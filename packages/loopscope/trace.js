@@ -121,6 +121,9 @@ function spanFor(run, event, id, name, kind, parentSpanId) {
   if (!span) {
     if (run._spans.size >= run._maxSpans) {
       run.attributes.span_limit_reached = true
+      // 根 span 是整条 Run 的锚点，必须优先于普通子 span 保留。
+      if (id === run.id) run._spans.delete(run._spans.keys().next().value)
+      else
       return { id, run_id: run.id, parent_span_id: parentSpanId ?? null, kind, name, status: 'unknown', started_at: event.at / 1000,
         ended_at: null, duration_ms: null, input: {}, output: {}, attributes: {}, code: {}, usage: {} }
     }
@@ -180,6 +183,7 @@ function updateRun(run, event, priorRun) {
     span.status = 'running'; span.ended_at = null; span.duration_ms = null
     span.attributes = { ...span.attributes, ...cloneSafe(event.attributes ?? {}) }
     run.attributes = { ...run.attributes, ...cloneSafe(event.attributes ?? {}) }
+    if (event.attributes?.subagent_trace) run.attributes.subagent_trace = cloneSafe(event.attributes.subagent_trace)
     return
   }
   const roundId = `${run.id}:round:${event.round ?? 0}`
@@ -473,16 +477,26 @@ function snapshot(run) {
 }
 
 function unavailableTrace(run, originalBytes, maxBytes) {
-  run._traceDisabled = true
-  run._spans.clear()
-  run._lastRequest = null
-  run._output = ''
-  run.input = {}
-  run.output = {}
-  run.attributes = { trace_capture_unavailable: 'trace_size_limit',
-    trace_capture_original_bytes: originalBytes, trace_capture_max_bytes: maxBytes }
+  run.attributes = { ...run.attributes, trace_capture_truncated: {
+    trace_capture_original_bytes: originalBytes, trace_capture_max_bytes: maxBytes } }
   const payload = snapshot(run)
-  return { payload, size: new TextEncoder().encode(JSON.stringify(payload)).byteLength }
+  // 保留 span 和结构化字段，优先缩短最大的正文，直到快照进入采集上限。
+  const strings = []
+  const visit = (value, parent, key) => {
+    if (typeof value === 'string') {
+      if (value.length > 4096) strings.push({ value, parent, key })
+    } else if (Array.isArray(value)) value.forEach((item, index) => visit(item, value, index))
+    else if (isRecord(value)) for (const [childKey, item] of Object.entries(value)) visit(item, value, childKey)
+  }
+  visit(payload)
+  strings.sort((a, b) => b.value.length - a.value.length)
+  for (const item of strings) {
+    item.parent[item.key] = `${item.value.slice(0, 4096)}\n[LoopScope 正文已截短]`
+    const size = new TextEncoder().encode(JSON.stringify(payload)).byteLength
+    if (size <= maxBytes) return { payload, size }
+  }
+  const size = new TextEncoder().encode(JSON.stringify(payload)).byteLength
+  return { payload, size }
 }
 
 /** 可信 Host 开启采集后才构造；`record` 同步入队且不等待网络 I/O。 */
@@ -566,7 +580,7 @@ export function createLoopScopeTrace({ endpoint, transport, source = 'web', reso
       updateRun(run, event, priorRun)
       let payload = snapshot(run)
       let size = new TextEncoder().encode(JSON.stringify(payload)).byteLength
-      if (run._traceDisabled || size > maxTraceBytes) {
+      if (size > maxTraceBytes) {
         const unavailable = unavailableTrace(run, size, maxTraceBytes)
         payload = unavailable.payload
         size = unavailable.size

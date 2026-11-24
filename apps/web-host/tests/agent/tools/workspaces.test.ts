@@ -33,22 +33,22 @@ async function cleanup() {
 function hostPort(overrides: Record<string, unknown> = {}) {
   return createWebAgentWorkspaceCreatePort({
     core, pool, lease,
-    async createDeclaration(ownerId, input) { return { id: input.projectId ?? input.folderId ?? Number(ownerId.length) } },
+    async createDeclaration(ownerId, input) { return { id: input.projectId ?? Number(ownerId.length) } },
     async createDirectory(_ownerId, name) { return { id: name.length } },
-    async readWorkspace(ownerId, id) { return { workspace_id: id, name: '文件夹绑定', kind: 'folder', folder_id: 19, owner: ownerId } },
+    async readWorkspace(ownerId, id) { return { workspace_id: id, name: '项目绑定', kind: 'project', project_id: 17, owner: ownerId } },
     async listWorkspaces(ownerId) { return [{ id: 61, kind: 'directory', directory_id: 81, name: '物理目录', owner: ownerId }] },
     ...overrides,
   })
 }
 
-test('真实 ToolRegistry dispatch 将三种工作区创建委托给 Host 领域操作，并持久回放调用结果', async t => {
+test('真实 ToolRegistry dispatch 将两种工作区创建委托给 Host 领域操作，并持久回放调用结果', async t => {
   await setup()
   t.after(cleanup)
   const calls: unknown[] = []
   const port = hostPort({
-    async createDeclaration(ownerId: string, input: { name: string; kind: 'project' | 'folder'; projectId?: number; folderId?: number; enabled: boolean }) { calls.push(['declaration', ownerId, input]); return { id: 51 } },
+    async createDeclaration(ownerId: string, input: { name: string; kind: 'project'; projectId?: number; enabled: boolean }) { calls.push(['declaration', ownerId, input]); return { id: 51 } },
     async createDirectory(ownerId: string, name: string) { calls.push(['directory', ownerId, name]); return { id: 81 } },
-    async readWorkspace(ownerId, id) { return { workspace_id: id, name: '文件夹绑定', kind: 'folder', folder_id: 19, owner: ownerId } },
+    async readWorkspace(ownerId, id) { return { workspace_id: id, name: '项目绑定', kind: 'project', project_id: 17, owner: ownerId } },
     async listWorkspaces(ownerId) { return [{ id: 61, kind: 'directory', directory_id: 81, name: '物理目录', owner: ownerId }] },
   })
   const registry = createToolRegistry({ groups: [{ id: 'workspaces', name: '工作区', tools: [createWorkspaceTool(port)] }], authorize: async () => true })
@@ -59,22 +59,16 @@ test('真实 ToolRegistry dispatch 将三种工作区创建委托给 Host 领域
   assert.equal(project.kind === 'completed' && project.successful, true, JSON.stringify(project))
   assert.deepEqual(calls[0], ['declaration', identity.ownerId, { name: '项目绑定', kind: 'project', projectId: 17, enabled: false }])
 
-  const folder = await dispatch({ workspace_name: '文件夹绑定', kind: 'folder', folder_id: 19 }, 'folder')
-  assert.deepEqual(folder.kind === 'completed' ? folder.value : null, { success: true, workspace: {
-    workspace_id: 51, name: '文件夹绑定', kind: 'folder', folder_id: 19, owner: identity.ownerId,
-  } })
-  assert.deepEqual(calls[1], ['declaration', identity.ownerId, { name: '文件夹绑定', kind: 'folder', folderId: 19, enabled: true }])
-
   const directory = await dispatch({ workspace_name: '物理目录', kind: 'directory' }, 'directory')
   assert.deepEqual(directory.kind === 'completed' ? directory.value : null, { success: true, workspace: {
     id: 61, kind: 'directory', directory_id: 81, name: '物理目录', owner: identity.ownerId,
   } })
-  assert.deepEqual(calls[2], ['directory', identity.ownerId, '物理目录'])
+  assert.deepEqual(calls[1], ['directory', identity.ownerId, '物理目录'])
   const replay = await dispatch({ workspace_name: '物理目录', kind: 'directory' }, 'directory')
   assert.deepEqual(replay.kind === 'completed' ? replay.value : replay, { success: true, workspace: {
     id: 61, kind: 'directory', directory_id: 81, name: '物理目录', owner: identity.ownerId,
   } })
-  assert.equal(calls.length, 3, '重放只读持久回执，不能再次创建目录')
+  assert.equal(calls.length, 2, '重放只读持久回执，不能再次创建目录')
   assert.deepEqual(await port.reconcile({ identity, roundId: 'round-1', toolCallId: 'directory', args: { workspace_name: '物理目录', kind: 'directory' } }), {
     kind: 'completed', successful: true, mutated: false, value: { success: true, workspace: {
       id: 61, kind: 'directory', directory_id: 81, name: '物理目录', owner: identity.ownerId,

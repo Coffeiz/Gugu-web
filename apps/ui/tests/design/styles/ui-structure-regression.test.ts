@@ -52,7 +52,6 @@ const usagePanel = load('../../../web/views/Admin/Agent/observability/components
 const actionButton = load('../../components/common/controls/ActionButton.vue')
 const systemLogs = load('../../../web/views/Admin/SystemLogs/index.vue')
 const analyticsUsage = load('../../../web/views/Admin/Analytics/Usage.vue')
-const trashView = load('../../views/Files/components/FilesTrashView.vue')
 const popupMenu = load('../../components/common/overlays/PopupMenu.vue')
 const profileImPane = load('../../im/connect/ImConnectPane.vue')
 const canvasToolbar = load('../../views/Mind/components/CanvasToolbar.vue')
@@ -224,10 +223,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
   })
 
   it('聊天附件和语音 hover 不连续插值阴影，避免快速移动时触发密集 paint', () => {
-    const chatActionBlock = cssBlock(guguChat, ':deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card))')
-    const chatActionStrongBlock = cssBlock(guguChat, ':deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card) strong)')
-    const chatFileBlock = cssBlock(guguChat, ':deep(.msg-file)')
-    const chatVoiceBlock = cssBlock(guguChat, ':deep(.msg-voice)')
+    const chatWindow = load('../../components/common/gugu-chat/GuguChatWindow.vue')
+    const chatActionBlock = cssBlock(chatWindow, ':deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button, .chat-file-card-download))')
+    const chatActionStrongBlock = cssBlock(chatWindow, ':deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button, .chat-file-card-download) strong)')
+    const chatFileBlock = cssBlock(chatWindow, ':deep(.chat-attachment-card > button.chat-object-card)')
+    const chatVoiceBlock = cssBlock(chatWindow, ':deep(.msg-voice)')
     expect(chatActionBlock).not.toContain('box-shadow var(--motion-hover-control)')
     expect(chatActionStrongBlock).toContain('color: inherit;')
     expect(chatFileBlock).not.toContain('box-shadow 0.25s')
@@ -772,8 +772,5 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(analyticsUsage).toContain('.expand-btn svg { transform: rotate(-90deg);')
     expect(analyticsUsage).toContain('.expand-btn svg.open { transform: rotate(0deg); }')
 
-    expect(trashView).toContain('<FlipChevron :open="expandedTrashFolders.has(folder.id)" :size="8" />')
-    expect(trashView).toContain('.trash-folder-contents[data-layout-open="false"]')
-    expect(trashView).toContain('.trash-folder-contents::before')
   })
 })

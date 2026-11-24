@@ -7,7 +7,9 @@ import { createLocalUndoRetentionStorage } from '../../../src/modules/files/stor
 
 const owner = '11111111-1111-4111-8111-111111111111'
 
-test('本地 Undo 正文清理仅删除 owner 的操作目录，不跟随目录符号链接', async () => {
+test('本地 Undo 正文清理仅删除 owner 的操作目录，不跟随目录符号链接', {
+  skip: process.platform !== 'linux' && '安全文件系统删除实现需要 Linux',
+}, async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-undo-retention-path-'))
   const outside = await mkdtemp(path.join(tmpdir(), 'gugu-undo-retention-outside-'))
   const operationId = `op-${'d'.repeat(32)}`

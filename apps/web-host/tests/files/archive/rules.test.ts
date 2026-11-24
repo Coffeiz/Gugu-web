@@ -3,7 +3,6 @@ import test from 'node:test'
 import { CoreError } from '@gugu/core'
 import {
   archiveMimeType,
-  buildFolderArchiveEntries,
   MAX_ARCHIVE_ENTRIES,
   MAX_COMPRESS_SOURCE_BYTES,
   MAX_EXTRACT_BYTES,
@@ -38,19 +37,4 @@ test('归档规则保留 Python 限额并识别 ZIP 与 TAR 扩展名', () => {
   assert.equal(supportedArchiveFormat('backup', 'rar'), null)
   assert.equal(archiveMimeType('说明.TXT'), 'text/plain')
   assert.equal(archiveMimeType('无扩展名'), 'application/octet-stream')
-})
-
-test('选择嵌套文件夹时把被选根目录作为 ZIP 根并保留目录层级', () => {
-  const entries = buildFolderArchiveEntries([
-    { id: 10, parent_id: 5, root_id: 10, name: '资料' },
-    { id: 11, parent_id: 10, root_id: 10, name: '子目录' },
-  ], [
-    { id: 7, folder_id: 11, display_name: '说明', ext: 'txt', size_bytes: 4, storage_key: 'fake-key' },
-  ], new Set(['资料']))
-
-  assert.deepEqual(entries.map((entry) => [entry.archivePath, entry.kind]), [
-    ['资料 (2)/', 'folder'],
-    ['资料 (2)/子目录/', 'folder'],
-    ['资料 (2)/子目录/说明.txt', 'file'],
-  ])
 })

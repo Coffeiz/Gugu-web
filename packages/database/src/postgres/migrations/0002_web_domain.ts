@@ -2,6 +2,11 @@ import { definePostgresMigration } from '../runner.js'
 
 import { tablesSql } from '../../schema.js'
 const core = tablesSql('postgres')
+// 0002 是不可变的历史基线；附件 ID 到路径的转换由 0039 执行。
+const initialCore = {
+  ...core,
+  scheduledTasks: core.scheduledTasks.replace('email_attachment_file_paths', 'email_attachment_file_ids'),
+}
 const coreOwnerTables = {
   projects: core.projects, clients: core.clients, calendar_events: core.calendarEvents,
   mind_nodes: core.mindNodes, mind_maps: core.mindMaps, mind_canvas_items: core.mindItems, mind_relations: core.mindRelations,
@@ -19,7 +24,7 @@ export const webDomainTables = [
 export const webDomainFunctions = ['gugu_apply_project_file_delta', 'gugu_project_file_counts_changed'] as const
 
 export const webDomainSql = `
-${[core.siteNotifications, core.receipts, core.scheduledTasks, core.scheduledFires, ...Object.values(coreOwnerTables)].join(';\n')};
+${[core.siteNotifications, core.receipts, initialCore.scheduledTasks, core.scheduledFires, ...Object.values(coreOwnerTables)].join(';\n')};
 ${Object.keys(coreOwnerTables).map(table =>
   `ALTER TABLE ${table} ADD FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE;`).join('\n')}
 ALTER TABLE core_operation_receipts ADD FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE;
@@ -315,6 +320,19 @@ export const webDomain = definePostgresMigration({
     'scheduled_tasks.execution_mode',
     'scheduled_tasks.scheduled_tasks_execution_mode_check',
     'scheduled_tasks.scheduled_tasks_execution_mode_not_null',
+    'scheduled_tasks.email_attachment_file_ids',
+    'scheduled_tasks.email_attachment_file_paths',
+  ],
+  downstreamFieldDefaults: { 'user_bots.private_streaming_enabled': 'false' },
+  downstreamRemovedTables: ['folders', 'storage_quota_ledgers', 'storage_quota_events'],
+  downstreamRemovedFields: ['files.folder_id', 'workspaces.folder_id'],
+  downstreamRemovedIndexes: ['gugu_files_owner_folder'],
+  downstreamChangedFunctions: ['gugu_project_file_counts_changed'],
+  downstreamRemovedBy: '0038_remove_folder_ids',
+  downstreamStages: [
+    { revision: '0039_scheduled_task_file_paths', removedFields: ['scheduled_tasks.email_attachment_file_ids'] },
+    { revision: '0042_file_paths_as_key', removedFields: ['files.id', 'files.files_pkey'], removedIndexes: ['uq_files_active_user_storage_key'] },
+    { revision: '0043_files_path_column', removedFields: ['files.storage_key'] },
   ],
   sql: webDomainSql,
   tables: webDomainTables,

@@ -20,8 +20,7 @@ async function contract(db: Kysely<WorkspaceDeclarationDatabase>, backend: 'sqli
     `CREATE TABLE workspace_directories (id ${id}, user_id TEXT NOT NULL, name TEXT NOT NULL, directory_name TEXT NOT NULL, is_system ${boolean} NOT NULL, is_default ${boolean} NOT NULL, deleted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     'CREATE UNIQUE INDEX workspace_names ON workspace_directories(user_id,name) WHERE deleted_at IS NULL',
     'CREATE UNIQUE INDEX workspace_segments ON workspace_directories(user_id,directory_name) WHERE deleted_at IS NULL',
-    `CREATE TABLE workspaces (id ${id}, user_id TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, folder_id INTEGER, project_id INTEGER, directory_id INTEGER, enabled ${boolean} NOT NULL, is_default ${boolean} NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
-    `CREATE TABLE folders (id ${id}, user_id TEXT NOT NULL, deleted_at TEXT)`,
+    `CREATE TABLE workspaces (id ${id}, user_id TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, project_id INTEGER, directory_id INTEGER, enabled ${boolean} NOT NULL, is_default ${boolean} NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     `CREATE TABLE projects (id ${id}, user_id TEXT NOT NULL, deleted_at TEXT)`,
     `CREATE TABLE conversation_sessions (id ${id}, user_id TEXT NOT NULL, workspace_id INTEGER)`,
   ]

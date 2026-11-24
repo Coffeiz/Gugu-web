@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import DesktopBackdropDefinitions from '../shared/components/DesktopBackdropDefinitions.vue'
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import FilePreviewModal from '@/components/common/file-browser/FilePreviewModal.vue'
 import FloatPreviewWindow from '@/components/common/layout/FloatPreviewWindow.vue'
 import { usePreviewStore } from '@/stores/preview'
 import DesktopProjectFiles from '@/views/Projects/components/DesktopProjectFiles.vue'
 import ProjectModal from '@/views/Projects/components/ProjectModal.vue'
+import PageSkeleton from '@/components/common/feedback/skeleton/PageSkeleton.vue'
+import SkeletonGate from '@/components/common/feedback/skeleton/SkeletonGate.vue'
 import AppToast from '@/components/common/feedback/AppToast.vue'
 import ConfirmDialog from '@/components/common/overlays/ConfirmDialog.vue'
 import { useProjectStore } from '@/stores/projects'
@@ -74,19 +77,23 @@ onUnmounted(() => {
 
 <template>
   <main class="desktop-project-window">
+    <DesktopBackdropDefinitions />
     <DesktopProjectFiles v-if="loading || error" shell native-window @close="close">
-      <p v-if="loading" role="status">正在加载项目…</p>
+      <SkeletonGate v-if="loading">
+        <PageSkeleton class="project-window-skeleton" variant="grid" collection="files" />
+      </SkeletonGate>
       <p v-else role="alert">{{ error }}</p>
     </DesktopProjectFiles>
     <ProjectModal v-else :project="projectStore.modalProject" native-window @close="close" />
     <FilePreviewModal :show="!!previewStore.singleFile" :file="previewStore.singleFile" @close="previewStore.close" />
     <FloatPreviewWindow v-for="win in previewStore.windows" :key="win.id" :win="win" />
     <AppToast />
-    <ConfirmDialog />
+    <ConfirmDialog teleport-to="body" />
   </main>
 </template>
 
 <style scoped>
+.project-window-skeleton { align-self: start; justify-self: stretch; }
 .desktop-project-window {
   position: relative;
   height: 100dvh;

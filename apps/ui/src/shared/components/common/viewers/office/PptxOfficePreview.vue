@@ -38,7 +38,7 @@ import type { PptxViewer } from '@aiden0z/pptx-renderer'
 import ViewerToolbar from '../ViewerToolbar.vue'
 import { normalizePptxRoundRectAdjustments } from './pptxCompatibility'
 
-const props = defineProps<{ blobUrl?: string; ext: string; fileId?: number; fileVersion?: number }>()
+const props = defineProps<{ blobUrl?: string; ext: string; filePath?: string; fileVersion?: number }>()
 const emit = defineEmits<{ (e: 'content-size', width: number, height: number): void }>()
 const { t } = useI18n()
 const pptxContainerRef = ref<HTMLDivElement | null>(null)

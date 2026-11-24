@@ -43,6 +43,7 @@ export function projectCanonicalRunHistory(
     receipt: digest({ finalized_run: identity.runId }).slice(0, 16),
     display: hasDisplay ? {
       text,
+      roundId: `round-${Math.max(1, checkpoint.round || 1)}`,
       files: checkpoint.files.length ? JSON.stringify(sanitizeMediaPayload(checkpoint.files)) : null,
       timeline: timeline.length ? JSON.stringify(sanitizeMediaPayload(timeline)) : null,
     } : null,

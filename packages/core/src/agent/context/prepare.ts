@@ -1,3 +1,4 @@
+import { agentSceneFingerprint } from '../scenes/index.js'
 import { projectAgentToolBrief } from '../capabilities/brief.js'
 
 import type { CanonicalMessage,CanonicalSourceLoaderResult,CapabilityCatalog,ContextData,ContextLoadPolicy,CurrentTurnSources,HistoryIdentity,Json,PreparationIdentity,PreparedToolDefinition,RunCapabilities,RunIdentity,SessionSnapshotState } from '../models.js'
@@ -125,11 +126,11 @@ export function createCanonicalSourceLoader(ports: ContextSourcePorts, observati
 }
 
 /** 供可信 Host 与来源加载器共用；scope key 不得包含凭据或明文隐私。 */
-export function contextAccessScopeHash(identity: HistoryIdentity, selection: Pick<import('../models.js').ContextSourceSelection, 'groupChat' | 'contextScopeKey' | 'contextPolicy'>, digest: ContextServices['digest']): string {
+export function contextAccessScopeHash(identity: HistoryIdentity, selection: Pick<import('../models.js').ContextSourceSelection, 'groupChat' | 'contextScopeKey' | 'contextPolicy' | 'scene'>, digest: ContextServices['digest']): string {
   if (selection.groupChat && (!selection.contextScopeKey || !selection.contextScopeKey.trim()))
     throw new Error('群上下文需要可信actor作用域绑定')
   return digest({ owner_id: identity.ownerId, session_id: identity.sessionId, group_chat: selection.groupChat,
-    scope_key: selection.contextScopeKey ?? 'owner', load_owner_context: selection.contextPolicy.loadOwnerContext, memory_enabled: selection.contextPolicy.memoryEnabled })
+    scene: agentSceneFingerprint(selection.scene), scope_key: selection.contextScopeKey ?? 'owner', load_owner_context: selection.contextPolicy.loadOwnerContext, memory_enabled: selection.contextPolicy.memoryEnabled })
 }
 
 export async function prepareRunContextSources(identity: RunIdentity, ports: ContextSourcePorts, signal?: AbortSignal, observation?: AgentObservationPort): Promise<CanonicalSourceLoaderResult> {
@@ -288,7 +289,7 @@ export const SNAPSHOT_CONTEXT_VERSION = 3
 
 export const DEFAULT_IDLE_TTL_MS = 30 * 60000
 
-export const bindingFields = ['workspace_id', 'workspace_name', 'kind', 'space', 'project_id', 'folder_id', 'project_name', 'folder_name', 'directory_id', 'directory_name'] as const
+export const bindingFields = ['workspace_id', 'workspace_name', 'kind', 'space', 'project_id', 'project_name', 'directory_id', 'directory_name'] as const
 
 export function workspaceBindingKey(value: Record<string, Json> | null | undefined): Record<string, Json> {
   return Object.fromEntries(bindingFields.map(key => [key, value?.[key] ?? null]))
@@ -623,7 +624,7 @@ export async function prepareRunCapabilities(input: {
   })
   if (!identity.ownerId || !identity.subject.id)
     throw new AgentRunError('invalid_state', '准备缺少可信授权主体')
-  let names = input.toolNames.filter((name) => !(imSources.has(input.source) && name === 'present_file') &&
+  let names = input.toolNames.filter((name) => !(imSources.has(input.source) && name === 'open_item') &&
     !(name === 'workspaces' && !ports.workspaceSupported))
   if (names.includes('shell')) {
     const policy = await ports.shellPolicy(identity, signal)
@@ -652,11 +653,14 @@ export async function prepareRunCapabilities(input: {
   signal?.throwIfAborted()
   const fileGuidance = shellState === null ? '' : [
     '文件操作优先用已授权的 shell，使用沙箱路径。先用 pwd 或 ls 确认可见目录。',
-    '个人文件在 /personal，默认工作区在 /workspace/default，其他工作区在 /workspace/<工作区目录名>，项目文件在 /project 下。使用已知挂载路径，目录名和项目路径以实际返回为准。',
+    ports.workspaceSupported
+      ? '个人文件在 /personal，用户创建的工作区在 /workspace/<工作区目录名>，项目文件在 /project 下。使用已知挂载路径，目录名和项目路径以实际返回为准。'
+      : '个人文件在 /personal。桌面项目目录不映射到 Shell 沙箱；不要把 /project 逻辑路径当作可访问的本机路径。',
     '浏览目录、查找文件、读取文本和普通文件操作用 shell。当前挂载、只读范围和写入确认规则照常生效；遇到权限限制先走正常授权流程。',
-    ...(names.includes('get_project') ? ['查询项目后优先用 get_project 返回的 sandbox_path 定位项目目录。'] : []),
+    ...(ports.workspaceSupported && names.includes('get_project') ? ['查询项目后优先用 get_project 返回的 location.value（kind 为 sandbox） 定位项目目录。'] : []),
+    ...(!ports.workspaceSupported && names.includes('get_project') ? ['get_project 返回的 location.value（kind 为 host_absolute） 是 Desktop 文件服务确认的本机绝对路径；沙箱 Shell 无法访问，必须使用获得授权的宿主机 Shell，并把该字段用作 cwd。历史消息中的 /project/... 是旧逻辑地址，不能当作本机路径；没有返回 location 时不得根据项目名推导路径。'] : []),
     ...(names.includes('view_image') ? ['找到图片后用 view_image 的 path 查看图片内容。'] : []),
-    ...(names.includes('delete_file') ? ['删除文件时优先用 delete_file 移入回收站。'] : []),
+    ...(names.includes('delete_item') ? ['删除文件或文件夹时优先用 delete_item 移入回收站。'] : []),
   ].join('\n')
   const shellReminder = shellState === null ? '' : catalog?.fixedAdapter
     ? [ports.appendShellProtocol('').trim(), shellState, fileGuidance].filter(Boolean).join(separator)
@@ -741,7 +745,7 @@ export function createCanonicalRunLoader(load: CanonicalContextPorts['load'], po
       || !tool.schema || typeof tool.schema !== 'object' || Array.isArray(tool.schema))
       || new Set(tools.map(tool => tool.name)).size !== tools.length)
       throw new AgentRunError('invalid_state', '发现工具缺少唯一名称或稳定Schema')
-    const candidates = [...new Set([...config.toolNames, ...tools.map(tool => tool.name)])]
+    const candidates = tools.map(tool => tool.name)
     const snapshotContext = loaded.sourceEffects?.sessionSnapshot.state.context
     const frozenSkills = snapshotContext?.user_skill_snapshot
     if (frozenSkills !== undefined && !Array.isArray(frozenSkills)) throw new AgentRunError('invalid_state', '会话用户技能快照格式无效')

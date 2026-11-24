@@ -168,7 +168,8 @@ export function parseQqMessage(eventType, raw, options) {
     const rawText = text(raw.content || '').trim(), rawAttachments = Array.isArray(raw.attachments) ? raw.attachments : [];
     const emojiRefs = extractQqFaces(rawText), faceOnly = emojiRefs.length > 0 && !rawText.replace(faceRegex(), '').trim();
     let body = normalizeQqAttachmentPlaceholders(normalizeQqFaces(rawText), rawAttachments);
-    const preflightBody = body, quote = directQuote(raw), reference = sceneValue(raw, 'ref_msg_idx');
+    let preflightBody = body;
+    const quote = directQuote(raw), reference = sceneValue(raw, 'ref_msg_idx') || sceneValue(raw, 'msg_ref_idx');
     let quotedText = normalizeQqFaces(normalizeQqAttachmentPlaceholders(quote.text, quote.attachments));
     if (quote.attachments.length && quotedText === '[QQ表情]')
         quotedText = '';
@@ -187,20 +188,47 @@ export function parseQqMessage(eventType, raw, options) {
         body = normalizeQqFaces(rawText.replace(faceRegex(), '').trim());
     if (faceOnly && !mediaItems.length && !body.trim())
         body = '[QQ表情]';
+    const facts = mentions(raw, group), chatType = group ? 'group' : 'c2c', platformMessageId = sceneValue(raw, 'msg_idx') || messageId;
+    // 仅订阅 AT 事件的群可能没有结构化提及。事件类型用于入站路由，不作为 Bot 身份证明。
+    const atEventOnly = eventType === 'GROUP_AT_MESSAGE_CREATE'
+        && (raw.mentions == null || (Array.isArray(raw.mentions) && raw.mentions.length === 0));
+    // QQ 可能只送达 @ 事件，正文不含 mention 标记。保留可入库的展示文本，路由与身份仍沿用提及事实。
+    const mentionOnly = !body && !rawAttachments.length && !mediaItems.length && !quotedText && !reference
+        && (facts.current === true || atEventOnly);
+    if (mentionOnly)
+        preflightBody = body = '@咕咕';
     if (!body && !mediaItems.length && !quotedText && !reference)
         return null;
-    const facts = mentions(raw, group), chatType = group ? 'group' : 'c2c', platformMessageId = sceneValue(raw, 'msg_idx') || messageId;
+    const otherBotNames = new Map();
+    if (group && Array.isArray(raw.mentions)) {
+        for (const item of raw.mentions) {
+            if (!object(item) || item.bot !== true || item.is_you !== false)
+                continue;
+            const id = text(item.id || item.user_openid || item.member_openid || item.openid || '');
+            const name = text(item.username || item.nickname || item.name || '').trim();
+            if (/^[A-Za-z0-9_-]{1,128}$/u.test(id) && id !== facts.botId && name && !otherBotNames.has(id))
+                otherBotNames.set(id, Array.from(name).slice(0, 128).join('').slice(0, 256));
+            if (otherBotNames.size >= 32)
+                break;
+        }
+    }
     const payload = { platform: 'qq', channel_id: options.botId, bot_id: options.botId, owner_user_id: options.ownerId,
         platform_user_id: senderId, platform_user_name: senderName || null, platform_bot_user_id: facts.botId || null,
+        ...(otherBotNames.size ? { other_bot_names: [...otherBotNames].map(([id, name]) => ({ id, name })) } : {}),
         message_id: messageId, platform_message_id: platformMessageId, platform_sent_ms: qqPlatformSentMs(raw), chat_type: chatType, ...(group ? { chat_id: chatId } : {}),
         text: body, attention_raw_text: body, quoted_text: quotedText || null, attachments: [], emoji_refs: faceOnly ? emojiRefs : [], qq_face_marker: emojiRefs.length > 0,
-        bot_mentioned: facts.current === true, group_mentioned: facts.current === true, native_bot_mentioned: facts.current, mentions_other_bot: facts.otherBot,
+        bot_mentioned: facts.current === true, group_mentioned: facts.current === true || atEventOnly,
+        native_bot_mentioned: facts.current,
+        // 回复准入沿用旧版保守规则：未明确标记为本机器人的 bot 也视为其他 bot。
+        mentions_other_bot: group && Array.isArray(raw.mentions)
+            ? raw.mentions.some(item => object(item) && item.bot === true && item.is_you !== true)
+            : false,
         mentions_other_member: facts.otherMember, has_unresolved_mention: facts.unresolved, reply_to_platform_message_id: reference || null,
         reply_target_sender_id: null, reply_target_is_bot: null };
     return { payload, rawText, mediaItems, splitFace: { waitForImage, faceOnly, emojiRefs },
         preflight: { platform: 'qq', channel_id: options.botId, owner_user_id: options.ownerId, platform_user_id: senderId, message_id: messageId,
             chat_type: chatType, chat_id: chatId || null, text: preflightBody, raw_text: rawText, attachments: rawAttachments.length ? [{ pending_media: true }] : [], emoji_refs: faceOnly ? emojiRefs : [] },
-        quoteRequest: reference ? { referenceIndex: reference, chatType, chatId, senderId, contentRequired: !quotedText && !quote.attachments.length } : null,
+        quoteRequest: reference ? { referenceIndex: reference, chatType, chatId, senderId, contentRequired: !quote.attachments.length } : null,
         indexEntry: { message_index: platformMessageId, message_id: messageId, sender_id: senderId, sender_is_bot: typeof author.bot === 'boolean' ? author.bot : null,
             sender_name: senderName, content: Array.from(normalizeQqAttachmentPlaceholders(rawText, rawAttachments)).slice(0, 200).join(''),
             attachments: rawAttachments.filter(object).map(item => Object.fromEntries(['url', 'filename', 'content_type', 'file_url', 'download_url'].filter(key => item[key]).map(key => [key, item[key]]))), timestamp: text(raw.timestamp) } };

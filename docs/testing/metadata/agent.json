@@ -1455,23 +1455,12 @@
     "keyBehavior": "真实注册器与Agent循环验证可信身份、只读结果投影、取消和领域安全边界",
     "ci": "core-node"
   },
-  "packages/core/tests/agent/tools/trash.test.ts": {
-    "domain": "agent-tools",
-    "layer": "L1",
-    "owner": "packages/core/src/agent/tools",
-    "productionEntry": "packages/core/src/agent/tools/trash.ts",
-    "keyBehavior": "真实注册器与Agent循环验证可信身份、Nd数字及下划线limit转换与夹取、合并排序、微秒时间保留、满额提示、取消和只读副作用",
-    "ci": "core-node"
-  },
-  "apps/web-host/tests/agent/tools/files/trash.postgres.test.ts": {
+  "apps/web-host/tests/agent/tools/files/disk-trash.test.ts": {
     "domain": "agent-tools",
     "layer": "L2",
-    "markers": [
-      "external_service"
-    ],
     "owner": "apps/web-host/src/modules/agent/tools",
-    "productionEntry": "createAgentToolRegistry → createAgentTrashListPort → createPostgresAgentTrashReader",
-    "keyBehavior": "隔离PG验证回收站owner、顶层资源过滤、微秒排序、整组启停和只读副作用",
+    "productionEntry": "createAgentToolRegistry → createAgentDiskTrashTools",
+    "keyBehavior": "验证路径回收站授权、取消、异常脱敏、确认、并发防重放、恢复和清理，不依赖旧文件表",
     "ci": "node-webui"
   },
   "backend/tests/agent/test_readonly_tool_migration.py": {
@@ -1925,7 +1914,7 @@
   "packages/core/tests/agent/context/greeting.test.ts": {
     "domain": "agent-greeting",
     "layer": "L1",
-    "owner": "packages/core/src/agent/greeting.ts",
+    "owner": "packages/core/src/agent/scenes/greeting/index.ts",
     "productionEntry": "createGreetingGenerator → buildGreetingPrompt + injected context/provider/cache ports",
     "keyBehavior": "保留 Python locale、owner 问候缓存、锁等待/取消释放、用户时区七日记忆截取和失败语义",
     "ci": "core-node"
@@ -2109,7 +2098,7 @@
   "packages/core/tests/agent/context/source-policy.test.ts": {
     "domain": "agent-context",
     "layer": "L1",
-    "owner": "packages/core/src/agent/context/source-policy.ts",
+    "owner": "packages/core/src/agent/scenes/source-policy.ts",
     "productionEntry": "Core trusted source and role policy",
     "keyBehavior": "Web ignores stale IM role fields; only trusted IM member/unknown restrict owner context, reflection and continuity; configured memory gate is preserved",
     "ci": "core-node"

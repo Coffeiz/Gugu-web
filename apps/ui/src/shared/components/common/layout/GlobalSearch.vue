@@ -159,7 +159,7 @@ function go(type: string, it: SearchItem) {
     void router.push('/projects')
   } else if (type === 'file' || type === 'folder') {
     if (!it.path_file) return
-    uiStore.pendingFileTarget = { kind: type, id: 0, pathFile: it.path_file }
+    uiStore.pendingFileTarget = { kind: type as 'file' | 'folder', pathFile: it.path_file }
     void router.push('/files')
     if (type === 'file') {
       const { base, ext } = splitName(it.title)

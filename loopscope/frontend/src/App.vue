@@ -7,6 +7,7 @@
       </div>
       <nav class="nav">
         <RouterLink to="/">{{ t('nav.conversation') }}</RouterLink>
+        <RouterLink to="/subagents">{{ t('playground.subagents') }}</RouterLink>
         <RouterLink to="/reflections">{{ t('nav.reflections') }}</RouterLink>
         <RouterLink to="/tokens">{{ t('nav.tokens') }}</RouterLink>
         <RouterLink to="/changelog">{{ t('nav.changelog') }}</RouterLink>
@@ -33,7 +34,9 @@
         <strong>{{ t('nav.authRequired') }}</strong>
         <span>{{ t('nav.accountDisconnected') }}</span>
       </section>
-      <RouterView v-else />
+      <RouterView v-else v-slot="{ Component, route }">
+        <component :is="Component" :key="route.path" />
+      </RouterView>
     </main>
   </div>
 </template>

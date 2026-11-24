@@ -134,14 +134,13 @@ test('执行异常不会写入原始异常，结束后不能再次取消', async
   assert.deepEqual(await service.cancel(owner, 'mine', 'failure'), { cancelled: false })
 })
 
-test('工作区目标必须属于 owner，且目录和文件夹不能已删除', async () => {
+test('工作区目标必须属于 owner，且目录和项目不能已删除', async () => {
   const native = new SQLite(':memory:')
   const db = new Kysely<Record<string, never>>({ dialect: new SqliteDialect({ database: native }) })
-  native.exec(`CREATE TABLE workspaces(id INTEGER,user_id TEXT,name TEXT,kind TEXT,folder_id INTEGER,project_id INTEGER,directory_id INTEGER,enabled INTEGER);
+  native.exec(`CREATE TABLE workspaces(id INTEGER,user_id TEXT,name TEXT,kind TEXT,project_id INTEGER,directory_id INTEGER,enabled INTEGER);
     CREATE TABLE workspace_directories(id INTEGER,user_id TEXT,directory_name TEXT,deleted_at TEXT,is_default INTEGER,name TEXT);
-    CREATE TABLE folders(id INTEGER,user_id TEXT,name TEXT,project_id INTEGER,deleted_at TEXT);
-    CREATE TABLE projects(id INTEGER,user_id TEXT,name TEXT);
-    INSERT INTO workspaces VALUES(1,'${owner.replaceAll('-', '')}','工作区','directory',NULL,NULL,2,1);
+    CREATE TABLE projects(id INTEGER,user_id TEXT,name TEXT,deleted_at TEXT);
+    INSERT INTO workspaces VALUES(1,'${owner.replaceAll('-', '')}','工作区','directory',NULL,2,1);
     INSERT INTO workspace_directories VALUES(2,'${owner.replaceAll('-', '')}','safe',NULL,1,'默认'),(3,'${other.replaceAll('-', '')}','other',NULL,0,'其他');`)
   try {
     const read = createWorkspaceShellTargetReader(db, 'sqlite')
@@ -152,7 +151,12 @@ test('工作区目标必须属于 owner，且目录和文件夹不能已删除',
     native.exec("UPDATE workspace_directories SET deleted_at='2026-01-01'")
     assert.deepEqual(await createWorkspaceShellDirectoryReader(db, 'sqlite')(owner), [])
     assert.equal(await read(owner, 1), null)
-    native.exec("UPDATE workspaces SET kind='folder',folder_id=3; INSERT INTO folders VALUES(3,'foreign','文件夹',NULL,NULL)")
+    native.exec(`INSERT INTO projects VALUES(7,'${owner.replaceAll('-', '')}','项目',NULL);
+      UPDATE workspaces SET kind='project',project_id=7`)
+    assert.equal((await read(owner, 1))?.space, 'project')
+    native.exec("UPDATE projects SET deleted_at='2026-01-01'")
+    assert.equal(await read(owner, 1), null)
+    native.exec("UPDATE workspaces SET kind='unknown'")
     assert.equal(await read(owner, 1), null)
   } finally { await db.destroy(); native.close() }
 })
@@ -162,13 +166,13 @@ test('Shell 事实每次读取 owner 会话、工作区、用户开关和授权�
   const db = new Kysely<Record<string, never>>({ dialect: new SqliteDialect({ database: native }) })
   native.exec(`CREATE TABLE terminal_sessions(id TEXT,owner_id TEXT,session_id INTEGER,workspace_id INTEGER,closed_at TEXT);
     CREATE TABLE conversation_sessions(id INTEGER,user_id TEXT,workspace_id INTEGER);
-    CREATE TABLE workspaces(id INTEGER,user_id TEXT,name TEXT,kind TEXT,folder_id INTEGER,project_id INTEGER,directory_id INTEGER,enabled INTEGER);
+    CREATE TABLE workspaces(id INTEGER,user_id TEXT,name TEXT,kind TEXT,project_id INTEGER,directory_id INTEGER,enabled INTEGER);
     CREATE TABLE workspace_directories(id INTEGER,user_id TEXT,directory_name TEXT,deleted_at TEXT,is_default INTEGER,name TEXT);
     CREATE TABLE user_preferences(user_id TEXT,data_json TEXT);
     CREATE TABLE filesystem_authorization_grants(id INTEGER,user_id TEXT,subject_type TEXT,subject_id TEXT,scope TEXT,permission TEXT,revoked_at TEXT,expires_at TEXT);
     INSERT INTO terminal_sessions VALUES('mine','${owner.replaceAll('-', '')}',1,NULL,NULL);
     INSERT INTO conversation_sessions VALUES(1,'${owner.replaceAll('-', '')}',2);
-    INSERT INTO workspaces VALUES(2,'${owner.replaceAll('-', '')}','工作区','directory',NULL,NULL,3,1);
+    INSERT INTO workspaces VALUES(2,'${owner.replaceAll('-', '')}','工作区','directory',NULL,3,1);
     INSERT INTO workspace_directories VALUES(3,'${owner.replaceAll('-', '')}','default',NULL,0,'默认');
     INSERT INTO filesystem_authorization_grants VALUES(1,'${owner.replaceAll('-', '')}','session','1','user_sandbox','read_write',NULL,NULL);`)
   try {
@@ -198,7 +202,7 @@ test('未绑定 Workspace 时 Shell 快照跟踪 owner 的默认目录目标', a
   const db = new Kysely<Record<string, never>>({ dialect: new SqliteDialect({ database: native }) })
   native.exec(`CREATE TABLE terminal_sessions(id TEXT,owner_id TEXT,session_id INTEGER,workspace_id INTEGER,closed_at TEXT);
     CREATE TABLE conversation_sessions(id INTEGER,user_id TEXT,workspace_id INTEGER);
-    CREATE TABLE workspaces(id INTEGER,user_id TEXT,name TEXT,kind TEXT,folder_id INTEGER,project_id INTEGER,directory_id INTEGER,enabled INTEGER);
+    CREATE TABLE workspaces(id INTEGER,user_id TEXT,name TEXT,kind TEXT,project_id INTEGER,directory_id INTEGER,enabled INTEGER);
     CREATE TABLE workspace_directories(id INTEGER,user_id TEXT,directory_name TEXT,deleted_at TEXT,is_default INTEGER,name TEXT);
     CREATE TABLE user_preferences(user_id TEXT,data_json TEXT);
     INSERT INTO terminal_sessions VALUES('mine','${owner.replaceAll('-', '')}',1,NULL,NULL);

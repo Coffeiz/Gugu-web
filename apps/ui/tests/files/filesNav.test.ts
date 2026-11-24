@@ -85,41 +85,12 @@ describe('navPathFor — project 卡保留 status/year/month 上下文', () => {
   })
 })
 
-describe('navPathFor — folder 卡（按当前段决定起点）', () => {
-  it('个人文件下的文件夹 → [个人, folder(space:personal)]', () => {
-    const cur: NavSeg[] = [{ type: 'personal', name: '个人文件', color: null }]
-    expect(navPathFor(card({ type: 'folder', folderId: 20, displayName: 'sub' }), cur)).toEqual([
-      { type: 'personal', name: '个人文件', color: null },
-      { type: 'folder', folderId: 20, name: 'sub', color: null, space: 'personal' },
-    ])
-  })
-  it('文件夹内嵌套子文件夹 → 追加，projectId/color 缺则回退当前段', () => {
-    const cur: NavSeg[] = [
-      { type: 'project', id: 3, name: 'P', color: '#p' },
-      { type: 'folder', folderId: 10, name: 'a', projectId: 3, color: '#c' },
-    ]
-    expect(navPathFor(card({ type: 'folder', folderId: 20, displayName: 'b', projectId: null, color: null }), cur)).toEqual([
-      { type: 'project', id: 3, name: 'P', color: '#p' },
-      { type: 'folder', folderId: 10, name: 'a', projectId: 3, color: '#c' },
-      { type: 'folder', folderId: 20, name: 'b', projectId: 3, color: '#c' },
-    ])
-  })
-  it('项目根下点文件夹 → 截到 project 段再追加', () => {
-    const cur: NavSeg[] = [
-      { type: 'projects', name: '项目文件', color: null },
-      { type: 'project', id: 5, name: 'P', color: '#p' },
-    ]
-    expect(navPathFor(card({ type: 'folder', folderId: 30, displayName: 'f', projectId: 5, color: '#f' }), cur)).toEqual([
-      { type: 'projects', name: '项目文件', color: null },
-      { type: 'project', id: 5, name: 'P', color: '#p' },
-      { type: 'folder', folderId: 30, name: 'f', projectId: 5, color: '#f' },
-    ])
-  })
-  it('无 project 段兜底 → 造 [项目, project(空名), folder]', () => {
-    expect(navPathFor(card({ type: 'folder', folderId: 40, displayName: 'g', projectId: 7, color: '#g' }), [])).toEqual([
-      { type: 'projects', name: '项目文件', color: null },
-      { type: 'project', id: 7, name: '', color: '#g' },
-      { type: 'folder', folderId: 40, name: 'g', projectId: 7, color: '#g' },
+describe('navPathFor — 磁盘目录按相对路径导航', () => {
+  it('个人文件中的嵌套目录保留路径层级，不依赖目录数据库 ID', () => {
+    const current: NavSeg[] = [{ type: 'disk-personal', name: '个人文件', relativePath: '资料' }]
+    expect(navPathFor(card({ type: 'disk-personal', id: '资料/图片', displayName: '图片', relativePath: '资料/图片' }), current)).toEqual([
+      { type: 'disk-personal', name: '个人文件', relativePath: '资料' },
+      { type: 'disk-personal', name: '图片', relativePath: '资料/图片', workspaceDirectoryId: undefined },
     ])
   })
 })

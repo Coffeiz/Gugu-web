@@ -1,4 +1,4 @@
-
+import { PROTECTED_HISTORY_ROUNDS } from './history/retention.js'
 import type { BranchResult,CanonicalMessage,CompactionResult,CompactionSummaryInput,Json,OpaqueProviderProjection,ProtectedWindow,SummaryGenerationConfig } from '../models.js'
 import type { MessageArea } from './history/canonical-history.js'
 import { blocks,copy,isCompactedSummaryMessage,stableJson,toolCallIds,toolResultIds } from './history/canonical-history.js'
@@ -127,7 +127,7 @@ export async function compactContext<Wire>(area: MessageArea, port: CompactionPo
   }
   else {
     const units = matchedAtomicUnits(normal)
-    for (const index of units.slice(-10).flat())
+    for (const index of units.slice(-PROTECTED_HISTORY_ROUNDS).flat())
       keep.add(index)
   }
   keep.delete(injectionIndex)
@@ -140,7 +140,7 @@ export async function compactContext<Wire>(area: MessageArea, port: CompactionPo
   if (!hasContent)
     return empty('no_compressible_history')
   const projection = options.projection && area.matchesProjection(options.projection, options.modelIdentity) ? copy(options.projection) : null
-  const previousSummary = previous ? contentText(previous.content).replace(/^\s*【消息时间】[^\n]*\n【消息正文】\n|^\s*【消息正文】\n/, '') : null
+  const previousSummary = previous ? contentText(previous.content).replace(/^\s*【消息时间】[^\n]*\n【消息正文】\n|^\s*【消息正文】\n|^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?: \/ [^\]\n]+)?\]: /u, '') : null
   await options.onStart?.()
   options.signal?.throwIfAborted()
   let text = await port.summarize({

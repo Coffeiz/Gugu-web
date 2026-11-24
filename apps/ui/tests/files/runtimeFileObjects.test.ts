@@ -44,7 +44,6 @@ import { i18n } from '@/i18n'
 import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vue'
 import RuntimeFolderCard from '@/components/common/file-browser/RuntimeFolderCard.vue'
 import RuntimeListRow from '@/components/common/file-browser/RuntimeListRow.vue'
-import RuntimeFileListRow from '@/views/Files/components/RuntimeFileListRow.vue'
 import RuntimeFolderListRow from '@/views/Files/components/RuntimeFolderListRow.vue'
 import { useFileRuntimeObject } from '@/composables/files/useFileRuntimeObject'
 
@@ -52,7 +51,6 @@ const variants: Array<{ name: string; component: Component; type: string; surfac
   { name: '文件卡片', component: RuntimeFileCard, type: 'file-item', surface: false },
   { name: '文件夹卡片', component: RuntimeFolderCard, type: 'folder-item', surface: true },
   { name: '通用列表行', component: RuntimeListRow, type: 'folder-item', surface: true },
-  { name: '文件库文件行', component: RuntimeFileListRow, type: 'file-item', surface: false },
   { name: '文件库文件夹行', component: RuntimeFolderListRow, type: 'folder-item', surface: true },
 ]
 let app: ReturnType<typeof createApp> | undefined
@@ -76,7 +74,8 @@ async function mountVariant(variant: typeof variants[number]) {
   document.body.appendChild(host)
   app = createApp({ render: () => h(variant.component, {
     ...state, context, cardProps: { displayName: '示例', ext: 'MD' },
-    item: { id: 7, folderId: 7, type: 'folder', displayName: '示例', ext: 'MD', sizeBytes: 7 },
+    item: { id: 'personal:示例', type: 'disk-personal', relativePath: '示例', displayName: '示例' },
+    openFolder: () => {}, folderListIcon: () => 'span', folderAccentColor: () => '#888888',
   }) })
   app.use(i18n)
   app.mount(host)
@@ -116,7 +115,7 @@ describe('文件 Runtime 包装器保持对象生命周期', () => {
     state.runtimeSurfaceId = 'next-library'
     state.runtimeAbilities.push('copy')
     await nextTick()
-    expect(record).toMatchObject({ selected: true, surfaceId: 'next-library', abilities: ['move', 'copy'] })
+    expect(record).toMatchObject({ selected: variant.name !== '文件库文件夹行', surfaceId: 'next-library', abilities: ['move', 'copy'] })
     app!.unmount()
     app = undefined
     expect(mocks.dispose).toHaveBeenCalledWith(state.runtimeId, record.element)

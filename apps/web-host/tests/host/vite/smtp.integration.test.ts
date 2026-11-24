@@ -70,9 +70,9 @@ test('Vite forwards authenticated SMTP preview requests to Node Host and serves 
     assert.match(html, /#9aaecd/)
     assert.match(html, /REMINDER/)
 
-    const logo = await fetch(`${base}/logo-large2.png`)
+    const logo = await fetch(`${base}/brand/bird-login.svg`)
     assert.equal(logo.status, 200)
-    assert.match(logo.headers.get('content-type') ?? '', /image\/png/)
+    assert.match(logo.headers.get('content-type') ?? '', /image\/svg\+xml/)
   } finally {
     if (vite) await vite.close()
     await app.close().catch(() => undefined)

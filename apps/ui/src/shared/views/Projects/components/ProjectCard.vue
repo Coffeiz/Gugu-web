@@ -162,6 +162,7 @@
       <div v-else class="tp-empty">{{ t('projects.noTodos') }}</div>
       <button class="tp-add" @click="addTodo">＋ {{ t('projects.addTodo') }}</button>
   </PopupMenu>
+  <UploadConflictDialog ref="dropConflictDialog" />
   </div>
 </template>
 
@@ -170,14 +171,16 @@ import { computed, ref, nextTick, useAttrs, watch, onUnmounted, type PropType } 
 import { useI18n } from 'vue-i18n'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
-import { useFilesCacheStore } from '@/stores/filesCache'
 import { runtime, bindRuntimeObjectPointer } from '@/interaction/runtime'
-import { errorMessage, showAppError } from '@/composables/core/useAppToast'
+import { errorMessage, showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import Icon from '@/components/common/icons/Icon.vue'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
+import UploadConflictDialog from '@/components/common/overlays/UploadConflictDialog.vue'
 import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
-import { filesApi, uploadDirectWithProgress } from '@/services/api'
-import { uploadFileWithProgress } from '@/composables/files/useFileUploadCore'
+import { usePathFileAccess } from '@/services/pathFileAccess'
+import { uploadSignal } from '@/services/cache'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { uploadWorkspaceFile } from '@/composables/files/useFileUploadCore'
 import SegBar from '@/components/common/controls/SegBar.vue'
 import { cloneProjectStages, firstIncompleteStageIdx } from '@/utils/projectStages'
 import { projectProgress } from '@/utils/projectProgress'
@@ -225,7 +228,6 @@ onUnmounted(() => {
 const projectRef = computed(() => props.project)
 const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectRef)
 
-const cacheStore   = useFilesCacheStore()
 
 const _colorRgb = computed(() => {
   const hex = props.project.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
@@ -389,6 +391,8 @@ const starColor = computed(() => {
 })
 
 // ── 文件拖放上传 ──────────────────────────────────────────────
+const pathFileAccess = usePathFileAccess()
+const dropConflictDialog = ref<InstanceType<typeof UploadConflictDialog> | null>(null)
 const fileDragOver   = ref(false)
 const fileUploading  = ref(false)
 const fileUploadPct  = ref(0)
@@ -416,34 +420,37 @@ async function onFileDrop(e: DragEvent) {
   const files = [...(e.dataTransfer?.files ?? [])]
   if (!files.length) return
   fileUploading.value = true; fileUploadPct.value = 0; fileUploadDone.value = false
+  const move = pathFileAccess.moveDropped?.(`project:${props.project.id}`, '',
+    async (filename, canOverwrite) => {
+      const choices = await dropConflictDialog.value?.show([{ filename, canOverwrite }])
+      return choices?.get(filename)?.action ?? 'skip'
+    },
+    percent => { fileUploadPct.value = percent })
   try {
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i]
-      const presign = await filesApi.presign({
-        filename: f.name, size_bytes: f.size,
-        mime_type: f.type || 'application/octet-stream',
-        space: 'project', project_id: props.project.id, folder_id: null, stage_name: '',
-      })
-      const onPct = (pct: number) => { fileUploadPct.value = Math.round(((i + pct) / files.length) * 100) }
-      let uploaded
-      if (presign.mode === 'oss') {
-        await uploadDirectWithProgress(presign.upload_url, f, onPct)
-        uploaded = await filesApi.confirm({
-          storage_key: presign.storage_key, display_name: presign.final_name,
-          ext: presign.ext, mime_type: f.type || 'application/octet-stream',
-          size_bytes: f.size, space: 'project', project_id: props.project.id,
-          folder_id: null, stage_name: '',
-        })
-      } else {
-        uploaded = await uploadFileWithProgress(f, { space: 'project', projectId: props.project.id }, onPct)
-      }
-      if (uploaded) cacheStore.addFile(uploaded)
+    if (move) {
+      if ((await move).retained) showAppNotice('已复制到目标文件夹')
+      fileUploadPct.value = 100
     }
+    const account = getAccountBoundaryEpoch()
+    const isCurrent = () => account === getAccountBoundaryEpoch()
+    if (!move) {
+      const target = { directoryId: `project:${props.project.id}` as const, relativePath: '' }
+      for (const [index, file] of files.entries()) {
+        if (!isCurrent()) return
+        const created = await uploadWorkspaceFile(target, { file, relativePath: file.name },
+          progress => { fileUploadPct.value = Math.round((index + progress) / files.length * 100) },
+          conflicts => dropConflictDialog.value?.show(conflicts) ?? Promise.resolve(new Map()),
+          isCurrent, pathFileAccess)
+        if (!isCurrent()) return
+        if (created) uploadSignal.value++
+      }
+    }
+    fileUploadPct.value = 100
     fileUploadDone.value = true
     setTimeout(() => { fileUploading.value = false; fileUploadDone.value = false }, 1200)
   } catch (err) {
     fileUploading.value = false
-    showAppError(`上传失败：${errorMessage(err)}`)
+    showAppError(move ? errorMessage(err) : `上传失败：${errorMessage(err)}`)
   }
 }
 

@@ -82,7 +82,7 @@ it('缺词、非法枚举和缺少平台来源明确失败，不将缺后端伪�
 
 it('桌面默认查询所有可用来源，文件与文件夹只扫描一次', async () => {
   const host = vi.fn(async () => ({ groups: [
-    { type: 'file', items: [{ id: '1', title: '样本.txt', path_file: { sandboxPath: '/personal/样本.txt' } }] },
+    { type: 'file', items: [{ id: '1', title: '样本.txt', path_file: { location: { kind: 'sandbox', value: '/personal/样本.txt' } } }] },
     { type: 'folder', items: [{ id: '2', title: '样本目录' }] },
   ] }))
   registry = createToolRegistry({
@@ -93,7 +93,7 @@ it('桌面默认查询所有可用来源，文件与文件夹只扫描一次', a
   expect(result.total).toBe(2)
   expect(host).toHaveBeenCalledExactlyOnceWith({ queries: ['样本', '资料'], mode: 'AND', perType: 20 }, expect.any(AbortSignal))
   expect(result.groups).toMatchObject([
-    { source_type: 'file', items: [{ path_file: { sandboxPath: '/personal/样本.txt' } }] },
+    { source_type: 'file', items: [{ path_file: { location: { kind: 'sandbox', value: '/personal/样本.txt' } } }] },
     { source_type: 'folder', items: [{ title: '样本目录' }] },
   ])
 })
@@ -130,4 +130,19 @@ it('Agent循环通过真实注册器和SQLite执行搜索，结果进入下一�
   expect(requests[1]![0].context.join('\n')).toContain('alpha beta')
   expect(requests[1]![0].context.join('\n')).not.toContain('alpha 他人')
   expect(result.events.some(event => event.type === 'tool_done')).toBe(true)
+})
+
+it('显式指定文件和文件夹时可以无关键词浏览，其他范围仍需关键词', async () => {
+  const host = vi.fn(async () => ({ groups: [
+    { type: 'file', items: [{ id: '1', title: '样本.txt' }] },
+    { type: 'folder', items: [{ id: '2', title: '样本目录' }] },
+  ] }))
+  registry = createToolRegistry({
+    tools: [createGlobalSearchTool(createGlobalSearchOperations(createDesktopFileSearchSources(host)), true)],
+    authorize: async () => true,
+  })
+  expect(value(await dispatch({ types: ['file', 'folder'] })).total).toBe(2)
+  expect(host).toHaveBeenCalledExactlyOnceWith({ queries: [], mode: 'OR', perType: 20 }, expect.any(AbortSignal))
+  expect(await dispatch({ types: ['file', 'project'] })).toMatchObject({ successful: false })
+  expect(host).toHaveBeenCalledTimes(1)
 })

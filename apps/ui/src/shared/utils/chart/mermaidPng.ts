@@ -72,5 +72,6 @@ export async function downloadMermaidPng(svg: SVGSVGElement): Promise<void> {
   link.href = url
   link.download = `mermaid-diagram-${new Date().toISOString().replace(/[:.]/g, '-')}.png`
   link.click()
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  // 系统保存窗口可能异步读取 Blob，不能在触发下载后立即释放。
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }

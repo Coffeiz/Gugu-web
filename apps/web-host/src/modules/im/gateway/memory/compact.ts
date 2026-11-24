@@ -58,7 +58,7 @@ export function createImProductionCompact(options:Options){
           if(!await current())throw unavailable()
           return result
         }},pauseBeforeRetry:async(_attempt,s)=>{await delay(250,undefined,{signal:s})},diagnostic:()=>options.diagnose('im_compaction_failed')})
-      return {modelIdentity:selection.modelIdentity,timezone:await services.source.data.loadTimezone(identity),compaction,
+      return {compaction,
         async recordUsage(client){await recordAgentUsage(client,identity,usage,binding.usageConfig,rounds,[],{scenario:'compaction',source:scope.platform})},
         async close(){try{await provider!.close()}finally{binding.release()}}}
     }catch{try{await provider?.close()}finally{binding.release()}throw unavailable()}

@@ -31,7 +31,7 @@ test('真实 PG/Redis：失锁仍执行和持锁未提交启动均不触发列�
       start_at timestamptz, end_at timestamptz, last_run_at timestamptz, last_run_failed boolean,
       enabled boolean NOT NULL, cron text NOT NULL, name text NOT NULL, payload text NOT NULL,
       channels text NOT NULL, interval_minutes int, workspace_id int, filesystem_authorization_grant_id int,
-      delivery_targets json, authorized_tools json, email_attachment_file_ids json
+      delivery_targets json, authorized_tools json, email_attachment_file_paths json
     )`)
     await pool.query(`INSERT INTO scheduled_tasks VALUES
       ($1,$4,NULL,'once',$5,NULL,$5,FALSE,TRUE,'@once','失锁执行','', 'web',NULL,NULL,NULL,NULL,'[]','[]'),

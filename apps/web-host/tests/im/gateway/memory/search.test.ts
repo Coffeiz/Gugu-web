@@ -11,7 +11,7 @@ import type { AgentDispatchLease } from '../../../../src/modules/agent/run/dispa
 import { createPostgresImAccess } from '../../../../src/modules/im/gateway/inbound/access.js'
 import { createPostgresImMemorySearch } from '../../../../src/modules/im/gateway/memory/search.js'
 import { createAgentToolRegistry } from '../../../../src/modules/agent/tools/registry.js'
-import { imCanUseTool } from '@gugu/core/im/access'
+import { imCanUseTool } from '@gugu/core/agent/scenes/im'
 
 /** Core索引/排名与私有文件实际执行；PG lease/配置/游标查询为明确替身，不声称PG联调。 */
 async function fixture(ownerPrivate = false, mixed = false, member = false, databaseUrl?: string) {

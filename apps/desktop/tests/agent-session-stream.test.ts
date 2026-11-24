@@ -87,17 +87,17 @@ it('桌面 /workspace 命令通过 Core 绑定当前会话并投影完成消息'
   const events: unknown[] = []
   const operationId = '00000000-0000-4000-8000-000000000004'
 
-  await handlers[DESKTOP_CHANNELS.agentSessions]({ action: 'send', id: 7, text: `/workspace ${directoryId}`,
-    operationId, stream: true }, event => events.push(event))
+  await handlers[DESKTOP_CHANNELS.agentSessions]({ action: 'send', id: 7, text: '/workspace bind 合成目录',
+    operationId, clientMessageId: 'workspace-client', stream: true }, event => events.push(event))
 
-  expect(request).toHaveBeenCalledWith('agent.sessions.setWorkspace', { id: 7, action: 'bind', directoryId })
+  expect(request).toHaveBeenCalledWith('agent.sessions.setWorkspace', { id: 7, action: 'bind', directoryId: '合成目录' })
   expect(request).toHaveBeenCalledWith('agent.sessions.append', {
-    id: 7, text: `/workspace ${directoryId}`, reply: '已将当前会话绑定到工作区「合成目录」。',
+    id: 7, text: '/workspace bind 合成目录', reply: '已将当前会话绑定到工作区「合成目录」。', clientId: 'workspace-client',
   }, operationId)
   expect(events).toEqual([
-    { type: 'session_id', operationId, session_id: 7, user_message_id: 43 },
+    { type: 'session_id', operationId, session_id: 7, user_message_id: 43, client_message_id: 'workspace-client' },
     { type: 'content', operationId, text: '已将当前会话绑定到工作区「合成目录」。' },
-    { type: 'projected', operationId, event: { type: 'done' } },
+    { type: 'projected', operationId, event: { type: 'done', command_reply: true } },
   ])
 })
 

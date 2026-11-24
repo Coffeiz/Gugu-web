@@ -13,11 +13,17 @@ const receivedMessage = z.object({
         conversationScope.extend({ chatType: z.literal('group'), chatId: z.string().min(1) }),
     ]),
     eventId: z.string().min(1),
+    platformSentMs: z.number().int().positive().optional(),
+    eventReceivedMs: z.number().int().positive().optional(),
     platformMessageId: z.string().optional(),
     platformUserName: z.string().max(256).optional(),
+    platformBotUserId: z.string().min(1).max(128).optional(),
+    otherBotNames: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
+        name: z.string().trim().min(1).max(256) })).max(32).optional(),
     text: z.string(),
     quotedText: z.string().nullable(),
     botMentioned: z.boolean(),
+    qqAtEventOnly: z.literal(true).optional(),
 });
 /** 重新读取序列化事件时，核对完整结构和可信连接归属。 */
 export function parseImReceivedMessage(connection, value) {
@@ -53,11 +59,21 @@ export function readImReceivedMessage(connection, payload) {
         throw new Error('IM 入站事件缺少稳定标识');
     return parseImReceivedMessage(connection, {
         version: 1, kind: 'message.received', scope, eventId,
+        ...(typeof payload.platform_sent_ms === 'number' && Number.isSafeInteger(payload.platform_sent_ms) && payload.platform_sent_ms > 0
+            ? { platformSentMs: payload.platform_sent_ms } : {}),
+        ...(typeof payload.event_received_ms === 'number' && Number.isSafeInteger(payload.event_received_ms) && payload.event_received_ms > 0
+            ? { eventReceivedMs: payload.event_received_ms } : {}),
         ...(typeof payload.platform_message_id === 'string' ? { platformMessageId: payload.platform_message_id } : {}),
         ...(typeof payload.platform_user_name === 'string' && payload.platform_user_name.trim()
             ? { platformUserName: payload.platform_user_name.trim().slice(0, 256) } : {}),
+        ...(typeof payload.platform_bot_user_id === 'string' && payload.platform_bot_user_id.length <= 128 && payload.platform_bot_user_id
+            ? { platformBotUserId: payload.platform_bot_user_id } : {}),
+        ...(scope.platform === 'qq' && scope.chatType === 'group' && payload.other_bot_names !== undefined
+            ? { otherBotNames: payload.other_bot_names } : {}),
         text: typeof payload.text === 'string' ? payload.text : '',
         quotedText: typeof payload.quoted_text === 'string' ? payload.quoted_text : null,
-        botMentioned: payload.bot_mentioned === true || payload.group_mentioned === true,
+        botMentioned: payload.bot_mentioned === true || (scope.platform !== 'qq' && payload.group_mentioned === true),
+        ...(scope.platform === 'qq' && scope.chatType === 'group' && payload.group_mentioned === true && payload.bot_mentioned !== true
+            ? { qqAtEventOnly: true } : {}),
     });
 }

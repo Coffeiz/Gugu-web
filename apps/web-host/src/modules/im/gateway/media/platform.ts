@@ -65,11 +65,14 @@ export function createPlatformMedia(options: { storage: PlatformAttachmentStore;
           async quote(media, sourcePlatformMessageId) {
             const reused = await options.storage.reuse({ scope, sourcePlatformMessageId,
               sourceAttachmentIndex: media.attachmentIndex, targetPlatformMessageId: source }, signal)
-            if (reused) ids.push(remember(reused))
+            if (!reused) return false
+            ids.push(remember(reused))
+            return true
           },
-          async file(_media, file, index) {
+          async file(media, file, index) {
             try {
-              ids.push(await add({ scope, sourcePlatformMessageId: source, sourceAttachmentIndex: index, ...file }))
+              ids.push(await add({ scope, sourcePlatformMessageId: source, sourceAttachmentIndex: media.source === 'quote' ? media.attachmentIndex : index,
+                ...file, quoted: media.source === 'quote' }))
             } catch {
               signal.throwIfAborted()
               throw new QqMediaIngressError('qq_media_stage')

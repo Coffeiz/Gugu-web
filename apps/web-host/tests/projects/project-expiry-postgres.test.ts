@@ -22,11 +22,11 @@ test('隔离数据库中锁被占用时跳过恢复，释放后处理部分清�
   const staged = `${file}.gugu-purge-${id}`
   try {
     await pool.query('CREATE TABLE projects(id int PRIMARY KEY,user_id uuid)')
-    await pool.query('CREATE TABLE files(id int PRIMARY KEY,user_id uuid,storage_key text)')
+    await pool.query('CREATE TABLE files(id int PRIMARY KEY,user_id uuid,path text)')
     await pool.query('CREATE TABLE project_expiry_journals(id uuid PRIMARY KEY,user_id uuid,project_id int,entries json,created_at timestamptz)')
     await pool.query('INSERT INTO projects VALUES(1,$1)', [owner])
     await pool.query('INSERT INTO files VALUES(2,$1,$2)', [owner, `${owner}/trash/a`])
-    await pool.query('INSERT INTO project_expiry_journals VALUES($1,$2,1,$3,CURRENT_TIMESTAMP)', [id, owner, JSON.stringify([{ id: 2, storage_key: `${owner}/trash/a` }])])
+    await pool.query('INSERT INTO project_expiry_journals VALUES($1,$2,1,$3,CURRENT_TIMESTAMP)', [id, owner, JSON.stringify([{ id: 2, path: `${owner}/trash/a` }])])
     await mkdir(directory, { recursive: true })
     await writeFile(staged, '旧文件')
     const lock = await pool.connect()
@@ -40,7 +40,7 @@ test('隔离数据库中锁被占用时跳过恢复，释放后处理部分清�
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM project_expiry_journals')).rows[0].n, 0)
     await pool.query('DELETE FROM files')
     await pool.query('DELETE FROM projects')
-    await pool.query('INSERT INTO project_expiry_journals VALUES($1,$2,1,$3,CURRENT_TIMESTAMP)', [id, owner, JSON.stringify([{ id: 2, storage_key: `${owner}/trash/a` }, { id: 3, storage_key: `${owner}/trash/missing` }])])
+    await pool.query('INSERT INTO project_expiry_journals VALUES($1,$2,1,$3,CURRENT_TIMESTAMP)', [id, owner, JSON.stringify([{ id: 2, path: `${owner}/trash/a` }, { id: 3, path: `${owner}/trash/missing` }])])
     await writeFile(staged, '待清理')
     let recovered = false
     for (let i = 0; i < 100 && !recovered; i++) {
@@ -68,21 +68,18 @@ test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登�
   const owner = randomUUID(), directory = path.join(root, owner, 'trash'), file = path.join(directory, 'a')
   let child: ReturnType<typeof spawn> | undefined
   try {
-    await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY,storage_limit_bytes bigint);
+    await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY);
       CREATE TABLE projects(id int PRIMARY KEY,user_id uuid,deleted_at timestamptz);
-      CREATE TABLE folders(id int PRIMARY KEY,user_id uuid,project_id int);
-      CREATE TABLE files(id int PRIMARY KEY,user_id uuid,project_id int,folder_id int,storage_key text);
+      CREATE TABLE files(id int PRIMARY KEY,user_id uuid,project_id int REFERENCES projects(id) ON DELETE CASCADE,path text);
       CREATE TABLE calendar_events(id int PRIMARY KEY,user_id uuid,project_id int);
       CREATE TABLE scheduled_tasks(id int PRIMARY KEY,user_id uuid,event_id int);
       CREATE TABLE rag_index_jobs(id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,pending_source_ids json,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation int NOT NULL,completed_generation int NOT NULL,attempts int NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_error_code text,last_started_at timestamptz,last_succeeded_at timestamptz,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type));
-      CREATE TABLE storage_quota_ledgers(user_id uuid,category text,root_path text,limit_bytes bigint,used_bytes bigint,reserved_bytes bigint,status text,initialized_at timestamptz,last_reconciled_at timestamptz,updated_at timestamptz,UNIQUE(user_id,category));
-      CREATE TABLE storage_quota_events(user_id uuid,category text,operation text,delta_bytes bigint,resource_type text,resource_id text,idempotency_key text,metadata_json jsonb,created_at timestamptz,UNIQUE(user_id,idempotency_key));
       CREATE TABLE project_expiry_journals(id uuid PRIMARY KEY,user_id uuid,project_id int,entries json,created_at timestamptz,UNIQUE(user_id,project_id));
       CREATE FUNCTION pause_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN OLD; END $$;
       CREATE TRIGGER pause_delete BEFORE DELETE ON files FOR EACH ROW EXECUTE FUNCTION pause_delete()`)
-    await pool.query('INSERT INTO users VALUES($1,NULL)', [owner])
+    await pool.query('INSERT INTO users(id) VALUES($1)', [owner])
     await pool.query("INSERT INTO projects VALUES(1,$1,CURRENT_TIMESTAMP-interval '40 days')", [owner])
-    await pool.query('INSERT INTO files VALUES(2,$1,1,NULL,$2)', [owner, `${owner}/trash/a`])
+    await pool.query('INSERT INTO files VALUES(2,$1,1,$2)', [owner, `${owner}/trash/a`])
     await pool.query('INSERT INTO calendar_events VALUES(5,$1,1)', [owner])
     await pool.query('INSERT INTO scheduled_tasks VALUES(6,$1,5)', [owner])
     await mkdir(directory, { recursive: true })
@@ -110,7 +107,7 @@ test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登�
     assert.equal(await readFile(file, 'utf8'), '正文')
     await pool.query('DROP TRIGGER pause_delete ON files')
     const { purgeExpiredProject } = await import('../../src/modules/projects/lifecycle/expiry.js')
-    assert.equal(await purgeExpiredProject(pool, root, new Date(), null), true)
+    assert.equal(await purgeExpiredProject(pool, root, new Date()), true)
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM projects')).rows[0].n, 0)
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM scheduled_tasks')).rows[0].n, 0)
     assert.deepEqual((await pool.query(`SELECT source_id,pending_source_ids,generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='scheduled_task'`, [owner])).rows[0], { source_id: '6', pending_source_ids: ['6'], generation: 1 })
@@ -118,10 +115,10 @@ test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登�
     assert.equal(await readFile(path.join(directory, 'untracked'), 'utf8'), '保留')
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM project_expiry_journals')).rows[0].n, 0)
     await pool.query("INSERT INTO projects VALUES(3,$1,CURRENT_TIMESTAMP-interval '40 days')", [owner])
-    await pool.query('INSERT INTO files VALUES(4,$1,3,NULL,$2)', [owner, `${owner}/trash/b`])
+    await pool.query('INSERT INTO files VALUES(4,$1,3,$2)', [owner, `${owner}/trash/b`])
     await writeFile(path.join(directory, 'b'), '正文')
     await pool.query('CREATE TRIGGER pause_delete BEFORE DELETE ON files FOR EACH ROW EXECUTE FUNCTION pause_delete()')
-    const cleanup = purgeExpiredProject(pool, root, new Date(), null)
+    const cleanup = purgeExpiredProject(pool, root, new Date())
     let secondStaged = false
     for (let i = 0; i < 100; i++) {
       if ((await readdir(directory)).some(name => name.startsWith('b.gugu-purge-'))) { secondStaged = true; break }

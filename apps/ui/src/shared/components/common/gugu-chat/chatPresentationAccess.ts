@@ -13,6 +13,11 @@ export const chatToolDetailsKey: InjectionKey<(
   sessionId: number, source: { kind: 'timeline'; messageId: number; index: number }
 ) => Promise<{ toolInput?: unknown; toolResult?: unknown }>> = Symbol('chatToolDetails')
 
+export const chatSubagentSnapshotKey: InjectionKey<{
+  read(sessionId: number, runId: string, childId: string): Promise<unknown>
+  subscribe(listener: (sessionId?: number) => void): () => void
+}> = Symbol('chatSubagentSnapshot')
+
 export const chatCommandCatalogKey: InjectionKey<() => Promise<ChatCommandOption[]>> = Symbol('chatCommandCatalog')
 
 export const chatAttachmentImageKey: InjectionKey<(id: string) => Promise<Blob>> = Symbol('chatAttachmentImage')

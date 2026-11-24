@@ -1,5 +1,10 @@
+import { createPostgresAgentInteractionCommandEffects } from '../../agent/interactions/effects.js'
+import { sql } from 'kysely'
+import { createLocalAgentRememberPort } from '../../agent/tools/memory/write.js'
+import { loadAgentMemoryContext } from '@gugu/core/agent/memory/context'
+import { createLocalAgentMemoryRagStore } from '../../agent/rag/memory.js'
 import { createSerialWorker, type SerialWorker } from '../../../workers/admission.js'
-import { createMcpManagementTool } from '@gugu/core/tools'
+import { createMcpManagementTool, forgetMemoryEdit } from '@gugu/core/tools'
 import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
 import { createMcpSettingsReader } from '../../mcp/status.js'
 import { createConfiguredByokEnvelope } from '../../byok/crypto.js'
@@ -11,7 +16,7 @@ import type { SqlDataRuntime } from '@gugu/core/data'
 import { stripThinking } from '@gugu/core/providers'
 import { stableJson, type CanonicalRunContext, type RunIdentity } from '@gugu/core/agent'
 import type {AgentSessionDeletePorts} from '@gugu/core/agent-sessions'
-import { imActorInputFromPayload } from '@gugu/core/im/access'
+import { imActorInputFromPayload, resolveImAccess } from '@gugu/core/im/access'
 import { createImRunDeliveryRecovery } from '@gugu/core/im/run-delivery'
 import { createRedisAgentCancellationCommands, createRedisEventPublisher } from '../../../adapters/cache/redis-events.js'
 import { createRedisLiveSubscription } from '../../../adapters/cache/redis-live-subscription.js'
@@ -82,6 +87,8 @@ export interface NodeImHostOptions {
     & Partial<Pick<ReturnType<typeof createMcpRuntime>, 'state' | 'testConnection' | 'dispatchForAgent'>>
   mcpDirectory?: NonNullable<ImProductionResourcesOptions['mcpTools']>['directory']
   registerImSubagentParentBinder?(binder: ImSubagentParentBinder | undefined, wake?: () => void): void
+  filesystemAuthorization?: Parameters<typeof createPostgresImControls>[0]['filesystemAuthorization']
+  automaticModeEnabled?: boolean
   imOwnerTools?: ImProductionResourcesOptions['imOwnerTools']
   onReflection?(service: ImReflectionService): void
   observation?: AgentObservationPort
@@ -227,6 +234,7 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
         dispatch: dispatchMcp,
       } : undefined
       const production: Omit<ImProductionResourcesOptions, 'reflection'> = {
+        filesystemAuthorizationEnabled: () => options.filesystemAuthorization?.enabled() === true,
         pool: options.pool, core: options.core, secretKey: options.secretKey, storageRoot: options.storageRoot, promptRoot: options.promptRoot,
         redisUrl, publicAppUrl: options.publicAppUrl, environment, configOverridePath: configPath, access, model, memoryEnabled, voice, voiceCache, ownerSessions, retention:historyRetention, sender: connections.sender,
         controls: { authorizeNativeTarget: (...args) => controls.authorizeNativeTarget(...args) }, nativeInteraction: input => native.interaction(input),
@@ -239,11 +247,12 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
       cleanup.push(() => reflection!.stop())
       options.onReflection?.(reflection)
       const history = createImProductionHistory(production, reflection)
-      const compact = createImProductionCompact({ ...production, supportedPlatforms,
-        readOwnerSession: (client, scope) => ownerSessions.readLocked(client,
+      const readOwnerSession: Parameters<typeof createImProductionCompact>[0]['readOwnerSession'] =
+        (client, scope) => ownerSessions.readLocked(client,
           { ownerId: scope.ownerId, botId: scope.botId, platform: scope.platform },
           { owner_user_id: scope.ownerId, platform: scope.platform, bot_id: scope.botId, chat_type: scope.chatType,
-            chat_id: scope.chatId, platform_user_id: scope.platformUserId }) })
+            chat_id: scope.chatId, platform_user_id: scope.platformUserId })
+      const compact = createImProductionCompact({ ...production, supportedPlatforms, readOwnerSession })
       const store = createPostgresAgentRunStore<CanonicalRunContext>(options.pool, options.secretKey, history)
       const confirmation = createFilesystemAuthorizationConfirmationStore({
         async get(key) { const value = await gatewayRedis.sendCommand(['GET', key]); if (value === null || typeof value === 'string') return value; throw new Error('确认状态无效') },
@@ -257,24 +266,59 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
         // 显式已有密钥；此分支永不触发createByokEnvelope的文件生成路径。
         return createByokEnvelope({ keyFile: '', version: keyVersion, masterKey, previousKey: keys[String(keyVersion - 1)] })
       }
+      const memoryStorage = createLocalAgentMemoryRagStore(options.storageRoot)
       controls = createPostgresImControls({ pool: options.pool, redis: gatewayRedis, secretKey: options.secretKey, supportedPlatforms, readRoute, history,
-        compact: compact.compact,
+        filesystemAuthorization: options.filesystemAuthorization,
+        compact: compact.compact, automaticModeEnabled: options.automaticModeEnabled,
+        resetContext: { readOwnerSession, removeAttachment: cleanupAttachments.removeUnreferenced },
+        async forgetMemory(scope, query, signal) {
+          if (!scope.eventId) throw new Error('记忆命令缺少入站收据')
+          const memory = createLocalAgentRememberPort({ core: options.core, storageRoot: options.storageRoot,
+            async authorize(tx) {
+              await sql`SELECT b.id FROM user_bots b JOIN users u ON u.id=b.user_id
+                WHERE b.id=${scope.botId} AND b.user_id=${scope.ownerId} AND b.platform=${scope.platform}
+                FOR SHARE OF b,u`.execute(tx)
+              const bot = await access.readBot(scope)
+              return !!bot && resolveImAccess(scope, bot).role === 'owner'
+            },
+          })
+          const id = createHash('sha256').update(stableJson([scope.platform, scope.botId, scope.eventId])).digest('hex')
+          let removed = 0
+          for (const target of ['profile', 'pattern'] as const) {
+            const result = await memory.mutate({ ownerId: scope.ownerId, sessionId: 'im-command',
+              runId: id, roundId: 'forget', toolCallId: target }, { target, text: '', remove: [query] }, signal,
+            rows => forgetMemoryEdit(rows, target, query))
+            if (result.kind !== 'completed' || !result.successful || typeof result.value !== 'object'
+              || !result.value || !('removed' in result.value) || typeof result.value.removed !== 'number')
+              throw new Error('记忆更新未完成')
+            removed += result.value.removed
+          }
+          return removed
+        },
+        async readMemory(ownerId, signal) {
+          const memory = await loadAgentMemoryContext({ ownerId, query: '', now: Date.now(), storage: memoryStorage, signal })
+          return [memory.summary, memory.profile, memory.pattern, memory.memory].filter(Boolean).join('\n\n').trim().slice(0, 6000)
+        },
         crypto: { async encrypt(values) { return (await crypto()).encrypt(JSON.stringify(values)) }, async decrypt(value) { return (await crypto()).decrypt(value) } },
         async invalidateMcpLocked(client, ownerId, serverId) {
           if ((await client.query('SELECT 1 FROM user_mcp_servers WHERE id=$1 AND user_id=$2 FOR UPDATE', [serverId, ownerId])).rowCount !== 1) throw new Error('MCP 凭据目标不存在')
           await options.mcpRuntime!.invalidate(ownerId, serverId)
         },
         interactionEffects: {
-          async applyCommandAction(client, input) {
-            if ((await client.query('SELECT 1 FROM conversation_sessions WHERE user_id=$1 AND id=$2 FOR UPDATE', [input.ownerId, input.sessionId])).rowCount !== 1) throw new Error('交互命令来源不存在')
-            return { status: 'error', text: '此 IM 命令暂未支持；请在网页中执行。' }
-          }, async redeemConfirmation(_client, ownerId, code) { return confirmation.redeem(ownerId, code) },
+          ...createPostgresAgentInteractionCommandEffects({
+            filesystemAuthorizationEnabled: () => options.filesystemAuthorization?.enabled() === true,
+            secretKey: options.secretKey,
+          }),
+          async redeemConfirmation(_client, ownerId, code) { return confirmation.redeem(ownerId, code) },
         }, cancellation, wakeDispatch: () => runtime.wake('dispatch'), wakeInteractions: async () => runtime.wake('interaction'),
         invalidateBinding: () => supervisor.refresh(), publishBindingChanged: publishChanged, diagnose: report,
         async reply(scope, text, reply) {
           reply.signal.throwIfAborted()
           const binding = { ownerId: scope.ownerId, botId: scope.botId, platform: scope.platform }, wire = connections.sender(binding)
-          const authorize = async () => !!await access.readBot(scope)
+          const authorize = async () => {
+            const bot = await access.readBot(scope)
+            return !!bot && (!reply.ownerOnly || resolveImAccess(scope, bot).role === 'owner')
+          }
           if (!wire || !await authorize()) throw new Error('IM 控制回复平台不可用')
           let outcome: string
           if (wire.platform === 'telegram') outcome = (await wire.sender.text({ chatId: scope.chatId ?? scope.platformUserId, chatType: scope.chatType }, text, { signal: reply.signal, authorize })).outcome
@@ -348,7 +392,7 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
           await withPostgresImDeliveryStore(options.deliveryPool, identity, async receipts => {
             const projection = resources.streamFactory?.(receipts, resources.authorize)
             try { await createImRunDeliveryRecovery({ events: { readAfter: store.readEventsAfter }, receipts, sender: resources.sender,
-              stream: projection, authorize: resources.authorize, showIntermediateReplies: resources.showIntermediateReplies,
+              stream: projection, authorize: resources.authorize, toolLocale: resources.toolLocale, showIntermediateReplies: resources.showIntermediateReplies,
               digest: value => createHash('sha256').update(stableJson(value)).digest('hex') }).recover(identity, signal) }
             finally { await projection?.close?.() }
           }, { secretKey: options.secretKey, platform: actor.platform === 'wechat' ? undefined : actor.platform, ledger: { scope: { ownerId: identity.ownerId, platform: input.im.platform, botId: input.im.botId,

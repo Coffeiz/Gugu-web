@@ -10,15 +10,15 @@ test('Node Host 文件复制路由认证 owner 并传递目标、冲突模式和
     emailSubscribed:false,imChannels:[],isActive:true,securityVersion:1,
   }:null}},fileCopies:{async copy(...args){calls.push(args);return {id:8,displayName:'doc(1)',version:1}}}})
   try{
-    const denied=await app.inject({method:'POST',url:'/api/v1/files/7/copy',payload:{folderId:null,projectId:null}})
+    const denied=await app.inject({method:'POST',url:'/api/v1/files/by-path/copy?path=owner%2Fpersonal%2Fnote.txt',payload:{folderPath:null,projectId:null}})
     assert.equal(denied.statusCode,401)
-    const invalid=await app.inject({method:'POST',url:'/api/v1/files/7/copy',headers:{authorization:`Bearer ${createUserToken(user,1,secret)}`,'content-type':'application/json'},payload:'[]'})
+    const invalid=await app.inject({method:'POST',url:'/api/v1/files/by-path/copy?path=owner%2Fpersonal%2Fnote.txt',headers:{authorization:`Bearer ${createUserToken(user,1,secret)}`,'content-type':'application/json'},payload:'[]'})
     assert.equal(invalid.statusCode,422)
-    const response=await app.inject({method:'POST',url:'/api/v1/files/7/copy',headers:{authorization:`Bearer ${createUserToken(user,1,secret)}`,'x-client-id':'renderer'},
-      payload:{folderId:null,projectId:null,workspaceDirectoryId:null,onConflict:'overwrite',overwriteFileId:9}})
+    const response=await app.inject({method:'POST',url:'/api/v1/files/by-path/copy?path=owner%2Fpersonal%2Fnote.txt',headers:{authorization:`Bearer ${createUserToken(user,1,secret)}`,'x-client-id':'renderer'},
+      payload:{folderPath:null,projectId:null,workspaceDirectoryId:null,onConflict:'overwrite',overwriteFilePath:'owner/personal/target.txt'}})
     assert.equal(response.statusCode,200);assert.equal(response.json().displayName,'doc(1)')
-    assert.equal(calls.length,1);assert.equal(calls[0]![0],user);assert.equal(calls[0]![1],7)
-    assert.deepEqual(calls[0]![2],{folderId:null,projectId:null,workspaceDirectoryId:null,onConflict:'overwrite',overwriteFileId:9})
+    assert.equal(calls.length,1);assert.equal(calls[0]![0],user);assert.equal(calls[0]![1],'owner/personal/note.txt')
+    assert.deepEqual(calls[0]![2],{folderPath:null,projectId:null,workspaceDirectoryId:null,onConflict:'overwrite',overwriteFilePath:'owner/personal/target.txt'})
     assert.equal((calls[0]![3] as {clientId:string}).clientId,'renderer')
   }finally{await app.close()}
 })

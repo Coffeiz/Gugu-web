@@ -11,7 +11,7 @@ it('返回 Python 规范命令的完整目录及插入文本，调用方修改�
     { command: '/new', label: '开启新对话', description: '清空当前对话上下文', insert: '/new' },
     { command: '/memory', label: '查看记忆', description: '查看咕咕记住的内容', insert: '/memory' },
     { command: '/forget', label: '忘记一条记忆', description: '输入要忘记的内容', insert: '/forget ' },
-    { command: '/workspace', label: '工作区', description: '查看、绑定、删除工作区或管理沙盒权限', insert: '/workspace ' },
+    { command: '/workspace', label: '工作区', description: '查看、绑定、解除或删除工作区', insert: '/workspace ' },
     { command: '/auto', label: '自动模式', description: '查看或开启、关闭自动模式', insert: '/auto ' },
     { command: '/help', label: '命令帮助', description: '查看全部命令说明', insert: '/help' },
   ])

@@ -343,6 +343,17 @@ it('联网来源忽略带凭据和非网页协议的地址', () => {
   expect(readChatSources({ results }).map(source => source.url)).toEqual(['https://example.test/'])
 })
 
+it('文件夹链接按内联胶囊和独立文件夹卡片渲染', () => {
+  const href = 'gugu://open-object/folder/path-' + btoa(JSON.stringify({ directoryId: 'personal', relativePath: 'reference', identity: '1.2.3' })).replace(/=+$/u, '')
+  const host = document.createElement('div')
+  host.innerHTML = renderChatMd('打开 [参考目录](' + href + ') 查看。\n\n[参考目录](' + href + ')')
+  const links = host.querySelectorAll('a')
+  expect(links).toHaveLength(2)
+  expect(links[0]?.querySelector('.chat-object-link-icon')).not.toBeNull()
+  expect(links[1]?.matches('.chat-object-card[data-object-type="folder"]')).toBe(true)
+  expect([...links].every(link => link.getAttribute('href') === href)).toBe(true)
+})
+
 it('独立对象链接使用统一卡片，连续两张同组，句内和表格保留链接', () => {
   const markdown = [
     '打开 [项目甲](gugu://open-object/project/2) 查看进度。',

@@ -24,9 +24,9 @@ test('send_file 实际 Host adapter 读取 owner 文件，阻断越界路径和�
       .addColumn('user_id', 'text', column => column.notNull()).addColumn('display_name', 'text', column => column.notNull())
       .addColumn('ext', 'text').addColumn('size_bytes', 'integer', column => column.notNull().defaultTo(4))
       .addColumn('storage_key', 'text', column => column.notNull()).addColumn('storage_backend', 'text', column => column.notNull())
-      .addColumn('space', 'text', column => column.notNull()).addColumn('folder_id', 'integer').addColumn('deleted_at', 'text').execute()
+      .addColumn('space', 'text', column => column.notNull()).addColumn('deleted_at', 'text').execute()
     await core.db.insertInto('files').values({ id: 23, user_id: ownerId, display_name: 'report', ext: 'txt', size_bytes: 4,
-      storage_key: relativePath, storage_backend: 'local', space: 'personal', folder_id: null, deleted_at: null }).execute()
+      storage_key: relativePath, storage_backend: 'local', space: 'personal', deleted_at: null }).execute()
     if (!core) throw new Error('SQLite 测试 Core 初始化失败')
     const resources = createWebScheduledAttachmentResources(core as never, root,
       async () => { throw new Error('此用例不读取聊天附件') }, {

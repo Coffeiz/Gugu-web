@@ -87,12 +87,44 @@
     "keyBehavior": "项目文件首开仅加载根目录，进入子目录按需请求并复用已加载目录缓存",
     "ci": "frontend-test"
   },
+  "apps/web-host/tests/files/browse/no-folder.postgres.test.ts": {
+    "domain": "file-library",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/files",
+    "productionEntry": "apps/web-host/src/modules/files/browse.ts",
+    "keyBehavior": "无旧文件夹表和字段时详情、路径定位及用户隔离正常",
+    "ci": "backend-ts"
+  },
+  "apps/ui/tests/files/fileInfoPath.test.ts": {
+    "domain": "file-library",
+    "layer": "L1",
+    "owner": "apps/ui/src/shared/components/common/file-browser",
+    "productionEntry": "apps/ui/src/shared/components/common/file-browser/FileInfoPopup.vue",
+    "keyBehavior": "文件信息使用路径定位结果展示目录",
+    "ci": "frontend-test"
+  },
+  "apps/ui/tests/files/desktopPathReferences.test.ts": {
+    "domain": "file-library",
+    "layer": "L1",
+    "owner": "apps/ui/src/desktop/files",
+    "productionEntry": "apps/ui/src/desktop/files/pathFileAccess.ts",
+    "keyBehavior": "桌面相对引用先校验源文件并拒绝越过目录根",
+    "ci": "frontend-test"
+  },
   "apps/ui/tests/files/composables/useFileLibraryDirectory.test.ts": {
     "domain": "file-library",
     "layer": "L1",
     "owner": "apps/ui/composables/files",
     "productionEntry": "apps/ui/src/shared/composables/files/useFileLibraryDirectory.ts",
-    "keyBehavior": "目录按需请求并复用已缓存快照，切换目标时先清除旧目录内容以免短暂显示错目录文件",
+    "keyBehavior": "根目录读取磁盘统计，路径视图不请求旧目录分页，账号切换丢弃过期统计",
+    "ci": "frontend-test"
+  },
+  "apps/ui/tests/files/composables/useFileLibraryFolderActions.test.ts": {
+    "domain": "file-library",
+    "layer": "L1",
+    "owner": "apps/ui/composables/files",
+    "productionEntry": "apps/ui/src/shared/composables/files/useFileLibraryFolderActions.ts",
+    "keyBehavior": "只在可信路径目标下创建文件夹，成功后刷新，无路径目标时不发送创建请求",
     "ci": "frontend-test"
   },
   "apps/ui/tests/files/composables/useFileLibraryFileActions.test.ts": {
@@ -102,14 +134,6 @@
     "productionEntry": "apps/ui/src/shared/composables/files/useFileLibraryFileActions.ts",
     "keyBehavior": "删除请求确认成功前保留文件卡片和选择状态，成功后才同步缓存与目录视图",
     "ci": "frontend-test"
-  },
-  "apps/web-host/tests/files/trash/worker.postgres.test.ts": {
-    "domain": "trash",
-    "layer": "L2",
-    "owner": "apps/web-host/src/modules/files",
-    "productionEntry": "apps/web-host/src/modules/files/trash-purge-worker-postgres.ts",
-    "keyBehavior": "隔离 PG 回收站清理任务租约竞争、接管和 owner 条件进度",
-    "ci": "web-host-node"
   },
   "apps/web-host/tests/files/mutations/commit.test.ts": {
     "domain": "files",

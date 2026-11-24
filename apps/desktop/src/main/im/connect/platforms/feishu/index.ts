@@ -44,7 +44,7 @@ function parseCredential(input: unknown) {
     || !['quiet', 'natural', 'active', 'autonomous'].includes(String(groupAttentionMode))
     || typeof groupOwnerMemoryEnabled !== 'boolean' || typeof groupMemoryEnabled !== 'boolean'
     || typeof memberMemoryEnabled !== 'boolean' || typeof privateStreamingEnabled !== 'boolean' || !Array.isArray(groupAllowedTools)
-    || !groupAllowedTools.every(tool => typeof tool === 'string' && ['web_search', 'http_get', 'similar_image_search', 'send_file', 'group_context_search'].includes(tool))) throw invalid()
+    || !groupAllowedTools.every(tool => typeof tool === 'string' && ['web_search', 'http_get', 'similar_image_search', 'send_item', 'group_context_search'].includes(tool))) throw invalid()
   return { appId, appSecret, userId, enabled, revision, groupChatEnabled, groupReplyMode, groupAttentionMode, privateStreamingEnabled,
     groupOwnerMemoryEnabled, groupMemoryEnabled, memberMemoryEnabled, groupAllowedTools } as FeishuCredential
 }

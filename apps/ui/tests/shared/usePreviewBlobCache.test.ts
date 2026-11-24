@@ -27,9 +27,9 @@ describe('usePreviewBlobCache', () => {
     vi.mocked(URL.revokeObjectURL).mockClear()
   })
 
-  it('按文件 id 区分库文件和聊天附件，并命中后刷新 LRU 顺序', () => {
-    expect(previewBlobCacheKey({ id: 7 })).toBe(`account:${getAccountBoundaryEpoch()}:file:7:0`)
-    expect(previewBlobCacheKey({ attach_id: 'a-7', id: 7 })).toBe(`account:${getAccountBoundaryEpoch()}:attach:a-7`)
+  it('按文件路径区分库文件，聊天附件仍按暂存 ID 区分，并命中后刷新 LRU 顺序', () => {
+    expect(previewBlobCacheKey({ filePath: '/personal/计划.md' })).toBe(`account:${getAccountBoundaryEpoch()}:file:/personal/计划.md:0`)
+    expect(previewBlobCacheKey({ attach_id: 'a-7', filePath: '/personal/计划.md' })).toBe(`account:${getAccountBoundaryEpoch()}:attach:a-7`)
 
     const cache = usePreviewBlobCache()
     cache.put('file:1', 'blob:1')
@@ -40,8 +40,8 @@ describe('usePreviewBlobCache', () => {
   })
 
   it('文件正文版本变化时使用不同缓存键', () => {
-    expect(previewBlobCacheKey({ id: 7, version: 1 })).toBe(`account:${getAccountBoundaryEpoch()}:file:7:1`)
-    expect(previewBlobCacheKey({ id: 7, version: 2 })).toBe(`account:${getAccountBoundaryEpoch()}:file:7:2`)
+    expect(previewBlobCacheKey({ filePath: '/personal/计划.md', version: 1 })).toBe(`account:${getAccountBoundaryEpoch()}:file:/personal/计划.md:1`)
+    expect(previewBlobCacheKey({ filePath: '/personal/计划.md', version: 2 })).toBe(`account:${getAccountBoundaryEpoch()}:file:/personal/计划.md:2`)
   })
 
   it('超过 20 条时只释放最久未使用的 blob，缓存中的 URL 不随组件卸载释放', () => {
@@ -71,18 +71,18 @@ describe('usePreviewBlobCache', () => {
   it('账号边界清空旧预览元数据并拒绝迟到的旧账号下载', () => {
     const cache = usePreviewBlobCache()
     const oldEpoch = getAccountBoundaryEpoch()
-    const oldKey = cache.keyOf({ id: 42, version: 1 })
+    const oldKey = cache.keyOf({ filePath: '/personal/报告.txt', version: 1 })
     cache.put(oldKey, 'blob:account-a', oldEpoch)
-    cache.rememberFile({ id: 42, version: 1 }, 0, oldEpoch)
+    cache.rememberFile({ filePath: '/personal/报告.txt', version: 1 }, 0, oldEpoch)
 
     beginAccountBoundary()
     cache.clear()
 
     expect(cache.get(oldKey)).toBeNull()
-    expect(cache.getFile(42)).toBeNull()
+    expect(cache.getFile('/personal/报告.txt')).toBeNull()
     expect(cache.put(oldKey, 'blob:late-account-a', oldEpoch)).toBe(false)
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:account-a')
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:late-account-a')
-    expect(cache.keyOf({ id: 42, version: 1 })).not.toBe(oldKey)
+    expect(cache.keyOf({ filePath: '/personal/报告.txt', version: 1 })).not.toBe(oldKey)
   })
 })

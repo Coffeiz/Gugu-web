@@ -27,7 +27,7 @@ export interface ImVideoInput extends VendorMediaSource {
 }
 interface MessageRow {
   id: string; content: string; content_json: unknown; files: unknown; quoted_text: string | null
-  platform_user_id: string; platform_user_name: string | null; message_ms: string
+  platform_user_id: string; platform_user_name: string | null; owner_platform_user_id: string | null; message_ms: string
 }
 interface MediaRow extends Record<string, unknown> {
   attach_id: string; name: string; ext: string; mime: string | null; kind: string; size: string | number
@@ -183,6 +183,7 @@ export function createImMessageMaterializer(options: {
       if (!sameIdentity(target, identity) || message.id !== ids.at(-1)) throw new ImMessageMaterializationError()
       await authorize(signal)
       const selected = await options.pool.query<MessageRow>(`SELECT m.id::text,m.content,m.content_json,m.files,m.quoted_text,m.platform_user_id,m.platform_user_name,
+        (SELECT b.owner_platform_user_id FROM user_bots b WHERE b.user_id=s.user_id AND b.platform=$5 AND b.id::text=$6) AS owner_platform_user_id,
         COALESCE(m.im_platform_sent_ms,m.im_event_received_ms,(extract(epoch FROM m.created_at)*1000)::bigint)::text AS message_ms
         FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id
         JOIN gugu_im_inbound_receipts r ON r.message_id=m.id AND r.user_id=s.user_id AND r.session_id=s.id
@@ -274,13 +275,15 @@ export function createImMessageMaterializer(options: {
         }
         const quotedText = [row.quoted_text, ...quotedTranscripts].filter(Boolean).join('\n') || null
         const content = scope.chatType === 'group'
-          ? formatGroupMessage({ body: text, senderId: row.platform_user_id, senderName: row.platform_user_name, quote: quotedText,
+          ? formatGroupMessage({ body: text, quote: quotedText,
             attachmentIds: checked.map(item => item.attach_id) }) : formatQuotedContext(text, quotedText)
         const timestamp = Number(row.message_ms)
         if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw new ImMessageMaterializationError()
         const time = options.formatMessageTime(timestamp, options.timezone)
         if (typeof time !== 'string' || !time) throw new ImMessageMaterializationError()
         users.push({ persistedMessageId: id, rawText: row.content, messageTime: time,
+          ...(scope.chatType === 'group' ? { groupSpeaker: { id: row.platform_user_id, name: row.platform_user_name,
+            owner: !!row.platform_user_id && row.platform_user_id === row.owner_platform_user_id } } : {}),
           message: { role: 'user', content: [{ type: 'text', text: content }, ...blocks], _history_id: id,
             _history_envelope: { quote: quotedText ? { type: 'quote', text: quotedText } : null,
               sender: { id: row.platform_user_id, name: row.platform_user_name }, source: scope.platform,

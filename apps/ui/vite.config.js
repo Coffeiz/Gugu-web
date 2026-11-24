@@ -66,6 +66,8 @@ function versionPayload() {
 
 // 开发目录含非 ASCII 字符时，Vite 生成的部分绝对文件 URL 返回 404。
 const devSourceEntries = {
+  '@gugu/core/agent/commands/menu': '../../packages/core/src/agent/commands/menu.ts',
+  '@gugu/core/agent/tool-result-format': '../../packages/core/src/agent/providers/tool-result-format.ts',
   '@arco-design/web-vue/dist/arco.css': 'node_modules/@arco-design/web-vue/dist/arco.css',
   'xterm/css/xterm.css': 'node_modules/xterm/css/xterm.css',
   '@gugu/charts/theme': 'node_modules/@gugu/charts/src/theme.mjs',
@@ -115,10 +117,14 @@ const localRuntimeAliases = process.env.VITE_USE_LOCAL_RUNTIME === '1'
 export default defineConfig({
   // 编辑器按需加载，提前优化这些依赖以避免首次打开时重建缓存使旧模块地址失效。
   optimizeDeps: {
+    exclude: ['@gugu/core/agent/tool-result-format', '@gugu/core/agent/commands/menu'],
     include: [
       // 通过预构建 URL 加载共享契约，避免开发工作区中文路径生成失效的 /@fs/ URL。
-      '@gugu/core/contracts', '@gugu/core/desktop', '@gugu/core/agent/chat-sse', '@gugu/core/agent/commands/menu', '@gugu/core/agent/shell-activity', '@gugu/core/mail/contracts',
+      '@gugu/core/contracts', '@gugu/core/desktop', '@gugu/core/agent/chat-sse', '@gugu/core/mail/contracts',
       '@gugu/core/preferences/text-upload', '@gugu/core/im/user-bots',
+      '@gugu/core/agent/commands/help',
+      '@gugu/core/agent/config/voice-availability', '@gugu/core/agent/sessions/state-labels', '@gugu/core/agent/sessions/ui-labels',
+      '@gugu/core/agent/sessions/tool-labels', '@gugu/core/agent/shell-activity',
       '@gugu/desktop-contracts/file-preview',
       'vue-codemirror', 'codemirror', '@codemirror/view', '@codemirror/state',
       '@codemirror/language', '@codemirror/autocomplete', '@lezer/highlight',

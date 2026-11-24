@@ -16,10 +16,10 @@ test('正文写入路由验证正文与版本、传递撤销上下文，并允�
     },
   })
   try {
-    const invalid = await app.inject({ method: 'PUT', url: '/api/v1/files/9/content', payload: { content: 7, version: 2 } })
+    const invalid = await app.inject({ method: 'PUT', url: '/api/v1/files/by-path/content?path=owner%2Fpersonal%2Fnote.txt', payload: { content: 7, version: 2 } })
     assert.equal(invalid.statusCode, 422)
     const response = await app.inject({
-      method: 'PUT', url: '/api/v1/files/9/content',
+      method: 'PUT', url: '/api/v1/files/by-path/content?path=owner%2Fpersonal%2Fnote.txt',
       headers: { 'x-undo-context-id': 'editor-tab', 'x-client-id': 'renderer' },
       payload: { content: '新正文', version: 2 },
     })
@@ -27,14 +27,14 @@ test('正文写入路由验证正文与版本、传递撤销上下文，并允�
     assert.equal(response.json().version, 3)
     assert.equal(calls.length, 1)
     assert.equal(calls[0]![0], '11111111-1111-4111-8111-111111111111')
-    assert.equal(calls[0]![1], 9)
+    assert.equal(calls[0]![1], 'owner/personal/note.txt')
     assert.equal(calls[0]![2], '新正文')
     assert.equal(calls[0]![3], 2)
     assert.equal((calls[0]![4] as { undoContextId: string }).undoContextId, 'editor-tab')
 
     const maxContent = 'x'.repeat(1024 * 1024)
     const maxSize = await app.inject({
-      method: 'PUT', url: '/api/v1/files/9/content', payload: { content: maxContent, version: 3 },
+      method: 'PUT', url: '/api/v1/files/by-path/content?path=owner%2Fpersonal%2Fnote.txt', payload: { content: maxContent, version: 3 },
     })
     assert.equal(maxSize.statusCode, 200)
     assert.equal(calls.length, 2)

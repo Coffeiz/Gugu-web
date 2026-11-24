@@ -2,6 +2,9 @@
   <FileBrowserPanel class="modal-right" :class="{ 'desktop-project-files': desktop }">
     <template #toolbar>
       <ProjectFileToolbar :desktop="desktop" :native-window="nativeWindow" :context="toolbarContext" :clipboard="{ canPaste, count: pasteCount }">
+        <template #root>{{ rootName || t('sharedUi.projectFiles') }}</template>
+        <ProjectWorkspaceRoots v-if="desktop" :project-id="projectId" :directory-id="target.directoryId"
+          :native="canPickWorkspace" @select="selectProjectRoot" />
         <DesktopRevealButton v-if="desktop" :directory-id="target.directoryId" :path="target.relativePath" />
       </ProjectFileToolbar>
     </template>
@@ -32,6 +35,7 @@ import { useI18n } from 'vue-i18n'
 import DesktopRevealButton from '@/components/common/file-browser/DesktopRevealButton.vue'
 import FileBrowserPanel from '@/components/common/file-browser/FileBrowserPanel.vue'
 import ProjectFileToolbar from './ProjectFileToolbar.vue'
+import ProjectWorkspaceRoots from './ProjectWorkspaceRoots.vue'
 import FileSelectionToolbar from '@/components/common/file-browser/FileSelectionToolbar.vue'
 import PathFiles from '@/views/Files/components/PathFiles.vue'
 import { hasShortcutOverlay } from '@/interaction/keyboardShortcuts'
@@ -46,17 +50,20 @@ import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 
 const pathFilesApi = usePathFileAccess()
+const canPickWorkspace = typeof window !== 'undefined' && 'guguDesktop' in window
 
 const props = defineProps<{ projectId: number; projectDirectoryKey?: string; desktop?: boolean; nativeWindow?: boolean; workspaceAvailable: boolean; workspaceExists: boolean; stagesExpanded: boolean }>()
 const emit = defineEmits<{ workspace: []; close: []; toggleStages: []; selectionChange: [active: boolean] }>()
 const { t } = useI18n()
 const main = ref<HTMLElement | null>(null)
 const files = ref<InstanceType<typeof PathFiles> | null>(null)
-const navigation = useFolderNavigation<PathFileEntry & { id: string }>()
+const navigation = useFolderNavigation<PathFileEntry & { id: string }>({})
 const { folderStack } = navigation
 const reload = ref(0)
+const projectRoot = `project:${props.projectId}` as const
+const directoryId = ref<typeof projectRoot | `desktop:${string}`>(projectRoot)
 const target = computed(() => ({
-  directoryId: `project:${props.projectId}` as const, relativePath: folderStack.value.at(-1)?.relativePath ?? '',
+  directoryId: directoryId.value, relativePath: folderStack.value.at(-1)?.relativePath ?? '',
 }))
 const selection = usePathFileSelection({
   target, container: main, getEntries: () => files.value?.selectableEntries() ?? [],
@@ -64,6 +71,15 @@ const selection = usePathFileSelection({
   reload: () => { reload.value++ },
 })
 const { selectionMode, selectionRect, selectedPaths, previewPaths, cutPaths, pasteCount, canPaste, fileCount, folderCount } = selection
+const rootName = ref<string>()
+function selectProjectRoot(id: typeof directoryId.value, name?: string) {
+  rootName.value = name
+  if (id === directoryId.value) { navigate(-1); return }
+  navigation.reset()
+  selection.clearSelection()
+  selection.clearCut()
+  directoryId.value = id
+}
 watch(selectionMode, active => emit('selectionChange', active))
 watch(() => props.projectDirectoryKey, () => { reload.value++ })
 const viewMode = ref<'grid' | 'list'>('grid')
@@ -197,7 +213,11 @@ onScopeDispose(() => document.removeEventListener('keydown', onKeyDown))
   cursor: pointer;
 }
 .modal-right :deep(.col-toggle-btn:hover) { color: var(--action-primary); }
-.file-content :deep(.file-grid) { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+.file-content :deep(.file-grid) { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.desktop-project-files .file-content :deep(.file-grid) {
+  grid-template-columns: repeat(auto-fill, minmax(140px, 140px));
+  justify-content: start;
+}
 .project-path-selection {
   position: absolute;
   pointer-events: none;

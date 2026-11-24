@@ -137,7 +137,7 @@
   --project-card-hover-shadow: var(--theme-project-hover-shadow);
   --project-card-sheen-rest: linear-gradient(to bottom,var(--theme-project-sheen-rest) 0%,transparent 50%);
   --project-card-highlight-rest: var(--theme-project-highlight-rest);
-  --project-card-sheen-hover: linear-gradient(to bottom,var(--theme-project-sheen-hover) 0%,var(--theme-project-sheen-hover-mid) 45%,transparent 100%);
+  --project-card-sheen-hover: linear-gradient(to bottom,var(--theme-project-sheen-hover) 0%,var(--theme-project-sheen-hover-mid) 50%,transparent 100%);
   --project-card-highlight-hover: var(--theme-project-highlight-hover);
   --project-card-radius: var(--radius-sm);
   --project-card-motion: var(--card-motion), box-shadow var(--motion-hover-card) ease;
@@ -183,6 +183,7 @@
 
   /* Gugu chat window + conversation layout. The Design mock consumes this same contract. */
   /* 聊天主区域必须使用独立实色面；Glass 主题的 surface-base 带透明度，会让项目页内容透出。 */
+  --gugu-chat-assistant-highlight: rgba(255,255,255,.80);
   --gugu-chat-bg: var(--surface-base);
   --gugu-chat-main-bg: var(--theme-chat-main-bg);
   --gugu-chat-sidebar-bg: var(--surface-sidebar);
@@ -199,14 +200,6 @@
   --gugu-chat-header-height: 50px;
   --gugu-chat-composer-height: 50px;
   --gugu-chat-user-bg: var(--action-primary);
-  --gugu-chat-file-bg: rgba(255,255,255,.50);
-  --gugu-chat-file-border: rgba(255,255,255,.65);
-  --gugu-chat-file-highlight: rgba(255,255,255,.80);
-  --gugu-chat-file-shadow: 0 1px 3px rgba(80,80,120,.06);
-  --gugu-chat-file-bg-hover: rgba(255,255,255,.70);
-  --gugu-chat-file-border-hover: rgba(255,255,255,.78);
-  --gugu-chat-file-highlight-hover: rgba(255,255,255,.90);
-  --gugu-chat-file-shadow-hover: 0 3px 10px rgba(100,110,200,.14);
   --gugu-chat-composer-bg: color-mix(in srgb,var(--surface-raised) 90%,transparent);
   --gugu-chat-drop-bg: color-mix(in srgb,var(--action-primary) 16%,transparent);
   --gugu-chat-drop-border: color-mix(in srgb,var(--action-primary) 60%,transparent);

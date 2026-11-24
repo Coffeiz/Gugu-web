@@ -46,22 +46,6 @@
           </div>
 
           <div class="quota-field">
-            <label class="qf-label">{{ t('adminQuota.storage') }}</label>
-            <div class="qf-input-row">
-              <input v-model.number="form.storageGB" class="qf-input" type="number" min="0" :disabled="unlimited.storage" :placeholder="placeholder('storage')" />
-              <span class="qf-unit">GB</span>
-            </div>
-            <div class="qf-presets">
-              <button class="preset-chip" @click="setMode('storage', 'inherit')">{{ t('adminQuota.followGlobal') }}</button>
-              <button class="preset-chip" @click="setMode('storage', 'unlimited')">{{ t('adminQuota.unlimited') }}</button>
-              <button class="preset-chip" @click="setValue('storage', 5)">5 GB</button>
-              <button class="preset-chip" @click="setValue('storage', 20)">20 GB</button>
-              <button class="preset-chip" @click="setValue('storage', 50)">50 GB</button>
-              <button class="preset-chip" @click="setValue('storage', 100)">100 GB</button>
-            </div>
-          </div>
-
-          <div class="quota-field">
             <label class="qf-label">{{ t('adminQuota.searchDaily') }}
               <span class="qf-hint">{{ t('adminQuota.dayReset') }}</span>
             </label>
@@ -93,17 +77,15 @@
 import { reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-type QuotaModeKey = 'token6h' | 'tokenWeek' | 'storage'
+type QuotaModeKey = 'token6h' | 'tokenWeek'
 type QuotaForm = {
   token6h: number | null
   tokenWeek: number | null
-  storageGB: number | null
   searchDaily: number | null
 }
 type QuotaPayload = {
   token_limit_6h: number | null
   token_limit_weekly: number | null
-  storage_limit_bytes: number | null
   search_limit_daily: number | null
 }
 
@@ -117,33 +99,27 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 const maskMousedownSelf = ref(false)
-const form = reactive<QuotaForm>({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
-const unlimited = reactive({ token6h: false, tokenWeek: false, storage: false })
+const form = reactive<QuotaForm>({ token6h: null, tokenWeek: null, searchDaily: null })
+const unlimited = reactive({ token6h: false, tokenWeek: false })
 
 watch(() => props.user, (user) => {
   form.token6h = user?.token_limit_6h === -1 ? null : user?.token_limit_6h ?? null
   form.tokenWeek = user?.token_limit_weekly === -1 ? null : user?.token_limit_weekly ?? null
-  form.storageGB = user?.storage_limit_bytes != null && user.storage_limit_bytes !== -1
-    ? +(user.storage_limit_bytes / 1073741824).toFixed(2)
-    : null
   form.searchDaily = user?.search_limit_daily ?? null
   unlimited.token6h = user?.token_limit_6h === -1
   unlimited.tokenWeek = user?.token_limit_weekly === -1
-  unlimited.storage = user?.storage_limit_bytes === -1
 }, { immediate: true })
 
 function setMode(key: QuotaModeKey, mode: 'inherit' | 'unlimited') {
   unlimited[key] = mode === 'unlimited'
   if (key === 'token6h') form.token6h = null
   else if (key === 'tokenWeek') form.tokenWeek = null
-  else form.storageGB = null
 }
 
 function setValue(key: QuotaModeKey, value: number) {
   unlimited[key] = false
   if (key === 'token6h') form.token6h = value
   else if (key === 'tokenWeek') form.tokenWeek = value
-  else form.storageGB = value
 }
 
 function placeholder(key: QuotaModeKey) {
@@ -154,9 +130,6 @@ function save() {
   emit('save', {
     token_limit_6h: unlimited.token6h ? -1 : form.token6h != null ? Number(form.token6h) : null,
     token_limit_weekly: unlimited.tokenWeek ? -1 : form.tokenWeek != null ? Number(form.tokenWeek) : null,
-    storage_limit_bytes: unlimited.storage
-      ? -1
-      : form.storageGB != null ? Math.round(Number(form.storageGB) * 1073741824) : null,
     search_limit_daily: form.searchDaily != null ? Number(form.searchDaily) : null,
   })
 }

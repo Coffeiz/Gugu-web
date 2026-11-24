@@ -1,7 +1,6 @@
 import * as mammoth from 'mammoth'
 import { unzipSync } from 'fflate'
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { parseFragment } from 'parse5'
 import * as XLSX from 'xlsx'
 
@@ -462,6 +461,7 @@ function extractRtf(bytes: Uint8Array): string {
 }
 
 async function extractPdf(bytes: Uint8Array): Promise<string> {
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
   const loading = getDocument({ data: bytes.slice(), useSystemFonts: true, disableFontFace: true, enableXfa: false, stopAtErrors: false, verbosity: 0 })
   try {
     const document = await loading.promise

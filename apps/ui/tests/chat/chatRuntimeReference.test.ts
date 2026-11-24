@@ -21,6 +21,8 @@ describe('GuguChat Runtime 对象引用解析', () => {
     expect(parseChatRuntimePathFile('project-files:file:project:9:报告.md'))
       .toEqual({ directoryId: 'project:9', relativePath: '报告.md' })
     expect(parseChatRuntimePathFile('files:file:7')).toBeNull()
+    expect(parseChatRuntimePathFile('files:folder:personal:目录/参考', 'folder'))
+      .toEqual({ directoryId: 'personal', relativePath: '目录/参考' })
     expect(parseChatRuntimePathFile('files:folder:personal:目录')).toBeNull()
   })
 

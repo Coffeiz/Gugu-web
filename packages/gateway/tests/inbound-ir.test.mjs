@@ -49,3 +49,11 @@ test('重读入站事件时拒绝跨连接、错误会话结构和未支持版�
   assert.throws(() => parseImReceivedMessage(connection, { ...event, scope: { ...event.scope, chatId: 'group' } }))
   assert.throws(() => parseImReceivedMessage(connection, { ...event, version: 2 }))
 })
+
+test('QQ 已确认的 Bot 平台身份随入站事件序列化恢复', () => {
+  const connection = { ownerId: 'test-owner', botId: 'test-bot', platform: 'qq' }
+  const event = readImReceivedMessage(connection, { platform: 'qq', owner_user_id: 'test-owner', bot_id: 'test-bot', channel_id: 'test-bot',
+    chat_type: 'group', chat_id: 'group', platform_user_id: 'sender', message_id: 'message',
+    platform_bot_user_id: 'synthetic-bot-id', bot_mentioned: true, text: '<@synthetic-bot-id> 你好' })
+  assert.equal(parseImReceivedMessage(connection, JSON.parse(JSON.stringify(event))).platformBotUserId, 'synthetic-bot-id')
+})

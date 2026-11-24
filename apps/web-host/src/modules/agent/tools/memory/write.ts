@@ -185,6 +185,11 @@ export function createLocalAgentRememberPort(options: {
           let next: ReturnType<typeof edit>
           try { next = edit(before) }
           catch { throw new InvalidMemorySnapshot('记忆修改未完成，当前内容未更改') }
+          if (!input.text && input.remove.length && next.value.removed === 0
+            && stableJson(before) === stableJson(next.rows)) {
+            return { before: digest(raw), after: digest(raw), archiveRevision: archive.revision,
+              added: 0, removed: 0, staleVectorIds: [] }
+          }
           const after = JSON.stringify(next.rows, null, 2)
           const retained = new Map(next.rows.map(row => [row.id, row.text]))
           const staleVectorIds = input.target === 'pattern' ? before.flatMap(row =>

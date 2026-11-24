@@ -16,7 +16,6 @@ export interface NavSeg {
   status?: string | null
   year?: string | number | null
   month?: string | number | null
-  folderId?: number | null
   projectId?: number | null
   space?: string
   workspaceDirectoryId?: number | null
@@ -25,16 +24,13 @@ export interface NavSeg {
 
 export interface FileLibraryNavigationTarget {
   kind: 'file' | 'folder'
-  id: number
   workspaceDirectoryId?: number
   workspaceDirectoryName?: string
   pathFile?: PathFileRef & { directoryName: string }
-  /** 从工作区根到目标所在目录；文件夹搜索目标不包含目标文件夹本身。 */
-  folderPath?: Array<{ id: number; name: string }>
 }
 
-// 文件夹「卡片视图模型」——loadContents 投影出的 6 种卡（personal/projects/trash/folder/
-// status/year/month/project）的并集：公共字段必填，各变体字段可选。非 FolderMeta（那是库存原型）。
+// 目录「卡片视图模型」——loadContents 投影出的 6 种卡（personal/projects/trash/directory/
+// status/year/month/project）的并集：公共字段必填，各变体字段可选。
 export interface FolderCard {
   id: string
   type: string
@@ -42,7 +38,6 @@ export interface FolderCard {
   count: number | null
   fileCount?: number | null
   folderCount?: number | null
-  folderId?: number
   color?: string | null
   space?: string
   projectId?: number | null
@@ -111,41 +106,6 @@ export function navPathFor(folder: FolderCard, currentPath: NavSeg[]): NavSeg[] 
     if (monthSeg) path.push({ ...monthSeg })
     path.push({ type: 'project', id: folder.projectId, name: folder.displayName, color: folder.color })
     return path
-  }
-  if (folder.type === 'folder') {
-    const seg = currentPath[currentPath.length - 1] ?? null
-    if (seg?.space === 'workspace' && seg.workspaceDirectoryId != null) {
-      return [
-        ...currentPath,
-        { type: 'folder', folderId: folder.folderId, name: folder.displayName, color: folder.color,
-          space: 'workspace', workspaceDirectoryId: seg.workspaceDirectoryId },
-      ]
-    }
-    if (seg?.type === 'personal') {
-      return [
-        { type: 'personal', name: '个人文件', color: null },
-        { type: 'folder', folderId: folder.folderId, name: folder.displayName, color: null, space: 'personal' },
-      ]
-    }
-    if (seg?.type === 'folder') {
-      // 已在某个文件夹内，直接追加子文件夹
-      return [
-        ...currentPath,
-        { type: 'folder', folderId: folder.folderId, name: folder.displayName,
-          projectId: folder.projectId ?? seg.projectId, color: folder.color ?? seg.color },
-      ]
-    }
-    // 保留到 project 层，追加 folder
-    const projIdx = currentPath.findIndex(s => s.type === 'project')
-    const projectSeg = currentPath.find(s => s.type === 'project') ?? null
-    const basePath: NavSeg[] = projIdx >= 0
-      ? currentPath.slice(0, projIdx + 1)
-      : [{ type: 'projects', name: '项目文件', color: null },
-         { type: 'project', id: folder.projectId, name: projectSeg?.name ?? '', color: folder.color }]
-    return [
-      ...basePath,
-      { type: 'folder', folderId: folder.folderId, name: folder.displayName, projectId: folder.projectId, color: folder.color },
-    ]
   }
   return currentPath
 }

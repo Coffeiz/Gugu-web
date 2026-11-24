@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="open" width="480px" background="var(--panel-bg)" @close="cancel">
+  <BaseModal :show="open" teleport-to="body" width="480px" background="var(--panel-bg)" @close="cancel">
     <div class="ucd">
       <div class="ucd-header">
         <h2>{{ t('viewerUi.conflictTitle', { count: conflicts.length }) }}</h2>
@@ -53,11 +53,9 @@ const { t } = useI18n()
 export interface ConflictItem {
   filename: string
   canOverwrite?: boolean
-  existingFile?: { id: number } | null
 }
 export interface ConflictDecision {
   action: 'overwrite' | 'keep_both' | 'skip'
-  existingFileId?: number
 }
 
 const open = ref(false)
@@ -85,7 +83,7 @@ function applyAll(action: ConflictDecision['action']) {
 function _buildMap(): Map<string, ConflictDecision> {
   return new Map(conflicts.value.map(c => [
     c.filename,
-    { action: choices.value[c.filename], existingFileId: c.existingFile?.id },
+    { action: choices.value[c.filename] },
   ]))
 }
 

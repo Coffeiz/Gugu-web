@@ -205,7 +205,9 @@ function protectNonMathInlineDollarPairs(root: HTMLElement) {
           && source[close - 1] !== '$' && !isEscapedCharacter(source, close)) break
       }
       if (close >= source.length) break
-      if (looksLikeInlineMath(source.slice(open + 1, close))) {
+      // 紧跟数字的美元符号属于下一笔金额，不能结束前面的行内公式。
+      // 例如 $0.15 / $0.60 中间的除号会让内容看起来像算式。
+      if (!/\d/.test(source[close + 1] ?? '') && looksLikeInlineMath(source.slice(open + 1, close))) {
         open = close
         continue
       }

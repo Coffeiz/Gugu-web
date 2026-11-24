@@ -57,10 +57,10 @@ export function renderUserSmtpPreview(value: unknown): { html: string } {
     <div style="text-align:center;padding:0 0 24px;margin:0;border-bottom:1px solid ${colors.border}">
       <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto"><tr>
         <td valign="middle" style="width:92px">
-          <div role="img" aria-label="咕咕" style="width:96px;height:96px;background:${colors.brand};-webkit-mask:url('/logo-large2.png') center/contain no-repeat;mask:url('/logo-large2.png') center/contain no-repeat"></div>
+          <div role="img" aria-label="咕咕" style="width:96px;height:96px;background:${colors.brand};-webkit-mask:url('/brand/bird-login.svg') center/contain no-repeat;mask:url('/brand/bird-login.svg') center/contain no-repeat"></div>
         </td>
         <td valign="middle" width="190" style="width:190px;text-align:center">
-          <div role="img" aria-label="咕咕" style="width:190px;height:90px;background:${colors.brand};-webkit-mask:url('/logo-text2.png') center/contain no-repeat;mask:url('/logo-text2.png') center/contain no-repeat;margin:0 auto"></div>
+          <div role="img" aria-label="咕咕" style="width:190px;height:90px;background:${colors.brand};-webkit-mask:url('/brand/wordmark-login.svg') center/contain no-repeat;mask:url('/brand/wordmark-login.svg') center/contain no-repeat;margin:0 auto"></div>
           <div style="width:190px;margin:0 auto;padding:2px 0 0;text-align:center;color:${colors.muted};font-size:10px;letter-spacing:.08em">${escapeHtml(template.toUpperCase())}</div>
         </td>
       </tr></table>

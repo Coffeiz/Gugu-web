@@ -35,7 +35,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ViewerToolbar from '../ViewerToolbar.vue'
 
-const props = defineProps<{ blobUrl?: string; ext: string; fileId?: number; fileVersion?: number }>()
+const props = defineProps<{ blobUrl?: string; ext: string; filePath?: string; fileVersion?: number }>()
 const { t } = useI18n()
 const containerRef = ref<HTMLDivElement | null>(null)
 const notice = ref('')

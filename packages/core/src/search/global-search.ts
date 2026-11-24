@@ -57,7 +57,8 @@ export function createGlobalSearchOperations(sources: readonly GlobalSearchSourc
       if (typeof ownerId !== 'string' || !ownerId) throw new CoreError('invalid_request', '用户 ID 无效')
       const query = snapshot(input), wanted = query.types === null ? null : new Set(query.types)
       for (const type of wanted ?? []) if (!registered.has(type)) throw new CoreError('conflict', '当前平台未提供所请求的搜索来源')
-      if (!query.queries.length) return { query: strip(query.q), queries: [], mode: query.mode, total: 0, groups: [] }
+      const browseFiles = wanted && wanted.size > 0 && [...wanted].every(type => type === 'file' || type === 'folder')
+      if (!query.queries.length && !browseFiles) return { query: strip(query.q), queries: [], mode: query.mode, total: 0, groups: [] }
       if (wanted === null && missingTypes.length) throw new GlobalSearchUnavailableError(missingTypes)
       const groups: Array<{ type: GlobalSearchType; label: string; items: readonly Record<string, unknown>[] }> = []
       for (const source of ordered) {

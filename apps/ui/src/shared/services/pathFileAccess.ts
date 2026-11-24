@@ -2,12 +2,21 @@ import { hasInjectionContext, inject, type InjectionKey } from 'vue'
 import { pathFilesApi } from '@/services/api'
 
 export interface PathFileAccess {
+  downloadArchive?: typeof pathFilesApi.downloadArchive
+  compressArchive?: typeof pathFilesApi.compressArchive
+  extractArchive?: typeof pathFilesApi.extractArchive
+  resolveRelative?: typeof pathFilesApi.resolveRelative
   reference: typeof pathFilesApi.reference
   entries: typeof pathFilesApi.entries
   contentUrl: typeof pathFilesApi.contentUrl
   thumbnailUrl: typeof pathFilesApi.thumbnailUrl
   systemReferenceUrl?: (reference: string, thumbnail?: boolean) => string
   createFolder: typeof pathFilesApi.createFolder
+  moveDropped?: (
+    directoryId: string | number, relativePath: string,
+    decide: (filename: string, canOverwrite: boolean) => Promise<'skip' | 'keep_both' | 'overwrite'>,
+    progress: (percent: number) => void,
+  ) => Promise<{ retained: number }> | undefined
   move: typeof pathFilesApi.move
   copy: typeof pathFilesApi.copy
   moveToTrash: typeof pathFilesApi.moveToTrash

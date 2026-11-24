@@ -1,7 +1,11 @@
+import { classifyGatewayGroupMessage } from '@gugu/gateway'
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
-import { classifyImGroupInbound, imActorInputFromPayload, type ImActor, type ImBotAccess } from '@gugu/core/im/access'
-import { pumpImPendingAsks, type ImPendingAskResume, type createImInboundPreflight } from '@gugu/gateway'
+import {  imActorInputFromPayload, resolveImAccess, type ImActor, type ImBotAccess } from '@gugu/core/im/access'
+import { imSemanticText, pumpImPendingAsks, type ImPendingAskResume, type createImInboundPreflight } from '@gugu/gateway'
+import { parseAgentGoalArgument } from '@gugu/core/agent/commands/menu'
+import { isAgentCommandHelpArgument } from '@gugu/core/agent/commands/help'
+import { parseImControlCommand } from '@gugu/core/im/shortcut'
 import type { RunIdentity } from '@gugu/core/agent'
 import { enqueueAgentRunLocked } from '../../../agent/run/dispatch.js'
 import { registerAgentRunStartupLocked } from '../../../agent/run/start.js'
@@ -17,6 +21,16 @@ import type { createImRetiredInbound } from './retired.js'
 
 type Payload = Record<string, unknown>
 const inputOf = imActorInputFromPayload
+
+function imGoalCreation(binding: NodeImBotBinding, payload: Readonly<Payload>): string | null {
+  if (typeof payload.text !== 'string') return null
+  const input = inputOf(binding, payload)
+  const mentioned = input.botMentioned || binding.platform === 'qq' && payload.group_mentioned === true
+  if (input.chatType === 'group' && !mentioned) return null
+  const command = parseImControlCommand(imSemanticText(payload.text, mentioned))
+  return command?.name === 'goal' && !isAgentCommandHelpArgument(command.argument)
+    && parseAgentGoalArgument(command.argument) === 'create' ? command.argument : null
+}
 
 /** 明确接入既有启动/持久调度；本模块不运行模型，也不把Redis ACK当业务提交。 */
 export function createPostgresImIngress(options: {
@@ -63,8 +77,12 @@ export function createPostgresImIngress(options: {
     if (row && binding.platform === 'feishu' && row.feishu_group_chat_enabled !== null && typeof row.feishu_group_chat_enabled !== 'boolean') throw new Error('IM 群回应配置无效')
     if (!row || (binding.platform === 'feishu' ? row.feishu_group_chat_enabled === false : row.group_chat_enabled !== true)) return 'control' as const
     if (typeof row.group_read_enabled !== 'boolean' || typeof row.group_requires_at !== 'boolean') throw new Error('IM 群回应配置无效')
-    return classifyImGroupInbound({ ...input, groupMentioned: payload.group_mentioned === true },
-      { readOnly: row.group_requires_at && row.group_read_enabled, requiresAt: row.group_requires_at }) ?? 'reply'
+    if (imGoalCreation(binding, payload)) {
+      const bot = await accessFor((sql, args) => client.query(sql, args)).readBot(input)
+      return bot && resolveImAccess(input, bot).role === 'owner' ? 'reply' as const : 'control' as const
+    }
+    return classifyGatewayGroupMessage({ ...input, groupMentioned: payload.group_mentioned === true },
+      row.group_requires_at ? row.group_read_enabled ? 'record_only' : 'reply_mentions' : 'reply_all') ?? 'reply'
   }
   const store = createPostgresImConversationStore({ pool: options.pool, secretKey: options.secretKey, attachments: options.attachments,
     async authorize(client, binding, payload) {
@@ -88,6 +106,12 @@ export function createPostgresImIngress(options: {
     const actor = snapshot.actor(input), memoryEnabled = await options.memoryEnabled(binding.ownerId)
     if (typeof memoryEnabled !== 'boolean') throw new Error('IM 记忆配置无效')
     const identity = { ownerId: binding.ownerId, sessionId: String(anchor.sessionId), runId: randomUUID() }
+    const goal = actor.role === 'owner' && imGoalCreation(binding, payload)
+    if (goal) {
+      await client.query(`UPDATE conversation_sessions SET session_context=COALESCE(session_context,'{}'::jsonb)
+        || jsonb_build_object('goal_text',$3::text,'goal_mode',true,'goal_status','active')
+        WHERE user_id=$1 AND id=$2`, [binding.ownerId, anchor.sessionId, goal])
+    }
     const attention = trustedAttention === undefined ? undefined : parseImAttentionRecord(trustedAttention)
     if (!await registerAgentRunStartupLocked(client, identity)) throw new Error('IM 运行启动登记冲突')
     const accessVersion = await options.model.accessVersion(identity, actor, snapshot.bot, memoryEnabled)
@@ -160,7 +184,7 @@ export function createPostgresImIngress(options: {
         if (!pending.length) return
         const batchItems = pending; pending = []
         const result = await store.persistBatch(binding, batchItems, { mode: previous === 'passive' ? 'passive' : 'dispatch',
-          ...(options.attention && binding.platform !== 'wechat' && batchItems[0]?.payload.chat_type === 'group' ? {
+          ...(options.attention && binding.platform !== 'wechat' && batchItems[0]?.payload.chat_type === 'group' && !imGoalCreation(binding, batchItems[0].payload) ? {
             async beforeDispatch(segment) {
               const messages = segment.aggregate._batch_messages as Payload[]
               const outcome = await options.attention!.evaluate({ scope: { ownerId: binding.ownerId, botId: binding.botId,
@@ -197,7 +221,11 @@ export function createPostgresImIngress(options: {
         if (await options.retired?.seen(binding,item.payload,signal)) continue
         const mode = await classify(options.pool, binding, item.payload)
         if (mode !== previous) { await flush(); previous = mode }
-        if (mode !== 'control') pending.push(item)
+        if (mode === 'reply' && imGoalCreation(binding, item.payload)) {
+          await flush()
+          pending.push(item)
+          await flush()
+        } else if (mode !== 'control') pending.push(item)
       }
       await flush()
       return results

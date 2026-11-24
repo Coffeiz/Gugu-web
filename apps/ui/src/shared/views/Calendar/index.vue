@@ -34,7 +34,6 @@
           :day-layout="dayLayout"
           :week-bars-capped="weekBarsCapped"
           :deadline-warn-layer="deadlineWarnLayer"
-          :bar-seg-fill="barSegFill"
           :darken-hex="darkenHex"
           :set-week-ref="setWeekRef"
           @week-mousemove="onWeekMouseMove"
@@ -426,20 +425,6 @@ function addDays(iso: string, n: number) {
   d.setDate(d.getDate() + n)
   return toIso(d)
 }
-function barSegFill(bar: CalItem) {
-  if (!bar.progress || !bar.startDate || !bar.endDate || !bar.segStartIso || !bar.segEndIso) return 0
-  // total 含端点（+1）：与下面 segEndOff 的「含端点 +1」口径一致。
-  // 否则 progressDays 最大只到 end-start，永远 < 末段 segEndOff(=total+1)，100% 的项目长条只填到 ~90%。
-  const total = daysBetween(bar.startDate, bar.endDate) + 1
-  if (total <= 0) return bar.progress
-  const progressDays  = total * bar.progress / 100
-  const segStartOff   = daysBetween(bar.startDate, bar.segStartIso)
-  const segEndOff     = daysBetween(bar.startDate, bar.segEndIso) + 1
-  if (progressDays <= segStartOff) return 0
-  if (progressDays >= segEndOff)   return 100
-  return Math.round((progressDays - segStartOff) / (segEndOff - segStartOff) * 100)
-}
-
 const DEADLINE_WARN_DAYS = 3   // 临近截止日的标红范围（天）：跟 store 里 urgentProjects 的阈值一致
 
 // 项目条最后几天渐变标红，提示临近截止日：只在真正落到 bar.endDate 那一段（跨周项目其余段不提前标红，

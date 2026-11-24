@@ -133,8 +133,8 @@ export function createPostgresScheduledTaskResultDelivery(
       plainText: task.executionMode === 'reminder',
       fixedTargets: task.deliveryTargets,
       artifacts: outcome.files,
-      emailAttachments: outcome.files.length || task.emailAttachmentFileIds.length
-        ? { fileIds: task.emailAttachmentFileIds, generated: outcome.files } : undefined,
+      emailAttachments: outcome.files.length || task.emailAttachmentFilePaths.length
+        ? { filePaths: task.emailAttachmentFilePaths, generated: outcome.files } : undefined,
     }
   }
   const deliverResult: ResultDelivery = (task, outcome, assertLease) => deliver(resultPlan(task, outcome), assertLease)

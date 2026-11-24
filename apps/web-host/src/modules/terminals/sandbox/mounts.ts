@@ -1,7 +1,7 @@
 import type { Pool } from 'pg'
 import type { Kysely } from 'kysely'
-import { createDefaultWorkspaceShellTargetReader, createWorkspaceShellDirectoryReader, createWorkspaceShellTargetReader } from '@gugu/core/workspaces/shell-target'
-import { readPostgresFolderPathMirrorKey, readPostgresProjectPathMirrorKey } from '../../files/folders/paths.js'
+import { createWorkspaceShellDirectoryReader, createWorkspaceShellTargetReader } from '@gugu/core/workspaces/shell-target'
+import { readPostgresProjectPathKey } from '../../files/paths.js'
 import { personalFileStorageKey, sandboxTarget, workspaceDirectoryStorageKey } from '../../workspaces/roots.js'
 import { CoreError } from '@gugu/core'
 import { posix } from 'node:path'
@@ -15,7 +15,7 @@ export { sandboxTarget } from '../../workspaces/roots.js'
 
 /** 输入 key 必须由 owner 限定的数据库查询产生；不接收客户端提供的挂载列表。 */
 export async function prepareTerminalMounts(root: string, owner: string, primaryKey: string, readonlyKeys: readonly string[], writableKeys: readonly string[], cwd: string, initializeKeys: ReadonlySet<string> = new Set()) {
-  if (!writableKeys.includes(primaryKey)) throw new Error('终端工作区未授权')
+  if (!writableKeys.includes(primaryKey) && !readonlyKeys.includes(primaryKey)) throw new Error('终端工作区未授权')
   const keys = [...new Set([...readonlyKeys, ...writableKeys])]
   if (keys.length > 64) throw new Error('终端挂载数量超限')
   const targets = new Map(keys.map(key => [key, sandboxTarget(key)]))
@@ -58,18 +58,17 @@ export async function prepareTerminalMounts(root: string, owner: string, primary
 export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | 'query'>, db: Kysely<DB>, storageRoot: string) {
   const files = createWorkspaceFileReads(pool, storageRoot)
   const target = createWorkspaceShellTargetReader(db, 'postgres')
-  const defaultTarget = createDefaultWorkspaceShellTargetReader(db, 'postgres')
   const directories = createWorkspaceShellDirectoryReader(db, 'postgres')
   async function resolvePrimary(owner: string, workspaceId: number | null) {
-    const selected = workspaceId === null ? await defaultTarget(owner) : await target(owner, workspaceId)
+    if (workspaceId === null) return { selected: null, primary: personalFileStorageKey(owner) }
+    const selected = await target(owner, workspaceId)
     if (!selected) return null
     const client = await pool.connect()
     let primary: string
     try {
       if (selected.kind === 'directory') {
         primary = workspaceDirectoryStorageKey(owner, selected.directoryName)
-      } else if (selected.kind === 'folder') primary = await readPostgresFolderPathMirrorKey(client, owner, selected.folderId)
-      else primary = await readPostgresProjectPathMirrorKey(client, owner, selected.projectId)
+      } else primary = await readPostgresProjectPathKey(client, owner, selected.projectId)
     } finally { client.release() }
     return { selected, primary }
   }
@@ -77,22 +76,24 @@ export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | '
     const resolved = await resolvePrimary(owner, workspaceId)
     if (!resolved) throw new Error('当前工作区挂载无法安全解析')
     const { selected, primary } = resolved
-    const writable = [primary]
+    const writable = selected ? [primary] : []
     const libraryRoots = [personalFileStorageKey(owner), `${owner}/项目文件`]
     // 老账号尚未使用文件库时，声明可能早于实际目录。只补固定根，不重建已丢失的普通目录。
-    const initialize = new Set([...libraryRoots, `${owner}/workspace/default`])
-    if (selected.kind === 'project') initialize.add(primary)
+    const initialize = new Set(libraryRoots)
+    if (selected?.kind === 'project') initialize.add(primary)
     const readonly = fullUserSandboxWrite ? [] : libraryRoots
     if (fullUserSandboxWrite) writable.push(...libraryRoots)
     const workspaceIds = new Map<string, number>()
     if (fullUserSandboxWrite) for (const directory of await directories(owner)) {
+      if (directory.isDefault && directory.directoryName === 'default'
+        && !(selected?.kind === 'directory' && selected.directoryId === directory.id)) continue
       const key = workspaceDirectoryStorageKey(owner, directory.directoryName)
       writable.push(key)
       workspaceIds.set(key, directory.id)
     }
     const mount = await prepareTerminalMounts(storageRoot, owner, primary, readonly, [...new Set(writable)], cwd, initialize)
-    const trashDirectory: FileDirectory = selected.kind === 'directory' ? selected.directoryId
-      : selected.projectId === null ? 'personal' : { projectId: selected.projectId }
+    const trashDirectory: FileDirectory = selected?.kind === 'directory' ? selected.directoryId
+      : selected?.kind === 'project' ? { projectId: selected.projectId } : 'personal'
     async function resolveTrashTarget(path: string) {
       if (path.includes('\0') || path.includes('\\') || path.split('/').includes('..') || posix.basename(path) === '.') throw new CoreError('invalid_request', '删除路径不得越界')
       const absolute = posix.resolve(mount.sandboxCwd, path)
@@ -119,7 +120,7 @@ export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | '
         for (const path of command.paths) {
           signal.throwIfAborted()
           const { directory, relative, root, source } = await resolveTrashTarget(path)
-          const kind = await localEntryKind(storageRoot, createLocalFileTree(storageRoot, root).storageKey(relative))
+          const kind = await localEntryKind(storageRoot, createLocalFileTree(storageRoot, root).path(relative))
           if (targets.has(source) || (!kind && command.force)) continue
           if (!kind) throw new CoreError('invalid_request', '文件或目录不存在')
           if (kind === 'directory' && !command.recursive) throw new CoreError('invalid_request', '删除目录需要递归选项')

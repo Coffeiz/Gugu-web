@@ -15,10 +15,8 @@ import { useUiStore } from '@/stores/ui'
 import {
   isAgentRunChangedEvent,
   isLiveEventPayload,
-  isTrashPurgeProgressEvent,
   type AgentRunChangedEvent,
   type LiveEventPayload,
-  type TrashPurgeProgressEvent,
 } from '@/types/live-events'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { notifyLiveResourceChanged } from '@/services/resourceRefreshEvents'
@@ -35,7 +33,6 @@ export const useLiveStore = defineStore('live', () => {
 
   // 所有实时变化统一通过 canonical 事件传递；业务 store 自己决定增量应用或重拉。
   const resourceEvent = ref<(LiveEventPayload & { _t: number }) | null>(null)
-  const trashPurgeEvent = ref<(TrashPurgeProgressEvent & { _t: number }) | null>(null)
   const agentRunEvent = ref<(AgentRunChangedEvent & { _t: number }) | null>(null)
   let _seq = 0
   const seenEventIds = new Set<string>()
@@ -127,11 +124,6 @@ export const useLiveStore = defineStore('live', () => {
                 running = false
                 break
               }
-              if (isTrashPurgeProgressEvent(evt)) {
-                if (!rememberEvent(evt.event_id)) continue
-                trashPurgeEvent.value = { ...evt, _t: ++_seq }
-                continue
-              }
               if (isAgentRunChangedEvent(evt)) {
                 if (!rememberEvent(evt.event_id)) continue
                 agentRunEvent.value = { ...evt, _t: ++_seq }
@@ -184,8 +176,7 @@ export const useLiveStore = defineStore('live', () => {
     disconnect()
     Object.keys(rev).forEach(resource => { rev[resource] = 0 })
     resourceEvent.value = null
-    trashPurgeEvent.value = null
-    agentRunEvent.value = null
+      agentRunEvent.value = null
     seenEventIds.clear()
     lastCanonicalRevision.clear()
     _catchUpTimers.forEach(clearTimeout)
@@ -194,7 +185,7 @@ export const useLiveStore = defineStore('live', () => {
     everConnected = false
   }
 
-  return { rev, connected, resourceEvent, trashPurgeEvent, agentRunEvent, bump, connect, disconnect, resetAccountState }
+  return { rev, connected, resourceEvent, agentRunEvent, bump, connect, disconnect, resetAccountState }
 })
 
 function _sleep(ms: number) {

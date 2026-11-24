@@ -23,6 +23,9 @@ export declare function createFeishuRunEventProjector(options?: {
     theme?: Parameters<typeof createImChartParser>[0]['theme'];
     signal?: AbortSignal;
     checkpoint?: unknown;
+    toolSummary?: {
+        locale?: string | null;
+    };
 }): {
     snapshot: () => unknown;
     /** 调用方须按RunEvent顺序await；不执行平台发送，不新增业务事件或Agent循环。 */

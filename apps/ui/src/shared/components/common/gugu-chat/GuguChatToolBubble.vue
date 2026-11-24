@@ -41,9 +41,9 @@
 </template>
 
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n'
-const { t, te } = useI18n()
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { formatToolResult } from '@gugu/core/agent/tool-result-format'
 import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import { useDelayedSkeleton } from '@/composables/core/useDelayedSkeleton'
 import type { ChatMessage } from './chatTypes'
@@ -51,6 +51,7 @@ import { agentApi } from '@/services/api'
 import { chatToolDetailsKey } from './chatPresentationAccess'
 import { formatToolDuration, toolHasNoMatches, toolActivityLabel } from './toolActivity'
 
+const { t, te } = useI18n()
 const readToolDetails = inject(chatToolDetailsKey, agentApi.getToolEventDetails)
 
 const props = defineProps<{ msg: ChatMessage; sessionId: number | null; expanded: boolean; subagentNames?: ReadonlyMap<string, string> }>()
@@ -110,7 +111,13 @@ function needsDetails() {
     && msg.toolInput === undefined && msg.toolResult === undefined
     && msg._toolDetailsSource && sessionId != null)
 }
-const formattedResult = computed(() => formatValue(props.msg.toolResult))
+const formattedResult = computed(() => {
+  const value = props.msg.toolResult
+  const content = typeof value === 'string' ? value : formatValue(value)
+  return props.msg.toolName
+    ? formatToolResult(props.msg.toolName, content, props.msg.toolStatus === 'error')
+    : content
+})
 const resultDisplayTruncated = computed(() => formattedResult.value.length > OUTPUT_DISPLAY_LIMIT)
 const displayResult = computed(() => resultDisplayTruncated.value
   ? `${formattedResult.value.slice(0, OUTPUT_DISPLAY_LIMIT)}\n…`
@@ -254,8 +261,10 @@ function cleanupDetailTransition(element: Element) {
 .tool-event-duration { color: var(--content-tertiary); font-size: var(--font-size-xs); white-space: nowrap; }
 .tool-event-detail {
   margin: 4px 0 6px; padding: 9px 12px 10px;
-  border: 1px solid var(--border-document-table); border-radius: var(--radius-sm);
-  background: var(--surface-soft); color: var(--content-secondary);
+  border: 1px solid color-mix(in srgb, var(--border-document-table) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-soft) 45%, transparent);
+  color: var(--content-secondary);
 }
 .tool-details-loading { color: var(--content-tertiary); font-size: var(--font-size-xs); }
 .tool-event-section + .tool-event-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--panel-divider); }

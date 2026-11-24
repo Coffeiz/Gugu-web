@@ -4,7 +4,7 @@
     :visible="!!audioStore.file && (miniPinned || open)"
     :style="miniPlayerStyle" :bars-playing="audioPlaying" :wave-bars="audioBars"
     :file-name="audioStore.file ? `${audioStore.file.displayName}.${audioStore.file.ext?.toLowerCase()}` : ''"
-    :playlist="audioStore.playlist" :current-track-id="audioStore.file?.id ?? null"
+    :playlist="audioStore.playlist" :current-track-id="audioTrackKey(audioStore.file)"
     :pinned="miniPinned" @update:pinned="miniPinned = $event"
     :current="audioCurrent" :duration="audioDuration" :seek-pct="audioSeekPct"
     :playing="audioPlaying" :muted="audioMuted" :volume="audioVolume"
@@ -55,8 +55,8 @@
       ref="windowRef"
       :window-style="windowStyle" :expanded="expanded" :resizing="resizing"
       :owner-z="chatZ"
-      :streaming="streaming" :can-interrupt-detached-run="canInterruptDetachedRun"
-      :interrupt-pending="interruptPending" :on-interrupt-detached-run="interruptDetachedRun" :is-chat-dragging="isChatDragging" :drop-files-as-references="!!referenceDroppedFile"
+      :streaming="streaming"
+      :is-chat-dragging="isChatDragging" :drop-files-as-references="!!referenceDroppedFile"
       :automatic-mode-enabled="automaticModeEnabled"
       :automatic-mode-available="automaticModeButtonVisible"
       :automatic-mode-saving="automaticModeSaving"
@@ -141,12 +141,12 @@ import { respondToHttpInteraction, type ChatInteractionAccess } from './chatInte
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useAudioStore } from '@/stores/audio'
+import { audioTrackKey, useAudioStore } from '@/stores/audio'
 import type { AudioTrack } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
-import { agentApi, filesApi, workspacesApi } from '@/services/api'
+import { agentApi, filesApi, pathFilesApi, workspacesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import GuguChatFab from './GuguChatFab.vue'
 import GuguChatMiniPlayer from './GuguChatMiniPlayer.vue'
@@ -534,11 +534,9 @@ const conversation = useChatConversation({
   onSyncSmallH,
   onQueuePersistenceError: () => showAppError(t('chatUi.pendingQueuePersistFailed')),
   onQueueDispatchError: () => showAppError(t('chatUi.networkError')),
-  onPresentFile: (file) => previewStore.open({
-    id: file.file_id,
-    ext: (file.ext || '').toUpperCase(),
-    displayName: file.name || `文件 #${file.file_id}`,
-  }),
+  onOpenItem: ({ kind, id }) => {
+    void openMindRef(kind, id).catch(() => _chatTip(t('mindUi.referenceMissing')))
+  },
 })
 const {
   messages, mkid, now, sessionSettling, historyState, loadOlderHistory,
@@ -575,26 +573,6 @@ watch(() => uiStore.pendingChatPrefill, async (prompt) => {
   // 首次打开时编辑器刚完成挂载，明确把光标放到预填文本末尾。
   composerRef.value?.focusEnd?.()
 }, { immediate: true })
-
-const interruptPending = ref(false)
-const canInterruptDetachedRun = computed(() => !streaming.value && sessions.value.some(session =>
-  session.id === sessionId.value && (!session.source || session.source === 'web') && session.isRunning))
-async function interruptDetachedRun() {
-  const id = sessionId.value
-  if (id == null || !canInterruptDetachedRun.value || interruptPending.value) return
-  interruptPending.value = true
-  try {
-    const result = await (props.cancelSession ?? (id => agentApi.cancelSession(String(id))))(id)
-    if (sessionId.value !== id) return
-    if (result.outcome === 'requested') await resumeStream(id)
-    else await loadSession(id, true)
-    await fetchSessions()
-  } catch {
-    if (sessionId.value === id) showAppError(t('chatUi.cancelFailed'))
-  } finally {
-    interruptPending.value = false
-  }
-}
 
 const visiblePendingQueue = computed(() => pendingQueue.value.filter(item => item.sessionId === sessionId.value))
 
@@ -672,7 +650,7 @@ const pendingCustomPromptId = computed(() => findPendingTextInteractionId(messag
 async function onInteractionSelect(message: ChatMessage, option: { id: string; label: string; token: string; selectedOptionIds?: string[]; customAnswer?: string }) {
   const interaction = message.interaction
   const currentSessionId = sessionId.value
-  if (!interaction?.promptId || !currentSessionId) return
+  if (!interaction?.promptId || !currentSessionId || interaction.submitting || interaction.resolved) return
   const custom = option.id === CUSTOM_REPLY_OPTION_ID && !option.customAnswer
   if (custom && (!interaction.allowTextInput || interaction.kind === 'confirm')) return
 
@@ -738,10 +716,11 @@ async function resolveSecretInteraction(
   request: { action: 'submit'; values: Record<string, string> } | { action: 'cancel' },
 ) {
   const interaction = message.interaction
-  if (!interaction?.promptId || !interaction.secretFields?.length) return
+  if (!interaction?.promptId || !interaction.secretFields?.length || interaction.submitting || interaction.resolved) return
   const cancel = request.action === 'cancel'
   const failure = cancel ? 'chatUi.interactionSubmitFailed' : 'chatUi.secretSubmitFailed'
   const currentSessionId = sessionId.value
+  interaction.submitting = true
   try {
     if (!currentSessionId) throw new Error(t(failure))
     const result = await (props.respondToInteraction ?? respondToHttpInteraction)({
@@ -768,10 +747,11 @@ async function onInteractionTextSubmit(message: ChatMessage, text: string) {
   const promptId = interaction?.promptId
   const answer = text.trim()
   const currentSessionId = sessionId.value
-  if (!promptId || !currentSessionId || !interaction?.allowTextInput || interaction.kind === 'confirm' || !answer) {
-    if (interaction) interaction.submitting = false
+  if (!promptId || !currentSessionId || !interaction?.allowTextInput || interaction.kind === 'confirm' || !answer
+    || interaction.submitting || interaction.resolved) {
     return
   }
+  interaction.submitting = true
   try {
     const result = await (props.respondToInteraction ?? respondToHttpInteraction)({
       action: 'text', sessionId: currentSessionId, runId: message.runId, promptId, text: answer,
@@ -852,9 +832,14 @@ async function onChatSend() {
 }
 
 async function onReferenceClick(reference: Pick<ChatReference, 'type' | 'id'>) {
+  if (reference.type === 'folder' && !String(reference.id).startsWith('path-')) {
+    _chatTip(t('mindUi.referenceMissing'))
+    return
+  }
   try {
     if (await props.openPlatformReference?.(reference)) return
-    await openMindRef(reference.type, reference.id)
+    if (!await openMindRef(reference.type, reference.id) && reference.type === 'folder')
+      _chatTip(t('mindUi.referenceMissing'))
   } catch (error) {
     _chatTip(error instanceof Error ? error.message : t('mindUi.referenceMissing'))
   }
@@ -910,8 +895,8 @@ async function downloadFile(f: ChatFile) {
     setTimeout(() => { URL.revokeObjectURL(url); a.remove() }, 1000)
     return
   }
-  if (f.file_id == null) return
-  try { await filesApi.download(f.file_id, `${f.qq_face ? 'QQ表情' : f.name}.${f.ext}`) }
+  if (!f.file_path) return
+  try { pathFilesApi.downloadSandboxPath(f.file_path, `${f.qq_face ? 'QQ表情' : f.name}.${f.ext}`) }
   catch (e) { console.error('下载失败', e) }
 }
 
@@ -920,7 +905,10 @@ function openFileFromChat(f: ChatFile) {
   if (canPreview(f)) {
     const displayName = f.qq_face ? 'QQ表情' : f.name
     previewStore.open({
-      id: f.file_id ?? undefined,
+      contentUrl: f.file_path ? pathFilesApi.sandboxContentUrl(f.file_path) : undefined,
+      chatLibraryPath: f.file_path,
+      mimeType: f.mime,
+      sizeBytes: f.size_bytes ?? f.size,
       attach_id: f.attach_id ?? null,
       ...(f.attach_id && props.readAttachment ? { readContent: () => props.readAttachment!(f.attach_id!) } : {}),
       ext: (f.ext || '').toUpperCase(),

@@ -155,21 +155,33 @@ export function createCalendarEventCreatePort(
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/u
 const eventReminderSchema = z.object({
   lead_minutes: z.number().int().safe().min(0),
-  channels: z.array(z.enum(['web', 'feishu', 'qq', 'wechat'])).min(1).optional(),
+  channels: z.array(z.enum(['web', 'feishu', 'qq', 'wechat', 'telegram'])).min(1).optional(),
   delivery_mode: z.enum(['owner_private', 'current_group']).optional(),
   enabled: z.boolean().optional(),
 }).strict().superRefine((value, context) => {
   if (value.channels && new Set(value.channels).size !== value.channels.length)
     context.addIssue({ code: 'custom', message: 'channels 不能重复' })
 })
+function validateAllDayTime(value: { all_day?: boolean; time?: string; end_time?: string }, context: z.RefinementCtx) {
+  if (value.all_day === true) {
+    for (const field of ['time', 'end_time'] as const) {
+      if (value[field] !== undefined) context.addIssue({
+        code: 'custom', path: [field], params: { constraint: 'all_day_time_forbidden' },
+        message: '全天活动不能设置开始或结束时间',
+      })
+    }
+  }
+  if (value.all_day === false && value.time === undefined) context.addIssue({
+    code: 'custom', path: ['time'], params: { constraint: 'all_day_time_required' },
+    message: '非全天活动必须提供 time',
+  })
+}
+
 const calendarCreateSchema = z.object({
   title: z.string(), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), time: z.string().regex(timePattern).optional(),
   end_time: z.string().regex(timePattern).optional(), type: z.enum(['event', 'deadline']).optional(),
   project_id: z.number().int().safe().optional(), description: z.string().optional(), reminders: z.array(eventReminderSchema).max(20).optional(), all_day: z.boolean(),
-}).passthrough().superRefine((value, context) => {
-  if (value.all_day && (value.time !== undefined || value.end_time !== undefined)) context.addIssue({ code: 'custom', message: '全天活动不能设置开始或结束时间' })
-  if (!value.all_day && value.time === undefined) context.addIssue({ code: 'custom', message: '非全天活动必须提供 time' })
-})
+}).passthrough().superRefine(validateAllDayTime)
 
 export function createCalendarEventCreateTool(port: CalendarEventCreateToolPort): ToolDefinition {
   const request = (args: z.infer<typeof calendarCreateSchema>, identity: RunIdentity, roundId: string, toolCallId: string): CalendarEventCreateRequest => ({ identity, roundId, toolCallId, args })
@@ -181,7 +193,7 @@ export function createCalendarEventCreateTool(port: CalendarEventCreateToolPort)
         time: { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' }, end_time: { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' },
         type: { type: 'string', enum: ['event', 'deadline'] }, project_id: { type: 'integer' }, description: { type: 'string' }, all_day: { type: 'boolean' },
         reminders: { type: 'array', maxItems: 20, 'x-empty-string': 'empty-array', items: { type: 'object', properties: {
-          lead_minutes: { type: 'integer', minimum: 0 }, channels: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', enum: ['web', 'feishu', 'qq', 'wechat'] } },
+          lead_minutes: { type: 'integer', minimum: 0 }, channels: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', enum: ['web', 'feishu', 'qq', 'wechat', 'telegram'] } },
           delivery_mode: { type: 'string', enum: ['owner_private', 'current_group'] }, enabled: { type: 'boolean' },
         }, required: ['lead_minutes'], additionalProperties: false } },
       }, required: ['title', 'date', 'all_day'], allOf: [
@@ -324,8 +336,7 @@ const eventUpdateSchema = z.object({
     .transform(value => value === '' ? [] : value),
 }).passthrough().superRefine((value, context) => {
   if (value.event_id === undefined && value.event === undefined) context.addIssue({ code: 'custom', message: '需提供 event_id 或事件标题 event' })
-  if (value.all_day === true && (value.time !== undefined || value.end_time !== undefined)) context.addIssue({ code: 'custom', message: '全天活动不能设置开始或结束时间' })
-  if (value.all_day === false && value.time === undefined) context.addIssue({ code: 'custom', message: 'all_day=false 时必须提供 time' })
+  validateAllDayTime(value, context)
 })
 
 export function createCalendarEventUpdateTool(port: CalendarEventUpdateToolPort): ToolDefinition {
@@ -339,7 +350,7 @@ export function createCalendarEventUpdateTool(port: CalendarEventUpdateToolPort)
         time: { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' }, end_time: { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' },
         type: { type: 'string', enum: ['event', 'deadline'] }, project_id: { type: 'integer' }, description: { type: 'string' }, all_day: { type: 'boolean' },
         reminders: { type: 'array', maxItems: 20, 'x-empty-string': 'empty-array', items: { type: 'object', properties: {
-          lead_minutes: { type: 'integer', minimum: 0 }, channels: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', enum: ['web', 'feishu', 'qq', 'wechat'] } },
+          lead_minutes: { type: 'integer', minimum: 0 }, channels: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', enum: ['web', 'feishu', 'qq', 'wechat', 'telegram'] } },
           delivery_mode: { type: 'string', enum: ['owner_private', 'current_group'] }, enabled: { type: 'boolean' },
         }, required: ['lead_minutes'], additionalProperties: false } },
       }, required: [], anyOf: [{ required: ['event_id'] }, { required: ['event'] }], allOf: [

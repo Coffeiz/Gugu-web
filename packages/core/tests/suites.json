@@ -881,11 +881,6 @@
     "layer": "L1",
     "purpose": "contract"
   },
-  "tests/agent/tools/trash.test.ts": {
-    "markers": [],
-    "layer": "L1",
-    "purpose": "contract"
-  },
   "tests/agent/tools/domain-reads.test.ts": {
     "markers": [],
     "layer": "L1",
@@ -902,10 +897,8 @@
   "tests/agent/tools/project-delete.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mind/canvas-agent-read.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/workspace-update.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
-"tests/agent/tools/workspace-unlink.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/undo.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/workspace-create.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
-"tests/agent/tools/folder-delete.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/canvas-focus.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mind/canvas-detail.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/canvas-ready.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
@@ -925,7 +918,6 @@
 "tests/byok/credential-test-preview.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/files/xlsx-preview.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/files/office-text.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
-"tests/files/trash-purge-worker.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/rag/memory-loader.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/rag/context-builder.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/rag/memory-search.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},

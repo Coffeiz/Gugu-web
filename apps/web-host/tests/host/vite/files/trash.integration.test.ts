@@ -4,54 +4,20 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import { createApp } from '../../../../src/app.js'
 import { createUserToken } from '../../../../src/modules/auth/session/token.js'
-import type { TrashOperations } from '../../../../src/modules/files/trash/service.js'
 
 const ownerId = '11111111-1111-4111-8111-111111111111'
 const secret = 'synthetic-trash-vite-secret'
 
-test('Vite→Node Host 回收站路由要求认证并把认证 owner 与客户端来源传给 Local 操作', async () => {
+test('Vite→Node Host 磁盘回收站要求认证并使用可信 owner', async () => {
   const calls: Array<{ operation: string; ownerId: string; args: unknown[] }> = []
   const record = (operation: string) => async (owner: string, ...args: unknown[]) => {
     calls.push({ operation, ownerId: owner, args })
     return undefined
   }
-  const operations: TrashOperations = {
-    async listFiles(owner, query) {
-      calls.push({ operation: 'listFiles', ownerId: owner, args: [query] })
-      return { items: [{ id: 7, display_name: '示例文件' }], has_more: false, next_cursor: null }
-    },
-    async listFolders(owner, query) {
-      calls.push({ operation: 'listFolders', ownerId: owner, args: [query] })
-      return { items: [], has_more: false, next_cursor: null }
-    },
-    async listFolderContents(owner, folderId, query) {
-      calls.push({ operation: 'listFolderContents', ownerId: owner, args: [folderId, query] })
-      return {
-        folders: { items: [], has_more: false, next_cursor: null },
-        files: { items: [], has_more: false, next_cursor: null },
-      }
-    },
-    async restoreFolder(owner, folderId, origin) {
-      calls.push({ operation: 'restoreFolder', ownerId: owner, args: [folderId, origin] })
-      return { id: folderId, name: '示例目录' }
-    },
-    async restoreFiles(owner, fileIds, origin) {
-      calls.push({ operation: 'restoreFiles', ownerId: owner, args: [fileIds, origin] })
-    },
-    hardDeleteFile: record('hardDeleteFile'),
-    hardDeleteFolder: record('hardDeleteFolder'),
-    async startEmpty(owner) {
-      calls.push({ operation: 'startEmpty', ownerId: owner, args: [] })
-      return { id: 9, status: 'queued', progressCurrent: 0, progressTotal: 1, failedCount: 0, errorCode: null }
-    },
-    async activeEmpty(owner) {
-      calls.push({ operation: 'activeEmpty', ownerId: owner, args: [] })
-      return null
-    },
-    async getEmpty(owner, jobId) {
-      calls.push({ operation: 'getEmpty', ownerId: owner, args: [jobId] })
-      return null
-    },
+  const files = {
+    async listDiskTrash(owner: string) { calls.push({ operation: 'list', ownerId: owner, args: [] }); return [{ id: 'entry', name: '示例文件' }] },
+    async restoreDiskTrash(owner: string, id: string) { calls.push({ operation: 'restore', ownerId: owner, args: [id] }); return { ok: true } },
+    async purgeDiskTrash(owner: string, id: string) { calls.push({ operation: 'purge', ownerId: owner, args: [id] }); return { ok: true } },
   }
   const app = createApp({
     appName: 'Local trash Vite integration',
@@ -66,7 +32,7 @@ test('Vite→Node Host 回收站路由要求认证并把认证 owner 与客户�
         } : null
       },
     },
-    trash: operations,
+    workspaceDirectories: { files } as never,
   })
   const hostAddress = await app.listen({ host: '127.0.0.1', port: 0 })
   const previousProxyTarget = process.env.VITE_API_PROXY_TARGET
@@ -91,31 +57,20 @@ test('Vite→Node Host 回收站路由要求认证并把认证 owner 与客户�
     await vite.listen()
     const address = vite.httpServer?.address()
     assert.ok(address && typeof address !== 'string')
-    const base = `http://127.0.0.1:${address.port}/api/v1/trash`
-    assert.equal((await fetch(`${base}/page`)).status, 401)
+    const base = `http://127.0.0.1:${address.port}/api/v1/files/disk-trash`
+    assert.equal((await fetch(base)).status, 401)
     assert.equal(calls.length, 0)
-
     const token = createUserToken(ownerId, 1, secret)
     const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }
-    const page = await fetch(`${base}/page?limit=25`, { headers })
-    assert.equal(page.status, 200)
-    assert.deepEqual(await page.json(), {
-      items: [{ id: 7, display_name: '示例文件' }], has_more: false, next_cursor: null,
-    })
-    const restored = await fetch(`${base}/folders/4/restore`, {
-      method: 'POST', headers: { ...headers, 'x-client-id': 'synthetic-tab' }, body: '{}',
-    })
-    assert.equal(restored.status, 200)
-    assert.deepEqual(await restored.json(), { id: 4, name: '示例目录' })
-    const batchRestored = await fetch(`${base}/batch-restore`, {
-      method: 'POST', headers: { ...headers, 'x-client-id': 'synthetic-tab' },
-      body: JSON.stringify({ ids: [7, 8] }),
-    })
-    assert.equal(batchRestored.status, 204)
+    const list = await fetch(base, { headers })
+    assert.equal(list.status, 200)
+    assert.deepEqual(await list.json(), [{ id: 'entry', name: '示例文件' }])
+    assert.equal((await fetch(`${base}/entry/restore`, { method: 'POST', headers })).status, 200)
+    assert.equal((await fetch(`${base}/entry`, { method: 'DELETE', headers })).status, 200)
     assert.deepEqual(calls, [
-      { operation: 'listFiles', ownerId, args: [{ limit: 25, cursor: null }] },
-      { operation: 'restoreFolder', ownerId, args: [4, 'synthetic-tab'] },
-      { operation: 'restoreFiles', ownerId, args: [[7, 8], 'synthetic-tab'] },
+      { operation: 'list', ownerId, args: [] },
+      { operation: 'restore', ownerId, args: ['entry'] },
+      { operation: 'purge', ownerId, args: ['entry'] },
     ])
   } finally {
     await vite?.close()

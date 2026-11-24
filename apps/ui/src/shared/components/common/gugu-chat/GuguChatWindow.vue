@@ -67,17 +67,13 @@
         >
           <Icon :name="filesystemAuthorized ? 'admin.shieldAuthorized' : 'admin.shield'" :size="13" />
         </button>
+        <GuguChatSubagentStatus v-if="!previewOnly" :key="sessionId ?? 'new'" :messages="messages" :session-id="sessionId" />
         <span v-if="!previewOnly" class="popup-status" :class="'is-' + presenceKind"
               @click="presenceKind === 'offline' && onPromptConnect()"
               :title="presenceTitle">
           <span class="status-dot" aria-hidden="true" /><span class="popup-status-label">{{ presenceText }}</span>
         </span>
         <div class="btn-group">
-          <button v-if="canInterruptDetachedRun" type="button" class="popup-icon-btn"
-            :disabled="interruptPending" :title="t('chatUi.interruptRun')" :aria-label="t('chatUi.interruptRun')"
-            @click="onInterruptDetachedRun">
-            <Icon name="action.stop-fill" :size="14" />
-          </button>
           <button v-if="!expanded" class="popup-icon-btn" @click="onEnterExpanded" :title="t('chat.expand')" :aria-label="t('chat.expand')">
             <Icon name="action.expand" :size="13" />
           </button>
@@ -131,8 +127,6 @@
         :pending-att="pendingAtt" :att-uploading="attUploading" :standalone-references="dropFilesAsReferences"
         :recording="recording" :record-secs="recordSecs" :voice-input-available="voiceInputAvailable"
         :expanded="expanded" :streaming="streaming" :vw="vw"
-        :can-interrupt-detached-run="canInterruptDetachedRun" :interrupt-pending="interruptPending"
-        :on-interrupt-detached-run="onInterruptDetachedRun"
         :automatic-mode-enabled="automaticModeEnabled"
         :automatic-mode-available="automaticModeAvailable"
         :automatic-mode-saving="automaticModeSaving"
@@ -161,6 +155,7 @@ import Icon from '@/components/common/icons/Icon.vue'
  * composerRef（GuguChatComposer 实例，暴露 focus/fitTextarea/resetHeight）。通过
  * defineExpose 暴露给父组件，父组件再注入 useChatWindow / useChatConversation。
  */
+import GuguChatSubagentStatus from './GuguChatSubagentStatus.vue'
 import GuguChatMessageList from './GuguChatMessageList.vue'
 import GuguChatComposer from './GuguChatComposer.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
@@ -226,9 +221,6 @@ const props = defineProps<{
   onPaste: (e: ClipboardEvent) => void
   onSend: () => void
   onStopStreaming: () => void
-  canInterruptDetachedRun?: boolean
-  interruptPending?: boolean
-  onInterruptDetachedRun?: () => void
   onCopy: (msg: ChatMessage) => void
   onToggleVoice: (file: ChatFile) => void
   onOpenFile: (file: ChatFile) => void
@@ -398,6 +390,10 @@ defineExpose({
   border-bottom: 1px solid var(--gugu-chat-header-border, rgba(255,255,255,0.5));
   flex-shrink: 0;
 }
+.chat-window :deep(.chat-header:has(.subagent-popovers)) {
+  position: relative;
+  z-index: calc(var(--scrollbar-overlay-z-index) + 1);
+}
 .chat-main.is-expanded .chat-header { padding: 0 8px 0 20px; }
 .chat-title { display:inline-flex; align-items:center; font-size: 13px; font-weight: 700; }
 .chat-title.is-new-session { display: inline-flex; padding: 2px 6px; }
@@ -407,7 +403,7 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--content-tertiary);
+  color: var(--theme-content-tertiary);
   font-size: 12px;
   font-weight: 500;
 }
@@ -448,7 +444,7 @@ defineExpose({
 .filesystem-auth-button.authorized { color: var(--color-success); }
 .filesystem-auth-button .app-icon { transform: translateY(1px); }
 /* 让 im 状态 + 按钮组始终靠右，标题按内容收缩；不再用 flex: 1 撑大标题，避免把右侧元素挤变形 */
-.popup-status { margin-left: auto; }
+.popup-status { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
 .popup-status { font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 4px; line-height: 1; }
 .status-dot { display: block; flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); transition: background .15s, box-shadow .15s; }
 .popup-status-label { display: inline-flex; align-items: center; line-height: 1; }
@@ -488,7 +484,6 @@ defineExpose({
 :deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
-:deep(.chat-messages.is-session-settling) { visibility: hidden; }
 .chat-main.is-expanded { --chat-assistant-bubble-max-width: 90%; }
 .chat-main.is-expanded :deep(.chat-messages .msg:is(.ai, .member) .msg-bubble) { font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
@@ -565,7 +560,7 @@ defineExpose({
    没法在模板里挂 class，数值直接写这里（hover/active 与全局 .press-fx 保持一致） */
 /* .msg-bubble.md-body 本体现在渲染于 GuguChatMessageRow.vue（子组件），这里必须整条选择器都用 :deep() 才能穿透组件边界匹配到，光把内层 a 包 :deep()
    不够——外层 class 名同样带着父组件的 scope 校验。 */
-:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button)) {
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button, .chat-file-card-download)) {
   display: inline-flex; align-items: center; gap: 5px;
   margin: 3px 4px 3px 0; padding: 5px 12px;
   font-size: 12.5px; font-weight: 600; text-decoration: none;
@@ -580,7 +575,8 @@ defineExpose({
     opacity var(--motion-hover-control) var(--motion-ease-standard);
   user-select: none;
 }
-:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button) strong) {
+:deep(.chat-object-link-icon) { inline-size: 1em; block-size: 1em; flex: none; fill: currentColor; }
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button, .chat-file-card-download) strong) {
   color: inherit;
 }
 /* 咕咕回复的 `---` 分隔线：实色次级文字色，全主题可辨，与预览窗 .tv-md hr 同口径 */
@@ -593,6 +589,88 @@ defineExpose({
   display: grid; align-items: stretch; gap: var(--space-sm);
   inline-size: 100%; max-inline-size: 420px; min-width: 0; margin-block: var(--space-sm);
 }
+:deep(.chat-folder-card-count) {
+  color: var(--content-secondary); font-size: var(--font-size-xs);
+}
+:deep(.chat-folder-card-previews) {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-xs); min-width: 0;
+}
+:deep(.chat-folder-card-previews:empty) { display: none; }
+:deep(.chat-folder-card-tile), :deep(.chat-folder-card-more) {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 1px solid var(--action-outline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card-solid);
+  color: var(--content-secondary);
+}
+:deep(.chat-folder-card-more) {
+  background: var(--surface-soft);
+  color: var(--content-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+:deep(.chat-file-card-actions) {
+  position: relative; break-inside: avoid; min-width: 0;
+  --chat-file-info-row-height: 52px;
+  anchor-scope: --chat-file-info;
+}
+:deep(.chat-object-cards.is-multiple > .chat-file-card-actions) { margin-block-end: var(--space-sm); }
+:deep(.chat-file-card-actions > .chat-object-card[href] .chat-object-file-identity) {
+  margin-inline-end: 36px;
+}
+:deep(.chat-file-card-actions > .chat-object-card:is([href], button) .chat-object-card-details) {
+  margin-inline-end: calc(var(--chat-file-info-row-height) + var(--space-xs));
+}
+:deep(.msg-bubble.md-body a.chat-file-card-download),
+:deep(.chat-attachment-card > button.chat-file-card-download) {
+  position: absolute; inset-inline-end: 14px; inset-block-end: 14px;
+  display: grid; place-items: center; inline-size: 30px; block-size: 30px;
+  margin: 0; padding: 0; border: 0; text-decoration: none;
+  border-radius: var(--radius-xs); color: var(--content-secondary);
+  background: var(--surface-soft);
+}
+:deep(.chat-file-card-actions:has(.chat-object-card-details) > .chat-file-card-download) {
+  inline-size: var(--chat-file-info-row-height); block-size: var(--chat-file-info-row-height);
+  inset-block-end: 16px;
+}
+:deep(.chat-file-card-actions:has(.chat-object-card-details):has(.chat-object-image-preview.is-loaded) > .chat-file-card-download) {
+  inset-block-end: 11px;
+}
+:deep(.chat-file-card-actions .chat-object-card-details > .chat-object-card-fact) {
+  box-sizing: border-box; min-block-size: var(--chat-file-info-row-height);
+}
+:deep(.chat-file-card-actions .chat-object-card-details > .chat-object-card-fact:first-child) {
+  anchor-name: --chat-file-info;
+}
+@supports (anchor-scope: --chat-file-info) {
+  :deep(.chat-file-card-actions:has(.chat-object-card-details) > .chat-file-card-download) {
+    position-anchor: --chat-file-info;
+    inset-block-start: anchor(start);
+    inset-block-end: anchor(end);
+    inline-size: anchor-size(--chat-file-info block, var(--chat-file-info-row-height));
+    block-size: auto;
+  }
+}
+:deep(.msg-bubble.md-body a.chat-file-card-download:hover),
+:deep(.chat-attachment-card > button.chat-file-card-download:hover) {
+  color: var(--action-primary); background: var(--action-soft);
+}
+:deep(.msg-bubble.md-body a.chat-file-card-download svg),
+:deep(.chat-attachment-card > button.chat-file-card-download svg) {
+  inline-size: 16px; block-size: 16px; display: block;
+}
+:deep(.chat-file-card-actions:not(:has(.chat-object-card:is([href], button))) > .chat-file-card-download) { display: none; }
+:deep(.chat-folder-card-tile img) {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0;
+}
+:deep(.chat-folder-card-tile img.is-loaded) { opacity: 1; }
 :deep(.chat-object-cards.is-multiple) {
   display: block; max-inline-size: none;
   column-width: 280px; column-gap: var(--space-sm);
@@ -600,25 +678,26 @@ defineExpose({
 :deep(.chat-object-cards.is-multiple > .chat-object-card) {
   break-inside: avoid; margin-block-end: var(--space-sm);
 }
-:deep(.msg-bubble.md-body a.chat-object-card) {
+:deep(.msg-bubble.md-body a.chat-object-card),
+:deep(.chat-attachment-card > button.chat-object-card) {
   position: relative; isolation: isolate;
   display: flex; flex-direction: column; justify-content: flex-start; gap: var(--space-sm);
   box-sizing: border-box; inline-size: 100%; min-width: 0; padding: 15px 16px;
   color: var(--content-primary);
-  background: linear-gradient(var(--chat-card-gradient-angle, 155deg), var(--action-soft), transparent 65%), var(--surface-card-solid);
+  background-color: var(--surface-card-solid);
   border: 1px solid var(--action-outline); border-radius: var(--card-radius);
   text-decoration: none; cursor: pointer;
   transition: background-color var(--motion-hover-control), border-color var(--motion-hover-control);
 }
-:deep(.msg-bubble.md-body a.chat-object-card[href]:hover) {
+:deep(.msg-bubble.md-body a.chat-object-card[href]:hover),
+:deep(.chat-file-card-actions:hover > .chat-object-card:is([href], button)) {
   color: var(--content-primary); opacity: 1;
   background-color: var(--card-surface-bg-hover); border-color: var(--action-primary);
 }
-:global(html[data-theme='light'] .chat-window .msg-bubble.md-body a.chat-object-card:is(:not([data-object-type="file"]), :has(> .chat-object-image-preview.is-loaded))) {
-  --chat-card-gradient-angle: 335deg;
-}
-:deep(.msg-bubble.md-body a.chat-object-card:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: -2px; }
-:deep(.msg-bubble.md-body a.chat-object-card:active) { opacity: 0.9; }
+:deep(.msg-bubble.md-body a.chat-object-card:focus-visible),
+:deep(.chat-attachment-card > button.chat-object-card:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+:deep(.msg-bubble.md-body a.chat-object-card:active),
+:deep(.chat-attachment-card > button.chat-object-card:active) { opacity: 0.9; }
 :deep(.msg-bubble.md-body a.chat-object-card.is-snapshot) { cursor: default; }
 :deep(.msg-bubble.md-body a.chat-object-card:not([href])) { cursor: default; }
 :deep(.chat-object-card-snapshot) {
@@ -772,16 +851,16 @@ defineExpose({
 :deep(.chat-project-status.is-pending) { color: var(--status-warning); background: var(--status-warning-bg); }
 :deep(.chat-project-status.is-active) { color: var(--status-info); background: var(--status-info-bg); }
 :deep(.chat-project-status.is-done) { color: var(--status-success); background: var(--status-success-bg); }
-:deep(.msg-bubble.md-body a[href^="gugu://open-object/"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button)),
-:deep(.msg-bubble.md-body a[href^="gugu://focus-canvas/"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button)),
-:deep(.msg-bubble.md-body a[href^="gugu://open-skill/"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button)) {
+:deep(.msg-bubble.md-body a[href^="gugu://open-object/"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button, .chat-file-card-download)),
+:deep(.msg-bubble.md-body a[href^="gugu://focus-canvas/"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button, .chat-file-card-download)),
+:deep(.msg-bubble.md-body a[href^="gugu://open-skill/"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button, .chat-file-card-download)) {
   margin-block: 0; padding: 0 0.55em; font-size: 0.9em; line-height: 1.5; vertical-align: baseline;
 }
-:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button):hover) {
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button, .chat-file-card-download):hover) {
   background: var(--gugu-chat-send-bg); border-color: var(--action-primary-hover);
   box-shadow: none; opacity: 1;
 }
-:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button):active) { transform: translateY(1px); opacity: 0.93; }
+:deep(.msg-bubble.md-body a[href^="gugu://"]:not(.chat-object-card, .chat-smart-row, .chat-smart-button, .chat-file-card-download):active) { transform: translateY(1px); opacity: 0.93; }
 
 /* .cb-* 扫码绑定弹窗样式已随 GuguChatBindDialog.vue 迁移 */
 /* .im-qr-cancel 已随 GuguChatImConnect.vue 迁移 */
@@ -822,13 +901,16 @@ defineExpose({
   white-space: nowrap; word-break: normal; overflow-wrap: normal;
 }
 :deep(.msg:is(.ai, .member) .msg-bubble) {
-  box-sizing: border-box; inline-size: var(--chat-assistant-bubble-max-width);
-  max-inline-size: 100%; min-inline-size: 0;
+  box-sizing: border-box; inline-size: fit-content;
+  max-inline-size: var(--chat-assistant-bubble-max-width); min-inline-size: 0;
+}
+:deep(.msg:is(.ai, .member) .msg-bubble:has(:is(table, pre, img, .chat-object-cards, .chat-smart-view, .chat-smart-stream, .md-mermaid))) {
+  inline-size: var(--chat-assistant-bubble-max-width);
 }
 :deep(.msg:is(.ai, .member) .msg-bubble),
 :deep(.md-view .chat-smart-view) {
   background: var(--gugu-chat-assistant-bg); border: 1px solid var(--gugu-chat-assistant-border);
-  box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
+  box-shadow: inset 0 1px 0 var(--gugu-chat-assistant-highlight);
 }
 :deep(.msg:is(.ai, .member) .msg-bubble) { border-bottom-left-radius: 4px; }
 :deep(.chat-assistant-content) {
@@ -892,12 +974,18 @@ defineExpose({
   gap: 8px;
 }
 :deep(.chat-smart-section) { display: grid; align-content: start; gap: 7px; padding-block-start: 8px; border-top: 1px solid var(--content-divider); }
+:deep(.chat-smart-section > .chat-smart-layout) { gap: 6px; }
+:deep(.chat-smart-section > .chat-smart-layout > .chat-smart-timeline) { border-block-start: 0; padding-block-start: 0; }
 :deep(.md-view .chat-smart-section > h4) { margin: 0; font-size: var(--font-size-sm); }
 :deep(.md-view .chat-smart-layout-view .chat-smart-row) {
   display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px;
   padding: 7px 8px; overflow-wrap: anywhere;
 }
 :deep(.chat-smart-list-detail) { color: var(--content-secondary); font-size: var(--font-size-xs); }
+:deep(.chat-smart-rows > li > .chat-smart-row > .chat-smart-list-detail) {
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+}
 :deep(.chat-smart-label),
 :deep(.chat-smart-text),
 :deep(.chat-smart-section h4) { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
@@ -1053,9 +1141,28 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   border-radius: var(--radius-sm); background: var(--surface-soft);
   font-size: var(--font-size-sm);
 }
+:deep(.chat-smart-section > .chat-smart-layout > .chat-smart-chart) { margin-block-start: -2px; }
 :deep(.chat-smart-chart figcaption) { color: var(--content-primary); font-weight: 600; }
 :deep(.chat-smart-chart-canvas) { position: relative; block-size: 198px; margin-block: 10px 8px; }
 :deep(.chat-smart-chart-canvas canvas) { color: var(--smart-view-color, var(--action-primary)); }
+:deep(.chat-smart-pie-legend:not([hidden])) {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px;
+  list-style: none; margin: 0; padding: 10px 0;
+  border-block-start: 1px solid var(--content-divider);
+}
+:deep(.chat-smart-pie-legend li) {
+  display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 2px 6px;
+  align-items: center; border-radius: var(--radius-xs); padding: 3px;
+  color: var(--content-secondary); overflow-wrap: anywhere;
+}
+:deep(.chat-smart-pie-legend li:hover) { background: var(--surface-soft-hover); }
+:deep(.chat-smart-pie-legend li > span:first-child) {
+  width: 8px; height: 8px; border-radius: 50%; grid-row: span 2;
+}
+:deep(.chat-smart-pie-legend strong) {
+  grid-column: 2; color: var(--content-primary); font-size: var(--font-size-md);
+  font-variant-numeric: tabular-nums;
+}
 :deep(.chat-smart-chart details) { border-block-start: 1px solid var(--content-divider); padding-block-start: 7px; }
 :deep(.chat-smart-chart summary) {
   display: flex; align-items: center; gap: var(--space-1); list-style: none;
@@ -1248,7 +1355,13 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.msg-speaker-bird) {
   flex: none; inline-size: 16px; block-size: 16px;
   background: currentColor;
-  mask: url('../../../assets/brand/gugu-bird-mask.png') center / contain no-repeat;
+  mask: url('/brand/bird-solid.svg') center / contain no-repeat;
+}
+:deep(.msg-speaker-subagent-duration) {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 /* 引用/回复预览条：浅色小字，跟正文气泡区分开——只是提示"引用了什么"，不是正文。
    截到 8 行，超出部分靠 hover 的原生 title 提示看全文，避免长引用只剩一小段看不出内容。 */
@@ -1286,7 +1399,8 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 
 /* send_link_buttons 复用 ask_user 的气泡与按钮契约：链接仍是普通导航，不产生交互回调。 */
 :deep(.msg-link-buttons) {
-  inline-size: var(--chat-assistant-bubble-max-width); box-sizing: border-box; margin: 6px 0 0; padding: 14px;
+  inline-size: var(--chat-assistant-bubble-max-width); max-inline-size: 100%; min-inline-size: 0;
+  box-sizing: border-box; margin: 6px 0 0; padding: 14px;
   border: 1px solid var(--border-default); border-radius: var(--card-radius);
   background: var(--surface-card-solid); color: var(--content-primary);
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
@@ -1294,7 +1408,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.msg-link-buttons:first-child) { margin-top: 0; }
 :deep(.msg-link-buttons .interaction-body) {
   margin-top: 0; color: var(--content-secondary); font-size: var(--font-size-sm);
-  line-height: var(--line-height-body); white-space: pre-wrap;
+  line-height: var(--line-height-body); white-space: pre-wrap; overflow-wrap: anywhere;
 }
 :deep(.msg-link-buttons .interaction-actions) {
   display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%;
@@ -1308,48 +1422,26 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.msg-link-buttons .interaction-option .app-action-button-content) {
   display: block; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere;
 }
-/* 按下反馈来自全局 .press-fx（模板里已加）——只要点击下沉，不要悬停抬起：
-   这条挤在其它消息气泡中间，抬起会显得跟旁边气泡割裂 */
-:deep(.msg-file) {
-  display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer;
-  max-width: 100%; box-sizing: border-box;
-  /* 和 AI 气泡同款：主题化半透明表面 + 左下角小尾巴 + 内高光。 */
-  background: var(--gugu-chat-file-bg); border: 1px solid var(--gugu-chat-file-border);
-  border-radius: 14px; border-bottom-left-radius: 5px;
-  box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight), var(--gugu-chat-file-shadow);
-  /* transform/opacity 是按下反馈(.press-fx)要用的——跟这里自己的 transition 写一起，
-     避免两条规则的 transition 互相整体覆盖、丢掉其中一份。
-     box-shadow 必须在列：hover 换阴影（highlight/shadow 双 token），漏列=瞬跳。 */
-  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease,
-    transform 0.15s ease, opacity 0.15s ease;
+/* 聊天附件沿用对象卡片样式，预先留出图片区域。 */
+:deep(.msg-files:has(.chat-attachment-card)) { inline-size: min(320px, 88%); }
+:deep(.chat-attachment-card) { inline-size: 100%; }
+:deep(.chat-attachment-card > button.chat-object-card) {
+  text-align: start; font: inherit;
 }
-:deep(.msg-file.press-fx:hover) {
-  background: var(--gugu-chat-file-bg-hover);
-  border-color: var(--gugu-chat-file-border-hover);
-  /* 文件气泡自己的 hover 阴影，避免全局 press-fx 规则覆盖主题。 */
-  box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight-hover), var(--gugu-chat-file-shadow-hover);
+:deep(.chat-attachment-card > button.chat-file-card-download) {
+  box-sizing: border-box; cursor: pointer;
 }
-:deep(.msg-file-ext) {
-  position: relative; overflow: hidden;
-  flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700; color: var(--gugu-chat-user-fg); letter-spacing: 0.02em;
-  background: var(--gugu-chat-file-ext-bg);
+:deep(.chat-attachment-preview) {
+  position: relative; display: grid; place-items: center; inline-size: 100%;
+  aspect-ratio: 4 / 3; overflow: hidden; border-radius: var(--radius-sm);
+  color: var(--content-tertiary); background: var(--surface-soft);
 }
-/* 图片附件：缩略图覆盖 ext 角标；加载失败时 @error 移除自身，露出底下角标 */
-:deep(.msg-file-thumb) {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; display: block;
+:deep(.chat-attachment-preview img.is-loaded[src]) {
+  position: absolute; inset: 0; inline-size: 100%; block-size: 100%;
+  object-fit: contain; background: var(--surface-soft);
 }
-:deep(.msg-file-info) { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-:deep(.msg-file-name) { display: block; font-size: 15px; font-weight: 500; line-height: var(--line-height-ui); color: var(--gugu-chat-file-name); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:deep(.msg-file-meta) { font-size: 12px; line-height: var(--line-height-ui); color: var(--gugu-chat-file-meta); }
-:deep(.msg-file-dl) {
-  flex-shrink: 0; color: var(--action-primary); cursor: pointer; border-radius: 4px; padding: 3px;
-  margin: -3px; box-sizing: content-box; transition: background 0.12s, color 0.12s;
-}
-:deep(.msg-file-dl:hover) { background: var(--gugu-chat-file-download-hover); color: var(--action-primary); }
-/* 语音条：迷你播放条（播放钮 + 波形 + 时长），和文件卡同款气泡质感 */
+:deep(.chat-attachment-preview img:not(.is-loaded)) { position: absolute; inset: 0; width: 100%; height: 100%; visibility: hidden; }
+/* 语音条保留独立的迷你播放布局。 */
 :deep(.msg-voice) {
   display: inline-flex; align-items: center; gap: 9px; padding: 8px 13px; cursor: pointer;
   max-width: 100%; box-sizing: border-box; user-select: none;
@@ -1370,7 +1462,6 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.msg-voice .mv-dur) { font-size: 12.5px; color: var(--gugu-chat-voice-duration); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 /* 用户(右侧)发的附件卡：气泡尾巴翻到右下、左下回正常圆角、容器右对齐 */
 :deep(.msg.user .msg-files) { align-items: flex-end; }
-:deep(.msg.user .msg-file) { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
 :deep(.msg.user .msg-voice) { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
 :deep(.msg-footer) {
   display: flex; align-items: center; gap: 4px;

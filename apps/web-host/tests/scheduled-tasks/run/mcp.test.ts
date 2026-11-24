@@ -58,7 +58,7 @@ test('定时 MCP 经 SDK 执行，按任务及当前确认模式授权，并拒�
     assert.ok(address && typeof address !== 'string')
     await admin.query(`CREATE SCHEMA "${schema}"`)
     await pool.query(`CREATE TABLE scheduled_tasks (id int PRIMARY KEY,user_id uuid,enabled boolean,name text,payload text,
-      channels text,delivery_targets jsonb,authorized_tools jsonb,email_attachment_file_ids jsonb,workspace_id int,
+      channels text,delivery_targets jsonb,authorized_tools jsonb,email_attachment_file_paths jsonb,workspace_id int,
       filesystem_authorization_grant_id int,schedule_kind text,end_at timestamptz,last_run_failed boolean);
       CREATE TABLE user_mcp_servers(id uuid PRIMARY KEY,user_id uuid,scope text,name text,transport text,endpoint text,
         encrypted_endpoint text,endpoint_nonce text,encrypted_endpoint_key text,endpoint_key_version int,command text,credential_slots jsonb,

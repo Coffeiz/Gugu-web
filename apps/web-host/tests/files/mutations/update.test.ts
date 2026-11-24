@@ -11,16 +11,16 @@ test('Node Host 对文件 PATCH 执行认证并传递字段存在性与撤销上
   }},fileUpdates:{async update(...args){calls.push(args);return {id:5,version:2}}},
   })
   try{
-    const denied=await app.inject({method:'PATCH',url:'/api/v1/files/5',payload:{version:1,displayName:'新名称',projectId:null}})
+    const denied=await app.inject({method:'PATCH',url:'/api/v1/files/by-path?path=owner%2Fpersonal%2Fnote.txt',payload:{version:1,displayName:'新名称',projectId:null}})
     assert.equal(denied.statusCode,401)
-    const response=await app.inject({method:'PATCH',url:'/api/v1/files/5',headers:{authorization:`Bearer ${createUserToken(userId,1,secret)}`,'x-undo-context-id':'files-tab'},
+    const response=await app.inject({method:'PATCH',url:'/api/v1/files/by-path?path=owner%2Fpersonal%2Fnote.txt',headers:{authorization:`Bearer ${createUserToken(userId,1,secret)}`,'x-undo-context-id':'files-tab'},
       payload:{version:1,displayName:'新名称',projectId:null}})
     assert.equal(response.statusCode,200)
     assert.equal(calls.length,1);assert.equal(calls[0]![0],userId)
-    assert.equal(calls[0]![1],5)
-    const input=calls[0]![2] as {version:number;displayName:string;folderSet:boolean;projectSet:boolean;projectId:null;workspaceDirectorySet:boolean}
+    assert.equal(calls[0]![1],'owner/personal/note.txt')
+    const input=calls[0]![2] as {version:number;displayName:string;folderPathSet:boolean;projectSet:boolean;projectId:null;workspaceDirectorySet:boolean}
     assert.equal(input.version,1);assert.equal(input.displayName,'新名称');assert.equal(input.projectId,null)
-    assert.equal(input.folderSet,false);assert.equal(input.projectSet,true);assert.equal(input.workspaceDirectorySet,false)
+    assert.equal(input.folderPathSet,false);assert.equal(input.projectSet,true);assert.equal(input.workspaceDirectorySet,false)
     assert.equal((calls[0]![3] as {undoContextId:string}).undoContextId,'files-tab')
   }finally{await app.close()}
 })

@@ -1,8 +1,8 @@
 import { CoreError, dataContext } from '../contracts/index.js'
 
 export interface AccountDeletionPorts {
-  readOwnedFileIds(ownerId: string): Promise<readonly number[] | null>
-  removeThumbnails(ownerId: string, fileIds: readonly number[]): Promise<void>
+  accountExists(ownerId: string): Promise<boolean>
+  removeThumbnails(ownerId: string): Promise<void>
   removeStoragePrefixes(ownerId: string): Promise<number>
   clearEphemeralData(ownerId: string): Promise<void>
   deleteDatabaseUser(ownerId: string): Promise<boolean>
@@ -14,10 +14,9 @@ export interface AccountDeletionPorts {
 export function createAccountDeleter(ports: AccountDeletionPorts) {
   return async (rawOwnerId: string): Promise<number> => {
     const ownerId = dataContext(rawOwnerId).ownerId
-    const fileIds = await ports.readOwnedFileIds(ownerId)
-    if (fileIds === null) throw new CoreError('not_found', '用户不存在')
+    if (!await ports.accountExists(ownerId)) throw new CoreError('not_found', '用户不存在')
 
-    await ports.removeThumbnails(ownerId, fileIds)
+    await ports.removeThumbnails(ownerId)
 
     let storageObjectsRemoved: number
     try {

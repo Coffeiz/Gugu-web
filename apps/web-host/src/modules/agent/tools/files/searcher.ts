@@ -3,25 +3,19 @@ import { CoreError } from '@gugu/core'
 import type { Pool } from 'pg'
 import { createSearcherReferenceSearch, createSearcherReferenceShell, type RunIdentity } from '@gugu/core/agent'
 import { createOwnedTextReader } from '@gugu/core/tools'
-import { isOwnedFileStorageKey } from '../../../files/store.js'
 import { createWorkspaceFileReads } from '../../../workspaces/files.js'
 import { parseWorkspaceFileReference } from '../../context/references.js'
-import { createWebAgentFileReadPort, webAgentFileTextType } from './read.js'
+import { webAgentFileTextType } from './read.js'
 
 function fileReference(value: unknown) {
-  if (!value || typeof value !== 'object' || !('type' in value) || !['file', 'folder'].includes(String(value.type)) || !('id' in value)) return null
-  const raw = value.id
-  const workspace = value.type === 'file' ? parseWorkspaceFileReference(raw) : null
-  if (workspace) return { ref: workspace.key, workspace }
-  const id = typeof raw === 'string' && /^\s*\+?\d+\s*$/u.test(raw) ? Number(raw) : raw
-  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1 || id > 2147483647) return null
-  return value.type === 'folder' ? { ref: `folder:${id}`, folderId: id } : { ref: String(id), id }
+  if (!value || typeof value !== 'object' || !('type' in value) || value.type !== 'file' || !('id' in value)) return null
+  return parseWorkspaceFileReference(value.id)
 }
 
 export function createWebSearcherFileAccess(pool: Pick<Pool, 'query'>, storageRoot: string) {
   const workspaceFiles = createWorkspaceFileReads(pool, storageRoot)
   const workspacePrefix = 'searcher-workspace-ref:'
-  async function listed(parent: RunIdentity, refs: readonly string[], signal: AbortSignal, fileId?: number, expandFolders = true, query = '') {
+  async function listed(parent: RunIdentity, refs: readonly string[], signal: AbortSignal) {
     signal.throwIfAborted()
     if (!refs.length) return []
     const { rows: [row] } = await pool.query<{ references_json: unknown }>(`
@@ -32,47 +26,16 @@ export function createWebSearcherFileAccess(pool: Pick<Pool, 'query'>, storageRo
     [parent.ownerId, parent.sessionId, parent.runId])
     if (!Array.isArray(row?.references_json)) return []
     const selected = new Set(refs)
-    const port = createWebAgentFileReadPort(pool, storageRoot, { identity: parent })
-    const results = new Map<string, { ref: string; label: string; folder?: true; workspace?: NonNullable<ReturnType<typeof parseWorkspaceFileReference>> }>()
+    const results = new Map<string, { ref: string; label: string; workspace: NonNullable<ReturnType<typeof parseWorkspaceFileReference>> }>()
     for (const raw of row.references_json.slice(0, 6)) {
-      const entry = fileReference(raw)
-      if (!entry || !selected.has(entry.ref) || results.has(entry.ref)) continue
-      if (entry.folderId !== undefined) {
-        const folder = await pool.query('SELECT 1 FROM folders WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL',
-          [entry.folderId, parent.ownerId])
-        if (!folder.rowCount) continue
-        results.set(entry.ref, { ref: entry.ref, label: '', folder: true })
-        if (!expandFolders) continue
-        const files = await pool.query<{ id: number; display_name: string; ext: string; storage_key: string }>(`
-          WITH RECURSIVE delegated AS (
-            SELECT id,project_id,workspace_directory_id FROM folders WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL
-            UNION
-            SELECT f.id,f.project_id,f.workspace_directory_id FROM folders f JOIN delegated d ON f.parent_id=d.id
-            WHERE f.user_id=$2 AND f.deleted_at IS NULL AND f.project_id IS NOT DISTINCT FROM d.project_id
-              AND f.workspace_directory_id IS NOT DISTINCT FROM d.workspace_directory_id
-          )
-          SELECT f.id,f.display_name,f.ext,f.storage_key FROM files f JOIN delegated d ON f.folder_id=d.id
-          WHERE f.user_id=$2 AND f.deleted_at IS NULL AND f.project_id IS NOT DISTINCT FROM d.project_id
-            AND f.workspace_directory_id IS NOT DISTINCT FROM d.workspace_directory_id
-            AND ($3::integer IS NULL OR f.id=$3)
-            AND ($4::text='' OR strpos(lower(f.display_name || '.' || f.ext), lower($4))>0) ORDER BY f.id LIMIT 100`,
-        [entry.folderId, parent.ownerId, fileId ?? null, query])
-        for (const row of files.rows) {
-          signal.throwIfAborted()
-          if (isOwnedFileStorageKey(parent.ownerId, row.storage_key))
-            results.set(String(row.id), { ref: String(row.id), label: `${row.display_name}.${row.ext}` })
-        }
-      } else if (entry.workspace) {
-        const { directory, relativePath, identity } = entry.workspace
-        try {
-          const file = await workspaceFiles.reference(parent.ownerId, directory, relativePath, identity)
-          results.set(entry.ref, { ref: entry.ref, label: file.label, workspace: entry.workspace })
-        } catch (error) {
-          if (!(error instanceof CoreError) || error.code !== 'not_found') throw error
-        }
-      } else if (entry.id !== undefined) {
-        const file = await port.resolveOwnedFile(parent, entry.id, signal)
-        if (file) results.set(entry.ref, { ref: entry.ref, label: file.name })
+      const workspace = fileReference(raw)
+      if (!workspace || !selected.has(workspace.key) || results.has(workspace.key)) continue
+      const { directory, relativePath, identity, key } = workspace
+      try {
+        const file = await workspaceFiles.reference(parent.ownerId, directory, relativePath, identity)
+        results.set(key, { ref: key, label: file.label, workspace })
+      } catch (error) {
+        if (!(error instanceof CoreError) || error.code !== 'not_found') throw error
       }
       signal.throwIfAborted()
     }
@@ -80,18 +43,17 @@ export function createWebSearcherFileAccess(pool: Pick<Pool, 'query'>, storageRo
   }
   return {
     async authorize(parent: RunIdentity, refs: readonly string[]) {
-      const allowed = new Set((await listed(parent, refs, new AbortController().signal, undefined, false)).map(file => file.ref))
+      const allowed = new Set((await listed(parent, refs, new AbortController().signal)).map(file => file.ref))
       return refs.every(ref => allowed.has(ref))
     },
     tools(parent: RunIdentity, child: RunIdentity, refs: readonly string[],
       authorizeShell: (signal: AbortSignal) => Promise<boolean>) {
       if (!refs.length) return []
-      const port = createWebAgentFileReadPort(pool, storageRoot, { identity: child })
       const scope = new Set(refs)
-      const search = createSearcherReferenceSearch(async (signal, query) => (await listed(parent, refs, signal, undefined, true, query)).filter(item => !item.folder).map(({ ref, label }) => ({ ref, label })))
+      const search = createSearcherReferenceSearch(async signal => (await listed(parent, refs, signal)).map(({ ref, label }) => ({ ref, label })))
       const reader = createOwnedTextReader({
-        async openFile(root, path) {
-          if (!path.startsWith(workspacePrefix)) return port.openFile(root, path)
+        async openFile(_root, path) {
+          if (!path.startsWith(workspacePrefix)) return null
           const ref = path.slice(workspacePrefix.length)
           if (!scope.has(ref)) return null
           const [entry] = await listed(parent, [ref], new AbortController().signal)
@@ -110,17 +72,11 @@ export function createWebSearcherFileAccess(pool: Pick<Pool, 'query'>, storageRo
           return { name: entry.label, root: storageRoot, relativePath: workspacePrefix + ref,
             ...webAgentFileTextType(extname(entry.label).slice(1)) }
         },
-        async resolveOwnedFile(identity, id, signal) {
-          const ref = String(id)
-          if (!Number.isInteger(id) || id < 1 || id > 2147483647
-            || !(await listed(parent, refs, signal, id)).some(entry => entry.ref === ref)) return null
-          return port.resolveOwnedFile(identity, id, signal)
-        },
       })
       const shell = createSearcherReferenceShell(async (ref, toolScope, maxOutputChars) => {
         if (!await authorizeShell(toolScope.signal))
           return { kind: "completed", successful: false, executed: false, mutated: false, value: { error: "Shell 权限已失效" } }
-        const result = await reader(ref.length === 24 ? { file: ref } : { file_id: Number(ref) }, toolScope)
+        const result = await reader({ file: ref }, toolScope)
         if (result.kind !== "completed" || !result.successful) return result
         const value = result.value as { content: string; name: string }
         return { ...result, executed: true, value: { stdout: value.content.slice(0, maxOutputChars),

@@ -12,7 +12,7 @@ type Attempt<Artifact> = Outcome<Artifact> & {
 
 const fileDeliveryChannels = new Set(['email', 'feishu', 'qq', 'wechat', 'telegram', 'im'])
 
-/** 只有可接收结果文件的渠道才向定时 Agent 提供 send_file。 */
+/** 只有可接收结果文件的渠道才向定时 Agent 提供 send_item。 */
 export function scheduledTaskSupportsFileDelivery(channels: readonly string[]): boolean {
   return channels.some(channel => fileDeliveryChannels.has(channel))
 }
@@ -88,7 +88,7 @@ function buildPrompt(task: ScheduledTaskExecutionPlan, time: string): string {
     `现在是 ${time}，用户设置了一条定时任务：${task.payload}`,
     `本轮消息将由系统投递到：${describeChannels(task.channels)}。`,
     '请以咕咕的身份完成这项任务，只生成要发给用户的正文。文字部分不需要你自己调用 IM 发送/推送工具（系统会自动把正文投递到已配置的渠道），也不要提及渠道、推送、工具不可用或无法发送。',
-    '如果任务需要配图/发图，只有在本轮存在可用图片来源或生成能力时才通过 send_file 实际发送；不要在正文里用 ![]() 这类 markdown 图片语法或「[图片]」占位符——那样发不出真图，图片必须靠 send_file 实际发送。',
+    '如果任务需要配图/发图，只有在本轮存在可用图片来源或生成能力时才通过 send_item 实际发送；不要在正文里用 ![]() 这类 markdown 图片语法或「[图片]」占位符——那样发不出真图，图片必须靠 send_item 实际发送。',
     '汇报要求：结果必须具体——有数据的给实际数字、日期、名称，不要空泛地说「已完成」「查了一下」；查不到或没做完的部分直接说明原因，不要为了完整而编造或凑数。任务本身很简单时，一两句话自然汇报即可，不要强行套条目。',
   ].join('\n')
 }

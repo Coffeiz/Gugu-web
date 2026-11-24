@@ -30,7 +30,7 @@ export function useChatAttachments(options: {
       for (const file of files) {
         try {
           const meta: ChatFile = await (options.uploadAttachment ?? agentApi.uploadAttachment)(file, opts.voice)
-          // 图片附件：本地 objectURL 立即出预览（暂存附件无 file_id，取不到服务端缩略图）
+          // 图片附件：本地 objectURL 立即出预览（暂存附件没有文件库路径，取不到服务端缩略图）
           if (IMG_EXTS.has((meta.ext || '').toLowerCase())) meta._thumbUrl = URL.createObjectURL(file)
           pendingAtt.value.push(meta)
           uploaded++

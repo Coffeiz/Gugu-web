@@ -13,11 +13,19 @@ export interface ImReceivedMessage {
     readonly kind: 'message.received';
     readonly scope: ImConversationScope;
     readonly eventId: string;
+    readonly platformSentMs?: number;
+    readonly eventReceivedMs?: number;
     readonly platformMessageId?: string;
     readonly platformUserName?: string;
+    readonly platformBotUserId?: string;
+    readonly otherBotNames?: readonly {
+        id: string;
+        name: string;
+    }[];
     readonly text: string;
     readonly quotedText: string | null;
     readonly botMentioned: boolean;
+    readonly qqAtEventOnly?: boolean;
 }
 /** 重新读取序列化事件时，核对完整结构和可信连接归属。 */
 export declare function parseImReceivedMessage(connection: ImConnectionIdentity, value: unknown): ImReceivedMessage;

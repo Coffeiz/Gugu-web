@@ -35,6 +35,14 @@ test('同群引用他人恢复正文/附件和reply sender；重建prepare服务
   assert.equal(reply?.payload.quoted_text, '合成原消息'); assert.equal(reply?.payload.reply_target_sender_id, 'member-a')
   assert.equal(reply?.payload.reply_target_is_bot, false)
   assert.equal(reply?.mediaItems[0]?.source, 'quote'); assert.equal(reply?.mediaItems[0]?.sourcePlatformMessageId, 'idx-one')
+  const inlineText = parseQqMessage('GROUP_AT_MESSAGE_CREATE', {
+    id: 'inline-reply', content: '看一下这张图', group_openid: scope.chatId,
+    author: { user_openid: 'member-b' }, message_scene: { ext: ['msg_ref_idx=idx-one'] },
+    quote: { content: 'QQ 内联引用正文' },
+  }, { ownerId: owner, botId: scope.botId })!
+  const prepared = await reopened.prepare({ ...scope, platformUserId: 'member-b' }, inlineText, signal)
+  assert.equal(prepared?.payload.quoted_text, 'QQ 内联引用正文')
+  assert.equal(prepared?.mediaItems[0]?.item.url, 'https://cdn.example.test/file?sign=synthetic')
   assert.equal(f.requests.length, 0); assert.ok(!JSON.stringify(f.db.calls).includes('合成原消息'))
   const otherGroup = await reopened.prepare({ ...scope, chatId: 'group-b' }, parsed('other', '引用', { group: 'group-b', reference: 'idx-one' }), signal)
   assert.equal(otherGroup?.payload.quoted_text, null); assert.equal(otherGroup?.payload.reply_target_sender_id, null)

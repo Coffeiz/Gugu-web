@@ -31,7 +31,7 @@ test('PostgreSQL 项目更新按 owner/version CAS，事务内更新目录键和
       )
     `)
     await pool.query(`CREATE TABLE files (
-      id serial PRIMARY KEY, user_id uuid NOT NULL, project_id integer, storage_key text NOT NULL
+      id serial PRIMARY KEY, user_id uuid NOT NULL, project_id integer, path text NOT NULL
     )`)
     await pool.query('CREATE TABLE project_file_counts (project_id integer PRIMARY KEY, file_count integer NOT NULL)')
     await pool.query(`
@@ -56,7 +56,7 @@ test('PostgreSQL 项目更新按 owner/version CAS，事务内更新目录键和
     )
     const projectId = inserted.rows[0]!.id
     const oldPrefix = `${ownerId}/项目文件/2026/11/旧项目 #${projectId}`
-    await pool.query('INSERT INTO files (user_id, project_id, storage_key) VALUES ($1, $2, $3)', [
+    await pool.query('INSERT INTO files (user_id, project_id, path) VALUES ($1, $2, $3)', [
       ownerId, projectId, `${oldPrefix}/资料.txt`,
     ])
     await pool.query('INSERT INTO project_file_counts (project_id, file_count) VALUES ($1, 1)', [projectId])
@@ -71,8 +71,8 @@ test('PostgreSQL 项目更新按 owner/version CAS，事务内更新目录键和
     const runtime = createPostgresProjectUpdateRuntime(
       pool,
       async (_owner, oldPath, newPath) => {
-        const current = await pool.query('SELECT storage_key FROM files WHERE user_id=$1 AND project_id=$2', [ownerId, projectId])
-        assert.equal(current.rows[0]?.storage_key, `${oldPath}/资料.txt`, '未提交的路径更新不能被其它连接看到')
+        const current = await pool.query('SELECT path FROM files WHERE user_id=$1 AND project_id=$2', [ownerId, projectId])
+        assert.equal(current.rows[0]?.path, `${oldPath}/资料.txt`, '未提交的路径更新不能被其它连接看到')
         await assert.rejects(pool.query('SELECT id FROM files WHERE user_id=$1 AND project_id=$2 FOR UPDATE NOWAIT', [ownerId, projectId]), { code: '55P03' })
         renames.push([oldPath, newPath])
       },
@@ -81,6 +81,7 @@ test('PostgreSQL 项目更新按 owner/version CAS，事务内更新目录键和
         assert.equal(committed.rows[0]?.version, 8, '更新事件必须在项目事务提交后发布')
         events.push(event)
       },
+      async () => 1,
     )
     const update = createProjectUpdater(runtime)
     const result = await update(ownerId, projectId, { version: 7, name: '新项目', currentStage: 's1', status: 'done' }, {
@@ -103,12 +104,12 @@ test('PostgreSQL 项目更新按 owner/version CAS，事务内更新目录键和
     assert.equal(storedTimes.updated_at, '2026-11-14 00:30:00.123+08')
     assert.equal(storedTimes.done_at, '2026-11-14 00:30:00+08')
     await pool.query('UPDATE projects SET summary=$2, priority=$3 WHERE id=$1', [projectId, '旧摘要', 'high'])
-    const agent = createAgentProjectUpdater(createPostgresProjectUpdateRuntime(pool, async () => {}, async () => {}))
+    const agent = createAgentProjectUpdater(createPostgresProjectUpdateRuntime(pool, async () => {}, async () => {}, async () => 1))
     await agent(ownerId, projectId, { summary: null, priority: null, current_stage: 's0' })
     const agentRow = await pool.query('SELECT summary,priority,current_stage,version FROM projects WHERE id=$1', [projectId])
     assert.deepEqual(agentRow.rows[0], { summary: null, priority: null, current_stage: 's0', version: 9 })
-    const file = await pool.query('SELECT storage_key FROM files WHERE project_id = $1', [projectId])
-    assert.equal(file.rows[0]?.storage_key, `${ownerId}/项目文件/2026/11/新项目 #${projectId}/资料.txt`)
+    const file = await pool.query('SELECT path FROM files WHERE project_id = $1', [projectId])
+    assert.equal(file.rows[0]?.path, `${ownerId}/项目文件/2026/11/新项目 #${projectId}/资料.txt`)
     const undo = await pool.query('SELECT * FROM undo_operations WHERE undo_context_id = $1', ['tab-update'])
     assert.equal(undo.rowCount, 1)
     assert.equal(undo.rows[0]!.resource, 'projects')

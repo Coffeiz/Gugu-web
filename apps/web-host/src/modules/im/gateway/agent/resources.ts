@@ -1,9 +1,14 @@
+import { createImSendFileTool } from '@gugu/core/tools'
+import { createPostgresFileReadOperations } from '../../../files/browse.js'
+import { createImFileTools } from './files.js'
 import { createSafeEgressSettingsReader } from '../../../admin/network.js'
 import { resolveConfigOverridePath } from '../../../../adapters/config/config-override-file.js'
 import { createWebAgentSearchPorts } from '../../../agent/tools/search.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { Pool } from 'pg'
+import { normalizeImChartAppearance } from '@gugu/core'
+import type { ChartRequest } from '@gugu/charts/render'
 import { createAgentCalendarReader, createKyselyCalendarAgentReadPort, createKyselyCalendarReadPort } from '@gugu/core/calendar'
 import { createAgentMindReader, createSqlMindCanvasReader } from '@gugu/core/mind'
 import type { SqlDataRuntime } from '@gugu/core/data'
@@ -11,9 +16,9 @@ import { buildAgentStaticPrompt, createCompactionSummarizer, projectPersistentTo
   type AgentObservationPort, type PreparedToolDefinition, type CanonicalRunContext, type CanonicalRunPreparationPorts, type RunIdentity, type Json } from '@gugu/core/agent'
 import { ProviderError, ProviderStreamSanitizer, adapterFor, capabilitySnapshot, stripThinking, type ProviderWire, type ProviderTransport } from '@gugu/core/providers'
 import { createNodeProviderTransportFactory } from '@gugu/core/providers/node'
-import { imCanUseTool, imDisplayPolicy, imActorInputFromPayload, type ImActor } from '@gugu/core/im/access'
+import { imDisplayPolicy, imActorInputFromPayload, type ImActor } from '@gugu/core/im/access'
+import { imOwnerPrivate } from '@gugu/core/agent/scenes/im'
 import type { ImAgentDispatchInput } from '../../../agent/run/dispatch.js'
-import { createPostgresFileReadOperations } from '../../../files/browse.js'
 import { createMcpAgentToolPorts, type AgentMcpToolPortsOptions } from '../../../agent/tools/mcp/ports.js'
 import type { createMcpRuntime } from '../../../mcp/runtime.js'
 import { createAgentToolRegistry, type ImOwnerToolFactory } from '../../../agent/tools/registry.js'
@@ -97,6 +102,7 @@ export function imProductionProvider(options: Pick<ImProductionResourcesOptions,
 }
 
 export interface ImProductionResourcesOptions {
+  filesystemAuthorizationEnabled?(): boolean
   pool: Pool; core: SqlDataRuntime; secretKey: string; storageRoot: string; promptRoot: string; redisUrl: string
   imOwnerTools?: ImOwnerToolFactory
   mcpTools?: { directory: AgentMcpToolPortsOptions['directory']; dispatch: ReturnType<typeof createMcpRuntime>['dispatchForAgent'] }
@@ -138,7 +144,7 @@ export async function createImProductionDelivery(options: DeliveryOptions, input
   let presentationAllowed=true
   const authorize=async()=>presentationAllowed&&await currentAuthorization()
   const common = { pool: options.pool, secretKey: options.secretKey, storageRoot: options.storageRoot, identity, actor, scope, messageIds,
-    payload: route.payload, files: createPostgresFileReadOperations(options.pool, null, options.storageRoot), sender: options.sender, authorize }
+    payload: route.payload, sender: options.sender, authorize }
   // 取消的Run仍须能创建Harness并提交终态；只有实际需要发送时才读取发送材料。
   let actual: ReturnType<typeof createImRunSender> | undefined
   const get = () => actual ??= createImRunSender({ ...common, controls: options.controls, publicAppUrl: options.publicAppUrl,
@@ -151,12 +157,17 @@ export async function createImProductionDelivery(options: DeliveryOptions, input
   const wire = options.sender(binding)
   if (!wire || wire.platform !== actor.platform) throw unavailable()
   let preferences:unknown={}
-  if(wire.platform!=='feishu'&&scope.chatType==='c2c'){
+  if(wire.platform!=='wechat'||scope.chatType==='c2c'){
     try{
       const row=(await options.pool.query('SELECT data_json FROM user_preferences WHERE user_id=$1',[identity.ownerId])).rows[0]
       preferences=typeof row?.data_json==='string'?JSON.parse(row.data_json):row?.data_json??{}
     }catch{options.diagnose?.('im_preferences_unavailable')} // Python展示偏好读取失败同样采用all/false，不影响身份权限。
   }
+  const toolLocale = input.input.locale ?? (preferences && typeof preferences === 'object'
+    && 'locale' in preferences && typeof preferences.locale === 'string' ? preferences.locale : null)
+  const chartAppearance = normalizeImChartAppearance(preferences)
+  const renderCharts = async (request: ChartRequest, signal?: AbortSignal) =>
+    (await import('../../../agent/charts.js')).renderAgentCharts({ ...request, theme: chartAppearance }, signal)
   const display=imDisplayPolicy(actor.platform,scope.chatType,preferences)
   if (display.toolDisplay !== 'off')
     sender.compactionNotice = async value => (await get()).compactionNotice!(value)
@@ -173,9 +184,9 @@ export async function createImProductionDelivery(options: DeliveryOptions, input
   let streamFactory: ImAgentReconstructionResources['streamFactory'] = wire.platform === 'feishu' && feishuStreaming ? (receipts, current) => {
     if (!wire.client) throw unavailable()
     return createPersistentFeishuProjection({ identity, receiveId: scope.chatId ?? scope.platformUserId,
-      policyVersion: digest([input.input.accessVersion, actor.chatType]), receipts, client: wire.client,
+      policyVersion: digest([input.input.accessVersion, actor.chatType]), receipts, client: wire.client, renderCharts,
       authorize: async () => await authorize() && await current(),
-      toolSummary: display.toolDisplay==='all'?{chatType:'p2p',includeDetails:false,sanitize:redactToolError}:undefined,
+      toolSummary: display.toolDisplay==='all'?{chatType:'p2p',includeDetails:false,sanitize:redactToolError,locale:toolLocale}:undefined,
       acceptedEvidence: { scope, recipient: scope.chatId ?? scope.platformUserId, source: () => createImRunScope(common).read() } })
   } : undefined
   if(wire.platform==='qq'&&scope.chatType==='c2c'){
@@ -199,7 +210,7 @@ export async function createImProductionDelivery(options: DeliveryOptions, input
         const permitted=async()=>{
           try{return await authorize()&&await current()&&stableJson(await readTrustedQqReplySettings(options.pool,binding,'c2c'))===stableJson(settings)}catch{return false}
         }
-        return createPersistentQqProjection({identity,receipts,sender:wire.sender,target,
+        return createPersistentQqProjection({identity,receipts,sender:wire.sender,target,renderCharts,
           ...(typeof legacyMessageId==='string'&&legacyMessageId!==original?{legacyMessageId}:{}),
           policyVersion:digest([input.input.accessVersion,settings]),authorize:permitted,
           sendChart: png => sendQqChart({ png, target, uploader: wire.mediaUpload, sender: wire.sender, authorize: permitted }),
@@ -209,16 +220,16 @@ export async function createImProductionDelivery(options: DeliveryOptions, input
   }
   if(wire.platform==='telegram'&&scope.chatType==='c2c'&&await readTrustedImPrivateStreaming(options.pool,binding)){
     const original=route.payload.platform_message_id??route.payload.message_id
-    streamFactory=(receipts,current)=>createPersistentTelegramProjection({identity,receipts,sender:wire.sender,
+    streamFactory=(receipts,current)=>createPersistentTelegramProjection({identity,receipts,sender:wire.sender,renderCharts,
       target:{chatId:scope.platformUserId,chatType:'c2c',...(typeof original==='string'?{replyToMessageId:original}:{})},
       policyVersion:digest([input.input.accessVersion,display]),authorize:async()=>await authorize()&&await current(),
-      showIntermediateReplies:display.showIntermediateReplies,toolSummary:display.toolDisplay==='all'?{chatType:'p2p',includeDetails:false,sanitize:redactToolError}:undefined,
+      showIntermediateReplies:display.showIntermediateReplies,toolSummary:display.toolDisplay==='all'?{chatType:'p2p',includeDetails:false,sanitize:redactToolError,locale:toolLocale}:undefined,
       acceptedEvidence:{scope,recipient:scope.platformUserId,source:()=>createImRunScope(common).read()}})
   }
   const observeRun: ImAgentReconstructionResources['observeRun'] = wire.platform === 'wechat'
     ? (events, current) => wire.sender.observeRun({ userId: actor.platformUserId, contextToken: String(route.payload.context_token ?? '') }, events,
       async () => await authorize() && await current()) : undefined
-  return { sender, streamFactory, observeRun, authorize, showIntermediateReplies: display.showIntermediateReplies }
+  return { sender, streamFactory, observeRun, authorize, toolLocale, showIntermediateReplies: display.showIntermediateReplies }
 }
 
 /** 从真实PG/本地FS/配置/平台组件装配完整Run；网络替身不能替换来源、授权或Agent循环。 */
@@ -252,8 +263,10 @@ export function createImProductionResources(options: ImProductionResourcesOption
         return { ...scope, groupMemoryEnabled: row.group_memory_enabled, memberMemoryEnabled: row.member_memory_enabled,
           groupOwnerMemoryEnabled: row.group_owner_memory_enabled }
       } })
+    let registry: ImAgentReconstructionResources['toolRegistry'] | undefined
     const skills = await createImProductionSkills({ pool: options.pool, identity, actor, loadOwnerContext: selection.contextPolicy.loadOwnerContext,
-      authorize: () => options.access.authorizeDelivery(actor, bot) })
+      authorize: () => options.access.authorizeDelivery(actor, bot),
+      availableTools: async () => new Set((await registry?.capabilities(identity) ?? []).map(tool => tool.name)) })
     const services = await createImAgentContextServices({ pool: options.pool, storageRoot: options.storageRoot, promptRoot: options.promptRoot,
       identity, actor, selection, redis, serverTimezone: options.serverTimezone ?? 'UTC', now: Date.now,
       authorize: () => options.access.authorizeDelivery(actor, bot), imMemory: memory.loadImMemory,
@@ -313,14 +326,14 @@ export function createImProductionResources(options: ImProductionResourcesOption
         catch { options.diagnose('im_runtime_event_pending') }
       } })
     const references = withViewImageReferences(materializer.references(createImContextReferenceCodec({ pool: options.pool, identity, scope, authorize: authorizeCurrent })))
-    let registry: ImAgentReconstructionResources['toolRegistry']
     const configuration: CanonicalRunPreparationPorts['configuration'] = async (candidate, signal) => {
       signal.throwIfAborted()
       if (!same(candidate, identity) || !await authorizeCurrent()) throw unavailable()
+      if (!registry) throw unavailable()
       return { identity: { ownerId: identity.ownerId, workspaceId: null, subject: { kind: 'session', id: identity.sessionId } },
         source: actor.platform, toolNames: (await registry.capabilities(identity)).map(tool => tool.name) }
     }
-    const mcpManagement = actor.role === 'owner' && actor.chatType === 'c2c' ? options.mcpManagement : undefined
+    const mcpManagement = imOwnerPrivate(actor) ? options.mcpManagement : undefined
     const authorizeTool = async (candidate: RunIdentity, name: string) => same(candidate, identity) && await authorizeCurrent()
       && (name !== 'manage_mcp_servers' || mcpManagement?.enabled() === true)
       && await options.access.authorizeTool(actorInput, name, lease.input.im.attention?.disposition === 'run')
@@ -328,20 +341,28 @@ export function createImProductionResources(options: ImProductionResourcesOption
       identity, binding, secretKey: options.secretKey, digest,
       readSafeEgress: createSafeEgressSettingsReader(options.environment, options.configOverridePath ?? resolveConfigOverridePath(options.environment)),
     })
-    const ownerTools = actor.role === 'owner' && actor.chatType === 'c2c' && options.imOwnerTools
-      ? await options.imOwnerTools(lease, await services.source.data.loadTimezone(identity), authorizeCurrent, binding) : undefined
-    const builtins = createAgentToolRegistry({ core: options.core, authorize: authorizeTool, ...search, callTool: true, skills: skills.tools, mcpManagement: mcpManagement?.tool, askUser: { singleChoiceOnly: true, async authorization() { return 'disabled' } },
-      fileOverview: createProjectFileOverviewPort(options.pool),
-      calendar: createAgentCalendarReader(createKyselyCalendarAgentReadPort(options.core.db, 'postgres')),
-      events: createKyselyCalendarReadPort(options.core.db, 'postgres'),
-      notes: createAgentMindReader(options.core.db, 'postgres'),
-      canvases: createSqlMindCanvasReader(options.core.db, 'postgres'),
+    const ownerTools = imOwnerPrivate(actor) && options.imOwnerTools
+      ? await options.imOwnerTools(lease, await services.source.data.loadTimezone(identity), authorizeCurrent, binding, actor.verifiedOwner) : undefined
+    const builtins = createAgentToolRegistry({ core: options.core, authorize: authorizeTool, ...search, callTool: true, skills: skills.tools, mcpManagement: mcpManagement?.tool,
+      ...(imOwnerPrivate(actor) ? {
+        fileOverview: createProjectFileOverviewPort(options.pool, options.storageRoot),
+        calendar: createAgentCalendarReader(createKyselyCalendarAgentReadPort(options.core.db, 'postgres')),
+        events: createKyselyCalendarReadPort(options.core.db, 'postgres'),
+        notes: createAgentMindReader(options.core.db, 'postgres'),
+        canvases: createSqlMindCanvasReader(options.core.db, 'postgres'),
+      } : {}),
       ...ownerTools?.tools,
-      ...(process.platform === 'linux' && actor.role === 'owner' && actor.chatType === 'c2c' ? {
+      ...(actor.platform !== 'wechat' ? { sendFile: createImSendFileTool(createImFileTools({
+        ...options, identity, actor, scope, messageIds, payload: route.payload,
+        files: createPostgresFileReadOperations(options.pool, options.storageRoot),
+        authorizeTool: name => authorizeTool(identity, name),
+      }).sendFile) } : {}),
+      ...(process.platform === 'linux' && imOwnerPrivate(actor) ? {
         saveAttachment: createImSaveAttachmentTool({ ...options, identity, actor, scope, messageIds, payload: route.payload,
+          ownerAttachment: actor.verifiedOwner ? ownerTools?.historicalSaveAttachment : undefined,
           authorize: () => authorizeTool(identity, 'save_attachment') }),
       } : {}),
-      ...(actor.role === 'owner' && actor.chatType === 'c2c' ? { imOwnerSession: options.ownerSessions.tool({ lease,actor,payload:route.payload,messageIds,authorize:()=>authorizeTool(identity,'bind_web_session') }) } : {}),
+      ...(imOwnerPrivate(actor) ? { imOwnerSession: options.ownerSessions.tool({ lease,actor,payload:route.payload,messageIds,authorize:()=>authorizeTool(identity,'bind_web_session') }) } : {}),
       time: { now: () => new Date(), timezone: () => services.source.data.loadTimezone(identity) },
       memorySearch: createPostgresImMemorySearch({ ...options, lease, actor, bot, configuration }),
       ...(actor.chatType === 'group' && actor.platform !== 'wechat' ? { groupContext: createPostgresImGroupContextSearch({ pool: options.pool,
@@ -349,7 +370,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
         authorize: (id, _actor, signal) => { signal.throwIfAborted(); return authorizeTool(id, 'group_context_search') }, isTombstoned: tombstoned }) } : {}),
       ...(actor.platform === 'feishu' ? { imReaction: { platform: 'feishu' as const, port: createPostgresImReaction({ ...options, lease, actor, bot, configuration }) } } : {}),
     })
-    const mcpTools = actor.role === 'owner' && actor.chatType === 'c2c' ? options.mcpTools : undefined
+    const mcpTools = imOwnerPrivate(actor) ? options.mcpTools : undefined
     registry = mcpTools ? createMcpAgentToolPorts({
       base: builtins,
       directory: mcpTools.directory,
@@ -391,7 +412,9 @@ export function createImProductionResources(options: ImProductionResourcesOption
     const ragContext = createPostgresImRagContextBuilder({ ...options, lease, actor, bot, selection,
       enabled: () => selection.contextPolicy.memoryEnabled && authorizeCurrent() })
     const delivery = await createImProductionDelivery(options, { identity, input: lease.input, route, actor, authorizeCurrent })
-    const executor = createImHarnessExecutorPorts({ pool: options.pool, db: options.core.db, storageRoot: options.storageRoot, identity, actor, authorize: authorizeCurrent })
+    const executor = createImHarnessExecutorPorts({ pool: options.pool, db: options.core.db, storageRoot: options.storageRoot, identity, actor, authorize: authorizeCurrent, enabled: options.filesystemAuthorizationEnabled })
+    const readyRegistry = registry
+    await services.refreshSkillIndex()
     const stableStyle = selection.contextPolicy.loadOwnerContext ? await services.source.data.loadStylePreferences(identity) : {}
     const stableSystem = buildAgentStaticPrompt(services.builder.staticPrompt(selection, identity, stableStyle))
     let commitContinuation: ((client: PoolClient, context: CanonicalRunContext) => Promise<void>) | undefined
@@ -412,12 +435,12 @@ export function createImProductionResources(options: ImProductionResourcesOption
         if (reasoning) await reasoning.checkpointHook(client, id, next, previous)
         else if (next.context?.continuationRef) throw unavailable()
       } },
-      source: services.source, builder: services.builder, materialize: materializer.materialize, toolRegistry: registry, ragContext, executor,
+      source: services.source, builder: services.builder, materialize: materializer.materialize, toolRegistry: readyRegistry, ragContext, executor,
       ...delivery,
       preparation: { configuration, capabilities: {
         workspaceSupported: false,
-        filterConfigured: async (names, _subject, signal) => { signal?.throwIfAborted(); const enabled = new Set((await registry.capabilities(identity)).map(tool => tool.name)); return names.filter(name => enabled.has(name) || name === 'choose_no_reply') },
-        shellPolicy: async () => ({ allowed: (await registry.capabilities(identity)).some(tool => tool.name === 'shell'), needsConfirmation: false }),
+        filterConfigured: async (names, _subject, signal) => { signal?.throwIfAborted(); const enabled = new Set((await readyRegistry.capabilities(identity)).map(tool => tool.name)); return names.filter(name => enabled.has(name) || name === 'choose_no_reply') },
+        shellPolicy: async () => ({ allowed: (await readyRegistry.capabilities(identity)).some(tool => tool.name === 'shell'), needsConfirmation: false }),
         shellState: async () => ownerTools?.tools.shell ? 'Shell 使用沙盒内的工作区路径，默认目录由会话工作区决定。' : null,
         appendShellProtocol: system => system,
         catalog: skills.catalog,

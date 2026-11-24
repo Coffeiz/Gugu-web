@@ -2,7 +2,7 @@ import { createMindCanvasRelationCreate, type MindRelationCreateRuntime } from '
 import { createSqlMindCanvasRelationCreateRuntime } from './relation-create-sql.js'
 import { recommendedCanvasSides } from './canvas-layout.js'
 import type { CanvasItemAddRuntime } from './canvas-item-add.js'
-import { applyCanvasPlacements, type CanvasPlacementIntent, type ResolveCanvasFileReference } from './canvas-placement.js'
+import { applyCanvasPlacements, resolveCanvasEditPosition, type CanvasPlacementIntent, type ResolveCanvasFileReference } from './canvas-placement.js'
 import { createMindCanvasUpdate } from './canvas-update.js'
 import { createSqlMindCanvasUpdateRuntime } from './canvas-update-sql.js'
 import { parseCanvasData } from './canvas-layout.js'
@@ -24,7 +24,7 @@ import { MindCanvasRelationMutationError } from './relation-delete-global.js'
 import type { CanvasItemUpdateRuntime } from './canvas-item-update.js'
 import type { MindCanvasItemRemoveRuntime } from './canvas-item-remove.js'
 
-export interface CanvasLayoutEdit { item_id: number; x?: number; y?: number; z?: number; collapsed?: boolean; width?: number; height?: number }
+export interface CanvasLayoutEdit { item_id: number; x?: number; y?: number; z?: number; collapsed?: boolean; width?: number; height?: number; position?: CanvasBatchOperation['position'] }
 export interface CanvasNoteEdit { node_id: number; title?: string; content?: string; color?: 'amber'|'coral'|'blue'|'teal' }
 export interface CanvasBatchOperation {
   kind: 'create_note'|'add_node'|'update_item'|'remove_item'|'delete_note'|'connect'
@@ -76,7 +76,7 @@ function layoutInput(edit:CanvasLayoutEdit,kind:string) {
   if ('w' in raw || 'h' in raw || (legacyPosition && typeof legacyPosition==='object' && ('w' in legacyPosition || 'h' in legacyPosition)))
     throw new MindCanvasItemMutationError('请使用 width 和 height 设置画布便签大小',422)
   if(kind!=='canvas_note'&&(edit.width!==undefined||edit.height!==undefined))throw new MindCanvasItemMutationError('只有画布便签支持设置卡片大小',422)
-  const {item_id,width,height,...position}=edit
+  const {item_id,width,height,position: _anchor,...position}=edit
   return {...position,...(width===undefined?{}:{w:width}),...(height===undefined?{}:{h:height})}
 }
 async function updateItems(ctx:EditContext,intent:Extract<CanvasEditIntent,{action:'layout'}>):Promise<EditResult> {
@@ -85,6 +85,13 @@ async function updateItems(ctx:EditContext,intent:Extract<CanvasEditIntent,{acti
   for(const edit of intent.entries) {
     const before=await readItem(ctx,edit.item_id,intent.canvas_id)
     const input=layoutInput(edit,before.kind)
+    if(edit.position){
+      if(edit.x!==undefined||edit.y!==undefined)throw new MindCanvasItemMutationError('请只提供 x/y 或 position 其中一种位置写法',422)
+      if(edit.position.x===undefined&&edit.position.y===undefined&&edit.position.anchor===undefined)
+        throw new MindCanvasItemMutationError('position 必须提供 x/y 或 anchor',422)
+      const [x,y]=await resolveCanvasEditPosition(ctx,intent.canvas_id,edit.position)
+      Object.assign(input,{x,y})
+    }
     const updated=await runtime.update(ctx.canonical,intent.canvas_id,edit.item_id,input,ctx.context)
     ctx.signal.throwIfAborted()
     result.changed ||= Object.entries(input).some(([field,value]) => {
@@ -237,8 +244,8 @@ export async function applyCanvasEditBatch(tx:Transaction<Database>,backend:Back
           edit={action:'add',canvas_id:intent.canvas_id,entries:[{ref_type:entry.ref_type,ref_id:entry.ref_id,position:entry.position}],batched:false};break
         case 'update_item':
           if(!Number.isSafeInteger(entry.item_id))throw new MindCanvasItemMutationError('第 '+(index+1)+' 个布局操作缺少 item_id',422)
-          if(!['x','y','z','collapsed','width','height'].some(field=>entry[field]!==undefined))throw new MindCanvasItemMutationError('第 '+(index+1)+' 个布局操作没有修改字段',422)
-          edit={action:'layout',canvas_id:intent.canvas_id,entries:[{item_id:entry.item_id!,x:entry.x,y:entry.y,z:entry.z,collapsed:entry.collapsed,width:entry.width,height:entry.height}],batched:false};break
+          if(!['x','y','z','collapsed','width','height','position'].some(field=>entry[field]!==undefined))throw new MindCanvasItemMutationError('第 '+(index+1)+' 个布局操作没有修改字段',422)
+          edit={action:'layout',canvas_id:intent.canvas_id,entries:[{item_id:entry.item_id!,position:entry.position,x:entry.x,y:entry.y,z:entry.z,collapsed:entry.collapsed,width:entry.width,height:entry.height}],batched:false};break
         case 'remove_item':
           if(!Number.isSafeInteger(entry.item_id))throw new MindCanvasItemMutationError('第 '+(index+1)+' 个移除操作缺少 item_id',422)
           edit={action:'remove',canvas_id:intent.canvas_id,item_ids:[entry.item_id!],batched:false};break

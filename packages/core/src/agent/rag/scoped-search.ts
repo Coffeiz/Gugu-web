@@ -47,7 +47,7 @@ export function createScopedRagSearch(ports:{
   })
   if(ports.filterDocuments)documents=[...await ports.filterDocuments(documents,signal)].filter(doc=>allowed.has(doc.source_type)&&scopes.some(current=>{
    if(current.scope_type==='owner')return doc.scope_type==='owner'
-   if(current.scope_type==='project'||current.scope_type==='folder')return doc.scope_type==='owner'&&String(doc.metadata?.[current.scope_type==='project'?'project_id':'folder_id']??'')===current.scope_id
+   if(current.scope_type==='project')return doc.scope_type==='owner'&&String(doc.metadata?.project_id??'')===current.scope_id
    if(doc.platform!==current.platform||doc.bot_id!==current.bot_id||doc.group_id!==current.group_id)return false
    return doc.scope_type===current.scope_type&&doc.scope_id===current.scope_id||current.scope_type==='member'&&doc.scope_type==='group'
   }))

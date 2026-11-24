@@ -26,7 +26,7 @@ export function createPostgresWorkspaceLister(pool: Pool, runtime: WorkspaceList
     },
     async workspaces(ownerId) {
       const result = await pool.query<ListRow>(
-        `SELECT id, name, kind, folder_id, project_id, directory_id, enabled, is_default
+        `SELECT id, name, kind, project_id, directory_id, enabled, is_default
        FROM workspaces WHERE user_id = $1 ORDER BY updated_at DESC`,
         [ownerId],
       )
@@ -44,12 +44,11 @@ export function createPostgresWorkspaceLister(pool: Pool, runtime: WorkspaceList
   return createWorkspaceLister(store, runtime)
 }
 
-type WorkspaceKind = 'folder' | 'project' | 'directory'
+type WorkspaceKind = 'project' | 'directory'
 
 export interface WorkspaceCreateInput extends Fields {
   name: string
   kind?: WorkspaceKind
-  folderId?: number | null
   projectId?: number | null
   directoryId?: number | null
   enabled?: boolean
@@ -59,7 +58,6 @@ export interface WorkspaceCreateResponse {
   id: number
   name: string
   kind: WorkspaceKind
-  folderId: number | null
   projectId: number | null
   directoryId: number | null
   enabled: boolean
@@ -70,7 +68,6 @@ export interface WorkspaceCreateResponse {
 interface NormalizedWorkspaceCreate {
   name: string
   kind: WorkspaceKind
-  folderId: number | null
   projectId: number | null
   directoryId: number | null
   enabled: boolean
@@ -78,7 +75,7 @@ interface NormalizedWorkspaceCreate {
 
 async function relationExists(
   client: PoolClient,
-  table: 'folders' | 'projects' | 'workspace_directories',
+  table: 'projects' | 'workspace_directories',
   ownerId: string,
   id: number | null,
   includeDeleted: boolean,
@@ -101,17 +98,16 @@ async function createInTransaction(
     id: number
     name: string
     kind: WorkspaceKind
-    folder_id: number | null
     project_id: number | null
     directory_id: number | null
     enabled: boolean
     is_default: boolean
   }>(
     `INSERT INTO workspaces
-       (user_id, name, kind, folder_id, project_id, directory_id, enabled, is_default)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE)
-     RETURNING id, name, kind, folder_id, project_id, directory_id, enabled, is_default`,
-    [ownerId, input.name, input.kind, input.folderId, input.projectId, input.directoryId, input.enabled],
+       (user_id, name, kind, project_id, directory_id, enabled, is_default)
+     VALUES ($1, $2, $3, $4, $5, $6, FALSE)
+     RETURNING id, name, kind, project_id, directory_id, enabled, is_default`,
+    [ownerId, input.name, input.kind, input.projectId, input.directoryId, input.enabled],
   )
   const row = inserted.rows[0]
   if (!row) throw new Error('工作区创建后未返回记录')
@@ -119,7 +115,6 @@ async function createInTransaction(
     id: Number(row.id),
     name: row.name,
     kind: row.kind,
-    folderId: row.folder_id,
     projectId: row.project_id,
     directoryId: row.directory_id,
     enabled: row.enabled,
@@ -133,7 +128,7 @@ export function createPostgresWorkspaceCreator(pool: Pool) {
   return createWorkspaceDeclarationCreator({
     transaction: work => withPostgresTransaction(pool, client => work({
       relationExists: (owner, kind, id) => relationExists(client,
-        kind === 'folder' ? 'folders' : kind === 'project' ? 'projects' : 'workspace_directories', owner, id, kind === 'directory'),
+        kind === 'project' ? 'projects' : 'workspace_directories', owner, id, kind === 'directory'),
       insert: (owner, input) => createInTransaction(client, owner, input),
       async get() { throw new Error('创建事务不支持读取工作区') },
       async renameDirectory() { throw new Error('创建事务不支持目录改名') },
@@ -153,7 +148,6 @@ interface WorkspaceRow extends Record<string, unknown> {
   user_id: string
   name: string
   kind: WorkspaceKind
-  folder_id: number | null
   project_id: number | null
   directory_id: number | null
   enabled: boolean
@@ -171,7 +165,7 @@ function validateDirectoryDisplayName(value: string): string {
 
 async function loadOwnedWorkspace(client: PoolClient, ownerId: string, workspaceId: number): Promise<WorkspaceRow> {
   const result = await client.query<WorkspaceRow>(
-    `SELECT id, user_id::text AS user_id, name, kind, folder_id, project_id,
+    `SELECT id, user_id::text AS user_id, name, kind, project_id,
             directory_id, enabled, is_default
      FROM workspaces WHERE id = $1 AND user_id = $2`,
     [workspaceId, ownerId],
@@ -248,7 +242,6 @@ async function toResponse(
     id: Number(row.id),
     name: row.name,
     kind: row.kind,
-    folderId: row.folder_id == null ? null : Number(row.folder_id),
     projectId: row.project_id == null ? null : Number(row.project_id),
     directoryId: row.directory_id == null ? null : Number(row.directory_id),
     enabled: row.enabled,

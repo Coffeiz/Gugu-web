@@ -1,6 +1,22 @@
 # Agent 目录职责
 
-本目录沿用 Python `backend/agent/README.md` 的模块职责。2.0 直接修改实现和调用方，不保留旧目录、旧包导出或兼容转发层。公开入口为 `@gugu/core/agent`。
+本目录承载跨 Host 的 Agent 运行能力，职责分层沿用旧 Python `backend/agent/README.md`。公开入口为 `@gugu/core/agent`，平台端口由 Web Host 和 Desktop 装配。
+
+## 运行与依赖方向
+
+```text
+Web / Desktop / IM / 定时触发
+        ↓ 可信身份、数据读取、工具与投递端口
+runtime.ts（接入所需 scenes/ 自定义规则）
+        ↓ 已授权的上下文、工具与运行策略
+context/ + runner.ts + core.ts
+        ↓ 执行、确认、持久化与恢复
+providers/ + tools/ + interactions/ + run/
+        ↓ 已提交的运行结果
+Host 事件与平台投递
+```
+
+入口验证本轮来源和作用域。默认 Runtime 通过共用端口组装已授权、已启用的数据与能力。场景只提供特定运行或渠道需要的上下文、权限、提示词和输出约束。通用运行层维护生命周期与安全执行门。Host 处理协议、数据库和实际投递。新场景遵循 [scenes/README.md](scenes/README.md) 的组装约定。
 
 工具领域分组与执行规范见 [tools/README.md](tools/README.md)，Markdown Skill 注册与加载规范见 [skills/README.md](skills/README.md)。工具按领域模块集中定义，Host 使用领域组注册；Prompt Skill 独立读取 Markdown 头部注册，两者不能混为权限来源。
 
@@ -11,13 +27,17 @@
 | `runner.ts` | `runner.py` | 组合可信运行准备、上下文、执行器和回复策略。 |
 | `core.ts` | `core.py` / 模型循环 | Provider 轮次、工具派发、运行推进和事件提交。 |
 | `models.ts`、`ports.ts` | 模型与依赖契约 | 运行状态、事件和显式注入的领域端口。 |
-| `context/` | `context/` | 上下文来源、能力快照、可信快照/提示词组装、预算和压缩；`compaction-runtime.ts` 管理同一 Run 的 Provider 摘要能力、惰性初始化与失败重试；Host 只注入已授权数据、模型绑定和工具 schema。 |
+| `scenes/` | IM、定时、问候与反思 | 特定场景组装、数据与工具可见性、渠道策略。 |
+| `capabilities/` | 工具目录与声明 | 基于已授权定义投影工具目录、Schema 和模型工具声明。 |
+| `context/` | `context/` | 来源读取契约、片段编译、能力与会话快照、通用提示词格式化、预算和压缩；`compaction-runtime.ts` 管理同一 Run 的 Provider 摘要能力、惰性初始化与失败重试；Host 只注入已授权数据、模型绑定和工具 schema。 |
 | `context/history/`、`context/messages/` | 历史与消息处理 | Canonical 历史、排序、图片读取适配、媒体清理与提及；附件快照编码位于 `context/snapshot-codec.ts`。 |
 | `run/` | `run/` 与运行收口 | 生命周期、取消、终结、流消费、背压、可信 Run 工具绑定和加密编码。调度执行依赖 Host 队列、来源校验和租约。`reconstruct.ts` 核对检查点、授权版本和 Provider 作用域，按持久会话快照重建固定请求前缀并校验指纹，管理运行资源释放。`event-stream.ts` 从提交序号有序重放并响应 Host 唤醒。Host 持久校验交互收据后随恢复租约提供 resolution，Harness 核对 pending interaction 绑定。 |
 | `interactions/` | `interactions/` | 提示与动作 schema、等待队列、动作/文本/凭据消费及恢复协调。事务、权限查询、命令副作用与一次性确认码兑换经可信 Host 端口执行。 |
-| `memory/` | `memory/`、反思 | 反思快照、反思输入和记忆能力。 |
+| `memory/` | `memory/`、反思 | 记忆能力与反思执行。反思输入投影由对应场景定义。 |
+| `subagent/` | 子任务委派 | 委派生命周期、结果与恢复，以及子 Agent 专属配置。 |
+| `rag/`、`knowledge/` | 检索与知识 | 召回、索引和知识资源能力。场景决定当前运行是否接入。 |
 | `providers/` | `providers/` | Provider 注册、协议、媒体与调用适配。 |
-| `tools/` | `tools/` | 工具注册、参数校验、权限、确认和可复用工具实现。 |
+| `tools/` | `tools/` | 通用注册、参数校验、消费实时授权结果、确认和可复用工具实现。场景的白名单和渠道限制由 `scenes/` 定义。 |
 | `skills/` | `skills/` | Skill 注册和加载，沿用 Markdown 头部元数据注册约定。 |
 | `sessions/` | 会话应用查询 | 会话列表、刷新、待处理队列、交互查询、工具事件详情与状态标签。 |
 | `config/` | 运行配置与凭据元数据 | 有效配置覆盖与 BYOK 列表；身份和真实凭据由 Host 注入。 |

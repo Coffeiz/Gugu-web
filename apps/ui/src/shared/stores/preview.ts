@@ -7,8 +7,8 @@ import type { FileMeta } from '@/stores/filesCache'
 import type { LiveEventPayload } from '@/types/live-events'
 import type { PathFileRef } from '@/services/api'
 
-// 预览窗口也承载聊天附件等非库文件，故用 Partial<FileMeta>（只需 id/ext，其余按需）
-export type PreviewFile = Partial<FileMeta> & { workspaceFile?: PathFileRef; readContent?: () => Promise<Blob>; contentUrl?: string }
+// 预览窗口也承载聊天附件等非库文件，故用 Partial<FileMeta>（只需 filePath/ext，其余按需）
+export type PreviewFile = Partial<FileMeta> & { virtualKey?: string; workspaceFile?: PathFileRef; chatLibraryPath?: string; readContent?: () => Promise<Blob>; contentUrl?: string }
 
 export const openPlatformPreviewKey: InjectionKey<(file: PreviewFile) => boolean> = Symbol()
 
@@ -17,7 +17,7 @@ function samePreviewFile(left: PreviewFile, right: PreviewFile): boolean {
     return left.workspaceFile?.directoryId === right.workspaceFile?.directoryId
       && left.workspaceFile?.relativePath === right.workspaceFile?.relativePath
   if (left.attach_id || right.attach_id) return left.attach_id === right.attach_id
-  return left.id === right.id
+  return left.filePath === right.filePath && left.virtualKey === right.virtualKey
 }
 
 export interface PreviewWindow {
@@ -44,17 +44,17 @@ export function isPreviewReloadRequested(currentToken: number, previousToken?: n
 
 /** 仅当实时文件事件明确指向当前文件时，才刷新已打开的预览。 */
 export function isPreviewAffectedByFileEvent(
-  fileId: string | number | null | undefined,
+  filePath: string | null | undefined,
   event: LiveEventPayload | null | undefined,
 ): boolean {
-  if (fileId == null || event?.resource !== 'files') return false
+  if (!filePath || event?.resource !== 'files') return false
   const payload = event.payload && typeof event.payload === 'object'
     ? event.payload as { kind?: unknown }
     : null
   if (payload?.kind === 'folder') return false
 
-  const ids = [event.entity_id, ...(event.entity_ids ?? [])]
-  return ids.some(id => id != null && String(id) === String(fileId))
+  const paths = [event.entity_id, ...(event.entity_ids ?? [])]
+  return paths.some(value => typeof value === 'string' && value === filePath)
 }
 
 /** 检查文本预览器实际会显示的内容；支持 UTF-8 与带 BOM 的 UTF-16。 */
@@ -183,7 +183,8 @@ export const usePreviewStore = defineStore('preview', () => {
     sourceText: string,
     saveSource: (content: string) => Promise<void> | void,
   ) {
-    const existing = windows.value.find(w => w.file.id === f.id)
+    const key = f.filePath ?? f.virtualKey
+    const existing = windows.value.find(w => (w.file.filePath ?? w.file.virtualKey) === key)
     if (existing) {
       existing.sourceText = sourceText
       existing.saveSource = saveSource
@@ -205,7 +206,8 @@ export const usePreviewStore = defineStore('preview', () => {
     const w = windows.value.find(w => w.id === id)
     if (!w || !w.siblings?.length) return
     const imgs = w.siblings.filter(f => isImageExt(f.ext) || isSvgMime(f.mimeType))
-    const curIdx = imgs.findIndex(f => f.id === w.file.id)
+    const current = w.file.filePath ?? w.file.virtualKey
+    const curIdx = imgs.findIndex(f => (f.filePath ?? f.virtualKey) === current)
     if (curIdx === -1 || imgs.length < 2) return
     w.file = imgs[(curIdx + dir + imgs.length) % imgs.length]
   }

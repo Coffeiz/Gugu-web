@@ -73,6 +73,32 @@ it('链接按钮点击走应用内项目和画布导航，外站链接保留浏�
   }
 })
 
+it('群聊图片附件使用新版卡片，打开与下载分别触发', () => {
+  const file = { attach_id: 'synthetic', name: '示例长文件名.jpg', ext: 'jpg', size_bytes: 1024, _thumbUrl: '/thumbnail.jpg' }
+  const onOpenFile = vi.fn(), onDownload = vi.fn()
+  const host = document.createElement('div')
+  const app = createApp(GuguChatMessageRow, {
+    msg: { id: 1, role: 'member', text: '', time: '', files: [file] },
+    sessionId: 1, isGroupSession: true, interactionAnswerMode: 'composer',
+    copiedId: null, voicePlayingId: null, voiceBars: [], onOpenFile, onDownload,
+  }).use(i18n)
+  app.mount(host)
+  try {
+    const card = host.querySelector<HTMLButtonElement>('button.chat-object-card')!
+    expect(card.textContent).toContain(file.name)
+    expect(card.textContent).not.toContain('.jpg.jpg')
+    expect(card.querySelector('img')?.getAttribute('src')).toBe('/thumbnail.jpg')
+    card.click()
+    expect(onOpenFile).toHaveBeenCalledExactlyOnceWith(file)
+    expect(onDownload).not.toHaveBeenCalled()
+    host.querySelector<HTMLButtonElement>('button.chat-file-card-download')!.click()
+    expect(onDownload).toHaveBeenCalledExactlyOnceWith(file)
+    expect(onOpenFile).toHaveBeenCalledTimes(1)
+  } finally {
+    app.unmount()
+  }
+})
+
 describe('useChatActions 工具完成后的资源刷新', () => {
   beforeEach(() => {
     vi.clearAllMocks()

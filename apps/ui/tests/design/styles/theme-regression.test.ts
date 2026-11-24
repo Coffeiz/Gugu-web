@@ -51,7 +51,7 @@ const fileCardVue = load('../../components/common/file-browser/FileCard.vue')
 const folderCardVue = load('../../components/common/file-browser/FolderCard.vue')
 const fileSelectionToolbarVue = load('../../components/common/file-browser/FileSelectionToolbar.vue')
 const filesViewVue = load('../../views/Files/index.vue')
-const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
+const projectDiskFilesVue = load('../../views/Projects/components/ProjectDiskFiles.vue')
 const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
 const eventFormPanelVue = load('../../components/events/EventFormPanel.vue')
 const imageViewerVue = load('../../components/common/viewers/ImageViewer.vue')
@@ -146,7 +146,7 @@ describe('主题 CSS 回归契约', () => {
     }
     expect(semanticCss).toContain('--brand-logo-color: var(--theme-brand-logo-color);')
     expect(brandComponent).toContain('background: var(--brand-logo-color);')
-    expect(brandComponent).toContain('mask-image: url(\'/logo-text.png\');')
+    expect(brandComponent).toContain('mask-image: url(\'/brand/wordmark.svg\');')
   })
 
   it('面板颜色与视觉材质分层，palette 改色不吞掉 family 效果', () => {
@@ -471,12 +471,12 @@ describe('主题 CSS 回归契约', () => {
     // 页面/项目面板不再保留历史批量栏 paint，避免共享组件之外出现第二个 owner。
     expect(filesViewVue).not.toMatch(/\.selection-bar\b/)
     expect(filesViewVue).not.toMatch(/\.sel-(?:count|download-btn|delete-btn|cancel-btn|action-btn|divider)\b/)
-    expect(projectFilesPanelVue).not.toMatch(/\.pm-selection-bar\b/)
-    expect(projectFilesPanelVue).not.toMatch(/\.pm-sel-/)
+    expect(projectDiskFilesVue).not.toMatch(/\.pm-selection-bar\b/)
+    expect(projectDiskFilesVue).not.toMatch(/\.pm-sel-/)
 
     // 项目批量栏必须在滚动 file-content 闭合后挂载；absolute bottom 才以动态 modal-right 为基准。
-    expect(projectFilesPanelVue).toContain('</div>\n\n          <!-- 批量栏挂在 modal-right')
-    const modalRightBlock = cssBlock(projectFilesPanelVue, '.modal-right')
+    expect(projectDiskFilesVue).toContain('</div>\n\n    <FileSelectionToolbar')
+    const modalRightBlock = cssBlock(projectDiskFilesVue, '.modal-right')
     expect(modalRightBlock).toContain('position: relative')
   })
 

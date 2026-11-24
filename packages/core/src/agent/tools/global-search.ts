@@ -15,7 +15,7 @@ const noMatches = '没搜到任何匹配——除思维便签(note)搜正文外�
 export function createGlobalSearchTool(search: GlobalSearchOperations, useAvailableSources = false): ToolDefinition {
   return {
     definition: { name: 'global_search', schema: { type: 'function', function: {
-      name: 'global_search', description: '跨项目、文件、日程、联系人、对话、便签和当前用户 Skill 按关键词搜索；明确范围时用专用工具。Skill 结果只返回 ID、名称和描述，不返回正文或关联权限。',
+      name: 'global_search', description: '跨项目、文件、日程、联系人、对话、便签和当前用户 Skill 按关键词搜索。需要找任意文件或文件夹时，仅指定 types 为 file 和/或 folder 即可浏览有限样本。Skill 结果只返回 ID、名称和描述，不返回正文或关联权限。',
       parameters: { type: 'object', properties: {
         query: { type: 'string' }, q: { type: 'string' }, queries: { type: 'array', items: { type: 'string' } },
         mode: { type: 'string', enum: ['OR', 'AND'] }, types: { type: 'array', items: { type: 'string', enum: [...GLOBAL_SEARCH_TYPES] } },
@@ -31,7 +31,8 @@ export function createGlobalSearchTool(search: GlobalSearchOperations, useAvaila
       const args = input as z.infer<typeof inputSchema>
       const query = parseGlobalSearchQuery({ q: args.query || args.q || '', queries: args.queries, mode: args.mode,
         types: args.types, per_type: '20' })
-      if (!query.queries.length) return { kind: 'completed', successful: false, mutated: false,
+      const browseFiles = !!query.types?.length && query.types.every(type => type === 'file' || type === 'folder')
+      if (!query.queries.length && !browseFiles) return { kind: 'completed', successful: false, mutated: false,
         value: { error: '需要提供搜索关键词 query 或 queries' } }
       const types = query.types ?? (useAvailableSources ? search.availableTypes : GLOBAL_SEARCH_TYPES)
       const missing = types.filter(type => !search.availableTypes.includes(type))
@@ -45,7 +46,7 @@ export function createGlobalSearchTool(search: GlobalSearchOperations, useAvaila
       // 分组类型属于搜索元数据。媒体块的 type 保留给持久化编解码器。
       const groups = value.groups.map(({ type, ...group }) => ({ ...group, source_type: type }))
       return { kind: 'completed', successful: true, mutated: false,
-        value: { ...value, groups, ...('total' in value && value.total === 0 ? { note: noMatches } : {}) } }
+        value: { ...value, groups, ...('total' in value && value.total === 0 ? { note: browseFiles && !query.queries.length ? '当前范围没有可访问的文件或文件夹' : noMatches } : {}) } }
     },
   }
 }

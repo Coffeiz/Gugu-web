@@ -36,7 +36,7 @@ html[data-theme][data-family] .control-resizable::-webkit-scrollbar-track {
 }
 
 html[data-theme][data-family] :is(
-  .form-input, .title-edit-input, .rename-input-inline, .header-name-input,
+  .form-input, .title-edit-input, .rename-input-inline,
   .field-input, .stage-input, .tpl-name-input, .np-todo-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 ) {
@@ -72,6 +72,13 @@ html[data-theme][data-family] :is(
   .field-input, .stage-input, .tpl-name-input, .np-todo-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 )::placeholder { color: var(--input-placeholder); opacity: .82; }
+
+/* 项目标题平时呈现为文字，悬停和编辑时沿用输入框的交互状态。 */
+html[data-theme][data-family] .header-name-input:not(:hover):not(:focus) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
 
 /* Admin 历史表单统一使用同一套背景与边框；不额外绘制内高光或外部阴影。 */
 html[data-theme][data-family] .admin-main :is(

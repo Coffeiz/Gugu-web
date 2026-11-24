@@ -5,11 +5,9 @@ import type { Pool, PoolClient } from 'pg'
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { enqueueScheduledTaskRagRebuild } from '../../scheduled-tasks/store.js'
 import { recordForwardUndoOperation } from '../../undo/record.js'
-import { projectTimestamp, readProjectFileCount } from '../store.js'
+import { projectTimestamp } from '../store.js'
 import type {
   ProjectTrashEvent,
-  ProjectTrashFile,
-  ProjectTrashFolder,
   ProjectTrashResourceChangedEvent,
   ProjectTrashRuntime,
   ProjectTrashTask,
@@ -51,32 +49,6 @@ function recordProject(row: Record<string, unknown>): ProjectRecord {
 
 function id(value: unknown) { return Number(value) }
 
-function fileRow(row: Record<string, unknown>): ProjectTrashFile {
-  return {
-    id: id(row.id), user_id: String(row.user_id), display_name: String(row.display_name),
-    ext: String(row.ext), space: String(row.space), project_id: row.project_id == null ? null : id(row.project_id),
-    folder_id: row.folder_id == null ? null : id(row.folder_id),
-    workspace_directory_id: row.workspace_directory_id == null ? null : id(row.workspace_directory_id),
-    stage_name: row.stage_name == null ? null : String(row.stage_name),
-    mind_map_id: row.mind_map_id == null ? null : id(row.mind_map_id),
-    storage_key: String(row.storage_key), version: Number(row.version || 1),
-    size: String(row.size ?? ''), size_bytes: Number(row.size_bytes ?? 0),
-    mime_type: row.mime_type == null ? null : String(row.mime_type),
-    img_width: row.img_width == null ? null : Number(row.img_width),
-    img_height: row.img_height == null ? null : Number(row.img_height),
-    deleted_at: projectTimestamp(row.deleted_at),
-  }
-}
-
-function folderRow(row: Record<string, unknown>): ProjectTrashFolder {
-  return {
-    id: id(row.id), user_id: String(row.user_id), project_id: row.project_id == null ? null : id(row.project_id),
-    workspace_directory_id: row.workspace_directory_id == null ? null : id(row.workspace_directory_id),
-    parent_id: row.parent_id == null ? null : id(row.parent_id), name: String(row.name),
-    version: Number(row.version || 1), deleted_at: projectTimestamp(row.deleted_at),
-  }
-}
-
 function eventRow(row: Record<string, unknown>): ProjectTrashEvent {
   return {
     id: id(row.id), user_id: String(row.user_id), title: String(row.title), date: String(row.date),
@@ -110,29 +82,6 @@ function transactionAdapter(client: Pick<PoolClient, 'query'>, lockCascade = tru
     },
 
     async listProjectResources(ownerId, projectId, deletedAt) {
-      const folderResult = await client.query<Record<string, unknown>>(
-        `SELECT id, user_id::text AS user_id, project_id, workspace_directory_id, parent_id,
-                name, version, deleted_at::text AS deleted_at
-         FROM folders WHERE user_id = $1 AND project_id = $2
-           AND ${deletedAt === undefined ? 'deleted_at IS NULL' : 'deleted_at = $3::timestamptz'}
-         ORDER BY id ${lockCascade ? 'FOR UPDATE' : ''}`,
-        deletedAt === undefined ? [ownerId, projectId] : [ownerId, projectId, deletedAt],
-      )
-      const folders = folderResult.rows.map(folderRow)
-      const folderIds = folders.map((row) => row.id)
-      const fileParams: unknown[] = [ownerId, projectId, folderIds]
-      const fileDelete = deletedAt === undefined ? 'deleted_at IS NULL' : 'deleted_at = $4::timestamptz'
-      if (deletedAt !== undefined) fileParams.push(deletedAt)
-      const filesResult = await client.query<Record<string, unknown>>(
-        `SELECT id, user_id::text AS user_id, display_name, ext, space, project_id,
-                folder_id, workspace_directory_id, stage_name, mind_map_id, storage_key,
-                version, size, size_bytes, mime_type, img_width, img_height,
-                deleted_at::text AS deleted_at
-         FROM files WHERE user_id = $1 AND ${fileDelete}
-           AND (project_id = $2 OR folder_id = ANY($3::integer[]))
-         ORDER BY id ${lockCascade ? 'FOR UPDATE' : ''}`,
-        fileParams,
-      )
       const eventParams: unknown[] = [ownerId, projectId]
       const eventDelete = deletedAt === undefined ? 'deleted_at IS NULL' : 'deleted_at = $3::timestamptz'
       if (deletedAt !== undefined) eventParams.push(deletedAt)
@@ -154,7 +103,7 @@ function transactionAdapter(client: Pick<PoolClient, 'query'>, lockCascade = tru
            FROM scheduled_tasks WHERE user_id = $1 AND event_id = ANY($2::integer[]) ORDER BY id ${lockCascade ? 'FOR UPDATE' : ''}`,
           [ownerId, eventIds],
         )
-      return { files: filesResult.rows.map(fileRow), folders, events, tasks: tasksResult.rows.map(taskRow) }
+      return { files: [], events, tasks: tasksResult.rows.map(taskRow) }
     },
 
     async updateProject(ownerId, projectId, fields) {
@@ -167,22 +116,7 @@ function transactionAdapter(client: Pick<PoolClient, 'query'>, lockCascade = tru
       return recordProject(result.rows[0])
     },
 
-    async updateFile(ownerId, file) {
-      await client.query(
-        `UPDATE files SET storage_key = $3, display_name = $4, deleted_at = $5::timestamptz, version = $6
-         WHERE id = $1 AND user_id = $2`,
-        [file.id, ownerId, file.storage_key, file.display_name, file.deleted_at, file.version],
-      )
-    },
-
-    async updateFolder(ownerId, folder) {
-      await client.query(
-        `UPDATE folders SET deleted_at = $3::timestamptz, version = $4
-         WHERE id = $1 AND user_id = $2`,
-        [folder.id, ownerId, folder.deleted_at, folder.version],
-      )
-    },
-
+    async updateFile() { throw new Error('项目文件由磁盘目录管理') },
     async updateEvent(ownerId, event) {
       await client.query(
         `UPDATE calendar_events SET deleted_at = $3::timestamptz, version = $4
@@ -217,13 +151,13 @@ function transactionAdapter(client: Pick<PoolClient, 'query'>, lockCascade = tru
 }
 
 /** PostgreSQL 项目软删/恢复与 Undo 共用单一事务；事件仅由 application 在提交后发布。 */
-export function createPostgresProjectTrashRuntime(pool: Pool, publish: EventPublisher): ProjectTrashRuntime {
+export function createPostgresProjectTrashRuntime(pool: Pool, publish: EventPublisher, readFileCount: (ownerId: string, projectId: number) => Promise<number>): ProjectTrashRuntime {
   return {
     async transaction<T>(work: (tx: ProjectTrashTransaction) => Promise<T>): Promise<T> {
       return withPostgresTransaction(pool, (client) => work(transactionAdapter(client)))
     },
     async getProjectFileCount(ownerId, projectId) {
-      return readProjectFileCount(pool, ownerId, projectId)
+      return readFileCount(ownerId, projectId)
     },
     publishResourceChanged: publish,
   }

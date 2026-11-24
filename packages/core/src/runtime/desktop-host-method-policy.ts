@@ -4,6 +4,7 @@ const fixedMethods = new Set([
   'agent.memory.resolveEmbedding',
   'agent.log.append',
   'agent.tools.policy',
+  'agent.shell.trash',
   'agent.schedules.model',
   'agent.schedules.im.privateTarget',
   'agent.schedules.im.decodeGroup',
@@ -13,8 +14,8 @@ const fixedMethods = new Set([
 ])
 
 const allowedPatterns = [
-  /^agent\.files\.(?:overview|projectOverview|resolve|present|resolveDroppedReference|resolveWorkspaceReference|workspaceList|workspaceInstructions|globalSearch|downloadTarget|commitDownload|saveAttachment)$/u,
-  /^agent\.im\.(?:snapshot|authorizeGroupTool|readGroupMemoryContext)$/u,
+  /^agent\.files\.(?:overview|projectOverview|projectPath|projectWorkspaceBinding|openFolder|deleteItem|libraryFileReference|resolve|present|resolveDroppedReference|resolveWorkspaceReference|workspaceList|workspaceInstructions|globalSearch|downloadTarget|commitDownload|saveAttachment)$/u,
+  /^agent\.im\.(?:snapshot|authorizeGroupTool|readGroupMemoryContext|sendAttachment)$/u,
   /^agent\.search\.(?:deep_research|similar_image_search)(?:\.available)?$/u,
   /^agent\.email\.(?:accounts|attachments|send)$/u,
 ]

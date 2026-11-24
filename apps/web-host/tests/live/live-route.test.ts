@@ -165,7 +165,7 @@ test('实时流裁剪 agent/filesync 字段并过滤无效 envelope 与控制消
   }
 })
 
-test('实时流接受提醒进度、通知和 present 文件消息，并拒绝畸形任务进度', async () => {
+test('实时流拒绝旧回收站任务进度，保留通知和 present 文件消息', async () => {
   const progress = {
     protocol_version: 'live-event-v1', event_id: 'purge-1', type: 'task.progress',
     task_type: 'trash_purge', task_id: 12, status: 'running', progress_current: 1,
@@ -180,7 +180,7 @@ test('实时流接受提醒进度、通知和 present 文件消息，并拒绝�
   try {
     const response = await app.inject({ method: 'GET', url: '/api/v1/live/stream' })
     assert.equal(response.statusCode, 200)
-    assert.ok(response.body.includes(JSON.stringify(progress)))
+    assert.equal(response.body.includes(JSON.stringify(progress)), false)
     assert.equal(response.body.includes(JSON.stringify(badProgress)), false)
     assert.ok(response.body.includes(JSON.stringify(notification)))
     assert.ok(response.body.includes(JSON.stringify(present)))

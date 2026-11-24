@@ -1,8 +1,8 @@
+import { attachmentFolderPathSchema } from './files.js'
 import { z } from 'zod'
 import { ProviderError } from '../providers/errors.js'
 import { retryClock } from '../providers/retry.js'
 import { parseFragment, type DefaultTreeAdapterTypes } from 'parse5'
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { ToolCall, ToolResult } from '../models.js'
 import type { ProviderHttpResponse } from '../providers/contracts.js'
 import type { ToolDefinition, ToolScope } from './contracts.js'
@@ -94,6 +94,8 @@ function extractHtmlText(html: string): string {
 
 async function extractPdfText(bytes: Uint8Array, signal: AbortSignal): Promise<string> {
   // PDF.js 会将输入缓冲区转移给解析 Worker；复制以免消费 Host 响应正文。
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  signal.throwIfAborted()
   const loading = getDocument({ data: bytes.slice(), useSystemFonts: true, disableFontFace: true, enableXfa: false, stopAtErrors: false, verbosity: 0 })
   const abortLoading = () => { void loading.destroy().catch(() => undefined) }
   signal.addEventListener('abort', abortLoading, { once: true })
@@ -226,25 +228,24 @@ export function createHttpGetTool(port: HttpGetPort): ToolDefinition {
 }
 
 const downloadSchema = z.object({
+  folder_path: attachmentFolderPathSchema.optional(),
   url: z.string().min(1),
   file_name: z.string().nullable().optional(),
   space: z.enum(['personal', 'project', 'workspace']).nullable().optional(),
   project_id: z.number().int().safe().nullable().optional(),
-  folder_id: z.number().int().safe().nullable().optional(),
 }).strict()
 
-type DownloadLocation = { space: 'personal' | 'project' | 'workspace' | null; projectId: number | null; folderId: number | null }
+type DownloadLocation = { folderPath?: string; space: 'personal' | 'project' | 'workspace' | null; projectId: number | null }
 type FileDirectory = { projectId: number | null; workspaceDirectoryId: number | null }
 type DownloadTarget = DownloadLocation & FileDirectory & { space: NonNullable<DownloadLocation['space']>; workspaceId: number | null }
-type DownloadTargetError = { error: string; expected?: { space: string; project_id: number | null; folder_id: number | null }; hint?: string }
+type DownloadTargetError = { error: string; expected?: { space: string; project_id: number | null }; hint?: string }
 
-/** 工作区绑定只决定默认目标和显式 workspace 空间，文件夹推断仍以 owner 限定的查询为准。 */
+/** 工作区绑定决定默认目标和显式 workspace 空间。 */
 export async function resolveWebDownloadLocation(location: DownloadLocation, sources: {
   bound(): Promise<DownloadTarget | null>
-  folder(id: number): Promise<FileDirectory | null>
 }): Promise<DownloadTarget | DownloadTargetError> {
-  const { space, projectId, folderId } = location
-  const omitted = space === null && projectId === null && folderId === null
+  const { space, projectId } = location
+  const omitted = space === null && projectId === null
   if (omitted || space === 'workspace') {
     const target = await sources.bound()
     if (omitted && target) return target
@@ -252,23 +253,18 @@ export async function resolveWebDownloadLocation(location: DownloadLocation, sou
       if (!target) return { error: 'space=workspace 需要会话绑定工作区；未绑定会话请使用 personal/project。' }
       if (target.workspaceDirectoryId === null) return {
         error: '当前会话绑定的工作区没有可写入的文件目录（绑定的是项目或文件夹）。',
-        expected: { space: target.space, project_id: target.projectId, folder_id: target.folderId },
+        expected: { space: target.space, project_id: target.projectId },
         hint: '省略目标位置参数即可写入当前工作区落点。',
       }
-      return { ...target, folderId }
+      return target
     }
   }
-  if (space === null && projectId === null && folderId !== null) {
-    const folder = await sources.folder(folderId)
-    if (!folder) return { error: '文件夹不存在' }
-    const inferredSpace = folder.workspaceDirectoryId !== null ? 'workspace' : folder.projectId !== null ? 'project' : 'personal'
-    return { ...folder, space: inferredSpace, folderId, workspaceId: null }
-  }
-  return { space: space ?? (projectId === null ? 'personal' : 'project'), projectId, folderId, workspaceDirectoryId: null, workspaceId: null }
+  return { space: space ?? (projectId === null ? 'personal' : 'project'), projectId, workspaceDirectoryId: null, workspaceId: null }
 }
 
 export interface WebDownloadPort {
   fixedDestination?: boolean
+  allowFolderPath?: boolean
   /** 仅按 Host 批准的 owner、工作区授权和领域资源定位，结束读取事务再返回。 */
   prepare(location: DownloadLocation, scope: ToolScope): Promise<{
     capacity: number | null
@@ -313,14 +309,15 @@ export function createWebDownloadTool(port: WebDownloadPort): ToolDefinition {
   return {
     definition: { name: 'web_download', schema: { type: 'function', function: {
       name: 'web_download',
-      description: port.fixedDestination ? '下载公网 URL 到个人文件的下载目录。' : '下载公网 URL 到个人、项目或当前工作区文件目录。',
+      description: (port.fixedDestination ? '下载公网 URL 到个人文件。' : '下载公网 URL 到个人、项目或当前工作区文件目录。')
+        + (port.allowFolderPath ? '可用 folder_path 指定已存在的相对子目录，省略时使用默认下载目录。' : ''),
       parameters: { type: 'object', additionalProperties: false, required: ['url'], properties: {
         url: { type: 'string', minLength: 1 },
         file_name: { type: ['string', 'null'] },
+        ...(port.allowFolderPath ? { folder_path: { type: 'string', description: '目标目录内已存在的相对子目录' } } : {}),
         ...(!port.fixedDestination ? {
         space: { type: ['string', 'null'], enum: ['personal', 'project', 'workspace', null] },
         project_id: { type: ['integer', 'null'] },
-        folder_id: { type: ['integer', 'null'] },
         } : {}),
       } },
     } } },
@@ -329,7 +326,8 @@ export function createWebDownloadTool(port: WebDownloadPort): ToolDefinition {
     ...(port.reconcile ? { reconcile: (_input, identity, call) => port.reconcile!(identity, call) } : {}),
     async execute(input, scope, call) {
       const args = input as z.infer<typeof downloadSchema>
-      if (port.fixedDestination && (args.space != null || args.project_id != null || args.folder_id != null))
+      if (args.folder_path !== undefined && !port.allowFolderPath) return downloadFailure('此下载工具不支持指定子目录')
+      if (port.fixedDestination && (args.space != null || args.project_id != null))
         return downloadFailure('文件只能保存到下载目录')
       const candidate = args.url.trim()
       if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(candidate) && !/^https?:\/\//iu.test(candidate)) return downloadFailure('非法 url')
@@ -343,7 +341,7 @@ export function createWebDownloadTool(port: WebDownloadPort): ToolDefinition {
         scope.signal.throwIfAborted()
         if (previous.kind === 'completed') return previous
       }
-      const target = await port.prepare({ space: args.space ?? null, projectId: args.project_id ?? null, folderId: args.folder_id ?? null }, scope)
+      const target = await port.prepare({ space: args.space ?? null, projectId: args.project_id ?? null, ...(args.folder_path === undefined ? {} : { folderPath: args.folder_path }) }, scope)
       if ('error' in target) return { kind: 'completed', successful: false, mutated: false, value: target }
       if (target.capacity !== null && (!Number.isSafeInteger(target.capacity) || target.capacity < 0))
         return downloadFailure('文件容量无法确认')
@@ -364,7 +362,7 @@ export function createWebDownloadTool(port: WebDownloadPort): ToolDefinition {
           scope.signal.throwIfAborted()
           if (response.status < 200 || response.status >= 300) return downloadFailure(`下载失败：远端返回 HTTP ${response.status}`)
           const capacity = target.capacity
-          const capacityError = '下载内容超过当前用户可用存储空间'
+          const capacityError = '下载文件超过大小限制'
           const remoteLength = response.headers['content-length'] ?? ''
           if (capacity !== null && /^\d+$/u.test(remoteLength) && Number(remoteLength) > capacity)
             return downloadFailure(capacityError)

@@ -151,16 +151,81 @@ export function registerWorkspaceDirectoryRoutes(
 ): void {
   const files = options.operations.files
   if (files) {
+    app.get<{ Querystring: { path?: string; download?: string } }>('/api/v1/files/by-path/content', {
+      preHandler: options.requireUser,
+    }, async (request, reply) => {
+      const sandboxPath = request.query.path
+      const download = request.query.download
+      if (typeof sandboxPath !== 'string' || sandboxPath.length > 4096 || download !== undefined && !['0', '1'].includes(download))
+        throw new CoreError('invalid_request', '文件路径无效')
+      const source = await files.openSandboxPath(options.ownerIdFromRequest(request), sandboxPath)
+      return sendContent(reply, request, {
+        file: { name: source.fileName }, handle: source.handle, size: source.size,
+        fileName: source.fileName, mimeType: source.mimeType,
+      }, download === '1' ? 'attachment' : 'inline')
+    })
+
     const registerFileRoutes = (prefix: string, directory: (params: { directory_id: string }) => FileDirectory) => {
-      type FileRequest = { Params: { directory_id: string }; Querystring: { path?: string; download?: string; overwrite?: string; identity?: string } }
+      type FileRequest = { Params: { directory_id: string }; Querystring: { path?: string; download?: string; overwrite?: string; identity?: string; kind?: string } }
       const scope = (request: FastifyRequest<FileRequest>) => {
         const path = request.query.path ?? ''
         if (typeof path !== 'string' || path.length > 4096)
           throw new CoreError('invalid_request', '文件路径无效')
         return [options.ownerIdFromRequest(request), directory(request.params), path] as const
       }
+      app.post<FileRequest & { Body: { paths?: unknown } }>(`${prefix}/download-archive`,
+        { preHandler: options.requireUser }, async (request, reply) => {
+          const paths = request.body?.paths
+          if (!Array.isArray(paths) || paths.length === 0 || paths.length > 10_000
+            || paths.some(path => typeof path !== 'string' || path.length > 4096))
+            throw new CoreError('invalid_request', '下载参数无效')
+          const controller = new AbortController()
+          const onClose = () => { if (!reply.raw.writableEnded) controller.abort() }
+          reply.raw.once('close', onClose)
+          try {
+            const stream = await files.downloadArchive(options.ownerIdFromRequest(request), directory(request.params), paths, controller.signal)
+            stream.once('close', () => reply.raw.off('close', onClose))
+            return reply.type('application/zip').header('Content-Disposition', 'attachment; filename="files.zip"').send(stream)
+          } catch (error) {
+            reply.raw.off('close', onClose)
+            throw error
+          }
+        })
+      app.post<FileRequest & { Body: { paths?: unknown; name?: unknown } }>(`${prefix}/compress`,
+        { preHandler: options.requireUser }, async (request, reply) => {
+          const { paths, name } = request.body ?? {}
+          if (!Array.isArray(paths) || paths.length === 0 || paths.length > 10_000
+            || paths.some(path => typeof path !== 'string' || path.length > 4096) || typeof name !== 'string')
+            throw new CoreError('invalid_request', '压缩参数无效')
+          const controller = new AbortController()
+          const onClose = () => controller.abort()
+          reply.raw.once('close', onClose)
+          try {
+            return await files.compressArchive(options.ownerIdFromRequest(request), directory(request.params), paths, name.trim(), controller.signal)
+          } finally { reply.raw.off('close', onClose) }
+        })
+      app.post<FileRequest & { Body: { folderName?: unknown } }>(`${prefix}/extract`,
+        { preHandler: options.requireUser }, async (request, reply) => {
+          const folderName = request.body?.folderName
+          if (typeof folderName !== 'string') throw new CoreError('invalid_request', '解压文件夹名称无效')
+          const controller = new AbortController()
+          const onClose = () => controller.abort()
+          reply.raw.once('close', onClose)
+          try {
+            return await files.extractArchive(...scope(request), folderName.trim(), controller.signal)
+          } finally { reply.raw.off('close', onClose) }
+        })
+      app.post<FileRequest & { Body: { paths?: unknown } }>(`${prefix}/resolve-relative`, { preHandler: options.requireUser }, request => {
+        const paths = request.body?.paths
+        if (!Array.isArray(paths) || paths.length > 100 || paths.some(path => typeof path !== 'string' || path.length > 4096))
+          throw new CoreError('invalid_request', '文件引用参数无效')
+        if (paths.some(path => path.split('/').length > 64) || paths.reduce((total, path) => total + path.split('/').length, 0) > 256)
+          throw new CoreError('invalid_request', '文件引用路径层级过多')
+        return files.resolveRelative(...scope(request), paths)
+      })
       app.get<FileRequest>(`${prefix}/entries`, { preHandler: options.requireUser }, request => files.list(...scope(request)))
-      app.get<FileRequest>(`${prefix}/reference`, { preHandler: options.requireUser }, request => files.reference(...scope(request)))
+      app.get<FileRequest>(`${prefix}/reference`, { preHandler: options.requireUser }, request =>
+        files.reference(...scope(request), request.query.identity, request.query.kind === 'folder' ? 'folder' : 'file'))
       app.get<FileRequest>(`${prefix}/thumb`, { preHandler: options.requireUser }, async (request, reply) => {
         const rendered = await renderPathFileThumbnail(await files.open(...scope(request)))
         return reply.type(rendered.mimeType)

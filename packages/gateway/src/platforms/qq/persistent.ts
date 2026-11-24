@@ -1,9 +1,8 @@
-import {completeQqLines} from '@gugu/core/im/qq-text'
 import {createHash} from 'node:crypto'
 import {z} from 'zod'
 import {stableJson,type RunIdentity,type RunEvent} from '@gugu/core/agent'
 import type {ImRunDeliveryPorts,ImDeliveryAcknowledgement} from '@gugu/core/im/run-delivery'
-import {parseQqStreamSnapshot,type createQqSender,type QqTarget,type QqReceipt} from './sender.js'
+import {parseQqStreamSnapshot,qqStreamPrefix,type createQqSender,type QqTarget,type QqReceipt} from './sender.js'
 import type { ImConversationScope } from '../../ir/inbound.js'
 
 import type { ImPlatformProjectionStore } from '../../runtime/projection-store.js'
@@ -41,7 +40,7 @@ const segment=z.object({round:z.number().int().nonnegative().safe(),text:z.strin
 const schema=z.object({v:z.literal(1),target:z.string().regex(/^[a-f0-9]{64}$/),eventSequence:z.number().int().nonnegative().safe(),lastEventHash:z.string(),
  segment:z.number().int().nonnegative().safe(),round:z.number().int().nonnegative().safe(),stage:z.enum(['open','paused','finished']),
  mode:z.enum(['stream','plain']),plainBuffer:z.string(),current:z.unknown().nullable(),pendingRoundText:z.string().nullable(),visible:z.array(segment).max(1000),lastFlushAt:z.number().finite().nonnegative(),
- parser:z.unknown(),line:z.string(),chartSource:z.string(),rawRound:z.string(),charts:z.array(z.object({round:z.number().int().nonnegative().safe(),source:z.string()}).strict()).max(1000),
+ parser:z.unknown(),line:z.string(),lineEmitted:z.number().int().nonnegative().optional(),chartSource:z.string(),rawRound:z.string(),charts:z.array(z.object({round:z.number().int().nonnegative().safe(),source:z.string()}).strict()).max(1000),
  inflight:z.object({sequence:z.number().int().positive().safe(),fingerprint:z.string().regex(/^[a-f0-9]{64}$/)}).strict().nullable()}).strict()
 type State=z.infer<typeof schema>
 class Blocked extends Error{constructor(readonly outcome:'unknown'|'rejected'){super('QQ 流式投递未完成')}}
@@ -122,7 +121,7 @@ export function createPersistentQqProjection(options:QqProjectionOptions):NonNul
   version=await store!.checkpoint(version,snapshot())
   let operation=0
   let stream:ReturnType<ReturnType<typeof createQqSender>['privateStream']>|undefined
-  const open=()=>stream??=options.sender.privateStream(target,undefined,{automaticFlush:false,authorize:options.authorize,...(state.current===null?{}:{snapshot:state.current}),
+  const open=()=>stream??=options.sender.privateStream(target,undefined,{automaticFlush:false,partialText:true,authorize:options.authorize,...(state.current===null?{}:{snapshot:state.current}),
    async checkpoint(value){state.current=value;version=await store!.checkpoint(version,snapshot())}})
   async function send(final:boolean,text?:string){
    const value=open();let key=`qq:${state.segment}:${event.sequence}:${++operation}:${timed?'timed-frame':final?'done':'frame'}`
@@ -159,8 +158,8 @@ export function createPersistentQqProjection(options:QqProjectionOptions):NonNul
    version=await store!.accepted(key,version,snapshot())
   }
   async function close(text?:string){
+   const fullRaw=text!==undefined&&!!state.rawRound&&(text.trimEnd()===state.rawRound.trimEnd()||text.startsWith(state.rawRound))
    if(text!==undefined){
-    const fullRaw=!!state.rawRound&&(text.trimEnd()===state.rawRound.trimEnd()||text.startsWith(state.rawRound))
     for(const chart of state.charts.filter(value=>value.round===state.round)){
      const at=text.indexOf(chart.source)
      if(at>=0){let end=at+chart.source.length;if(text.slice(end,end+2)==='\r\n')end+=2;else if(text[end]==='\n')end++;text=text.slice(0,at)+text.slice(end)}
@@ -170,8 +169,16 @@ export function createPersistentQqProjection(options:QqProjectionOptions):NonNul
    const has=text?.trim()||state.plainBuffer.trim()||state.current!==null&&parseQqStreamSnapshot(state.current).fullText.trim()
    if(!has)return
    if(state.current===null&&!state.plainBuffer&&text){const last=state.visible.at(-1);if(last?.round===event.round&&last.source.trimEnd()===text.trimEnd())return}
+   if(state.current===null&&!state.plainBuffer&&text&&event.type==='final'){
+    const last=state.visible.at(-1)
+    if(last?.round===event.round&&['text_end','round_end'].includes(last.boundary)&&!fullRaw){
+     if(!text.startsWith(last.source))throw new Blocked('unknown')
+     text=text.slice(last.source.length)
+     if(!text.trim())return
+    }
+   }
    if(state.mode==='plain'){await sendPlain(text||state.plainBuffer);return}
-   if(state.current===null&&text){const last=state.visible.at(-1);if(last?.round===event.round){if(last.source.trimEnd()===text.trimEnd())return;if(event.type==='final'&&last.boundary==='round_end')throw new Blocked('unknown')}open().push(text);state.current=open().snapshot()}
+   if(state.current===null&&text){open().push(text);state.current=open().snapshot()}
    await send(true,text)
   }
   const append=(text:string)=>{if(text){if(state.mode==='plain')state.plainBuffer+=text;else{open().push(text);state.current=open().snapshot()}}}
@@ -190,6 +197,8 @@ export function createPersistentQqProjection(options:QqProjectionOptions):NonNul
    version=await store!.accepted(key,version,snapshot())
   }
   async function line(text:string,final=false){
+   const emitted=state.lineEmitted??0
+   state.lineEmitted=0
    const before=parser!.snapshot() as {chart:unknown}
    const events=[...await parser!.push({...event,type:'token',payload:{text}})]
    if(final)events.push(...await parser!.push({...event,type:'final',payload:{text:''}}))
@@ -202,37 +211,52 @@ export function createPersistentQqProjection(options:QqProjectionOptions):NonNul
      if(rendered?.type==='chart_image'&&preparation)await chart(rendered.png,source)
      else append(source)
     }
-   }else append(text)
+   }else append(text.slice(emitted))
   }
   async function tokens(text:string){
    if(!preparation){append(text);return}
    state.rawRound+=text;state.line+=text
    let newline:number
    while((newline=state.line.indexOf('\n'))>=0){const value=state.line.slice(0,newline+1);state.line=state.line.slice(newline+1);await line(value)}
+   if(!state.chartSource&&(parser!.snapshot() as {chart:unknown}).chart===null){
+    const prefix=qqStreamPrefix(state.line)
+    if(prefix.trim()&&prefix.length>(state.lineEmitted??0)){
+     append(prefix.slice(state.lineEmitted??0));state.lineEmitted=prefix.length
+    }
+   }
   }
   async function finishSource(){
    if(!preparation)return
    if(state.line){const text=state.line;state.line='';await line(text,true)}
    if(state.chartSource){append(state.chartSource);state.chartSource='';resetParser()}
   }
+  async function closeText(text?:string){
+   await finishSource()
+   await close(text??state.pendingRoundText??undefined)
+   // 仅旧检查点可能带有尚未发送的轮次正文。
+   state.pendingRoundText=null
+  }
   function pendingFrame(){
    if(state.current===null)return
-   const frame=parseQqStreamSnapshot(state.current),complete=completeQqLines(frame.fullText)
+   const frame=parseQqStreamSnapshot(state.current),complete=qqStreamPrefix(frame.fullText)
    if(complete.trim()&&complete!==frame.lastSentText)return frame
   }
   try{
    if(timed){
     if(pendingFrame())await send(false)
    }else if(event.type==='token'&&typeof event.payload.text==='string'){
-    if(state.pendingRoundText!==null){await finishSource();await close(state.pendingRoundText);state.pendingRoundText=null;state.rawRound='';resetParser()}
+    if(state.pendingRoundText!==null){await closeText();state.rawRound='';resetParser()}
     if(state.round!==event.round){await finishSource();await close();state.round=event.round;state.rawRound='';resetParser()}
     await tokens(event.payload.text)
     const frame=pendingFrame()
     // 每段首帧独立发送。空刷和上一段的 DONE 不占用新段的节流窗口。
     if(frame&&(frame.index===0||now()-state.lastFlushAt>=frame.flushInterval))await send(false)
-   }else if(event.type==='round_end'){if(state.round!==event.round){await close();state.round=event.round}state.pendingRoundText=typeof event.payload.text==='string'?event.payload.text:state.mode==='plain'?state.plainBuffer:state.current===null?'':parseQqStreamSnapshot(state.current).fullText}
-   else if(event.type==='tool_call'||event.type==='run_waiting'||event.type==='interaction_required'){
-    await finishSource();await close(state.pendingRoundText??undefined);state.pendingRoundText=null;if(event.type==='interaction_required')state.stage='paused'
+   }else if(event.type==='text_end'||event.type==='round_end'){
+    if(state.round!==event.round){await finishSource();await close();state.round=event.round;state.rawRound=''}
+    await closeText(typeof event.payload.text==='string'?event.payload.text:undefined)
+   }
+   else if(event.type==='tool_call'||(event.type==='compaction'&&event.payload.phase==='started')||event.type==='run_waiting'||event.type==='interaction_required'){
+    await closeText();if(event.type==='interaction_required')state.stage='paused'
    }else if(event.type==='final'){
     if(state.round!==event.round){await finishSource();await close();state.round=event.round;state.rawRound=''}
     if(preparation&&event.payload.status==='completed'&&typeof event.payload.text==='string'){

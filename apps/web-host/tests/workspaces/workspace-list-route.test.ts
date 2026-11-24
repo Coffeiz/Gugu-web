@@ -33,7 +33,6 @@ test('GET workspace route uses authenticated owner and returns complete list sna
       id: 7,
       name: '工作区',
       kind: 'directory',
-      folderId: null,
       projectId: null,
       directoryId: 31,
       enabled: false,

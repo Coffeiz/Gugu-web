@@ -19,7 +19,7 @@ export declare function describeQqMedia(item: Readonly<Record<string, unknown>>,
     mime: string;
     name: string;
 } | null;
-/** 直传与表情补图共用下载规则。引用附件由宿主从当前会话存储读取。 */
+/** 直传、引用图片与表情补图共用下载规则。 */
 export declare function materializeQqMedia(item: Readonly<Record<string, unknown>>, budget: {
     readonly remaining: number;
     consume(size: number): boolean;
@@ -34,6 +34,6 @@ export declare function materializeQqMedia(item: Readonly<Record<string, unknown
 /** 顺序处理直传与引用；宿主提供会话授权和附件存储。 */
 export declare function processQqMedia(items: readonly QqMediaRequirement[], budget: Parameters<typeof materializeQqMedia>[1], signal: AbortSignal, options: Parameters<typeof downloadQqMedia>[3] & {
     authorize?: () => Promise<boolean>;
-    quote: (media: QqMediaRequirement, sourceId: string) => Promise<void>;
+    quote: (media: QqMediaRequirement, sourceId: string) => Promise<boolean>;
     file: (media: QqMediaRequirement, file: NonNullable<Awaited<ReturnType<typeof materializeQqMedia>>>, index: number) => Promise<void>;
 }): Promise<boolean>;

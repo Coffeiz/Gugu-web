@@ -3,7 +3,7 @@ import { h, render, type Component } from 'vue'
 import { resolveIcon } from '@/components/common/icons/iconRegistry'
 import { i18n } from '@/i18n'
 import { escapeHtml } from '@/utils/escapeHtml'
-import { decodeMindFileReference } from '@/composables/mind/fileReference'
+import { decodeMindFileReference, folderLinkReference } from '@/composables/mind/fileReference'
 import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
 
 // Markdown 渲染器输出的是 HTML 字符串，不能直接挂载 Vue 图标组件；这里复用
@@ -22,12 +22,17 @@ function chatObjectIcon(path: string, className: string) {
   return `<svg viewBox="0 0 24 24" aria-hidden="true" class="${className}"><path d="${path}"/></svg>`
 }
 
+export function renderObjectLinkIcon(href: string) {
+  const icon = objectCard(href)?.icon
+  return icon ? chatObjectIcon(icon, 'chat-object-link-icon') : ''
+}
+
 
 type ObjectCard = { href: string; type: string; icon?: string; title: string; context: string; description?: string; badge?: string }
 
 const cardIconMarkup = new Map<Component, string>()
 
-function renderCardIcon(icon: Component) {
+export function renderCardIcon(icon: Component) {
   if (typeof document === 'undefined') return ''
   const cached = cardIconMarkup.get(icon)
   if (cached !== undefined) return cached
@@ -41,6 +46,12 @@ function renderCardIcon(icon: Component) {
 
 function objectCard(href: string, title = '', description?: string): ObjectCard | undefined {
   const base = { href, title, description }
+  const folder = folderLinkReference(href)
+  if (folder) {
+    const context = i18n.global.t('mindEditorUi.referenceTypes.folder')
+    return { ...base, title: title || decodeMindFileReference(folder)?.relativePath.split('/').at(-1) || context,
+      type: 'folder', icon: CHAT_PROJECT_ICON_PATH, context }
+  }
   const object = /^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task)\/(\d+)$/i.exec(href)
   if (object) {
     const type = object[1]!.toLowerCase()

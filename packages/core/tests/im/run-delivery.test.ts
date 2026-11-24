@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { test, vi } from 'vitest'
 import type { RunEvent, RunIdentity } from '../../src/agent/models.js'
-import { createImRunDelivery, createImRunDeliveryRecovery, ImRunDeliveryBlocked } from '../../src/im/run-delivery.js'
+import { createImRunDelivery, createImRunDeliveryRecovery, formatImToolReceipt, ImRunDeliveryBlocked } from '../../src/im/run-delivery.js'
 import type { ImDeliveryResult, ImRunDeliveryPorts } from '../../src/im/run-delivery.js'
 import { fixture, identity } from '../agent/run/fixtures.js'
 
@@ -453,4 +453,42 @@ test('上下文压缩提示按状态单独投递，关闭展示后无提示，�
   const disabled = deliveryFixture(events)
   await createImRunDelivery(disabled.ports).consume(identity, (async function* () { yield* events })())
   assert.deepEqual(disabled.sent.map(item => item.value), ['合成结果'])
+})
+
+test('启用整理提示时先投影开始事件，再发送提示，完成事件不关闭文本流', async () => {
+  const events = [
+    event(1, 'compaction', { phase: 'started' }),
+    event(2, 'compaction', { phase: 'completed', applied: true }),
+  ]
+  const f = deliveryFixture(events)
+  const ordered: string[] = []
+  f.ports.sender.compactionNotice = async ({ text }) => { ordered.push(text); return 'accepted' }
+  const delivery = createImRunDelivery({ ...f.ports, stream: {
+    async project({ event }) { ordered.push(event.type); return 'accepted' },
+  } })
+  await delivery.consume(identity, (async function* () { yield* events })())
+  assert.deepEqual(ordered, ['compaction', '上下文较长，正在整理后继续处理。', '上下文整理完成。'])
+})
+
+test('工具回执按语言显示真实工具名称，Shell 回执只显示动作', () => {
+  const wrapped = { name: 'call_tool', status: 'success', display: { toolInput: { tool_name: 'get_project' } } }
+  assert.equal(formatImToolReceipt(wrapped), '✅ 项目详情完成')
+  assert.equal(formatImToolReceipt(wrapped, undefined, 'ja-JP'), '✅ プロジェクト詳細：完了')
+  assert.equal(formatImToolReceipt(wrapped, undefined, 'en-US'), '✅ Project details completed')
+  assert.equal(formatImToolReceipt({
+    name: 'shell', status: 'error', display: { shellActivity: { action: 'git_diff', target: 'private-file' } },
+  }, undefined, 'en-US'), '⚠️ View Git diff not completed')
+})
+
+test('未匹配专用动作的 Shell 回执使用共享命令名词条', () => {
+  const event = { name: 'shell', status: 'success', display: { toolInput: { command: '/usr/bin/rsync input output' } } }
+  assert.equal(formatImToolReceipt(event), '✅ 运行 rsync 命令完成')
+  assert.equal(formatImToolReceipt(event, undefined, 'ja-JP'), '✅ rsync コマンドを実行：完了')
+  assert.equal(formatImToolReceipt(event, undefined, 'en-US'), '✅ Run rsync command completed')
+})
+
+test('Shell 诊断回执显示共享分类和实际命令数', () => {
+  const receipt = { name: 'shell', status: 'success', display: { toolInput: { command: 'uptime; sysctl -n hw.ncpu; ps | head -6' } } }
+  assert.equal(formatImToolReceipt(receipt), '✅ 查看系统负载与进程 · 3 条命令完成')
+  assert.equal(formatImToolReceipt(receipt, undefined, 'en-US'), '✅ View system load and processes · 3 commands completed')
 })

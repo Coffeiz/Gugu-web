@@ -1,5 +1,5 @@
 <template>
-  <button ref="elementRef" v-bind="$attrs"><slot /></button>
+  <component :is="tag" ref="elementRef" v-bind="$attrs"><slot /></component>
 </template>
 
 <script setup lang="ts">
@@ -9,6 +9,7 @@ import { runtime } from '@/interaction/runtime'
 defineOptions({ inheritAttrs: false })
 
 const props = defineProps({
+  tag: { type: String as PropType<'button' | 'div'>, default: 'button' },
   targetId: { type: String, required: true },
   surfaceId: { type: String, required: true },
   accepts: { type: Array as PropType<readonly string[]>, default: () => ['file-item', 'folder-item'] },

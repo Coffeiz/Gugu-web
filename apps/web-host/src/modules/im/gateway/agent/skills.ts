@@ -4,7 +4,7 @@ import type { RunIdentity, Json, CanonicalRunPreparationPorts } from '@gugu/core
 import { createBuiltinSkillDefinitions, createSkillRegistry, type SkillDefinition, type SkillMetadata } from '@gugu/core/skills'
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 import type { ImActor } from '@gugu/core/im/access'
-import { imCanUseTool } from '@gugu/core/im/access'
+import { imAllowsBuiltinSkill, imCanUseTool, imSkillToolsAvailable } from '@gugu/core/agent/scenes/im'
 import { createAgentToolBrief } from '@gugu/core/agent/tool-brief'
 
 const same = (a: RunIdentity, b: RunIdentity) => a.ownerId === b.ownerId && a.sessionId === b.sessionId && a.runId === b.runId
@@ -13,12 +13,14 @@ const failure = () => new Error('IM 技能资源不可用')
 export async function createImProductionSkills(options: {
   pool: Pick<Pool, 'query'>; identity: RunIdentity; actor: ImActor; loadOwnerContext: boolean
   authorize(): Promise<boolean>
+  availableTools?(): Promise<ReadonlySet<string>>
 }) {
   const identity = { ...options.identity }, actor = structuredClone(options.actor)
-  const builtins = await createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal)
+  const builtins = (await createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal))
+    .filter(skill => imAllowsBuiltinSkill(skill.key))
   const canRead = async (candidate: RunIdentity) => same(candidate, identity) && imCanUseTool(actor, 'use_skill') && await options.authorize()
   async function userMetadata(): Promise<SkillMetadata[]> {
-    if (!options.loadOwnerContext || actor.role !== 'owner') return []
+    if (actor.chatType === 'group' || !options.loadOwnerContext || actor.role !== 'owner') return []
     const rows = await options.pool.query(`SELECT skill_id,name,description_short,description_long,category,related_tools
       FROM user_skills WHERE owner_id=$1 AND source='user' AND enabled IS TRUE ORDER BY skill_id`, [identity.ownerId])
     return rows.rows.map(row => {
@@ -41,7 +43,12 @@ export async function createImProductionSkills(options: {
   } }))]
   const registry = createSkillRegistry({ skills: definitions, async authorize(candidate, id) {
     if (!await canRead(candidate)) return false
-    if (id.startsWith('S')) return true
+    if (id.startsWith('S')) {
+      if (!options.availableTools) return true
+      const available = await options.availableTools()
+      const skill = builtins.find(item => item.id === id)
+      return available.has('use_skill') && !!skill && imSkillToolsAvailable(skill, available)
+    }
     return (await userMetadata()).some(meta => meta.id === id)
   } })
   const tools = { skills: registry, async origin(candidate: RunIdentity, id: string, signal: AbortSignal) {

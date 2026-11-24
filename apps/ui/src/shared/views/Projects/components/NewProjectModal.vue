@@ -558,11 +558,16 @@ async function handleCreate() {
   font-size: 17px; font-weight: 700; color: var(--text-primary);
   font-family: var(--font-sans); line-height: 1.2; outline: none;
   padding: 7px 8px; margin: 0;
-  border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; corner-shape: round;
-  background: rgba(255,255,255,0.72); caret-color: var(--input-caret-color);   /* 与下方字段框统一：0.72 白底 + 0.1 边框 */
-  transition: border-color 0.15s, box-shadow 0.15s;
+  border: 1px solid transparent; border-radius: 10px; corner-shape: round;
+  background: transparent; caret-color: var(--input-caret-color);
+  transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
 }
 .header-name-input::placeholder { color: var(--text-secondary); opacity: 0.45; font-weight: 700; }
+.header-name-input:hover {
+  border-color: var(--input-border-hover);
+  background: var(--input-bg-hover);
+  box-shadow: var(--input-hover-shadow);
+}
 .header-name-input:focus {
   border-color: var(--input-border-focus);
 }

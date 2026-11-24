@@ -85,27 +85,34 @@ it('QQ 绑定消息只用于认证，随后只登记绑定用户的私聊', asyn
       body: { msg_id: 'broken-media', content: expect.stringContaining('暂时无法从 QQ 下载附件') },
     })
     expect(admit).toHaveBeenCalledOnce()
-    const groupMessage = { ...qqPrivateMessage, id: 'group-message', group_openid: 'group-test' }
+    const groupMessage = { ...qqPrivateMessage, id: 'group-message', group_openid: 'group-test',
+      mentions: [{ bot: true, is_you: true, id: 'synthetic-bot' }] }
     await onEvent('GROUP_AT_MESSAGE_CREATE', groupMessage, signal)
     bot.groupChatEnabled = true
-    await onEvent('GROUP_MESSAGE_CREATE', groupMessage, signal)
+    await onEvent('GROUP_MESSAGE_CREATE', { ...groupMessage, id: 'passive-normal', mentions: [] }, signal)
+    await onEvent('GROUP_AT_MESSAGE_CREATE', { ...groupMessage, id: 'passive-other-bot', mentions: [{ bot: true, is_you: false }] }, signal)
+    await onEvent('GROUP_AT_MESSAGE_CREATE', { ...groupMessage, id: 'passive-unknown-bot', mentions: [{ bot: true }] }, signal)
+    expect(admit.mock.calls.slice(1)).toEqual(['passive-normal', 'passive-other-bot', 'passive-unknown-bot'].map(eventId => [
+      expect.any(String), expect.objectContaining({ eventId }), undefined, expect.objectContaining({ recordOnly: true }),
+    ]))
+    expect(groupDelivery).toBeUndefined()
     await onEvent('GROUP_AT_MESSAGE_CREATE', { ...groupMessage, author: { member_openid: 'other' } }, signal)
-    expect(admit).toHaveBeenCalledTimes(2)
+    expect(admit).toHaveBeenCalledTimes(5)
     await onEvent('GROUP_AT_MESSAGE_CREATE', groupMessage, signal)
-    expect(admit).toHaveBeenCalledTimes(3)
+    expect(admit).toHaveBeenCalledTimes(6)
     expect(groupDelivery?.group?.id).toBe('group-test')
     expect(admit).toHaveBeenLastCalledWith(groupDelivery?.connectionId, expect.objectContaining({
       botMentioned: true, scope: expect.objectContaining({ chatType: 'group', chatId: 'group-test' }),
     }))
     bot.groupReplyMode = 'reply_all'
-    await onEvent('GROUP_MESSAGE_CREATE', { ...groupMessage, id: 'unmentioned' }, signal)
-    expect(admit).toHaveBeenCalledTimes(4)
+    await onEvent('GROUP_MESSAGE_CREATE', { ...groupMessage, id: 'unmentioned', mentions: [] }, signal)
+    expect(admit).toHaveBeenCalledTimes(7)
     expect(admit).toHaveBeenLastCalledWith(groupDelivery?.connectionId, expect.objectContaining({
       eventId: 'unmentioned', botMentioned: false,
     }))
 
     await onEvent('GROUP_AT_MESSAGE_CREATE', { ...groupMessage, id: 'member-message', author: { member_openid: 'other' } }, signal)
-    expect(admit).toHaveBeenCalledTimes(5)
+    expect(admit).toHaveBeenCalledTimes(8)
     expect(admit).toHaveBeenLastCalledWith(groupDelivery?.connectionId, expect.objectContaining({
       scope: expect.objectContaining({ chatId: 'group-test', platformUserId: 'other' }),
     }))
@@ -123,6 +130,15 @@ it('QQ 绑定消息只用于认证，随后只登记绑定用户的私聊', asyn
     await onEvent('GROUP_AT_MESSAGE_CREATE', { ...groupMessage, id: 'record-only-media',
       attachments: [{ filename: '示例.png', url: 'http://media.invalid/media.png' }] }, signal)
     expect(outbound).toHaveLength(outboundCount)
+    bot.groupReplyMode = 'reply_mentions'
+    const callsBeforeAtOnly = admit.mock.calls.length
+    const { mentions: _mentions, ...atOnly } = groupMessage
+    await onEvent('GROUP_AT_MESSAGE_CREATE', { ...atOnly, id: 'at-event-only', content: '' }, signal)
+    expect(admit).toHaveBeenCalledTimes(callsBeforeAtOnly + 1)
+    expect(admit).toHaveBeenLastCalledWith(groupDelivery.connectionId, expect.objectContaining({
+      eventId: 'at-event-only', text: '@咕咕', qqAtEventOnly: true, botMentioned: false,
+    }))
+    expect(await groupDelivery.group.authorizeMessage(admit.mock.lastCall![1])).toBe(true)
 
   } finally { await gateway.stop() }
 })
@@ -165,13 +181,15 @@ it('桌面 QQ 引用与表情配对按连接隔离，并在重开后保留', asy
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
-it.each([false, true])('桌面 QQ 恢复原群收件时复核绑定（解密时撤权 %s）', async revoke => {
+it.each([
+  { revoke: false, owner: false }, { revoke: false, owner: true }, { revoke: true, owner: true },
+])('桌面 QQ 恢复原群收件时复核绑定（解密撤权 $revoke，发言者为 owner $owner）', async ({ revoke, owner }) => {
   const { createHash } = await import('node:crypto')
   const { desktopImEventKey } = await import('../src/main/im/gateway/inbound/inbox.js')
   const bot = { appId: 'bot', appSecret: 'synthetic', enabled: true, revision: '1', userId: 'owner',
     bindingEventId: null, privateMessageFormat: 'markdown' as const, privateStreamingEnabled: true, groupChatEnabled: true, groupHistorySearchEnabled: true, groupWebToolsEnabled: false, groupProviderSearchEnabled: false, groupReplyMode: 'reply_mentions' as 'reply_mentions' | 'record_only' }
   const event = { version: 1, kind: 'message.received', eventId: 'message', text: '测试群收件', quotedText: null, botMentioned: true,
-    scope: { platform: 'qq', ownerId: 'desktop', botId: 'bot', chatType: 'group', chatId: 'group', platformUserId: 'owner' } } as const
+    scope: { platform: 'qq', ownerId: 'desktop', botId: 'bot', chatType: 'group', chatId: 'group', platformUserId: owner ? 'owner' : 'member' } } as const
   const connectionId = createHash('sha256').update(JSON.stringify(['qq-group', 'bot', 'group', 'owner'])).digest('hex')
   const connected = Promise.withResolvers<QqConnectionPorts>()
   const decoded = Promise.withResolvers<void>()
@@ -209,21 +227,23 @@ it.each([false, true])('桌面 QQ 恢复原群收件时复核绑定（解密时�
       const receipt = { connectionId, eventKey: desktopImEventKey(event), sealedEvent: 'AQ==', name: 'group_context_search' }
       const signal = new AbortController().signal
       expect(await gateway.authorizeGroupTool(receipt, signal)).toBe(true)
-      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'http_get' }, signal)).toBe(false)
+      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'http_get' }, signal)).toBe(owner)
       bot.groupWebToolsEnabled = true
       expect(await gateway.authorizeGroupTool({ ...receipt, name: 'http_get' }, signal)).toBe(true)
       expect(await gateway.authorizeGroupTool({ ...receipt, name: 'similar_image_search' }, signal)).toBe(true)
-      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'send_file' }, signal)).toBe(true)
-      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'web_search' }, signal)).toBe(false)
+      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'send_item' }, signal)).toBe(true)
+      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'send_file' }, signal)).toBe(false)
+      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'web_search' }, signal)).toBe(owner)
       bot.groupWebToolsEnabled = false
       bot.groupProviderSearchEnabled = true
+      expect(await gateway.authorizeGroupTool({ ...receipt, name: 'send_item' }, signal)).toBe(owner)
       expect(await gateway.authorizeGroupTool({ ...receipt, name: 'web_search' }, signal)).toBe(true)
       expect(await gateway.authorizeGroupTool({ ...receipt, name: 'http_get' }, signal)).toBe(true)
       expect(await gateway.authorizeGroupTool({ ...receipt, name: 'list_projects' }, signal)).toBe(false)
 
       expect(await gateway.authorizeGroupTool({ ...receipt, connectionId: 'wrong' }, signal)).toBe(false)
       bot.groupHistorySearchEnabled = false
-      expect(await gateway.authorizeGroupTool(receipt, signal)).toBe(false)
+      expect(await gateway.authorizeGroupTool(receipt, signal)).toBe(owner)
       bot.groupReplyMode = 'record_only'
       await onEvent('GROUP_AT_MESSAGE_CREATE', {
         id: 'record', group_openid: 'other-group', author: { member_openid: 'owner' }, content: '测试仅记录',

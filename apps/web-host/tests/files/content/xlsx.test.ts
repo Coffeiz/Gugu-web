@@ -37,19 +37,21 @@ async function makeXlsx(): Promise<Buffer> {
 test('XLSX preview routes use the authenticated owner and the PostgreSQL plus local-file adapter', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-xlsx-preview-'))
   rootDirectories.push(root)
-  const storageKey = `${ownerId}/sample.xlsx`
-  const filePath = path.join(root, storageKey)
+  const xlsxPath = `${ownerId}/个人文件/sample.xlsx`
+  const textPath = `${ownerId}/个人文件/sample.txt`
+  const missingPath = `${ownerId}/个人文件/missing.xlsx`
+  const filePath = path.join(root, xlsxPath)
   await mkdir(path.dirname(filePath), { recursive: true })
   await writeFile(filePath, await makeXlsx())
   const sqlCalls: Array<{ sql: string; params: unknown[] }> = []
   const pool = {
     async query(sql: string, params: unknown[]) {
       sqlCalls.push({ sql, params })
-      const [fileId, userId] = params
+      const [requestedPath, userId] = params
       if (userId !== ownerId) return { rows: [] }
-      if (fileId === 23) return { rows: [{ id: 23, storage_key: storageKey, ext: 'XLSX', version: 7 }] }
-      if (fileId === 24) return { rows: [{ id: 24, storage_key: `${ownerId}/sample.txt`, ext: 'txt', version: 1 }] }
-      if (fileId === 25) return { rows: [{ id: 25, storage_key: `${ownerId}/missing.xlsx`, ext: 'xlsx', version: 1 }] }
+      if (requestedPath === xlsxPath) return { rows: [{ path: xlsxPath, ext: 'XLSX', version: 7 }] }
+      if (requestedPath === textPath) return { rows: [{ path: textPath, ext: 'txt', version: 1 }] }
+      if (requestedPath === missingPath) return { rows: [{ path: missingPath, ext: 'xlsx', version: 1 }] }
       return { rows: [] }
     },
   } as unknown as Pick<Pool, 'query'>
@@ -71,12 +73,13 @@ test('XLSX preview routes use the authenticated owner and the PostgreSQL plus lo
   apps.push(app)
   const token = createUserToken(ownerId, 1, secret)
   const otherToken = createUserToken(otherOwnerId, 1, secret)
-  const denied = await app.inject({ url: '/api/v1/files/23/xlsx-preview' })
-  const preview = await app.inject({ url: '/api/v1/files/23/xlsx-preview', headers: { authorization: `Bearer ${token}` } })
-  const foreign = await app.inject({ url: '/api/v1/files/23/xlsx-preview', headers: { authorization: `Bearer ${otherToken}` } })
-  const unsupported = await app.inject({ url: '/api/v1/files/24/xlsx-preview', headers: { authorization: `Bearer ${token}` } })
-  const missing = await app.inject({ url: '/api/v1/files/25/xlsx-preview', headers: { authorization: `Bearer ${token}` } })
-  const image = await app.inject({ url: '/api/v1/files/23/xlsx-preview-image/0', headers: { authorization: `Bearer ${token}` } })
+  const xlsxUrl = `/api/v1/files/by-path/xlsx-preview?${new URLSearchParams({ path: xlsxPath })}`
+  const denied = await app.inject({ url: xlsxUrl })
+  const preview = await app.inject({ url: xlsxUrl, headers: { authorization: `Bearer ${token}` } })
+  const foreign = await app.inject({ url: xlsxUrl, headers: { authorization: `Bearer ${otherToken}` } })
+  const unsupported = await app.inject({ url: `/api/v1/files/by-path/xlsx-preview?${new URLSearchParams({ path: textPath })}`, headers: { authorization: `Bearer ${token}` } })
+  const missing = await app.inject({ url: `/api/v1/files/by-path/xlsx-preview?${new URLSearchParams({ path: missingPath })}`, headers: { authorization: `Bearer ${token}` } })
+  const image = await app.inject({ url: `/api/v1/files/by-path/xlsx-preview-image/0?${new URLSearchParams({ path: xlsxPath, v: '7' })}`, headers: { authorization: `Bearer ${token}` } })
 
   assert.equal(denied.statusCode, 401)
   assert.equal(preview.statusCode, 200, preview.payload)
@@ -93,6 +96,6 @@ test('XLSX preview routes use the authenticated owner and the PostgreSQL plus lo
   assert.equal(image.headers['cache-control'], 'private, max-age=86400')
   assert.deepEqual(image.rawPayload, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=', 'base64'))
   assert.deepEqual(sqlCalls.map(({ params }) => params), [
-    [23, ownerId], [23, otherOwnerId], [24, ownerId], [25, ownerId], [23, ownerId],
+    [xlsxPath, ownerId], [textPath, ownerId], [missingPath, ownerId], [xlsxPath, ownerId],
   ])
 })

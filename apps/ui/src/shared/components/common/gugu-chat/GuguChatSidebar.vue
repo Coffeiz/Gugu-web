@@ -249,10 +249,20 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   justify-content: center;
   cursor: pointer;
   opacity: 0;
-  flex-shrink: 0;
+  pointer-events: none;
+  position: absolute;
+  inset-inline-end: var(--space-sm);
+  top: 50%;
+  transform: translateY(-50%);
 }
-:deep(.exp-session-item:hover .exp-session-rename-btn),
-:deep(.exp-session-item:hover .exp-session-del) { opacity: 1; }
+:deep(.exp-session-item:is(:hover, :focus-within, :has(.is-editing)) .exp-session-title-wrap) {
+  padding-inline-end: 52px;
+}
+:deep(.exp-session-item:is(:hover, :focus-within) .exp-session-rename-btn),
+:deep(.exp-session-item:is(:hover, :focus-within) .exp-session-del) {
+  opacity: 1;
+  pointer-events: auto;
+}
 :deep(.exp-session-del:hover) { background: var(--status-danger-bg); color: var(--status-danger); }
 :deep(.exp-session-empty) { font-size: var(--font-size-xs); color: var(--content-tertiary); padding: var(--space-sm); }
 :deep(.exp-session-tag) {

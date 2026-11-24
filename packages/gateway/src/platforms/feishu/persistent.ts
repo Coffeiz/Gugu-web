@@ -84,7 +84,7 @@ export function createPersistentFeishuProjection(options: FeishuProjectionOption
     state.inflight = { sequence: event.sequence, eventId: event.id, fingerprint: hash(event) }
     version = await store.checkpoint(version, state)
     let presentation = FeishuPresentation.restore(state.presentation, options.toolSummary)
-    const projector = createFeishuRunEventProjector({ checkpoint: state.parser, renderCharts: options.renderCharts, signal: options.signal })
+    const projector = createFeishuRunEventProjector({ checkpoint: state.parser, renderCharts: options.renderCharts, signal: options.signal, toolSummary: options.toolSummary })
     let operation = 0
     const snapshot = () => {
       const value = stateSchema.parse({ ...state, presentation: presentation.snapshot(), parser: projector.snapshot() })

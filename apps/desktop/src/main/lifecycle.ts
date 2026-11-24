@@ -5,7 +5,7 @@ type Host = Pick<CoreHost, 'request' | 'close'> & Partial<Pick<CoreHost, 'onAgen
 export class DesktopLifecycle {
   private hostRequestHandler?: Parameters<NonNullable<Host['setHostRequestHandler']>>[0]
   private current?: Host
-  private readonly runListeners = new Set<(sessionId: number, runId: string, interactionChanged?: true) => void>()
+  private readonly runListeners = new Set<(sessionId: number, runId: string | undefined, interactionChanged?: true) => void>()
   private detachRunListener?: () => void
   private starting?: Promise<void>
   private stopping?: Promise<void>
@@ -41,7 +41,7 @@ export class DesktopLifecycle {
       })
     return this.starting
   }
-  onAgentRunChanged(listener: (sessionId: number, runId: string, interactionChanged?: true) => void): () => void {
+  onAgentRunChanged(listener: (sessionId: number, runId: string | undefined, interactionChanged?: true) => void): () => void {
     this.runListeners.add(listener)
     return () => { this.runListeners.delete(listener) }
   }

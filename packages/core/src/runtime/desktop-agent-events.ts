@@ -1,4 +1,4 @@
-import { isImInternalDelegationTool } from '../im/access.js'
+import { isImInternalDelegationTool } from '../agent/scenes/im/index.js'
 import type { Kysely } from 'kysely'
 import type { Database } from '../data/schema.js'
 import { CoreError } from '../contracts/index.js'
@@ -34,7 +34,7 @@ export function createDesktopAgentEventReader(db: Kysely<Database>, databasePath
     return { store, readState,
       projection: createSqliteInteractionProjection(db, secret) }
   }
-  return async (sessionId: number, runId: string | undefined, after: number, stateOnly = false, imDelivery = false, imStream = false): Promise<DesktopAgentEventPage> => {
+  return async (sessionId: number, runId: string | undefined, after: number, stateOnly = false, imDelivery = false, imStream = false, reportAgentWait = false): Promise<DesktopAgentEventPage> => {
     if (runId === undefined && after !== 0) throw new CoreError('invalid_request', '续读事件必须指定运行')
     const active = await admission.active(ownerId, sessionId, runId)
     if (!active || (runId !== undefined && !active.identity)) throw new CoreError('not_found', '会话或运行不存在')
@@ -44,6 +44,11 @@ export function createDesktopAgentEventReader(db: Kysely<Database>, databasePath
     await settleClosedSqliteInteraction(db, databasePath, identity)
     const { store, readState, projection } = reader ??= await openReader()
     if (stateOnly) {
+      if (reportAgentWait) {
+        const checkpoint = await store.read(identity)
+        if (checkpoint?.status === 'waiting' && (checkpoint.subagentWaitChildId || checkpoint.agentInboxWaiting))
+          return { runId: identity.runId, status: 'waiting_agent', events: [], cursor: checkpoint.sequence, hasMore: false }
+      }
       const state = await readState(identity)
       return { runId: identity.runId, executionState: active.executionState, status: state?.status ?? 'preparing',
         events: [], cursor: state?.sequence ?? 0, hasMore: false }
@@ -60,17 +65,19 @@ export function createDesktopAgentEventReader(db: Kysely<Database>, databasePath
         && isImInternalDelegationTool(event.payload.name)
       const projected: DesktopAgentEventPage['events'] = internalTool ? [] : await projectAgentRunEvent(displayEvent, projection)
       if (imDelivery) {
-        if (event.type === 'round_end' && typeof event.payload.text === 'string')
+        if (event.type === 'compaction')
+          projected.push({ type: 'im_compaction', sequence: event.sequence, phase: event.payload.phase, applied: event.payload.applied,
+            ...(imStream && event.payload.phase === 'started' ? { runEvent: { ...event, payload: { phase: 'started' } } } : {}) })
+        else if (event.type === 'round_end' && typeof event.payload.text === 'string')
           projected.push({ type: 'im_round_end', sequence: event.sequence, text: event.payload.text })
-        else if (event.type === 'tool_call' || event.type === 'run_waiting') projected.push({ type: 'im_round_continues' })
         else if (event.type === 'final' && event.payload.status === 'completed' && typeof event.payload.text === 'string')
           projected.push({ type: 'im_final_text', text: event.payload.text })
       }
-      if (imStream && (!internalTool || event.type === 'tool_call') && ['token', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_waiting', 'run_resumed'].includes(event.type)) {
+      if (imStream && (!internalTool || event.type === 'tool_call') && ['token', 'text_end', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_waiting', 'run_resumed'].includes(event.type)) {
         const { text, status } = event.payload
         projected.push({ type: 'im_stream', runEvent: {
           id: event.id, identity: event.identity, sequence: event.sequence, round: event.round, type: event.type,
-          payload: { ...(['token', 'round_end', 'final'].includes(event.type) && typeof text === 'string' ? { text } : {}),
+          payload: { ...(['token', 'text_end', 'round_end', 'final'].includes(event.type) && typeof text === 'string' ? { text } : {}),
             ...(event.type === 'final' && typeof status === 'string' ? { status } : {}) },
         } })
       }

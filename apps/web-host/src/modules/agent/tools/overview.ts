@@ -1,18 +1,18 @@
+import { readWebProjectWorkspaceLinks } from '../../workspaces/project-links.js'
 import type { Pool } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
-import { readPostgresProjectPathMirrorKey } from '../../files/folders/paths.js'
-import { sandboxTarget } from '../../terminals/sandbox/mounts.js'
-import { readProjectFileOverview } from '../../projects/store.js'
+import { sandboxTarget } from '../../workspaces/roots.js'
+import { readPathDirectoryOverview, resolveFileDirectoryRoot } from '../../workspaces/files.js'
 
 /** 只接受可信运行身份及已解析的项目；等待数据库查询结束后再传播取消。 */
-export function createProjectFileOverviewPort(pool: Pick<Pool, 'query'>) {
+export function createProjectFileOverviewPort(pool: Pick<Pool, 'query'>, storageRoot: string) {
   return async (identity: RunIdentity, projectId: number, signal: AbortSignal) => {
     signal.throwIfAborted()
     try {
-      const key = await readPostgresProjectPathMirrorKey(pool, identity.ownerId, projectId)
-      signal.throwIfAborted()
-      const counts = await readProjectFileOverview(pool, identity.ownerId, projectId)
-      return { ...counts, sandbox_path: sandboxTarget(key) }
+      const key = await resolveFileDirectoryRoot(pool, identity.ownerId, { projectId })
+      const counts = await readPathDirectoryOverview(storageRoot, key, signal)
+      const workspaces = await readWebProjectWorkspaceLinks(pool, identity.ownerId, projectId)
+      return { ...(workspaces.length ? { workspaces } : {}), total_file_count: counts.total, root_file_count: counts.rootFiles, total_folder_count: counts.totalFolders, location: { kind: 'sandbox' as const, value: sandboxTarget(key) } }
     }
     finally { signal.throwIfAborted() }
   }

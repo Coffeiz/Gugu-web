@@ -5,11 +5,12 @@ import type { createSubagentDeliveryStore } from './delivery-store.js'
 import type { DelegatedAgentInput } from './contracts.js'
 import { delegatedTerminalOutcome } from './runner.js'
 import { searcherDefinition } from './searcher/definition.js'
+import { toolDisplayIdentity } from '../sessions/tool-labels.js'
 import { searcherModuleIds } from './searcher/context.js'
 
 export class SubagentServiceError extends Error {
-  constructor(readonly code: 'RUN_NOT_FOUND' | 'AGENT_UNAVAILABLE' | 'RUN_TERMINAL' | 'ROUND_NOT_FOUND') {
-    super({ RUN_NOT_FOUND: '子运行不存在', AGENT_UNAVAILABLE: '子 Agent 当前不可用',
+  constructor(readonly code: 'RUN_NOT_FOUND' | 'AGENT_NOT_FOUND' | 'AGENT_UNAVAILABLE' | 'RUN_TERMINAL' | 'ROUND_NOT_FOUND') {
+    super({ RUN_NOT_FOUND: '子运行不存在', AGENT_NOT_FOUND: '子 Agent ID 无效，请使用目录中的 ID', AGENT_UNAVAILABLE: '子 Agent 当前不可用',
       RUN_TERMINAL: '子运行已结束', ROUND_NOT_FOUND: '轮次不存在' }[code])
   }
 }
@@ -49,15 +50,17 @@ export function createSubagentService(ports: {
       catch (error) { if (error instanceof SubagentServiceError) return []; throw error }
       return [{ id: searcherDefinition.id, name: searcherDefinition.name, description: searcherDefinition.description }]
     },
-    async start(parent: RunIdentity, callId: string, agentId: string, input: DelegatedAgentInput, signal: AbortSignal) {
+    async spawn(parent: RunIdentity, callId: string, agentId: string, input: DelegatedAgentInput, signal: AbortSignal) {
       const bound = await binding(parent)
-      if (agentId !== searcherDefinition.id || !await ports.authorizeResources(parent, input.resourceRefs ?? []))
+      if (agentId !== searcherDefinition.id && agentId !== 'searcher')
+        throw new SubagentServiceError('AGENT_NOT_FOUND')
+      if (!await ports.authorizeResources(parent, input.resourceRefs ?? []))
         throw new SubagentServiceError('AGENT_UNAVAILABLE')
       signal.throwIfAborted()
-      const admitted = await ports.deliveries.admit(parent, callId, startInputKey(agentId, input),
+      const admitted = await ports.deliveries.admit(parent, callId, startInputKey(searcherDefinition.id, input),
         { input, modelIdentity: bound.modelIdentity, workspaceFingerprint: bound.workspaceFingerprint })
       if (admitted.status === 'queued' || admitted.status === 'running') await notifySchedule()
-      return { action: 'start' as const, run: {
+      return { action: 'spawn' as const, run: {
         childId: admitted.childId, agentId: searcherDefinition.id, status: admitted.status, updatedAt: admitted.updatedAt,
       } }
     },
@@ -125,7 +128,7 @@ export function createSubagentService(ports: {
       await ports.requestCancellation(execution)
       return { childId, status: 'cancelling' as const }
     },
-    async inspect(parent: RunIdentity, childId?: string, roundNumber?: number) {
+    async inspect(parent: RunIdentity, childId?: string, roundNumber?: number, lastRounds = 1, presentation = false) {
       await binding(parent)
       if (childId === undefined) {
         const runs = await ports.deliveries.listConversations(parent) ?? await ports.deliveries.list(parent)
@@ -138,25 +141,37 @@ export function createSubagentService(ports: {
       const identity = await ports.deliveries.childIdentity(origin, saved.runId)
       const checkpoint = identity && await ports.childCheckpoints.read(identity)
       const outcome = saved.outcome ?? (checkpoint ? delegatedTerminalOutcome(checkpoint) : null)
-      const status = outcome?.status ?? (checkpoint?.status === 'running' ? 'running' : saved.status)
+      const status = outcome?.status ?? (checkpoint?.status === 'running' || checkpoint?.status === 'waiting' ? checkpoint.status : saved.status)
+      const finalMessage = presentation && outcome && 'finalMessage' in outcome
+        ? outcome.finalMessage?.trim() : undefined
       const run = { childId, agentId: searcherDefinition.id, status, updatedAt: saved.updatedAt }
+      const summarizeRound = (number: number) => {
+        const current = number === checkpoint?.round
+        const items = (checkpoint?.displayTimeline ?? []).filter(item => item.roundId === `${saved.runId}:${number}`)
+        return {
+          number,
+          status: current ? outcome?.status ?? checkpoint?.status : 'completed',
+          modelCall: { status: current && checkpoint?.phase === 'provider' ? 'running' : 'completed' },
+          messages: items.filter(item => item.kind === 'assistant' && item.text && (!finalMessage || item.text.trim() !== finalMessage)).slice(-2)
+            .map(item => item.text!.slice(0, 600)),
+          toolCalls: items.filter(item => item.kind === 'tool' && item.toolName).slice(-8)
+            .map(item => ({ name: presentation ? toolDisplayIdentity(item.toolName, item.toolInput).name : item.toolName!,
+              status: item.toolStatus ?? 'unknown',
+              ...(item.toolDurationMs !== undefined ? { elapsedMs: item.toolDurationMs } : {}) })),
+        }
+      }
       if (roundNumber !== undefined) {
         if (!checkpoint || !Number.isSafeInteger(roundNumber) || roundNumber < 1 || roundNumber > checkpoint.round)
           throw new SubagentServiceError('ROUND_NOT_FOUND')
-        const current = roundNumber === checkpoint.round
-        const modelStatus = current && checkpoint.phase === 'provider' ? 'running' : 'completed'
-        return { view: 'round' as const, run, round: {
-          number: roundNumber,
-          status: current ? outcome?.status ?? 'running' : 'completed',
-          modelCall: { status: modelStatus },
-          toolCalls: (checkpoint.displayTimeline ?? []).filter(item => item.kind === 'tool'
-            && item.roundId === `${saved.runId}:${roundNumber}` && item.toolName)
-            .map(item => ({ name: item.toolName!, status: item.toolStatus ?? 'unknown',
-              ...(item.toolDurationMs !== undefined ? { elapsedMs: item.toolDurationMs } : {}) })),
-        } }
+        return { view: 'round' as const, run, round: summarizeRound(roundNumber) }
       }
+      const roundsUsed = checkpoint?.round ?? 0
+      const count = Math.min(roundsUsed, lastRounds)
+      const rounds = Array.from({ length: count }, (_, index) => summarizeRound(roundsUsed - count + index + 1))
       const launch = await ports.deliveries.readLaunch(origin, saved.runId, true)
-      return { view: 'run' as const, run,
+      return { view: 'run' as const, run, rounds,
+        ...(presentation ? { task: launch?.input.task, finalMessage } : {}),
+        ...(checkpoint?.pending ? { waitingFor: checkpoint.pending.kind } : {}),
         ...(launch ? { model: { id: launch.modelIdentity, selection: 'inherited' } } : {}),
         context: { moduleIds: checkpoint?.context ? [...searcherModuleIds] : [], inputRefCount: launch?.input.resourceRefs?.length ?? 0 },
         budget: { roundsUsed: checkpoint?.round ?? 0, maxRounds: checkpoint ? checkpoint.maxRounds : null },

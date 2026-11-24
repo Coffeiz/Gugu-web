@@ -11,7 +11,6 @@ function mapWorkspaceDeclaration(row: Omit<WorkspaceListRow, 'enabled' | 'is_def
   enabled: number | boolean; is_default: number | boolean
 }): WorkspaceDeclaration {
   return { id: Number(row.id), name: row.name, kind: row.kind,
-    folderId: row.folder_id == null ? null : Number(row.folder_id),
     projectId: row.project_id == null ? null : Number(row.project_id),
     directoryId: row.directory_id == null ? null : Number(row.directory_id),
     enabled: Boolean(row.enabled), isDefault: Boolean(row.is_default), boundSessionCount: 0 }
@@ -38,7 +37,7 @@ export function createKyselyWorkspaceBindingRuntime(db: Kysely<WorkspaceBindingT
             return row ? { id: Number(row.id), workspaceId: row.workspace_id == null ? null : Number(row.workspace_id) } : null
           },
           async workspaceForOwner(ownerId, workspaceId, requireEnabled) {
-            let query = tx.selectFrom('workspaces').select(['id', 'name', 'kind', 'folder_id', 'project_id', 'directory_id', 'enabled', 'is_default'])
+            let query = tx.selectFrom('workspaces').select(['id', 'name', 'kind', 'project_id', 'directory_id', 'enabled', 'is_default'])
               .where('user_id', '=', owner(ownerId)).where('id', '=', workspaceId)
             if (requireEnabled) query = query.where('enabled', '=', backend === 'sqlite' ? 1 : true)
             const row = await query.executeTakeFirst()

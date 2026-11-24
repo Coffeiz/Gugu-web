@@ -2,7 +2,7 @@ import {randomUUID,randomInt} from 'node:crypto'
 import type {FastifyInstance,FastifyReply,FastifyRequest,preHandlerHookHandler} from 'fastify'
 import {NodeProviderTransport} from '@gugu/core/providers/node'
 import {sql,type Kysely} from 'kysely'
-import {createWechatPairing,type WechatPairingOptions} from '@gugu/gateway/wechat'
+import {createWechatPairing,WechatConnectionError,type WechatPairingOptions} from '@gugu/gateway/wechat'
 import {insertUserBot,invalidateOwnerImSnapshots} from '@gugu/core/im/user-bot-create'
 import {createRedisExpiringValueStore} from '../../../../../adapters/cache/redis-events.js'
 
@@ -35,13 +35,17 @@ type WechatConnectOptions = WechatPairingOptions & {
 
 /** Web Host 使用事务更新加密凭据，并通知网关重新读取。 */
 export function createWechatConnector<DB>(db:Kysely<DB>,options:WechatConnectOptions){
- return createWechatPairing({...options,async saveBot(owner,token,base){
+ return createWechatPairing({...options,async saveBot(owner,token,base,{userId}){
+   if(typeof userId!=='string'||!userId.trim()||userId.length>128||/[\r\n\0]/u.test(userId))
+    throw new WechatConnectionError(502,'微信扫码未返回绑定身份，请重试')
+
    const bot=await db.transaction().execute(async tx=>{
     await sql`SELECT id FROM users WHERE id=${owner} FOR UPDATE`.execute(tx)
     const old=(await sql<{id:number;name:string}>`SELECT id,name FROM user_bots WHERE user_id=${owner} AND platform='wechat' ORDER BY id LIMIT 1 FOR UPDATE`.execute(tx)).rows[0]
     const encrypted=await options.encrypt(token)
     const botId=old?old.id:await insertUserBot(tx,owner,{platform:'wechat',name:'我的微信',app_id:base},encrypted)
-    if(old)await sql`UPDATE user_bots SET app_secret=${encrypted},app_id=${base},enabled=true WHERE id=${old.id} AND user_id=${owner}`.execute(tx)
+    await sql`UPDATE user_bots SET app_secret=${encrypted},app_id=${base},enabled=true,
+      owner_platform_user_id=${userId},owner_bound_at=clock_timestamp() WHERE id=${botId} AND user_id=${owner}`.execute(tx)
     return {id:botId,name:old?.name??'我的微信'}
    })
    const refreshed=(await sql<{id:number;name:string}>`SELECT id,name FROM user_bots WHERE id=${bot.id} AND user_id=${owner}`.execute(db)).rows[0]

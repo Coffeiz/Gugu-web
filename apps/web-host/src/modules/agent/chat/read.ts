@@ -94,7 +94,7 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
                 session.workspace_id, workspace.name AS workspace_name, session.session_context,
                 session.execution_state, session.pending_message_count, session.bot_id
          FROM conversation_sessions AS session
-         LEFT JOIN workspaces AS workspace ON workspace.id = session.workspace_id AND workspace.user_id = session.user_id
+         LEFT JOIN workspaces AS workspace ON workspace.id = session.workspace_id AND workspace.user_id = session.user_id AND workspace.enabled IS TRUE
          WHERE session.id = $1 AND session.user_id = $2 AND session.source IS DISTINCT FROM 'subagent'`,
         [sessionId, ownerId],
       )
@@ -310,7 +310,7 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
           title: session.source === 'qq' && !session.title_locked && session.title ? replacePlatformMentionIds(session.title, mentionNames) : session.title,
           chatType: session.chat_type,
           ownerPlatformUserId: bot.rows[0]?.owner_platform_user_id ?? null,
-          workspaceName: runtime.workspaceShellSupported?.() ? session.workspace_name : null,
+          workspaceName: session.workspace_name,
           filesystemAuthorized: grant !== null,
           filesystemAuthorizationEnabled,
           ...projectAgentSessionGoal(sessionContext),

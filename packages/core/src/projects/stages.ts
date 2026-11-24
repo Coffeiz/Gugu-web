@@ -8,7 +8,7 @@ export type ProjectStageOperation =
   | { action:'rename_stage'; stage:string; new_label:string }
   | { action:'set_stages'; stages:unknown[] }
   | { action:'update_stage'; stage?:string; add?:string[]; todos?:Array<{text:string;stage?:string;done?:boolean;new_text?:string;to_stage?:string;remove?:boolean}> }
-export interface ProjectStageRejection { error:string; available?:string[]; results?:Record<string,unknown>[] }
+export interface ProjectStageRejection { error:string; available?:Pick<Stage,'key'|'label'>[]; results?:Record<string,unknown>[] }
 export type ProjectStageChange = {fields:Fields;value:Record<string,unknown>} | ProjectStageRejection
 
 /** key优先；名称必须唯一，不沿用Web的“首个同名”查询。 */
@@ -18,8 +18,10 @@ function resolve(stages:Stage[],target:string): Stage | {error:string} | undefin
   const matched=stages.filter(stage=>stage.label===key)
   return matched.length>1 ? {error:'阶段名称重名，请使用阶段 key 定位'} : matched[0]
 }
+const stageReferences = (stages: Stage[]) => stages.map(({key, label}) => ({key, label}))
+
 function missing(stages:Stage[],target:string): ProjectStageRejection {
-  return {error:`阶段不存在: ${target}`,available:stages.map(stage=>stage.label)}
+  return {error:`阶段不存在: ${target}`,available:stageReferences(stages)}
 }
 function findTodo(stages:Stage[],target:string,scope?:Stage) {
   const entries=(scope?[scope]:stages).flatMap(stage=>(stage.todos??[]).map(todo=>({stage,todo})))
@@ -50,19 +52,19 @@ export function prepareProjectStageChange(project:Pick<ProjectRecord,'id'|'stage
     const target=strip(operation.stage)
     if(!target)return {error:'stage 必须是非空文本'}
     const stage=resolve(stages,target)
-    if(!stage)return operation.action==='remove_stage'?missing(stages,target):{error:`阶段不存在: ${target}`}
-    if('error' in stage)return {error:String(stage.error)}
+    if(!stage)return missing(stages,target)
+    if('error' in stage)return {error:String(stage.error),available:stageReferences(stages)}
     if(operation.action==='rename_stage'){
       const label=strip(operation.new_label)
       if(!label)return {error:'阶段名称不能为空'}
       stage.label=label
-      return success({stages},{label})
+      return success({stages},{stage_key:stage.key,label})
     }
     if(stages.length<=1)return {error:'项目至少保留一个阶段，无法删除最后一个阶段'}
     const remaining=stages.filter(item=>item.key!==stage.key)
     const current=project.current_stage===stage.key?remaining[0]!.key:project.current_stage
     const active=remaining.find(item=>item.key===current)
-    return success({stages:remaining,current_stage:current},{removed:stage.label,remaining_stages:remaining.map(item=>item.label),
+    return success({stages:remaining,current_stage:current},{removed:stage.label,remaining_stages:stageReferences(remaining),
       current_stage_key:active?.key??null,current_stage:active?.label??null})
   }
   return updateTodos(stages,project,operation,success)
@@ -81,7 +83,7 @@ function updateTodos(stages:Stage[],project:Pick<ProjectRecord,'id'|'current_sta
   if(stageArg&&!add.length&&!todos.length){
     const stage=resolve(stages,stageArg)
     if(!stage)return missing(stages,stageArg)
-    if('error' in stage)return {error:String(stage.error)}
+    if('error' in stage)return {error:String(stage.error),available:stageReferences(stages)}
     return success({current_stage:stage.key},{current_stage:stage.key})
   }
   const results:Record<string,unknown>[]=[],rejected=(error:string)=>({error,results})
@@ -89,7 +91,7 @@ function updateTodos(stages:Stage[],project:Pick<ProjectRecord,'id'|'current_sta
   if(add.length){
     const target=stageArg||project.current_stage,stage=target?resolve(stages,target):undefined
     if(!stage)return missing(stages,String(target))
-    if('error' in stage)return {error:String(stage.error)}
+    if('error' in stage)return {error:String(stage.error),available:stageReferences(stages)}
     const base=nextProjectTodoNumber(stages)
     stage.todos??=[]
     for(const [i,text] of add.entries()){
@@ -112,10 +114,14 @@ type TodoChange = NonNullable<Extract<ProjectStageOperation,{action:'update_stag
 function applyTodoChange(stages:Stage[],item:TodoChange,stageArg?:string){
   const text=strip(item.text),entry:Record<string,unknown>={todo:text},result={entry,changed:false}
   const hint=item.stage||stageArg,scope=hint?resolve(stages,hint):undefined
-  if(scope&&'error' in scope){entry.error=scope.error;return result}
-  if(hint&&!scope){entry.error='阶段不存在: '+hint;return result}
+  if(scope&&'error' in scope){Object.assign(entry,{error:scope.error,available:stageReferences(stages)});return result}
+  if(hint&&!scope){Object.assign(entry,missing(stages,hint));return result}
   const match=findTodo(stages,text,scope)
-  if(!match.found){Object.assign(entry,match);return result}
+  if(!match.found){
+    Object.assign(entry,match)
+    if(scope&&match.error==='未找到待办') entry.hint='stage 限定待办查找范围，移动待办请用 to_stage 指定目标阶段。'
+    return result
+  }
   const {stage,todo}=match.found
   entry.stage=stage.label;entry.todo=todo.text??null
   if(item.remove){stage.todos=stage.todos!.filter(row=>row!==todo);entry.action='remove';result.changed=true;return result}

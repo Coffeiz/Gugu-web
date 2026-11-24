@@ -17,7 +17,7 @@ const actor = (group = false, member = false) => resolveImActor({ ownerId: owner
   botMentioned: true, mentionsOtherBot: false }, () => ({ role: member ? 'member' : 'owner', allowedToolNames: member ? [] : null }))
 const selection = (group = false, member = false): ContextSourceSelection => ({ modelIdentity: 'synthetic-model', contextWindow: 8192,
   locale: 'zh-CN', groupChat: group, workspaceBinding: null, contextScopeKey: 'synthetic-scope',
-  contextPolicy: { loadOwnerContext: !member, memoryEnabled: true } })
+  contextPolicy: { loadOwnerContext: !group && !member, memoryEnabled: true } })
 const code = (expected: ImContextServicesError['code']) => (error: unknown) => {
   assert.ok(error instanceof ImContextServicesError)
   assert.equal(error.code, expected)
@@ -97,16 +97,16 @@ test('群人格独立于私人人格，读取当前群配置与真实文件，�
   await f.preference('reply-style.md', '合成群回复风格')
   const config = { ...f.options, actor: actor(true), selection: selection(true) }
   const services = await createImAgentContextServices(config)
-  const styles = await services.source.data.loadStylePreferences(identity)
-  const prompt = services.builder.staticPrompt(config.selection, identity, styles)
+  await assert.rejects(services.source.data.loadStylePreferences(identity), code('unauthorized'))
+  const prompt = services.builder.staticPrompt(config.selection, identity, {})
   assert.equal(prompt.groupPersonalityPreferenceEnabled, true)
   assert.equal(prompt.groupPersonalityPreference, '合成群人格')
   assert.equal(prompt.customReplyStyle, '合成群回复风格')
   assert.equal(prompt.personalityPreference, undefined)
   assert.equal(prompt.afterBasePrompt, '合成群规则')
   f.setRaw(JSON.stringify({ group_personality_preference_enabled: false }))
-  const disabled = await services.source.data.loadStylePreferences(identity)
-  assert.equal(services.builder.staticPrompt(config.selection, identity, disabled).groupPersonalityPreferenceEnabled, false)
+  const disabled = await createImAgentContextServices(config)
+  assert.equal(disabled.builder.staticPrompt(config.selection, identity, {}).groupPersonalityPreferenceEnabled, false)
 }))
 
 test('成员不读取owner业务/私人人格，但真实群人格进入静态system；个人记忆仅进入当前动态尾部', async () => fixture(async f => {
@@ -157,12 +157,13 @@ test('读取过程中撤销权限不返回刚取得的数据；身份与模型sc
 }))
 
 test('坏群配置/控制字符失败关闭，数据库原异常脱敏，取消与关闭owner记忆不会读取私有数据', async () => fixture(async f => {
-  const services = await createImAgentContextServices({ ...f.options, actor: actor(true), selection: selection(true) })
+  const config = { ...f.options, actor: actor(true), selection: selection(true) }
+  const services = await createImAgentContextServices(config)
   f.setRaw('{synthetic-private-invalid-json')
-  await assert.rejects(services.source.data.loadStylePreferences(identity), code('invalid_data'))
+  await assert.rejects(createImAgentContextServices(config), code('invalid_data'))
   f.setRaw(JSON.stringify({ group_personality_preference_enabled: true }))
   await f.preference('group-persona.md', '合成\u0000坏文本')
-  await assert.rejects(services.source.data.loadStylePreferences(identity), code('invalid_data'))
+  await assert.rejects(createImAgentContextServices(config), code('invalid_data'))
   const controller = new AbortController(); controller.abort(new Error('synthetic-private-cancellation'))
   await assert.rejects(services.source.data.loadTimezone(identity, controller.signal), code('aborted'))
   const disabled = await createImAgentContextServices({ ...f.options, selection: { ...f.options.selection,

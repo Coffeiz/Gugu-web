@@ -23,16 +23,16 @@ const schema = z.object({
   theme: z.enum(['auto', 'light', 'dark']).optional(),
   palette: z.enum(['auto', 'cafe', 'neutral', 'red', 'blue', 'green']).optional(),
   html: z.string().optional(),
-  file_ids: z.array(z.number().int().safe().positive()).max(5).optional(),
+  file_paths: z.array(z.string().max(4096).regex(/^\/(personal|project|workspace)\/[^\\\p{Cc}]+$/u).refine(path => path.slice(1).split('/').every(part => part && part !== '.' && part !== '..'))).max(5).optional(),
   file_refs: z.array(z.string().regex(/^[a-f0-9]{24}$/u)).max(5).optional(),
 }).strict()
-  .refine(value => value.file_ids === undefined || new Set(value.file_ids).size === value.file_ids.length)
+  .refine(value => value.file_paths === undefined || new Set(value.file_paths).size === value.file_paths.length)
   .refine(value => value.file_refs === undefined || new Set(value.file_refs).size === value.file_refs.length)
 
 type EmailInput = z.infer<typeof schema>
-type PreparedDraft = Omit<EmailInput, 'to' | 'client_id' | 'file_ids' | 'file_refs' | 'html' | 'format' | 'template'> & {
+type PreparedDraft = Omit<EmailInput, 'to' | 'client_id' | 'file_paths' | 'file_refs' | 'html' | 'format' | 'template'> & {
   recipient: string
-  fileIds: readonly number[]
+  filePaths: readonly string[]
   fileRefs: readonly string[]
   html: string | null
   format: NonNullable<EmailInput['format']>
@@ -65,7 +65,7 @@ export interface AgentEmailPort {
   /** 只用于交互恢复，区分尚未发出与已有未知投递。 */
   attempted?(operation: EmailOperation): Promise<boolean>
   supportedFormats?: readonly NonNullable<EmailInput['format']>[]
-  supportedAttachmentInputs?: readonly ('file_ids' | 'file_refs')[]
+  supportedAttachmentInputs?: readonly ('file_paths' | 'file_refs')[]
 }
 
 export type AgentEmailAutomationClaim = (tx: Transaction<Database>, identity: RunIdentity, signal: AbortSignal) => Promise<boolean>
@@ -100,10 +100,10 @@ export function createSendEmailTool(port: AgentEmailPort | AutomatedEmailPort): 
   const automated = !('confirmation' in port)
   const { $schema: _dialect, ...parameters } = z.toJSONSchema(schema, { target: 'draft-7' }) as Record<string, Json>
   const formats = port.supportedFormats ?? ['plain', 'template', 'html']
-  const attachmentInputs = port.supportedAttachmentInputs ?? ['file_ids']
+  const attachmentInputs = port.supportedAttachmentInputs ?? ['file_paths']
   const defaultFormat = formats.includes('template') ? 'template' : formats[0] ?? 'plain'
   const properties: Record<string, Json> = { ...parameters.properties as Record<string, Json>, format: { type: 'string', enum: [...formats] } }
-  if (!attachmentInputs.includes('file_ids')) delete properties.file_ids
+  if (!attachmentInputs.includes('file_paths')) delete properties.file_paths
   if (attachmentInputs.includes('file_refs')) {
     properties.file_refs = { type: 'array', maxItems: 5, uniqueItems: true, items: {
       type: 'string', pattern: '^[a-f0-9]{24}$', description: '当前消息【引用文件】中的引用键。',
@@ -118,7 +118,7 @@ export function createSendEmailTool(port: AgentEmailPort | AutomatedEmailPort): 
       parameters: { ...parameters, properties, not: { required: ['to', 'client_id'] } },
     } } },
     effect: 'write', destructive: true, ...(automated ? {} : { requiresInteraction: true, confirmationReplay: true }),
-    strictArrayFields: ['file_ids', 'file_refs', 'sections', 'actions'],
+    strictArrayFields: ['file_paths', 'file_refs', 'sections', 'actions'],
     validate: input => schema.safeParse(input),
     reconcile(_input, identity, call) {
       return port.reconcile({ identity, roundId: identity.roundId, toolCallId: call.id })
@@ -132,10 +132,10 @@ export function createSendEmailTool(port: AgentEmailPort | AutomatedEmailPort): 
         // 只有 Host 能区分从未尝试和发送结果未知。后者由 send 的持久认领拦截。
         if (previous.kind === 'completed' || await port.attempted?.(id)) return previous
       }
-      const { to, client_id, file_ids, file_refs, ...inputDraft } = input as EmailInput
-      const fileIds = file_ids ?? []
+      const { to, client_id, file_paths, file_refs, ...inputDraft } = input as EmailInput
+      const filePaths = file_paths ?? []
       const fileRefs = file_refs ?? []
-      if (fileIds.length && !attachmentInputs.includes('file_ids')) return fail('当前邮件端口不支持 file_ids 附件')
+      if (filePaths.length && !attachmentInputs.includes('file_paths')) return fail('当前邮件端口不支持文件路径附件')
       if (fileRefs.length && !attachmentInputs.includes('file_refs')) return fail('当前邮件端口不支持本机文件引用附件')
       const normalized = normalize({
         ...inputDraft,
@@ -157,7 +157,7 @@ export function createSendEmailTool(port: AgentEmailPort | AutomatedEmailPort): 
       signal.throwIfAborted()
       if (!emailPattern.test(recipient)) return fail('收件人邮箱格式无效')
       const prepared = await port.prepare(id, {
-        ...inputDraft, ...normalized, recipient, template: inputDraft.template ?? 'notification', fileIds, fileRefs,
+        ...inputDraft, ...normalized, recipient, template: inputDraft.template ?? 'notification', filePaths, fileRefs,
       }, signal)
       signal.throwIfAborted()
       if ('error' in prepared) return fail(prepared.error)

@@ -10,7 +10,6 @@ export interface WebUiConfig {
   readonly databaseUrl: string
   readonly secretKey: string
   readonly redisUrl: string | null
-  readonly storageDefaultLimitBytes: number | null
   readonly postgresPoolMax: number
   readonly publicSiteConfig: PublicSiteConfig
   readonly smtp: {
@@ -259,19 +258,6 @@ export function loadConfig(env: NodeJS.ProcessEnv, configOverridePath: string | 
   Object.defineProperty(config, 'publicAppUrl', { value: publicAppUrl, enumerable: false })
   Object.defineProperty(config, 'logFile', {
     value: env.GUGU_LOG_FILE?.trim() ? resolve(env.GUGU_LOG_FILE.trim()) : null,
-    enumerable: false,
-  })
-  Object.defineProperty(config, 'storageDefaultLimitBytes', {
-    value: env.QUOTA__DEFAULT_STORAGE_LIMIT_BYTES === undefined
-      || env.QUOTA__DEFAULT_STORAGE_LIMIT_BYTES.trim() === ''
-      ? null
-      : integerSetting(
-        env.QUOTA__DEFAULT_STORAGE_LIMIT_BYTES.trim(),
-        -1,
-        -1,
-        Number.MAX_SAFE_INTEGER,
-        'QUOTA__DEFAULT_STORAGE_LIMIT_BYTES 配置无效',
-      ),
     enumerable: false,
   })
   Object.defineProperties(config, {

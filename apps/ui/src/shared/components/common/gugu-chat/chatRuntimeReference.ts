@@ -2,11 +2,11 @@ import type { ChatReference } from './chatTypes'
 import { splitMindTitleBody } from '@/composables/mind/useMindEditor'
 
 /** 磁盘文件 Runtime ID 由目录标识和原始相对路径组成。 */
-export function parseChatRuntimePathFile(objectId: string) {
-  const match = /(?:^|:)file:(personal|project:[1-9]\d*|[1-9]\d*):([\s\S]+)$/.exec(objectId)
-  if (!match) return null
-  const [, key, relativePath] = match
-  const directoryId = key === 'personal' || key.startsWith('project:') ? key as 'personal' | `project:${number}` : Number(key)
+export function parseChatRuntimePathFile(objectId: string, kind: 'file' | 'folder' = 'file') {
+  const match = /(?:^|:)(file|folder):(personal|project:[1-9]\d*|desktop:[a-f0-9-]{36}|[1-9]\d*):([\s\S]+)$/.exec(objectId)
+  if (!match || match[1] !== kind) return null
+  const [, , key, relativePath] = match
+  const directoryId = /^\d+$/.test(key) ? Number(key) : key as 'personal' | `project:${number}` | `desktop:${string}`
   return { directoryId, relativePath }
 }
 

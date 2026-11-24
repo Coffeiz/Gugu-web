@@ -4,6 +4,7 @@ import { isAttentionSourceKind } from './attention/directive.js'
 import type { RunIdentity } from '../agent/models.js'
 import { createHash } from 'node:crypto'
 import { createDesktopAgentSession } from '../agent/sessions/desktop.js'
+import { createSqliteAgentAdmission } from '../agent/run/sqlite-admission.js'
 import { sql, type Kysely, type Transaction } from 'kysely'
 import { CoreError, type Fields } from '../contracts/index.js'
 import { databaseTime, nowUtc } from '../data/codec.js'
@@ -112,6 +113,9 @@ async function ensureDesktopImSession(tx: Transaction<Database>, ownerId: string
     await sql`UPDATE conversation_sessions SET chat_type=${chatType} WHERE id=${sessionId} AND user_id=${owner}`.execute(tx)
     await sql`INSERT INTO desktop_im_sessions (owner_id,platform,connection_id,session_id)
       VALUES (${owner},${platform},${connectionId},${sessionId})`.execute(tx)
+  } else if (mapped?.chat_type === null) {
+    await sql`UPDATE conversation_sessions SET chat_type=${chatType}
+      WHERE id=${sessionId} AND user_id=${owner} AND chat_type IS NULL`.execute(tx)
   }
   if (typeof ownerPlatformUserId === 'string') {
     if (mapped?.platform_user_id && mapped.platform_user_id !== ownerPlatformUserId)
@@ -124,18 +128,23 @@ async function ensureDesktopImSession(tx: Transaction<Database>, ownerId: string
 }
 
 /** 只写群会话历史，不启动 Agent，也不创建出站投递任务。 */
-export async function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId: string, fields: Fields, onReflectionDue?: () => void) {
+export async function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId: string, fields: Fields, onReflectionDue?: () => void, onRecorded?: (sessionId: number) => void) {
   const owner = ownerId.toLowerCase().replaceAll('-', '')
   const { platform, connectionId } = connectionScope(fields)
-  const { eventKey, text, attachments = [], platformUserId, platformUserName } = fields
+  const { eventKey, text, quotedText, attachments = [], platformUserId, platformUserName, platformBotUserId } = fields
   if (!['feishu', 'qq', 'telegram'].includes(platform) || typeof eventKey !== 'string' || !/^[a-f0-9]{64}$/u.test(eventKey)
     || typeof text !== 'string' || text.length > 32_000
     || !Array.isArray(attachments) || attachments.length > 32
     || attachments.some(input => !input || typeof input !== 'object' || Array.isArray(input))
-    || (!text.trim() && !attachments.length)
+    || (quotedText !== undefined && (typeof quotedText !== 'string' || Buffer.byteLength(quotedText) > 32_000))
+    || (!text.trim() && (typeof quotedText !== 'string' || !quotedText.trim()) && !attachments.length)
     || (platformUserId !== undefined && (typeof platformUserId !== 'string' || !platformUserId.trim() || platformUserId.length > 256))
-    || (platformUserName !== undefined && (typeof platformUserName !== 'string' || platformUserName.length > 256)))
+    || (platformUserName !== undefined && (typeof platformUserName !== 'string' || platformUserName.length > 256))
+    || (platformBotUserId !== undefined && (typeof platformBotUserId !== 'string' || !platformBotUserId || platformBotUserId.length > 128)))
     throw new CoreError('invalid_request', '本机 IM 群记录无效')
+  const mentionFacts = serializeDesktopOtherBotNames(fields.otherBotNames)
+  const platformSentMs = desktopImTimestamp(fields.platformSentMs)
+  const eventReceivedMs = desktopImTimestamp(fields.eventReceivedMs)
   const result = await db.transaction().execute(async tx => {
     const queued = await sql`SELECT 1 FROM desktop_im_inbox
       WHERE owner_id=${owner} AND platform=${platform} AND connection_id=${connectionId} AND event_key=${eventKey}`.execute(tx)
@@ -149,8 +158,8 @@ export async function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId:
     const updated = await sql<{ last_message_seq: number }>`UPDATE conversation_sessions
       SET last_message_seq=last_message_seq+1,updated_at=${at} WHERE id=${sessionId} AND user_id=${owner}
       RETURNING last_message_seq`.execute(tx)
-    const message = await sql<{ id: number }>`INSERT INTO conversation_messages(session_id,conversation_seq,role,content,client_message_id,created_at,platform_user_id,platform_user_name)
-      VALUES(${sessionId},${updated.rows[0]!.last_message_seq},'user',${text},${clientId},${at},${platformUserId ?? null},${platformUserName ?? null}) RETURNING id`.execute(tx)
+    const message = await sql<{ id: number }>`INSERT INTO conversation_messages(session_id,conversation_seq,role,content,quoted_text,client_message_id,created_at,platform_user_id,platform_user_name,platform_bot_user_id,im_mention_facts,im_platform_sent_ms,im_event_received_ms)
+      VALUES(${sessionId},${updated.rows[0]!.last_message_seq},'user',${text},${typeof quotedText === 'string' ? quotedText.trim() || null : null},${clientId},${at},${platformUserId ?? null},${platformUserName ?? null},${platformBotUserId ?? null},${mentionFacts},${platformSentMs},${eventReceivedMs}) RETURNING id`.execute(tx)
     const messageId = message.rows[0]!.id
     const ids: string[] = []
     for (const input of attachments) {
@@ -168,9 +177,12 @@ export async function recordDesktopImGroupMessage(db: Kysely<Database>, ownerId:
     if (state?.passive_count === 0) await sql`INSERT INTO desktop_im_reflection_thresholds
       (owner_id,session_id,through_sequence,due_at_ms) VALUES(${owner},${sessionId},
         ${updated.rows[0]!.last_message_seq},${Date.now() + IM_REFLECTION_IDLE_SECONDS * 1000})`.execute(tx)
-    return state!.passive_count === 0
+    return { sessionId, reflectionDue: state!.passive_count === 0 }
   })
-  if (result === true) onReflectionDue?.()
+  if (result) {
+    onRecorded?.(result.sessionId)
+    if (result.reflectionDue) onReflectionDue?.()
+  }
   return result !== null
 }
 
@@ -298,6 +310,48 @@ export function prepareDesktopImEvent(db: Kysely<Database>, ownerId: string, fie
     return { sessionId, runId, eventKey: event.event_key,
       sealedEvent: event.sealed_event.toString('base64'), clientId }
   })
+}
+
+/** 按可信平台连接定位同一个桌面 IM 会话。 */
+export async function readDesktopImSessionId(db: Kysely<Database>, ownerId: string, fields: Fields) {
+  const owner = ownerId.toLowerCase().replaceAll('-', '')
+  const { platform, connectionId } = connectionScope(fields)
+  const chatType = fields.chatType
+  const platformUserId = fields.platformUserId
+  const ownerPlatformUserId = fields.ownerPlatformUserId
+  if (!['c2c', 'group'].includes(String(chatType)) || typeof platformUserId !== 'string'
+    || !platformUserId.trim() || platformUserId.length > 256
+    || chatType === 'group' && (typeof ownerPlatformUserId !== 'string' || !ownerPlatformUserId.trim() || ownerPlatformUserId.length > 256)
+    || chatType === 'c2c' && ownerPlatformUserId !== undefined)
+    throw new CoreError('invalid_request', '本机 IM 会话范围无效')
+  const mapped = (await sql<{ session_id: number; chat_type: string | null; owner_platform_user_id: string | null }>`
+    SELECT im.session_id,s.chat_type,s.platform_user_id AS owner_platform_user_id
+    FROM desktop_im_sessions im JOIN conversation_sessions s ON s.id=im.session_id AND s.user_id=im.owner_id
+    WHERE im.owner_id=${owner} AND im.platform=${platform} AND im.connection_id=${connectionId}`.execute(db)).rows[0]
+  if (!mapped || (mapped.chat_type ?? 'c2c') !== chatType
+    || chatType === 'group' && mapped.owner_platform_user_id !== ownerPlatformUserId) return null
+  return mapped.session_id
+}
+
+/** 只允许当前 IM 消息的原始发言人取消其自己发起的桌面 Run。 */
+export async function readDesktopImCancellationTarget(db: Kysely<Database>, ownerId: string, fields: Fields) {
+  const sessionId = await readDesktopImSessionId(db, ownerId, fields)
+  if (sessionId === null) return null
+  const owner = ownerId.toLowerCase().replaceAll('-', '')
+  const { chatType, platformUserId } = fields
+  const active = await createSqliteAgentAdmission(db).active(ownerId, sessionId)
+  const identity = active?.identity
+  if (!identity) return null
+  const admission = (await sql<{ platform_user_id: string | null }>`
+    SELECT m.platform_user_id FROM agent_run_admissions a
+    JOIN conversation_messages m ON m.id=a.user_message_id AND m.session_id=a.session_id
+    WHERE a.user_id=${owner} AND a.session_id=${sessionId} AND a.run_id=${identity.runId}`.execute(db)).rows[0]
+  if (!admission) return null
+  return { sessionId, runId: identity.runId,
+    // 私聊连接本身按发言人隔离；群聊共享连接，必须依赖准入消息记录的发言人。
+    initiator: chatType === 'c2c'
+      ? admission.platform_user_id === null || admission.platform_user_id === platformUserId
+      : admission.platform_user_id === platformUserId }
 }
 
 /** 首次发送前持久占位，重启后无法证明结果的投递按未知处理。 */
@@ -510,7 +564,7 @@ export function nextDesktopQqSequence(db: Kysely<Database>, ownerId: string, fie
   })
 }
 
-/** 文件投递绑定活动私聊、原始收件及该轮实际收到的附件。 */
+/** 文件投递使用当前收件路由。私聊可发送会话内附件，群聊仅限当前消息。 */
 export async function desktopImAttachmentDelivery(
   db: Kysely<Database>, identity: RunIdentity, source: string,
   action: 'read' | 'begin' | 'accepted' | 'rejected' | 'unknown',
@@ -530,14 +584,16 @@ export async function desktopImAttachmentDelivery(
       SELECT i.platform,i.connection_id,i.event_key,m.client_message_id,i.sealed_event,f.name,f.ext,f.mime,f.size,f.storage_key
       FROM agent_run_admissions a
       JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id
-        AND s.active_run_id=a.run_id AND s.chat_type IN ('c2c','group')
+        AND s.active_run_id=a.run_id AND coalesce(s.chat_type,'c2c') IN ('c2c','group')
       JOIN conversation_messages m ON m.id=a.user_message_id AND m.session_id=s.id
-      LEFT JOIN chat_attachments f ON f.user_id=a.user_id AND f.message_id=m.id AND f.attach_id=${attachId}
+      LEFT JOIN chat_attachments f ON f.user_id=a.user_id AND f.attach_id=${attachId}
+      LEFT JOIN conversation_messages source ON source.id=f.message_id AND source.session_id=s.id
       JOIN desktop_im_sessions im ON im.session_id=s.id AND im.owner_id=s.user_id
       JOIN desktop_im_inbox i ON i.owner_id=im.owner_id AND i.platform=im.platform AND i.connection_id=im.connection_id
       WHERE a.user_id=${owner} AND a.session_id=${session} AND a.run_id=${identity.runId}
-        AND (${filePath} IS NULL OR s.chat_type='c2c')
-        AND (${attachId} IS NULL OR f.state='attached' AND f.storage_key=${`agent-attachments/${attachId}`})
+        AND (${filePath} IS NULL OR coalesce(s.chat_type,'c2c')='c2c')
+        AND (${attachId} IS NULL OR f.state='attached' AND f.storage_key=${`agent-attachments/${attachId}`}
+          AND source.id IS NOT NULL AND (coalesce(s.chat_type,'c2c')='c2c' OR source.id=m.id))
         AND (i.run_id=a.run_id AND i.state='running' OR i.run_id IS NULL AND i.state='pending')
       ORDER BY (i.run_id IS NULL),i.received_at,i.rowid LIMIT 1`.execute(tx)
     const event = rows[0]
@@ -584,3 +640,4 @@ export async function readDesktopImAttachmentReference(db: Kysely<Database>, own
     LIMIT 2`.execute(db)
   return rows.length === 1 ? rows[0]! : null
 }
+import { desktopImTimestamp, serializeDesktopOtherBotNames } from '../agent/run/sqlite-admission.js'

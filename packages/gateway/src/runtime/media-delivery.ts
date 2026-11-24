@@ -1,6 +1,6 @@
 import type { ImConversationScope } from '../ir/inbound.js'
 import type { createFeishuSender } from '../platforms/feishu/sender.js'
-import type { createQqMediaUploader } from '../platforms/qq/media-upload.js'
+import { QqMediaUploadError, type createQqMediaUploader } from '../platforms/qq/media-upload.js'
 import type { createQqSender } from '../platforms/qq/sender.js'
 import type { createTelegramSender } from '../platforms/telegram/sender.js'
 import type { createWechatSender } from '../platforms/wechat/sender.js'
@@ -26,8 +26,7 @@ export function validateImOutboundFile(platform: ImConversationScope['platform']
     && Number.isSafeInteger(file.size) && file.size > 0 && file.size <= imOutboundMediaLimits[platform]
 }
 
-/** 宿主验证文件和会话归属后，按平台协议上传并投递。 */
-export async function sendImMedia(input: {
+type ImMediaInput = {
   platform: MediaSender
   scope: Pick<ImConversationScope, 'platform' | 'chatId' | 'chatType' | 'platformUserId'>
   file: { name: string; ext: string; mime: string }
@@ -36,7 +35,12 @@ export async function sendImMedia(input: {
   wechatContextToken?: unknown
   authorize(): Promise<boolean>
   signal?: AbortSignal
-}) {
+  onQqMessageFailure?: (httpStatus?: number, upstreamCode?: number) => void
+  onQqUploadFailure?: (error: QqMediaUploadError) => void
+}
+
+/** 宿主验证文件和会话归属后，按平台协议上传并投递。 */
+export async function sendImMedia(input: ImMediaInput) {
   const { platform, scope, file, bytes, signal, authorize } = input
   if (platform.platform !== scope.platform || !validateImOutboundFile(scope.platform, { ...file, size: bytes.byteLength })
     || signal?.aborted || !await authorize()) return null
@@ -62,12 +66,66 @@ export async function sendImMedia(input: {
       return { recipient, receipt }
     }
     case 'qq': {
-      const media = await platform.mediaUpload.upload({ target: scope.chatType === 'group' ? 'groups' : 'users', openid: recipient,
-        fileType: image ? 1 : 4, data: bytes, fileName: name, signal, authorize })
-      if (typeof media.file_info !== 'string' || !await authorize()) return null
-      const receipt = await platform.sender.media({ id: recipient, chatType: scope.chatType },
-        { fileInfo: media.file_info, image, filename: name }, signal, authorize)
-      return { recipient, receipt }
+      const send = await prepareQqMedia({ ...input, platform }, recipient, name, image)
+      return send ? send() : null
     }
+  }
+}
+
+type QqMediaInput = ImMediaInput & { platform: Extract<MediaSender, { platform: 'qq' }> }
+
+async function prepareQqMedia(input: QqMediaInput, recipient: string, name: string, image: boolean, partConcurrencyLimit?: 5) {
+  const { platform, scope, bytes, signal, authorize } = input
+  let media
+  try {
+    media = await platform.mediaUpload.upload({ target: scope.chatType === 'group' ? 'groups' : 'users', openid: recipient,
+      fileType: image ? 1 : 4, data: bytes, fileName: name, signal, authorize, partConcurrencyLimit })
+  } catch (error) {
+    if (!(error instanceof QqMediaUploadError)) throw error
+    input.onQqUploadFailure?.(error)
+    return null
+  }
+  const fileInfo = media.file_info
+  if (typeof fileInfo !== 'string') return null
+  return async () => {
+    if (signal?.aborted || !await authorize()) return null
+    const receipt = await platform.sender.media({ id: recipient, chatType: scope.chatType },
+      { fileInfo, image, filename: name }, signal, authorize, input.onQqMessageFailure)
+    return { recipient, receipt }
+  }
+}
+
+/** 上传最多预取一张，发送顺序及单件回执仍由原发送器决定。 */
+export async function* sendQqImageBatch(inputs: readonly QqMediaInput[]) {
+  const lifetime = new AbortController()
+  const prepare = async (input: QqMediaInput) => {
+    const { scope, file, bytes } = input
+    const signal = input.signal ? AbortSignal.any([input.signal, lifetime.signal]) : lifetime.signal
+    if (scope.platform !== 'qq' || !/^image\/(png|jpeg|gif|webp|bmp)$/.test(file.mime)
+      || !validateImOutboundFile('qq', { ...file, size: bytes.byteLength }) || signal.aborted || !await input.authorize()) return null
+    const name = file.ext ? `${file.name}.${file.ext}` : file.name
+    return prepareQqMedia({ ...input, signal }, scope.chatId ?? scope.platformUserId, name, true, inputs.length > 1 ? 5 : undefined)
+  }
+  const start = (index: number) => {
+    const item = inputs[index]
+    return item ? prepare(item).catch(() => null) : undefined
+  }
+  let current = start(0)
+  let next = start(1)
+  try {
+    for (let index = 0; current; index++) {
+      const send = await current
+      let outcome: 'accepted' | 'rejected' | 'unknown' = 'rejected'
+      if (send) {
+        try { outcome = (await send())?.receipt.outcome ?? 'rejected' }
+        catch { outcome = 'unknown' }
+      }
+      yield { index, outcome }
+      current = next
+      next = start(index + 2)
+    }
+  } finally {
+    lifetime.abort()
+    await Promise.allSettled([current, next])
   }
 }

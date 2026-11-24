@@ -28,7 +28,7 @@ describe.each(['sqlite', 'postgres'] as const)('定时任务列表 %s', backend 
       const time = databaseTime('2026-01-01T12:34:56.123456Z', backend)
       const bool = (value: boolean) => backend === 'sqlite' ? Number(value) : value
       for (const [id, event, enabled, kind] of [[1, null, true, 'cron'], [2, 7, true, 'once'], [3, null, false, 'interval']] as const)
-        await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,name,payload,cron,schedule_kind,interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,last_run_at,created_at,updated_at)
+        await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,name,payload,cron,schedule_kind,interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_paths,last_run_at,created_at,updated_at)
           VALUES(${id},${stored},${event},'合成任务','内容','0 9 * * *',${kind},10,${time},${time},'web,qq',${bool(enabled)},'{"qq":"private"}','["send_email"]','[5]',${time},${time},${time})`.execute(db)
       if (backend === 'postgres') await sql`INSERT INTO scheduled_tasks(id,user_id,name,payload,cron,schedule_kind,channels,enabled,created_at,updated_at) VALUES(4,${other},'其他','','*','cron','web',TRUE,${time},${time})`.execute(db)
       const read = createKyselyScheduledTaskReader(db, backend)

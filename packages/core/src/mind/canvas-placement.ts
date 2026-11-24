@@ -78,11 +78,19 @@ async function addReferences(ctx:Context,intent:Extract<CanvasPlacementIntent,{a
   return {results,publications}
 }
 /** 调用方已经锁定画布并提供外层事务；新增引用、节点、视图和Undo原子提交。 */
-export async function applyCanvasPlacements(base:Omit<Context,'data'|'canvasId'>,intent:CanvasPlacementIntent) {
+async function placementContext(base:Omit<Context,'data'|'canvasId'>,canvasId:number):Promise<Context> {
   const {tx,owner,signal}=base
-  const canvas=await tx.selectFrom('mind_maps').select('data_json').where('id','=',intent.canvas_id).where('user_id','=',owner).where('deleted_at','is',null).executeTakeFirst()
+  const canvas=await tx.selectFrom('mind_maps').select('data_json').where('id','=',canvasId).where('user_id','=',owner).where('deleted_at','is',null).executeTakeFirst()
   if(!canvas)throw new MindCanvasItemMutationError('画布不存在',404)
   signal.throwIfAborted()
-  const ctx:Context={...base,data:parseCanvasData(canvas.data_json),canvasId:intent.canvas_id}
+  return {...base,data:parseCanvasData(canvas.data_json),canvasId}
+}
+
+export async function resolveCanvasEditPosition(base:Omit<Context,'data'|'canvasId'>,canvasId:number,value:CanvasPosition) {
+  return position(await placementContext(base,canvasId),value)
+}
+
+export async function applyCanvasPlacements(base:Omit<Context,'data'|'canvasId'>,intent:CanvasPlacementIntent) {
+  const ctx=await placementContext(base,intent.canvas_id)
   return intent.action==='create_note'?createNotes(ctx,intent):addReferences(ctx,intent)
 }

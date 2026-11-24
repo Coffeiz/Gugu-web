@@ -26,8 +26,8 @@ export async function listDesktopProjects(projects: ProjectService, collection: 
   return { items, nextOffset: null }
 }
 
-export async function getDesktopProject(projects: ProjectService, id: number) {
-  const project = await projects.get(id)
+export async function getDesktopProject(projects: ProjectService, id: number, includeDeleted = false) {
+  const project = await projects.get(id, includeDeleted)
   if (!project) throw new CoreError('not_found', '项目不存在')
   return projectResponse(project, 0)
 }
@@ -65,7 +65,7 @@ export async function setDesktopProjectDeleted(
   return project
 }
 
-/** 桌面只清理项目记录和所属日程，绑定的磁盘目录由用户管理。 */
+/** 清理已软删的项目记录和所属日程；磁盘目录由桌面宿主处理。 */
 export async function purgeDesktopProject(tx: Transaction<Database>, ownerId: string, rawId: unknown): Promise<void> {
   const id = safeInteger(rawId)
   const project = await tx.selectFrom('projects').select('id')

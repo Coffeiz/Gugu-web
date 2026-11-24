@@ -34,10 +34,10 @@
             <span class="fp-info-label">{{ t('files.project') }}</span>
             <span class="fp-info-val">{{ infoFile.projectName }}</span>
           </div>
-          <div v-if="folderPath || pathLoading || infoFile.folderName || infoFile.id" class="fp-info-row">
+          <div v-if="folderPath || pathLoading || infoFile.filePath" class="fp-info-row">
             <span class="fp-info-label">{{ t('files.folderLocation') }}</span>
             <button class="fp-info-path" :disabled="!canNavigate" @click="$emit('navigate', infoFile)">
-              {{ folderPath || (pathLoading ? t('files.loading') : infoFile.folderName || '—') }}
+              {{ folderPath || (pathLoading ? t('files.loading') : '—') }}
             </button>
           </div>
           <div v-if="infoFile.stageName" class="fp-info-row">
@@ -88,7 +88,7 @@ const pathLoading = ref(false)
 let detailLoadSequence = 0
 const infoFile = computed<Partial<FileMeta>>(() => {
   const file = props.file ?? {}
-  return detailFile.value && String(detailFile.value.id) === String(file.id)
+  return detailFile.value && detailFile.value.filePath === file.filePath
     ? { ...file, ...detailFile.value }
     : file
 })
@@ -98,10 +98,9 @@ const folderPath = computed(() => {
   const root = infoFile.value.projectName
     || (infoFile.value.workspaceDirectoryId != null ? (workspaceName.value || t('files.workspace')) : t('files.all'))
   const folders = [...folderNames.value]
-  if (!folders.length && infoFile.value.folderName) folders.push(infoFile.value.folderName)
   return [root, ...folders].filter(Boolean).join(' / ')
 })
-const canNavigate = computed(() => !infoFile.value.attach_id && Number.isSafeInteger(Number(infoFile.value.id)))
+const canNavigate = computed(() => !infoFile.value.attach_id && typeof infoFile.value.filePath === 'string' && infoFile.value.filePath.length > 0)
 
 watch(() => [props.show, props.x, props.y, props.zIndex], async ([v]) => {
   if (!v) return
@@ -118,25 +117,23 @@ watch(() => [props.show, props.x, props.y, props.zIndex], async ([v]) => {
   }
 }, { immediate: false })
 
-watch(() => [props.show, props.file?.id, accountBoundaryEpoch.value], ([show]) => {
+watch(() => [props.show, props.file?.filePath, accountBoundaryEpoch.value], ([show]) => {
   const sequence = ++detailLoadSequence
   detailFile.value = null
   folderNames.value = []
   workspaceName.value = ''
   pathLoading.value = false
   const file = props.file
-  if (!show || !file || file.attach_id || typeof file.id !== 'number') return
-  const fileId = file.id
+  if (!show || !file || file.attach_id || typeof file.filePath !== 'string') return
+  const filePath = file.filePath
   const accountEpoch = getAccountBoundaryEpoch()
   pathLoading.value = true
   void (async () => {
     try {
-      const location = await filesApi.location(fileId)
+      const location = await filesApi.location(filePath)
       if (sequence !== detailLoadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       detailFile.value = location.file as Partial<FileMeta>
-      folderNames.value = location.pathFile
-        ? location.pathFile.relativePath.split('/').slice(0, -1)
-        : location.folderPath.map(folder => folder.name)
+      folderNames.value = location.pathFile?.relativePath.split('/').slice(0, -1) ?? []
       const workspaceDirectoryId = detailFile.value.workspaceDirectoryId
       if (workspaceDirectoryId != null) {
         const directories = await workspaceDirectoriesApi.list()

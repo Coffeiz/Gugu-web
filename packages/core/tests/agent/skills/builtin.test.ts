@@ -45,7 +45,7 @@ describe('内置Skill文档到注册器', () => {
       name: '图表与数学表达', description: expect.stringMatching(/Mermaid.*TeX/u), related_tools: [],
     })
     expect(catalog.find(item => item.key === 'im-bind')?.related_tools).toEqual([])
-    expect(catalog.find(item => item.key === 'canvas')?.related_tools).toContain('present_file')
+    expect(catalog.find(item => item.key === 'canvas')?.related_tools).toContain('open_item')
     expect((await registry.load('S4', identity, signal())).content).toContain('桌面工具返回的本机绝对路径')
     expect((await registry.load('S10', identity, signal())).content).toContain('managed_by=assistant')
     expect(catalog.some(item => item.key === 'smart-view')).toBe(false)

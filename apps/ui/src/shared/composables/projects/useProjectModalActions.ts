@@ -1,7 +1,6 @@
 import { useProjectAccess } from '@/api/projects'
 import type { Ref } from 'vue'
 import { useProjectStore } from '@/stores/projects'
-import { useFilesCacheStore } from '@/stores/filesCache'
 import type { Project, ProjectStage } from '@/types/project'
 import { calculateStageProgress } from '@/composables/projects/useProjectProgress'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
@@ -22,7 +21,6 @@ interface ProjectModalActionsOptions {
 export function useProjectModalActions(options: ProjectModalActionsOptions) {
   const desktop = useProjectAccess().storesProjectsLocally
   const projectStore = useProjectStore()
-  const fileCacheStore = useFilesCacheStore()
   const { project, localName, localColor, localStatus, localStages, localCurrentStage, close } = options
 
   function saveName() {
@@ -83,7 +81,6 @@ export function useProjectModalActions(options: ProjectModalActionsOptions) {
 
     try {
       await projectStore.deleteProject(current.id)
-      if (!desktop) fileCacheStore.invalidatePages()
       close()
     } catch (error) {
       showAppError(error instanceof Error ? error.message : String(error))

@@ -1,3 +1,6 @@
+import { decodeMindFileReference, folderLinkReference } from '@/composables/mind/fileReference'
+import { usePathFileAccess } from '@/services/pathFileAccess'
+import { useFileOpenAccess } from '@/services/fileOpenAccess'
 import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
@@ -6,7 +9,7 @@ import type { Router } from 'vue-router'
 import { i18n } from '@/i18n'
 import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
-import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
+import { errorMessage, showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { copyTextToClipboard } from './copyTextToClipboard'
 import { downloadMarkdownMathPng, toggleMarkdownMathSource } from '@/utils/chart/math'
 
@@ -16,6 +19,12 @@ import { downloadMarkdownMathPng, toggleMarkdownMathSource } from '@/utils/chart
 export const PROJECT_TOOLS = new Set(['create_project','update_project','delete_project','archive_project','update_stage','set_priority','set_color','add_stage','remove_stage','rename_stage','set_stages'])
 export const CALENDAR_TOOLS = new Set(['create_event','update_event','delete_event'])
 export const FILE_TOOLS = new Set(['edit_file','create_file','rename_file','move_items','copy_file','create_folder','delete_file','rename_folder','delete_folder','save_attachment','restore_file','permanent_delete'])
+export const MIND_WRITE_TOOLS = new Set([
+  'note_create', 'note_update', 'note_delete', 'note_restore', 'note_undo',
+  'canvas_create', 'canvas_delete', 'canvas_create_note', 'canvas_update_note', 'canvas_delete_note',
+  'canvas_add_node', 'canvas_update_node', 'canvas_remove_node',
+  'canvas_connect', 'canvas_update_anchor', 'canvas_disconnect', 'canvas_batch',
+])
 export const SCHEDULED_TASK_TOOLS = new Set(['create_scheduled_task', 'update_scheduled_task', 'delete_scheduled_task'])
 export const SKILL_TOOLS = new Set(['create_skill', 'update_skill', 'delete_skill'])
 export const MCP_TOOLS = new Set(['manage_mcp_servers'])
@@ -35,6 +44,8 @@ export function useChatActions(options: {
   const liveStore = useLiveStore()
   const uiStore = useUiStore()
   const { openMindRef } = useMindRefActions()
+  const pathFiles = usePathFileAccess()
+  const desktopFileOpen = useFileOpenAccess()
 
   async function refreshAfterTools(usedTools: Set<string>) {
     if (!usedTools.size) return
@@ -122,11 +133,31 @@ export function useChatActions(options: {
     if (!a) return
     e.preventDefault()
     const href = a.getAttribute('href') || ''
+    if (href.startsWith('gugu://download-file/')) {
+      const reference = href.slice('gugu://download-file/'.length)
+      const file = decodeMindFileReference(reference)
+      const card = a.previousElementSibling
+      if (!desktopFileOpen && file && a.classList.contains('chat-file-card-download')
+        && card?.classList.contains('chat-object-card')
+        && card.getAttribute('href') === 'gugu://open-object/file/' + reference) {
+        try { await pathFiles.download(file) }
+        catch (error) { showAppError(errorMessage(error)) }
+      }
+      return
+    }
     const mBind = href.match(/^gugu:\/\/bind-im\/([a-z]+)/i)
     if (mBind) { options.onBindPlatform(mBind[1]); return }
+    const folderLink = folderLinkReference(href)
+    if (folderLink) {
+      if (!await openMindRef('folder', folderLink)) showAppNotice(i18n.global.t('mindUi.referenceMissing'))
+      return
+    }
     const fileLink = /^gugu:\/\/open-object\/file\/((?:path|drop)-[A-Za-z0-9_-]{1,24000})$/u.exec(href)
     if (fileLink) {
-      if (!await openMindRef('file', fileLink[1]!)) showAppNotice(i18n.global.t('mindUi.referenceMissing'))
+      try {
+        if (!await openMindRef('file', fileLink[1]!, { revealUnsupportedFile: true }))
+          showAppNotice(i18n.global.t('mindUi.referenceMissing'))
+      } catch (error) { showAppError(errorMessage(error)) }
       return
     }
     if (/^gugu:\/\/(?:open-file|open-object\/file)\//i.test(href)) {

@@ -11,8 +11,9 @@ import { createSubagentDeliveryStore } from '../../../src/agent/subagent/deliver
 import { createSqliteAgentRunLeasePort, createSqliteAgentRunStore } from '../../../src/agent/run/sqlite-store.js'
 import { createDesktopAgentEventReader } from '../../../src/runtime/desktop-agent-events.js'
 import { createSqliteRememberMemory } from '../../../src/agent/memory/sqlite.js'
+import { compactDesktopConversation } from '../../../src/runtime/desktop-manual-compaction.js'
 import { applyRememberEdit } from '../../../src/agent/memory/remember.js'
-import { settleExclusiveSqliteAgentRuns } from '../../../src/agent/run/sqlite-recovery.js'
+import { settleExclusiveSqliteAgentRuns, settleStoppedSqliteAgentRun } from '../../../src/agent/run/sqlite-recovery.js'
 import { loadSqliteAgentRunSecret } from '../../../src/agent/run/sqlite-secret.js'
 import { createSqliteAgentPersistence, createSqliteAgentRuntime } from '../../../src/agent/run/sqlite-runtime.js'
 import { createSqliteAgentAdmission } from '../../../src/agent/run/sqlite-admission.js'
@@ -25,7 +26,7 @@ import { contentText } from '../../../src/agent/context/compaction.js'
 import { MessageArea, stableJson } from '../../../src/agent/context/history/canonical-history.js'
 import { createConversationRagSource } from '../../../src/agent/rag/conversation-index-source.js'
 import { createSqlRagRebuildWorker } from '../../../src/agent/rag/rebuild-worker.js'
-import { writeSqliteAgentHistory } from '../../../src/agent/run/sqlite-history.js'
+import { prepareSqliteHistorySummary, writeSqliteAgentHistory } from '../../../src/agent/run/sqlite-history.js'
 import { contextAccessScopeHash, createCanonicalSourceLoader } from '../../../src/agent/context/prepare.js'
 import { ProviderStreamSanitizer, stripThinking } from '../../../src/agent/providers/index.js'
 import type { CanonicalRunContext, CurrentUser, RunCheckpoint, RunEvent } from '../../../src/agent/models.js'
@@ -514,6 +515,8 @@ it('独占重启结算遗留运行，保留事件并允许会话再次发送', a
           identity, version: 0, sequence: 1, status: 'running', phase: 'tools', round: 1, context: null, displayTimeline,
           inflightCalls: ['search-a', 'search-b', 'queued'].map(id => ({ id, name: 'deep_research', input: { query: id } })),
         } as unknown as RunCheckpoint<unknown>, lease, [started])
+        await settleStoppedSqliteAgentRun(runtime.db, path, identity)
+        expect(await store.read(identity)).toMatchObject({ status: 'running', sequence: 1 })
         const requested: string[] = []
         const reconcile: NonNullable<Parameters<typeof settleExclusiveSqliteAgentRuns>[3]> = async (call, source) => {
           expect(source).toEqual({ ...identity, roundId: `${identity.runId}:1` })
@@ -586,6 +589,19 @@ it('Desktop 独占恢复只续跑结果就绪的等待，先结算取消且清�
       }
       const pending = await createWaiting()
       const cancelled = await createWaiting()
+      const interrupted = await createWaiting()
+      const child = await deliveries.childIdentity(interrupted.identity, interrupted.child.runId)
+      expect(child).not.toBeNull()
+      const childLease = (await leases.acquire(child!))!
+      const childCheckpoint = { identity: child!, version: 0, sequence: 0, status: 'running', phase: 'provider', round: 1,
+        context: null, text: '', displayTimeline: [] } as RunCheckpoint<unknown>
+      await store.create(childCheckpoint, childLease, [])
+      await leases.release(child!, childLease)
+      await settleStoppedSqliteAgentRun(db, path, child!, interrupted.identity)
+      expect(await store.read(child!)).toMatchObject({ status: 'unknown' })
+      expect(await deliveries.pending(interrupted.identity)).toMatchObject([{ status: 'failed', reasonCode: 'desktop_run_interrupted' }])
+      expect(await store.read(pending.identity)).toMatchObject({ status: 'waiting' })
+      await createSqliteAgentRunCoordination(db, store).cancellation.request(interrupted.identity)
       await createSqliteAgentRunCoordination(db, store).cancellation.request(cancelled.identity)
       const resumed: string[] = []
       const recover = () => settleExclusiveSqliteAgentRuns(db, path, ownerId, undefined, async checkpoint => {
@@ -601,6 +617,66 @@ it('Desktop 独占恢复只续跑结果就绪的等待，先结算取消且清�
       await recover()
       expect(resumed).toEqual([pending.identity.runId])
       expect((await sql`SELECT 1 FROM agent_subagent_waits WHERE parent_run_id=${cancelled.identity.runId}`.execute(db)).rows).toEqual([])
+    } finally { await runtime.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('SQLite 压缩按持久历史推进水位并保留上一轮与本轮原文', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-sqlite-compaction-'))
+  const path = join(directory, 'core.db')
+  try {
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      const db = runtime.db
+      const session = await createDesktopAgentSession(db, ownerId, '合成会话')
+      const at = '2026-01-01 00:00:00'
+      await sql`INSERT INTO conversation_messages(session_id,conversation_seq,role,content,run_id,round_id,created_at)
+        VALUES(${session.id},1,'user','旧历史','older','round-1',${at}),
+          (${session.id},2,'assistant','保留的上一轮','previous','round-12',${at})`.execute(db)
+      await sql`UPDATE conversation_sessions SET last_message_seq=2 WHERE id=${session.id}`.execute(db)
+      const { identity } = await createSqliteAgentAdmission(db).prepare(ownerId, {
+        session_id: session.id, message: '当前问题', client_message_id: 'synthetic-compaction',
+      })
+      const source = createSqliteAgentSessionSource(db)
+      const { currentUser } = await source.currentTurn(identity)
+      const snapshot = (await source.readSnapshot(identity))!
+      const history = await source.historyReader.read(identity)
+      const area = new MessageArea({
+        digest: value => createHash('sha256').update(stableJson(value)).digest('hex'), nextId: randomUUID,
+      })
+      area.append(currentUser!.message, {
+        source: 'user', persistencePolicy: 'already_persisted', persistedMessageId: currentUser!.persistedMessageId,
+      })
+      const context = {
+        identity, prepared: { area: area.snapshot() }, historyBaseline: history.baselineIdentity,
+        sourceEffects: { sessionSnapshot: { state: snapshot } },
+        compactions: [{ result: { changed: true, coversUnpersisted: true, coversUntilMessageIds: [],
+          messages: [{ role: 'user', content: '<compacted-summary>本轮临时摘要</compacted-summary>' }] } }],
+      } as unknown as CanonicalRunContext
+      const checkpoint = { identity, status: 'completed', round: 12, files: [], displayTimeline: [] } as unknown as RunCheckpoint<CanonicalRunContext>
+      const candidate = await prepareSqliteHistorySummary(db, identity, context, { async summarize(input) {
+        expect(input.compressible.map(message => message.content)).toEqual(['旧历史'])
+        expect(input.projection).toBeNull()
+        await db.transaction().execute(async tx => {
+          expect((await sql`SELECT id FROM conversation_messages WHERE role='summary'`.execute(tx)).rows).toEqual([])
+        })
+        return '旧历史的 Provider 摘要'
+      } }, new AbortController().signal)
+      expect(candidate?.summary).toBe('旧历史的 Provider 摘要')
+      await db.transaction().execute(tx => writeSqliteAgentHistory(tx, identity, { outcome: 'success', context, text: '当前回答' }, checkpoint, candidate))
+      const next = await source.historyReader.read({ ...identity, runId: 'next' })
+      expect(next.baselineSeq).toBe(1)
+      const restored = selectSessionHistory(identity, next.rows, next.baselineSeq).rows
+      expect(restored[0]).toMatchObject({ role: 'summary', coversUntilSeq: 1, content: '旧历史的 Provider 摘要' })
+      expect(restored[0]!.content).not.toMatch(/本轮临时摘要|保留的上一轮|当前问题/)
+      expect(restored.slice(1).map(item => item.content)).toEqual(['保留的上一轮', '当前问题', '当前回答'])
+      expect(restored.at(-1)?.roundId).toBe('round-12')
+      const empty = await createDesktopAgentSession(db, ownerId, '合成空会话')
+      const noPlan = await compactDesktopConversation(db, ownerId, empty.id, {
+        provider: 'local', api_format: 'openai', base_url: 'http://127.0.0.1:1/v1', model: 'synthetic',
+      }, { text: '/compact', clientId: randomUUID() }, randomUUID(), new AbortController().signal)
+      expect(noPlan.text).toBe('当前历史还不够长，暂时无需整理上下文。')
     } finally { await runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

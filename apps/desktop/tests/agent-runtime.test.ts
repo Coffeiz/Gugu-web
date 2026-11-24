@@ -255,7 +255,7 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     })
     const result = await runs.runScheduledInstruction({
       id: '1', ownerId, name: '合成定时任务', payload: '读出当前时间', executionMode: 'instruction',
-      channels: ['web'], deliveryTargets: {}, authorizedTools: [], emailAttachmentFileIds: [],
+      channels: ['web'], deliveryTargets: {}, authorizedTools: [], emailAttachmentFilePaths: [],
       workspaceId: null, filesystemGrantId: null,
     }, true, async () => {})
     expect(result).toEqual({ status: 'success', text: '定时任务已读取当前时间' })
@@ -283,7 +283,7 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
       boundUserId: 'ou_synthetic-owner', chatType: 'c2c', recipient: 'ou_synthetic-owner' }
     const runGroup = () => runs.runScheduledInstruction({
       id: '2', ownerId, name: '合成群任务', payload: '汇报群事务', executionMode: 'instruction',
-      channels: ['qq', 'feishu', 'web'], deliveryTargets: { qq: group, feishu: copiedPrivate }, authorizedTools: [], emailAttachmentFileIds: [],
+      channels: ['qq', 'feishu', 'web'], deliveryTargets: { qq: group, feishu: copiedPrivate }, authorizedTools: [], emailAttachmentFilePaths: [],
       workspaceId: null, filesystemGrantId: null,
       groupScope: { ownerId, platform: 'qq', botId: group.botId, scopeType: 'group', scopeId: group.recipient },
     }, true, async () => {})
@@ -300,7 +300,7 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     const privateTarget: DesktopScheduleImTarget = { ...group, chatType: 'c2c', recipient: group.boundUserId }
     expect((await runs.runScheduledInstruction({
       id: '3', ownerId, name: '合成私聊任务', payload: '汇报个人事务',
-      channels: ['qq'], deliveryTargets: { qq: privateTarget }, authorizedTools: [], emailAttachmentFileIds: [],
+      channels: ['qq'], deliveryTargets: { qq: privateTarget }, authorizedTools: [], emailAttachmentFilePaths: [],
       workspaceId: null, filesystemGrantId: null,
     }, true, async () => {})).status).toBe('success')
     expect(JSON.stringify(requests.at(-1)?.messages)).toContain('合成画像')
@@ -351,11 +351,11 @@ data: [DONE]
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
     if (!address || typeof address === 'string') throw new Error('合成 Provider 未监听')
-    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async method => {
+    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async (method, params) => {
       if (method === 'agent.tools.policy') return { disabledTools: [] }
       if (method.endsWith('.available')) return false
       if (method === 'agent.log.append') return null
-      if (method === 'agent.im.authorizeGroupTool') return false
+      if (method === 'agent.im.authorizeGroupTool') return ['list_scheduled_tasks', 'create_scheduled_task', 'update_scheduled_task'].includes(String(params?.name))
       if (method === 'agent.im.readGroupMemoryContext')
         return { actor, groupMemoryEnabled: false, groupOwnerMemoryEnabled: false, memberMemoryEnabled: false }
       if (method === 'agent.schedules.im.authorize') return { groupMemoryEnabled: false, groupHistorySearchEnabled: false }
@@ -381,7 +381,7 @@ data: [DONE]
     expect(JSON.parse(rows[0]!.delivery_targets)).toEqual({ qq: target })
   })
 
-  it('桌面 IM 群会话生成回复时只公开时间工具且不读取个人上下文', async () => {
+  it('同一群会话的 IM 收件与桌面续聊使用各自的工具策略', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-group-run-'))
     const path = join(directory, 'core.db')
     await initializeSqlite(path)
@@ -391,6 +391,7 @@ data: [DONE]
     let collectorUnavailable = true
     let failedTraceAttempts = 0
     let sentCalls = false
+    let groupHistoryAllowed = true
     const server = createServer(async (request, response) => {
       const chunks = []
       for await (const chunk of request) chunks.push(chunk)
@@ -413,8 +414,24 @@ data: [DONE]
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       if (!sentCalls && Array.isArray(body.tools) && body.tools.some((tool: { function?: { name?: string } }) => tool.function?.name === 'get_current_time')) {
         sentCalls = true
-        const tool_calls = ['get_current_time', 'list_projects'].map((name, index) => ({
-          index, id: `synthetic-call-${index}`, type: 'function', function: { name, arguments: '{}' },
+        const fromApp = body.tools.some((tool: { function?: { name?: string } }) => tool.function?.name === 'list_projects')
+        const system = body.messages.find((message: { role: string }) => message.role === 'system')?.content ?? ''
+        const skillId = JSON.stringify(system).match(/图表与数学表达\*\*（Skill ID：`(S\d+)`/u)?.[1]
+        const calls = [
+          fromApp ? { name: 'call_tool', arguments: JSON.stringify({ tool_name: 'get_current_time', arguments: {} }) }
+            : { name: 'get_current_time', arguments: '{}' },
+          { name: 'list_projects', arguments: '{}' },
+          ...(!fromApp && skillId ? [{ name: 'call_tool', arguments: JSON.stringify({ tool_name: 'use_skill', arguments: { id: skillId } }) }] : []),
+          ...(!fromApp ? [
+            { name: 'call_tool', arguments: JSON.stringify({ tool_name: 'list_projects', arguments: {} }) },
+            { name: 'open_item', arguments: '{}' },
+            { name: 'synthetic_unknown_tool', arguments: '{}' },
+            { name: 'group_context_search', arguments: JSON.stringify({ query: '测试' }) },
+          ] : []),
+        ]
+        if (!fromApp) groupHistoryAllowed = false
+        const tool_calls = calls.map((call, index) => ({
+          index, id: `${fromApp ? 'desktop-call' : 'synthetic-call'}-${index}`, type: 'function', function: call,
         }))
         response.end(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`)
         return
@@ -430,12 +447,21 @@ data: [DONE]
       LOOPSCOPE_ENABLED: 'true', LOOPSCOPE_ENDPOINT: `http://127.0.0.1:${address.port}`,
     })
     const hostCalls: string[] = []
-    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async method => {
+    const privateTarget: DesktopScheduleImTarget = { platform: 'qq', botId: 'synthetic-bot',
+      boundUserId: 'synthetic-owner', recipient: 'synthetic-owner', chatType: 'c2c' }
+    let privateBound = true
+    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async (method, params) => {
       hostCalls.push(method)
       if (method === 'agent.log.append') return null
       if (method === 'agent.tools.policy') return { disabledTools: [
         'delete_file', 'delete_folder', 'list_trash', 'restore_file', 'restore_folder', 'permanent_delete',
       ] }
+      if (method === 'agent.schedules.im.privateTarget') return privateBound ? privateTarget : null
+      if (method === 'agent.im.authorizeGroupTool')
+        return params?.name === 'group_context_search' ? groupHistoryAllowed
+          : ['get_current_time', 'call_tool', 'search_tools', 'use_skill'].includes(String(params?.name))
+      if (method === 'agent.im.snapshot') return { feishu: false, qq: true, wechat: false, telegram: false }
+      if (method === 'agent.files.overview') return { total: 0, folders: [], files: [], partial: false }
       if (method.endsWith('.available')) return false
       throw new Error('未预期的宿主请求')
     }, undefined, loopScope?.observation)
@@ -446,19 +472,16 @@ data: [DONE]
       await new Promise<void>(resolve => server.close(() => resolve()))
       await rm(directory, { recursive: true, force: true })
     })
-    const session = await runtime.db.transaction().execute(async tx => {
-      const session = await createDesktopAgentSession(tx, ownerId, '群会话')
-      const owner = ownerId.replaceAll('-', '')
-      await sql`UPDATE conversation_sessions SET chat_type='group' WHERE id=${session.id} AND user_id=${owner}`.execute(tx)
-      await sql`INSERT INTO desktop_im_sessions (owner_id,platform,connection_id,session_id)
-        VALUES (${owner},'qq',${'a'.repeat(64)},${session.id})`.execute(tx)
-      return session
-    })
+    const connection = { platform: 'qq' as const, connectionId: 'a'.repeat(64) }
+    await admitDesktopImEvent(runtime.db, ownerId, { ...connection, eventKey: 'skill-test', sealedEvent: 'AQ==' })
+    const turn = await prepareDesktopImEvent(runtime.db, ownerId, { ...connection, chatType: 'group', ownerPlatformUserId: 'synthetic-owner' })
+    if (!turn) throw new Error('合成群收件未准备')
+    const session = { id: turn.sessionId }
     const preferenceFiles = createLocalPreferenceTextFiles(directory)
     const preferences = createKyselyPreferenceDocumentStore(runtime.db, 'sqlite')
     await desktopAgentPreference(preferences, preferenceFiles, ownerId, 'personality', { content: '合成个人设定', enabled: true })
     await desktopAgentPreference(preferences, preferenceFiles, ownerId, 'group-personality', { content: '合成群聊设定', enabled: true })
-    const { run_id: runId } = await runs.start(session.id, '测试群消息', 'synthetic-group', {
+    const { run_id: runId } = await runs.start(session.id, '测试群消息', turn.clientId, {
       provider: 'local', api_format: 'openai', base_url: `http://127.0.0.1:${address.port}/v1`,
       api_key: '', model: 'synthetic', context_tokens: 256_000, max_tokens: 512, web_search_enabled: false,
     }, undefined, true, undefined, [], [], undefined, undefined, { id: 'synthetic-member', name: '小北' })
@@ -490,26 +513,68 @@ data: [DONE]
     expect(spans.flatMap(span => span.attributes.request_timings ?? [])
       .some(timing => Number.isFinite(timing.firstVisibleTokenMs))).toBe(true)
     const { rows: speakers } = await sql`SELECT platform_user_id,platform_user_name FROM conversation_messages
-      WHERE session_id=${session.id} AND client_message_id='synthetic-group'`.execute(runtime.db)
+      WHERE session_id=${session.id} AND client_message_id=${turn.clientId}`.execute(runtime.db)
     expect(speakers).toEqual([{ platform_user_id: 'synthetic-member', platform_user_name: '小北' }])
     expect(requests.length).toBeGreaterThan(0)
     expect(JSON.stringify(requests[0])).toContain('合成群聊设定')
     expect(JSON.stringify(requests)).not.toContain('合成个人设定')
     const tools = requests.flatMap(request => Array.isArray(request.tools) ? request.tools : [])
     expect(tools.length).toBeGreaterThan(0)
-    expect(tools.every(tool => tool.function?.name === 'get_current_time')).toBe(true)
+    expect([...new Set(tools.map(tool => tool.function?.name))].sort()).toEqual(['call_tool', 'get_current_time', 'group_context_search', 'search_tools', 'use_skill'])
     const toolReplies = requests.flatMap(request => Array.isArray(request.messages) ? request.messages.filter(message => message.role === 'tool') : [])
     expect(toolReplies).toEqual(expect.arrayContaining([
       expect.objectContaining({ tool_call_id: 'synthetic-call-0', content: expect.stringContaining(
-        `"timezone":"${Intl.DateTimeFormat().resolvedOptions().timeZone}"`,
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
       ) }),
       expect.objectContaining({ tool_call_id: 'synthetic-call-1' }),
     ]))
-    expect(JSON.stringify(toolReplies.find(reply => reply.tool_call_id === 'synthetic-call-1')?.content)).toContain('工具不存在或未开放')
+    expect(JSON.stringify(toolReplies.find(reply => reply.tool_call_id === 'synthetic-call-2')?.content)).toContain('Mermaid')
+    expect(JSON.stringify(toolReplies.find(reply => reply.tool_call_id === 'synthetic-call-1')?.content)).toContain('没有权限使用此工具')
+    expect(JSON.stringify(toolReplies.find(reply => reply.tool_call_id === 'synthetic-call-3')?.content)).toContain('tool_not_allowed')
+    expect(JSON.stringify(toolReplies.find(reply => reply.tool_call_id === 'synthetic-call-4')?.content)).toContain('tool_unsupported_in_scene')
+    expect(JSON.stringify(toolReplies.find(reply => reply.tool_call_id === 'synthetic-call-5')?.content)).toContain('tool_not_found')
+    expect(JSON.stringify(toolReplies.find(reply => reply.tool_call_id === 'synthetic-call-6')?.content)).toContain('tool_not_allowed')
     expect(hostCalls).not.toContain('agent.im.snapshot')
     expect(hostCalls).not.toContain('agent.files.overview')
     expect((await sql`SELECT 1 FROM desktop_agent_reflection_jobs`.execute(runtime.db)).rows).toEqual([])
-  })
+
+    requests.length = 0
+    sentCalls = false
+    await createDesktopAppearanceService(preferences).update(ownerId, { toolInjectionMode: 'full' })
+    const localRun = await runs.start(session.id, '从桌面续聊群消息', randomUUID(), {
+      provider: 'local', api_format: 'openai', base_url: `http://127.0.0.1:${address.port}/v1`,
+      api_key: '', model: 'synthetic', context_tokens: 256_000, max_tokens: 512, web_search_enabled: false,
+    }, undefined, true)
+    await expect.poll(async () => (await read(session.id, localRun.run_id, 0)).status, { timeout: 10000 }).toBe('completed')
+    const localTools = (requests[0]?.tools as Array<{ function: { name: string } }>).map(tool => tool.function.name)
+    expect(localTools).toEqual(expect.arrayContaining(['http_get', 'call_tool', 'list_projects', 'send_item', 'list_skills', 'use_skill']))
+    const localToolReplies = requests.flatMap(request => Array.isArray(request.messages) ? request.messages.filter(message => message.role === 'tool') : [])
+    expect(localToolReplies).toContainEqual(expect.objectContaining({ tool_call_id: 'desktop-call-0',
+      content: expect.stringContaining(Intl.DateTimeFormat().resolvedOptions().timeZone) }))
+    expect(JSON.stringify(localToolReplies.find(reply => reply.tool_call_id === 'desktop-call-1')?.content)).not.toContain('工具不存在或未开放')
+    expect(JSON.stringify(requests[0])).toContain('合成个人设定')
+    expect(hostCalls).toContain('agent.im.authorizeGroupTool')
+
+    const privateConnection = { platform: 'qq' as const, connectionId: desktopScheduleImConnection(privateTarget) }
+    await admitDesktopImEvent(runtime.db, ownerId, { ...privateConnection, eventKey: 'private-skill-test', sealedEvent: 'AQ==' })
+    const privateTurn = await prepareDesktopImEvent(runtime.db, ownerId, privateConnection)
+    if (!privateTurn) throw new Error('合成私聊收件未准备')
+    await createDesktopAppearanceService(preferences).update(ownerId, { toolInjectionMode: 'full' })
+    const privateModel = { provider: 'local' as const, api_format: 'openai' as const,
+      base_url: `http://127.0.0.1:${address.port}/v1`, api_key: '', model: 'synthetic',
+      context_tokens: 256_000, max_tokens: 512, web_search_enabled: false }
+    requests.length = 0
+    const privateRun = await runs.start(privateTurn.sessionId, '主人私聊', privateTurn.clientId, privateModel, undefined, true)
+    await expect.poll(async () => (await read(privateTurn.sessionId, privateRun.run_id, 0)).status).toBe('completed')
+    expect(requests[0]?.tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ function: expect.objectContaining({ name: 'list_projects' }) }),
+    ]))
+    privateBound = false
+    requests.length = 0
+    const revoked = await runs.start(privateTurn.sessionId, '绑定已撤销', 'synthetic-revoked', privateModel, undefined, true)
+    await expect.poll(async () => (await read(privateTurn.sessionId, revoked.run_id, 0)).status).toBe('failed')
+    expect(requests).toEqual([])
+  }, 20000)
 
   it('被动成员过阈值后使用独立水位，文件失败重试不重发模型或重复落盘', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-passive-reflection-'))
@@ -1060,7 +1125,7 @@ it.each(['正常交付', '主人 IM 私聊交付', '跨父运行续聊', '收件
       } else if (++parentRequests === 1) {
         parentTools = body.tools.map((tool: { name: string }) => tool.name)
         block = { type: 'tool_use', id: 'delegate', name: 'agent_message',
-          input: { action: 'start', agentId: 'builtin:searcher', task: '核对合成资料', ...(fileMode ? { resourceRefs: [fileKey] } : {}) } }
+          input: { action: 'spawn', agentId: mode === '正常交付' ? 'searcher' : 'builtin:searcher', task: '核对合成资料', ...(fileMode ? { resourceRefs: [fileKey] } : {}) } }
       } else if (parentRequests === 2 || mode === '收件箱等待' && parentRequests === 3) {
         const { rows: [row] } = await sql<{ child_id: string }>`SELECT child_id FROM agent_subagent_deliveries`.execute(runtime.db)
         if (!row) throw new Error('派单未持久化')

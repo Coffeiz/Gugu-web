@@ -5,6 +5,14 @@ import { QqApiError, type createQqClient } from './client.js'
 import { z } from 'zod'
 import {createHash} from 'node:crypto'
 
+/** 只提前发送不会被后续链接、围栏或 Markdown 标记重写的纯文本部分。 */
+export function qqStreamPrefix(text: string): string {
+  const lines = completeQqLines(text)
+  const tail = text.slice(lines.length)
+  const plain = /^[\p{L}\p{N} ，。！？、；：…（）《》「」]+/u.exec(tail)?.[0] ?? ''
+  return lines + plain.replace(/[A-Za-z0-9]+$/u, '')
+}
+
 type Outcome = 'accepted' | 'rejected' | 'unknown'
 export interface QqReceipt { outcome: Outcome; platformMessageIds: readonly string[] }
 export interface QqTarget {
@@ -13,6 +21,7 @@ export interface QqTarget {
   messageId?: string
   messageFormat?: 'compat' | 'markdown'
   mentionUserId?: string
+  mentionUserName?: string
   /** 仅接受Host从当前群授权资料读取的名单。 */
   knownMemberIds?: readonly string[]
 }
@@ -113,17 +122,24 @@ function messageId(response: Record<string, unknown>, stream = false): string | 
   return typeof id === 'string' && id.trim() ? id : null
 }
 
-/** 只升级可信普通@ID；模型已明确写出的旧mention标签按Python升级。 */
-export function splitQqGroupMentions(text: string, userId?: string, known: readonly string[] = []): { mention: string; body: string } {
-  let formatted = text.replace(/<@!?([^>\s]+)>/g, (original, id: string) => /[<>"']/.test(id) ? original : `<qqbot-at-user id="${id}" />`)
-  const members = new Set([...known, ...(userId ? [userId.trim()] : [])].filter(id => id && !/[<>"']/.test(id)))
-  for (const member of members) {
-    const escaped = member.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    formatted = formatted.replace(new RegExp(`(?<![<@\\p{L}\\p{N}_])[@＠]${escaped}(?![\\p{L}\\p{N}_])`, 'gu'), `<qqbot-at-user id="${member}" />`)
+/** 只有来自当前群的可信成员 ID 能被转成 QQ 提及。 */
+export function splitQqGroupMentions(text: string, userId?: string, known: readonly string[] = [], userName?: string): { mention: string; body: string } {
+  const members = new Set([...known, userId ?? ''].filter(id => /^[A-Za-z0-9_-]{1,128}$/u.test(id)))
+  const mentions = new Set<string>()
+  const tag = /<@!?([^>\s]+)>|<qqbot-at-user\s+id="([^"]+)"\s*\/>/gu
+  const readable = (value: string) => value.replace(/[<>]/gu, char => char === '<' ? '＜' : '＞')
+  const remember = (id: string) => {
+    mentions.add(`<qqbot-at-user id="${id}" />`)
+    return ''
   }
-  const pattern = /<qqbot-at-user\s+id="[^"]+"\s*\/>/g
-  const mentions = formatted.match(pattern)
-  return mentions ? { mention: mentions.join(''), body: formatted.replace(pattern, '').replace(/[ \t]{2,}/g, ' ').trim() } : { mention: '', body: formatted }
+  const token = /(`+)(?!`)[\s\S]*?\1(?!`)|<@!?([^>\s]+)>|<qqbot-at-user\s+id="([^"]+)"\s*\/>|(?<![<@\p{L}\p{N}_])[@＠]([\p{L}\p{N}\p{M}_-]+)/gu
+  const body = text.replace(token, (raw, code, legacy, native, plain) => {
+    if (code) return raw.replace(tag, readable)
+    const id = legacy ?? native ?? (members.has(plain) ? plain : plain === userName ? userId : undefined)
+    if (id === undefined) return plain ? raw : readable(raw)
+    return members.has(id) ? remember(id) : plain ? raw : readable(raw)
+  })
+  return { mention: [...mentions].join(''), body: mentions.size ? body.trim() : body }
 }
 
 export function createQqSender(options: {
@@ -145,13 +161,13 @@ export function createQqSender(options: {
   function validTarget(target: QqTarget): boolean { return valid(target.id) && ['c2c', 'group'].includes(target.chatType) &&
     (!target.messageId || typeof target.messageId === 'string' && target.messageId.length <= 2048 && !/[\r\n\0]/.test(target.messageId)) }
   const path = (target: QqTarget) => `/v2/${target.chatType === 'group' ? 'groups' : 'users'}/${target.id}/messages`
-  async function postText(target: QqTarget, text: string, markdown: boolean, signal?: AbortSignal,authorize?:()=>Promise<boolean>): Promise<string> {
+  async function postText(target: QqTarget, text: string, markdown: boolean, signal?: AbortSignal,authorize?:()=>Promise<boolean>, plainFallback: string | null = text): Promise<string> {
     const body: Record<string, unknown> = { msg_type: markdown ? 2 : 0, msg_seq: await sequence(target), ...(markdown ? { markdown: { content: text } } : { content: text }), ...(target.messageId ? { msg_id: target.messageId } : {}) }
     let response: Record<string, unknown>
     try { response = await options.client.call('POST', path(target), { body, signal,authorize }) }
     catch (error) {
-      if (!markdown || !markdownBlocked(error)) throw error
-      response = await options.client.call('POST', path(target), { body: { msg_type: 0, content: text, msg_seq: await sequence(target), ...(target.messageId ? { msg_id: target.messageId } : {}) }, signal,authorize })
+      if (!markdown || !markdownBlocked(error) || plainFallback === null) throw error
+      response = await options.client.call('POST', path(target), { body: { msg_type: 0, content: plainFallback, msg_seq: await sequence(target), ...(target.messageId ? { msg_id: target.messageId } : {}) }, signal,authorize })
     }
     const id = messageId(response)
     if (!id) throw new QqApiError('message', 200, undefined, 'UNKNOWN')
@@ -180,9 +196,12 @@ export function createQqSender(options: {
           const prepared = sender.prepareText(text)
         const markdown = (target.messageFormat ?? (target.chatType === 'group' ? 'compat' : 'markdown')) === 'markdown'
         if (target.chatType === 'group') {
-          const split = splitQqGroupMentions(prepared, target.mentionUserId, target.knownMemberIds)
-          if (split.mention) ids.push(await withPassiveFallback(target, actual => postText(actual, split.mention, true, signal,authorize)))
-          if (split.body) ids.push(await withPassiveFallback(split.mention ? { ...target, messageId: undefined } : target, actual => postText(actual, split.body, markdown, signal,authorize)))
+          const split = splitQqGroupMentions(prepared, target.mentionUserId, target.knownMemberIds, target.mentionUserName)
+          // 同一条 Markdown 携带提及和正文；明确拒绝 Markdown 时只降级发送正文。
+          if (split.mention) {
+            const combined = split.body ? `${split.mention}\n\n${split.body}` : split.mention
+            ids.push(await withPassiveFallback(target, actual => postText(actual, combined, true, signal,authorize, split.body || null)))
+          } else if (split.body) ids.push(await withPassiveFallback(target, actual => postText(actual, split.body, markdown, signal,authorize)))
         } else if (prepared.trim()) ids.push(await withPassiveFallback(target, actual => postText(actual, prepared, markdown, signal,authorize)))
         return ids.length ? { outcome: 'accepted', platformMessageIds: ids } : reject()
       } catch (error) { return { outcome: ids.length ? 'unknown' : outcome(error), platformMessageIds: ids } }
@@ -237,7 +256,8 @@ export function createQqSender(options: {
       catch (error) { return { outcome: outcome(error), acknowledged: false } }
     },
     /** fileInfo只能来自实际QQ媒体上传结果；此入口不生成或猜测平台文件凭证。 */
-    async media(target: QqTarget, uploaded: { fileInfo: string; image: boolean; filename?: string }, signal?: AbortSignal,authorize?:()=>Promise<boolean>): Promise<QqReceipt> {
+    async media(target: QqTarget, uploaded: { fileInfo: string; image: boolean; filename?: string }, signal?: AbortSignal,authorize?:()=>Promise<boolean>,
+      onFailure?: (status?: number, code?: number) => void): Promise<QqReceipt> {
       if (!validTarget(target) || typeof uploaded.fileInfo !== 'string' || !uploaded.fileInfo || !uploaded.image && !uploaded.filename) return reject()
       try {
         const send = async (actual: QqTarget) => {
@@ -249,9 +269,13 @@ export function createQqSender(options: {
         }
         const id = target.chatType === 'group' ? await withPassiveFallback(target, send) : await send(target)
         return { outcome: 'accepted', platformMessageIds: [id] }
-      } catch (error) { return { outcome: outcome(error), platformMessageIds: [] } }
+      } catch (error) {
+        onFailure?.(error instanceof QqApiError ? error.statusCode : undefined,
+          error instanceof QqApiError ? error.errorCode : undefined)
+        return { outcome: outcome(error), platformMessageIds: [] }
+      }
     },
-    privateStream(target: QqTarget, signal?: AbortSignal, lifecycle: {authorize?:()=>Promise<boolean>;automaticFlush?:boolean;snapshot?:unknown;checkpoint?(snapshot:QqStreamSnapshot):Promise<void>} = {}) {
+    privateStream(target: QqTarget, signal?: AbortSignal, lifecycle: {authorize?:()=>Promise<boolean>;automaticFlush?:boolean;partialText?:boolean;snapshot?:unknown;checkpoint?(snapshot:QqStreamSnapshot):Promise<void>} = {}) {
       if (!validTarget(target) || target.chatType !== 'c2c' || target.messageFormat === 'compat') throw new Error('QQ 私聊流身份或格式无效')
       let fullText = '', lastSentText = '', lastContent = '', streamId: string | null = null, msgSeq: number | null = null, index = 0
       let timer: ReturnType<typeof setTimeout> | undefined, tail: Promise<unknown> = Promise.resolve(), finished = false, failed = false, rejectedContent = false
@@ -265,7 +289,7 @@ export function createQqSender(options: {
       const receipt = (result: Outcome, closed: boolean, mismatch = false): QqStreamReceipt => ({ outcome: result, platformMessageIds: streamId ? [streamId] : [], closed, ...(mismatch ? { reason: 'prefix-mismatch' as const } : {}) })
       function serial<T>(work: () => Promise<T>): Promise<T> { const result = tail.then(work); tail = result.catch(() => undefined); return result }
       async function frame(state: 1 | 10, override?: string): Promise<QqStreamReceipt> {
-        let raw = state === 10 ? fullText : completeQqLines(fullText)
+        const raw = state === 10 ? fullText : lifecycle.partialText ? qqStreamPrefix(fullText) : completeQqLines(fullText)
         let content: string
         try { content = override ?? prepareQqText(options.sanitizeText(raw)) }
         catch { failed = true; return receipt('unknown', false) }

@@ -115,3 +115,12 @@ it('项目/活动真实来源快照和跨owner隔离，旧版允许项目/活动
  expect(await send('canvas_add_node',{canvas_id:1,ref_type:'project',ref_id:foreign.id},'foreign-project')).toMatchObject({successful:false,value:{error:'引用对象不存在'}})
  expect(await rows('mind_nodes')).toHaveLength(2)
 })
+
+it('单项放置接受字符串项目 ID 和数字坐标，同时保留文件引用类型限制',async()=>{
+ const project=await core.transaction({ownerId:owner},data=>data.projects.create({name:'放置来源'}))
+ const input={canvas_id:'1',ref_id:String(project.id),position:{x:300,y:760}}
+ expect(await send('canvas_add_node',{...input,ref_type:'project'},'project')).toMatchObject({
+  successful:true,value:{node:{ref_id:project.id,position:{x:300,y:760}}},
+ })
+ expect(await send('canvas_add_node',{...input,ref_type:'file'},'wrong-file')).toMatchObject({successful:false,executed:false})
+})

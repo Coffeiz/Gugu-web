@@ -22,7 +22,7 @@ async function rehearse(file: string) {
   if (process.platform !== 'linux' || !isAbsolute(file)) throw new Error('需要 Linux 环境和清单绝对路径')
   const config = loadConfig(process.env, resolveConfigOverridePath(process.env))
   const root = await mkdtemp(join(tmpdir(), 'gugu-file-migration-rehearsal-'))
-  const report = { references: 0, restores: 0, blocked: 0, folderRecords: 0 }
+  const report = { references: 0, restores: 0, blocked: 0, folderRecords: 0, folderPaths: 0 }
   const storage = createFileMigrationStorage(root)
   const rows = createInterface({ input: createReadStream(file), crlfDelay: Infinity })
   try {
@@ -30,11 +30,23 @@ async function rehearse(file: string) {
     for await (const line of rows) {
       const row = JSON.parse(line)
       if (!hasHeader) {
-        if (row.kind !== 'header' || row.version !== 2) throw new Error('迁移清单版本无效')
+        if (row.kind !== 'header' || row.version !== 3) throw new Error('迁移清单版本无效')
         hasHeader = true
         continue
       }
-      if (row.kind === 'folder') { report.folderRecords++; continue }
+      if (row.kind === 'folder') {
+        report.folderRecords++
+        const owner = normalizeOwnerId(row.legacy.user_id)
+        const key: unknown = row.storageKey
+        if (row.legacy.deleted_at || typeof key !== 'string') { report.blocked++; continue }
+        const parts = key.split('/')
+        if (parts[0] !== owner || !['个人文件', '项目文件', 'workspace'].includes(parts[1] ?? '')
+          || parts.length < 3 || parts.some(part => !part || part === '.' || part === '..'
+            || part.startsWith('.gugu-') || /[\\\0]/u.test(part))) throw new Error('清单目录归属不合法')
+        if (!await createLocalFileTree(root, key).ensureRoot()) throw new Error('无法创建迁移目录')
+        report.folderPaths++
+        continue
+      }
       if (row.kind !== 'file') throw new Error('迁移清单条目无效')
       if (row.state !== 'inPlace' || (row.legacy.deleted_at && (!row.restoreKey || !row.restoreTarget))) {
         report.blocked++

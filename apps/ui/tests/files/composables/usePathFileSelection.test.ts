@@ -4,7 +4,7 @@ import { confirmFileDeletion } from '@/composables/files/useFileDeleteConfirm'
 import { usePathFileSelection } from '@/composables/files/usePathFileSelection'
 import { pathFilesApi, type PathFileEntry, type PathFileRef } from '@/services/api'
 
-vi.mock('@/services/api', () => ({ pathFilesApi: { move: vi.fn(), copy: vi.fn(), moveToTrash: vi.fn() } }))
+vi.mock('@/services/api', () => ({ pathFilesApi: { move: vi.fn(), copy: vi.fn(), moveToTrash: vi.fn(), download: vi.fn(), downloadArchive: vi.fn() } }))
 vi.mock('@/composables/files/useFileDeleteConfirm', () => ({ confirmFileDeletion: vi.fn() }))
 vi.mock('@/composables/core/useAppToast', () => ({
   errorMessage: (error: Error) => error.message,
@@ -14,6 +14,46 @@ vi.mock('@/composables/core/useAppToast', () => ({
 function file(name: string): PathFileEntry {
   return { kind: 'file', name, relativePath: name, size: 1, mimeType: 'text/plain' }
 }
+
+it('多选文件和目录时按路径整体下载', async () => {
+  const scope = effectScope()
+  const entries = [file('说明.txt'), { ...file('资料'), kind: 'directory' as const }]
+  const target = ref<PathFileRef>({ directoryId: 'project:7', relativePath: '' })
+  const selection = scope.run(() => usePathFileSelection({
+    target, container: ref(null), getEntries: () => entries, getSelectedEntries: () => entries, reload: vi.fn(),
+  }))!
+  const archive = vi.mocked(pathFilesApi.downloadArchive).mockClear().mockResolvedValue(undefined)
+  try {
+    let release!: () => void
+    archive.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve }))
+    const pending = selection.downloadSelected()
+    expect(selection.downloading.value).toBe(true)
+    await selection.downloadSelected()
+    expect(archive).toHaveBeenCalledExactlyOnceWith(target.value, ['说明.txt', '资料'])
+    release()
+    await pending
+    expect(selection.downloading.value).toBe(false)
+  } finally { scope.stop() }
+})
+
+it('未提供归档下载能力时仍可逐个下载所选文件', async () => {
+  const scope = effectScope()
+  const entries = [file('甲.txt'), file('乙.txt')]
+  const target = ref<PathFileRef>({ directoryId: 'personal', relativePath: '' })
+  const selection = scope.run(() => usePathFileSelection({
+    target, container: ref(null), getEntries: () => entries, getSelectedEntries: () => entries, reload: vi.fn(),
+  }))!
+  const access = pathFilesApi as { downloadArchive?: typeof pathFilesApi.downloadArchive }
+  const original = access.downloadArchive
+  access.downloadArchive = undefined
+  const download = vi.mocked(pathFilesApi.download).mockClear().mockResolvedValue(undefined)
+  try {
+    await selection.downloadSelected()
+    expect(download).toHaveBeenCalledTimes(2)
+    expect(download).toHaveBeenNthCalledWith(1, { directoryId: 'personal', relativePath: '甲.txt' })
+    expect(download).toHaveBeenNthCalledWith(2, { directoryId: 'personal', relativePath: '乙.txt' })
+  } finally { access.downloadArchive = original; scope.stop() }
+})
 
 it('批量粘贴遇到冲突时保留失败项，并限制在原授权目录内重试', async () => {
   const scope = effectScope()

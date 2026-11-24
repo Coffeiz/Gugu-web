@@ -23,8 +23,8 @@ async function fixture(work:(f:{pool:import('pg').Pool;root:string;c:ReturnType<
     CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer,run_id text,role text,chat_type text,platform_user_id text,conversation_seq integer,im_platform_message_id text);
     CREATE TABLE gugu_im_inbound_receipts(user_id uuid,session_id integer,message_id integer,run_id text,state text,platform text,bot_id varchar(128),chat_type text,scope_hash text,event_hash text,fingerprint text,sealed_payload jsonb);
     CREATE TABLE chat_attachments(attach_id text,user_id uuid,message_id integer,state text,platform text,extra jsonb,storage_key text,name text,ext text,mime text,size bigint);
-    CREATE TABLE projects(id integer,user_id uuid,name text,color text);CREATE TABLE folders(id integer,user_id uuid,name text);
-    CREATE TABLE files(id integer,user_id uuid,display_name text,ext text,space text,workspace_directory_id integer,storage_key text,project_id integer,stage_name text,folder_id integer,mind_map_id integer,size text,size_bytes bigint,mime_type text,created_at timestamptz,deleted_at timestamptz,img_width integer,img_height integer,version integer,storage_backend text);`)
+    CREATE TABLE projects(id integer,user_id uuid,name text,color text);
+    CREATE TABLE files(id integer,user_id uuid,display_name text,ext text,space text,workspace_directory_id integer,storage_key text,project_id integer,stage_name text,mind_map_id integer,size text,size_bytes bigint,mime_type text,created_at timestamptz,deleted_at timestamptz,img_width integer,img_height integer,version integer,storage_backend text);`)
    await pool.query(imGatewaySql.fileTools)
    await pool.query('INSERT INTO users VALUES($1)',[owner]);await pool.query("INSERT INTO conversation_sessions VALUES(91,$1,'web',NULL,NULL,NULL)",[owner])
    const r=receipt(c)
@@ -63,13 +63,30 @@ test('QQ 私聊下一轮可保存历史附件，拒绝跨会话、不同机器�
    assert.ok(result.kind==='completed' && !result.successful && !result.mutated,id)
    await pool.query(restore!)
  }
+ await pool.query('UPDATE conversation_messages SET session_id=92 WHERE id=11')
+ let lookups = 0
+ const ownerAttachment = {
+  ...tool,
+  async execute(input) {
+   assert.deepEqual(input, { attach_id: 'attachment' })
+   lookups++
+   return { kind: 'completed', successful: true, mutated: true, value: { name: '跨会话附件' } } as const
+  },
+ } satisfies typeof tool
+ for (const verifiedOwner of [true, false]) {
+  const candidate = createImSaveAttachmentTool({ ...current, actor: { ...current.actor, verifiedOwner },
+   pool, storageRoot:root, messageIds:['12'], authorize:async()=>true, ownerAttachment })
+  const result = await candidate.execute({ attach_id:'attachment' }, scope, { id:'cross-session', name:'save_attachment', input:{} })
+  assert.ok(result.kind==='completed' && result.successful===verifiedOwner)
+ }
+ assert.equal(lookups,1)
 },'qq'))
 test('实际registry→文件ports→真实PG/本地FS→真实TG multipart，跨调用重复只发送一次且恢复不重发', {skip:!url&&'需要显式隔离PG'},async()=>fixture(async f=>{
  let entered!:()=>void,release!:()=>void
  const started=new Promise<void>(resolve=>{entered=resolve}),blocked=new Promise<void>(resolve=>{release=resolve})
  const p=platform('telegram',async()=>{entered();await blocked});let allowed=true
  try{
-  const ports=createImFileTools({...f.c,pool:f.pool,storageRoot:f.root,messageIds:['11'],files:createPostgresFileReadOperations(f.pool,null,f.root),sender:()=>p.sender,authorizeTool:async()=>allowed})
+  const ports=createImFileTools({...f.c,pool:f.pool,storageRoot:f.root,messageIds:['11'],files:createPostgresFileReadOperations(f.pool, f.root),sender:()=>p.sender,authorizeTool:async()=>allowed})
   const registry=createToolRegistry({authorize:async()=>allowed,tools:[createImSendFileTool(ports.sendFile)]})
   const scope={identity:f.c.identity,roundId:'round',signal:new AbortController().signal,resolution:null,execute:async()=>{throw Error('不能执行Shell')}}
   const first=registry.tools.dispatch({id:'first',name:'send_file',input:{attach_id:'attachment'}},scope)
@@ -91,14 +108,14 @@ test('实际registry→文件ports→真实PG/本地FS→真实TG multipart，�
 test('成员/群不能按文件库 ID 发送；未知平台结果保持持久unknown并且不重发', {skip:!url&&'需要显式隔离PG'},async()=>fixture(async f=>{
  const p=platform('telegram',()=>{throw Error('synthetic-private-failure')})
  try{
-  const ports=createImFileTools({...f.c,pool:f.pool,storageRoot:f.root,messageIds:['11'],files:createPostgresFileReadOperations(f.pool,null,f.root),sender:()=>p.sender,authorizeTool:async()=>true})
+  const ports=createImFileTools({...f.c,pool:f.pool,storageRoot:f.root,messageIds:['11'],files:createPostgresFileReadOperations(f.pool, f.root),sender:()=>p.sender,authorizeTool:async()=>true})
   const input={identity:f.c.identity,roundId:'r',toolCallId:'one',attachId:'attachment',signal:new AbortController().signal}
   assert.equal(await ports.sendFile.send(input),'unknown')
   const count=p.requests.length
   assert.equal(await ports.sendFile.send({...input,toolCallId:'two'}),'unknown')
   assert.equal(await ports.sendFile.recover(input),'unknown');assert.equal(p.requests.length,count)
   const member=context('telegram',true)
-  const limited=createImFileTools({...member,pool:f.pool,storageRoot:f.root,messageIds:['11'],files:createPostgresFileReadOperations(f.pool,null,f.root),sender:()=>p.sender,authorizeTool:async()=>true})
+  const limited=createImFileTools({...member,pool:f.pool,storageRoot:f.root,messageIds:['11'],files:createPostgresFileReadOperations(f.pool, f.root),sender:()=>p.sender,authorizeTool:async()=>true})
   assert.equal(limited.sendFile.allowFileId,false)
   assert.equal(createImSendFileTool(limited.sendFile).validate({file_id:1}).success,false)
  }finally{await p.close()}

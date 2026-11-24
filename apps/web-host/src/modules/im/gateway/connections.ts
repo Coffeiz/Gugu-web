@@ -121,7 +121,7 @@ export function createPlatformConnections(options: {
           () => services.controls.authorize(currentScope, reply.signal)) })
         // cutoff只来自可信PG准入收据，绝不从平台payload读取；保留PG微秒精度。
         const result = await run({ scope: admittedScope, text: event.text, hasPendingMedia,
-          botMentioned: event.botMentioned,
+          botMentioned: event.botMentioned || event.qqAtEventOnly === true,
           telegramCommand: typeof payload.telegram_command === 'string' ? payload.telegram_command : null }, signal)
         await services.admission.finish(scope, receipt.token, result)
         // 准入已永久完成，重投不再触发表情；体验反馈失败不得吞掉原消息或回退重跑控制。

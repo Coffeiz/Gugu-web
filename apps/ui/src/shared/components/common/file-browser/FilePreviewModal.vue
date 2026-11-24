@@ -45,7 +45,7 @@
             <template v-else-if="blobUrl || videoSrc">
               <PdfViewer v-if="isPdf" :blobUrl="blobUrl ?? undefined" />
               <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" :upscale="isVectorImage" />
-              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.workspaceFile ? JSON.stringify(file.workspaceFile) : file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" @refresh="refreshTextPreview" />
+              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.workspaceFile ? JSON.stringify(file.workspaceFile) : file?.filePath ?? (file?.attach_id == null ? undefined : String(file.attach_id))" :fileContext="file ?? null" @refresh="refreshTextPreview" />
               <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" :refresh-src="refreshVideoSource" />
 
             </template>
@@ -178,10 +178,11 @@ let loadSequence = 0
 async function refreshVideoSource(): Promise<string> {
   const workspaceFile = props.file?.workspaceFile
   if (workspaceFile) return pathFilesApi.contentUrl(workspaceFile)
-  const id = props.file?.id
-  if (typeof id !== 'number') throw new Error('无法刷新视频地址')
-  const { url } = await filesApi.getStreamUrl(id)
-  if (!props.show || props.file?.id !== id) throw new DOMException('预览已切换', 'AbortError')
+  if (props.file?.contentUrl) return props.file.contentUrl
+  const filePath = props.file?.filePath
+  if (typeof filePath !== 'string') throw new Error('无法刷新视频地址')
+  const { url } = await filesApi.getStreamUrl(filePath)
+  if (!props.show || props.file?.filePath !== filePath) throw new DOMException('预览已切换', 'AbortError')
   return url
 }
 
@@ -210,7 +211,8 @@ async function load(file: PreviewFile, refresh = false) {
 
   try {
     if (isVideoExt(file.ext)) {
-      const url = file.workspaceFile ? pathFilesApi.contentUrl(file.workspaceFile) : (await filesApi.getStreamUrl(file.id!)).url
+      const url = file.workspaceFile ? pathFilesApi.contentUrl(file.workspaceFile)
+        : file.contentUrl ?? (typeof file.filePath === 'string' ? (await filesApi.getStreamUrl(file.filePath)).url : '')
       if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       videoSrc.value = withCacheBust(url, refresh)
     } else {
@@ -221,9 +223,10 @@ async function load(file: PreviewFile, refresh = false) {
         const cached = previewBlobCache.get(key)
         if (cached) { blobUrl.value = cached; return }
       }
-      const dlUrl = file.workspaceFile ? pathFilesApi.contentUrl(file.workspaceFile) : (file.attach_id
-        ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
-        : `${BASE_URL}/files/${file.id!}/download`) + bust
+      const dlUrl = file.workspaceFile ? pathFilesApi.contentUrl(file.workspaceFile)
+        : file.contentUrl ? `${file.contentUrl}${bust}`
+          : (file.attach_id ? `${BASE_URL}/agent/attachment/${file.attach_id}/download`
+            : typeof file.filePath === 'string' ? `${BASE_URL}/files/by-path/download?${new URLSearchParams({ path: file.filePath })}` : '') + bust
       const res = file.readContent ? new Response(await file.readContent())
         : await fetch(dlUrl, { headers, credentials: 'include', cache: 'no-cache' })
       if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
@@ -268,7 +271,7 @@ watch(() => [props.show, props.file] as [boolean, Partial<FileMeta> | undefined]
 
 const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, (event) => {
-  if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.file?.id, event)) return
+  if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.file?.filePath, event)) return
   if (props.show && props.file && !props.file.attach_id) load(props.file, true)
 })
 
@@ -292,6 +295,20 @@ async function handleDownload() {
     const filename = `${file.displayName}.${file.ext?.toLowerCase()}`
     if (file.workspaceFile) {
       await pathFilesApi.download(file.workspaceFile)
+    } else if (file.contentUrl) {
+      const url = new URL(file.contentUrl, window.location.origin)
+      url.searchParams.set('download', '1')
+      const res = await fetch(url, { credentials: 'include' })
+      if (isUnauthorizedResponse(res)) return
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const objectUrl = URL.createObjectURL(await res.blob())
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
     } else if (file.attach_id) {
       const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
       const res = file.readContent ? new Response(await file.readContent())
@@ -306,8 +323,8 @@ async function handleDownload() {
       anchor.click()
       anchor.remove()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
-    } else if (file.id != null) {
-      await filesApi.download(file.id, filename)
+    } else if (typeof file.filePath === 'string') {
+      await filesApi.download(file.filePath, filename)
     }
   } catch (e) {
     console.error('[Preview] 下载失败:', e)
@@ -335,12 +352,11 @@ async function openInfo() {
   showInfo.value = !showInfo.value
 }
 
-function navigateToFileDirectory(target?: Partial<FileMeta>) {
-  if (!target || !Number.isSafeInteger(Number(target.id)) || target.attach_id) return
+function navigateToFileDirectory(target?: PreviewFile) {
+  if (!target?.workspaceFile || target.attach_id) return
   uiStore.pendingFileTarget = {
     kind: 'file',
-    id: Number(target.id),
-    ...(target.workspaceDirectoryId != null ? { workspaceDirectoryId: target.workspaceDirectoryId } : {}),
+    pathFile: { ...target.workspaceFile, directoryName: '' },
   }
   void router.push('/files')
 }

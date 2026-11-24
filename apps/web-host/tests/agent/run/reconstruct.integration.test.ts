@@ -27,7 +27,7 @@ import { createAuthorizedWebAgentProductionRagRunPorts } from '../../../src/modu
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL, redis = process.env.GUGU_WEBUI_TEST_REDIS_URL
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 
-test('重启后以持久用户锚点及可信作用域重建 Harness，缺服务时保留运行', { skip: !(url && redis) && '需要隔离 PG 和 Redis', timeout: 30000 }, async () => {
+test('Web 从 QQ 群会话发起仍可访问 owner 工具，重启后按可信运行作用域恢复', { skip: !(url && redis) && '需要隔离 PG 和 Redis', timeout: 30000 }, async () => {
   const schema = `web_rebuild_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: url })
   const temporary = await mkdtemp(join(tmpdir(), 'gugu-web-agent-rag-run-'))
   const owner = randomUUID()
@@ -39,6 +39,7 @@ test('重启后以持久用户锚点及可信作用域重建 Harness，缺服务
   const rememberAvailable = process.platform === 'linux'
   try {
     await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY,security_version integer NOT NULL DEFAULT 1,is_active boolean NOT NULL DEFAULT true,account_status text NOT NULL DEFAULT 'active');
+      CREATE TABLE user_bots(id integer PRIMARY KEY,user_id uuid,platform text,enabled boolean,owner_platform_user_id text);
       CREATE TABLE data_import_jobs(id uuid PRIMARY KEY,user_id uuid NOT NULL,mode text NOT NULL,status text NOT NULL,updated_at timestamptz NOT NULL);
       CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid NOT NULL,source text NOT NULL,title text,summary text,bot_id text,chat_id text,chat_type text,updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,execution_state text NOT NULL DEFAULT 'idle',active_run_id text,pending_message_count integer NOT NULL DEFAULT 0,context_epoch integer NOT NULL DEFAULT 0,session_context jsonb,snapshot_hash text,session_info_hash text,snapshot_expires_at timestamptz,baseline_message_seq bigint NOT NULL DEFAULT 0,baseline_message_hash text);
       CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer,role text,content text,content_json jsonb,files jsonb,references_json jsonb,conversation_seq bigint,history_anchor_seq bigint,covers_until_seq bigint,run_id text,round_id text,canonical_batch_id bigint,im_platform_sent_ms bigint,im_event_received_ms bigint,created_at timestamptz,sent_at timestamptz,quoted_text text,platform_user_id text,platform_user_name text,chat_type text);
@@ -46,6 +47,10 @@ test('重启后以持久用户锚点及可信作用域重建 Harness，缺服务
       CREATE TABLE agent_run_leases(user_id uuid,session_id integer,run_id text,token text,fence bigint,expires_at timestamptz,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,session_id));
       CREATE TABLE agent_run_checkpoints(user_id uuid,session_id integer,run_id text,version bigint,sequence bigint,status text,phase text,nonce bytea,payload bytea,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,session_id,run_id));
       CREATE TABLE agent_run_events(user_id uuid,session_id integer,run_id text,event_id text,sequence bigint,nonce bytea,payload bytea,created_at timestamptz,acknowledged_at timestamptz,PRIMARY KEY(user_id,session_id,run_id,event_id));
+      CREATE TABLE interaction_prompts(id integer PRIMARY KEY,user_id uuid,session_id integer,status text);
+      CREATE TABLE agent_interaction_resumes(user_id uuid,session_id integer,run_id text,prompt_id integer,interaction_id text,
+        receipt text,created_at timestamptz,completed_at timestamptz,claim_token text,claim_expires_at timestamptz,
+        PRIMARY KEY(user_id,session_id,run_id,prompt_id));
       CREATE TABLE agent_run_interaction_receipts(user_id uuid,session_id integer,run_id text,receipt text,created_at timestamptz);
       CREATE TABLE agent_run_dispatch(sequence bigserial PRIMARY KEY,user_id uuid,session_id integer,run_id text,state text,message_id integer,nonce bytea,payload bytea,request_expires_at timestamptz,token text,fence bigint NOT NULL DEFAULT 0,lease_expires_at timestamptz,cancel_requested boolean NOT NULL DEFAULT false,blocked_reason text,UNIQUE(user_id,session_id,run_id));
       CREATE UNIQUE INDEX selected ON agent_run_dispatch(user_id,session_id) WHERE state='selected';`)
@@ -66,7 +71,9 @@ test('重启后以持久用户锚点及可信作用域重建 Harness，缺服务
     assert.equal(await rebuild(), 'idle')
     const indexed = await pool.query('SELECT source_id, owner_user_id FROM knowledge_index_entries ORDER BY source_id')
     assert.deepEqual(indexed.rows, [{ source_id: '5', owner_user_id: owner }, { source_id: '6', owner_user_id: otherOwner }])
-    await pool.query("INSERT INTO conversation_sessions(id,user_id,source) VALUES (1,$1,'web')", [owner])
+    await pool.query(`INSERT INTO conversation_sessions(id,user_id,source,bot_id,chat_id,chat_type)
+      VALUES (1,$1,'qq','73','synthetic-group','group')`, [owner])
+    await pool.query("INSERT INTO user_bots VALUES (73,$1,'qq',true,'synthetic-owner')", [owner])
     await pool.query("INSERT INTO conversation_messages(id,session_id,role,content,conversation_seq) VALUES (9,1,'user','持久合成问题',1)")
     const identity = { ownerId: owner, sessionId: '1', runId: 'run' }, accessVersion = 'a'.repeat(64)
     await withPostgresTransaction(pool, async client => { assert.equal(await lockAgentRunSession(client, identity), true); await enqueueAgentRunLocked(client, 'synthetic-key', identity, { userMessageId: 9, locale: 'zh-CN', origin: null, accessVersion, v: 2, source: 'web' }, 60) })
@@ -110,6 +117,7 @@ test('重启后以持久用户锚点及可信作用域重建 Harness，缺服务
           runtime: { clock: { now: () => new Date().toISOString() }, interactions: { activate: async (_id, value) => value }, sanitizeText: stripThinking, createStreamSanitizer: () => new ProviderStreamSanitizer(), presentError(error) { runErrors.push(String(error)); return { code: 'failed', text: '失败' } }, presentToolResult: async value => value, publish: async () => {}, diagnose: () => {} },
           provider: { transport: { async request(request) { calls++; callsForRun++; assert.doesNotMatch(JSON.stringify(request.body), /异主内容不可见/); assert.match(JSON.stringify(request.body), /持久合成问题/); if (lease.identity.sessionId === '1' && callsForRun === 1) {
               assert.match(JSON.stringify(request.body), /knowledge-context/)
+              assert.match(JSON.stringify(request.body), /"name":"call_tool"/u)
               const toolCalls = [{
                 index: 0, id: 'search-history', type: 'function',
                 function: { name: 'call_tool', arguments: JSON.stringify({ tool_name: 'call_tool', arguments: { name: ' search_conversations ', arguments: { query: '历史回归' } } }) },

@@ -5,7 +5,7 @@ import { encodeVoiceRecording } from '../voice-recording'
 import { provide } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
-import { chatAttachmentImageKey, chatCommandCatalogKey, chatModelCatalogKey, chatToolDetailsKey } from '@/components/common/gugu-chat/chatPresentationAccess'
+import { chatAttachmentImageKey, chatCommandCatalogKey, chatModelCatalogKey, chatToolDetailsKey, chatSubagentSnapshotKey } from '@/components/common/gugu-chat/chatPresentationAccess'
 import type { DesktopBridge } from '@gugu/core/desktop'
 import type { ChatReference, QueuedMessagePayload } from '@/components/common/gugu-chat/chatTypes'
 import type { ChatConversationAccess } from '@/components/common/gugu-chat/composables/useChatConversation'
@@ -50,6 +50,10 @@ if (hasDesktopAgentModelBridge()) {
 provide(chatCommandCatalogKey, listDesktopChatCommands)
 
 provide(chatToolDetailsKey, readDesktopChatToolDetails)
+provide(chatSubagentSnapshotKey, {
+  read: (id, runId, childId) => requestDesktopAgentSessions({ action: 'subagentSnapshot', id, runId, childId }),
+  subscribe: subscribeDesktopAgentRunChanges,
+})
 
 const automaticModeAccess = {
   async read() { return (await desktopData.appearance()).automaticModeEnabled === true },

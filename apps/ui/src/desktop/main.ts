@@ -1,3 +1,4 @@
+import { installOverlayScrollbars } from '@/utils/overlayScrollbars'
 import { pathFileAccessKey } from '@/services/pathFileAccess'
 import { desktopPathFileAccess } from '@desktop/files/pathFileAccess'
 import { scheduleAccessKey } from '@/services/scheduleAccess'
@@ -85,6 +86,7 @@ export async function mountDesktop() {
   })
   installEnterDirective(app)
   app.use(pinia).use(i18n).use(ArcoVue).use(createDesktopRouter()).mount('#app')
+  installOverlayScrollbars()
 }
 
 function createDesktopRouter() {

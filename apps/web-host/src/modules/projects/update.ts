@@ -2,7 +2,7 @@ import type { Fields, ProjectRecord } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
 import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 import { recordForwardUndoOperation } from '../undo/record.js'
-import { projectTimestamp, readProjectFileCount } from './store.js'
+import { projectTimestamp } from './store.js'
 import type { ProjectUpdatedEvent, ProjectUpdateRuntime, ProjectUpdateTransaction, ProjectUpdateUndoRecord } from '@gugu/core/project-update'
 import { chmod, chown, lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -92,16 +92,6 @@ function transactionAdapter(client: PoolClient): ProjectUpdateTransaction {
       return result.rows[0] ? project(result.rows[0]) : null
     },
 
-    async updateFileStoragePrefixes(ownerId, projectId, oldPrefix, newPrefix) {
-      await client.query(
-        `UPDATE files
-         SET storage_key = $4 || substring(storage_key FROM char_length($3) + 1)
-         WHERE user_id = $1 AND project_id = $2
-           AND left(storage_key, char_length($3)) = $3`,
-        [ownerId, projectId, oldPrefix, newPrefix],
-      )
-    },
-
     async recordUndo(record: ProjectUpdateUndoRecord) {
       const context = record.contextId.trim().slice(0, 128)
       if (!context) return
@@ -110,11 +100,12 @@ function transactionAdapter(client: PoolClient): ProjectUpdateTransaction {
   }
 }
 
-/** PostgreSQL update adapter. Project, file-key and Undo writes share one transaction. */
+/** PostgreSQL update adapter. Project and Undo writes share one transaction. */
 export function createPostgresProjectUpdateRuntime(
   pool: Pool,
   renameProjectDirectory: DirectoryRenamer,
   publishProjectUpdated: EventPublisher,
+  readFileCount: (ownerId: string, projectId: number) => Promise<number>,
 ): ProjectUpdateRuntime {
   return {
     async transaction<T>(work: (tx: ProjectUpdateTransaction) => Promise<T>): Promise<T> {
@@ -122,7 +113,7 @@ export function createPostgresProjectUpdateRuntime(
     },
     renameProjectDirectory: (owner, oldPrefix, newPrefix, onMoved) => renameProjectDirectory(owner, oldPrefix, newPrefix, undefined, onMoved),
     async getFileCount(ownerId, projectId) {
-      return readProjectFileCount(pool, ownerId, projectId)
+      return readFileCount(ownerId, projectId)
     },
     publishProjectUpdated,
   }
@@ -281,8 +272,8 @@ export interface ProjectPostCommitPublication {
   userId: string
   resource: ProjectPostCommitResource
   operation: ProjectPostCommitOperation
-  entityId?: number
-  entityIds?: number[]
+  entityId?: number | string
+  entityIds?: Array<number | string>
   origin: string | null
   payload?: Record<string, unknown>
 }

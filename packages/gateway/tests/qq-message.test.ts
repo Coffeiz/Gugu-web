@@ -28,17 +28,39 @@ test('群sender优先user_openid以复用私聊绑定，Bot/owner不接受事件
   assert.equal(privateMessage.payload.chat_id, undefined)
 })
 
-test('GROUP_AT事件名不证明提及当前Bot，只有bot=true且is_you=true才确认', () => {
+test('仅有 AT 事件可触发群回复，只有结构化 is_you 能证明当前 Bot 身份', () => {
   const absent = parseQqMessage('GROUP_AT_MESSAGE_CREATE', base, options)!.payload
   assert.equal(absent.bot_mentioned, false)
+  assert.equal(absent.group_mentioned, true)
+  assert.equal(absent.platform_bot_user_id, null)
   assert.equal(absent.native_bot_mentioned, null)
   const ambiguous = parseQqMessage('GROUP_AT_MESSAGE_CREATE', { ...base, mentions: [{ bot: true }] }, options)!.payload
   assert.equal(ambiguous.native_bot_mentioned, null)
+  assert.equal(ambiguous.group_mentioned, false)
   assert.equal(ambiguous.has_unresolved_mention, true)
+  assert.equal(ambiguous.mentions_other_bot, true)
   const current = parseQqMessage('GROUP_MESSAGE_CREATE', { ...base, mentions: [{ bot: true, is_you: true, id: 'bot-openid' }] }, options)!.payload
   assert.equal(current.bot_mentioned, true)
   assert.equal(current.group_mentioned, true)
   assert.equal(current.platform_bot_user_id, 'bot-openid')
+})
+
+test('只有 @ 没有正文时仍生成可投递的群消息，且不冒认 Bot 身份', () => {
+  for (const mentions of [undefined, []]) {
+    const parsed = parseQqMessage('GROUP_AT_MESSAGE_CREATE', { ...base, content: '  ', mentions }, options)!
+    assert.equal(parsed.payload.text, '@咕咕')
+    assert.equal(parsed.preflight.text, '@咕咕')
+    assert.equal(parsed.payload.group_mentioned, true)
+    assert.equal(parsed.payload.native_bot_mentioned, mentions ? false : null)
+    assert.equal(parsed.payload.platform_bot_user_id, null)
+  }
+  const empty = { ...base, content: '' }
+  const current = [{ bot: true, is_you: true, id: 'bot-openid' }]
+  assert.equal(parseQqMessage('GROUP_MESSAGE_CREATE', { ...empty, mentions: current }, options)?.payload.text, '@咕咕')
+  assert.equal(parseQqMessage('GROUP_MESSAGE_CREATE', empty, options), null)
+  assert.equal(parseQqMessage('C2C_MESSAGE_CREATE', empty, options), null)
+  assert.equal(parseQqMessage('GROUP_AT_MESSAGE_CREATE', { ...empty, mentions: [{ bot: true, is_you: false }] }, options), null)
+  assert.equal(parseQqMessage('GROUP_AT_MESSAGE_CREATE', { ...empty, mentions: [{ bot: true }] }, options), null)
 })
 
 test('其他Bot和成员mention事实保持三态，部分已知事实不被未知节点覆盖', () => {

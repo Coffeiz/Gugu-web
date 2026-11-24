@@ -1,5 +1,3 @@
-import { canUseTool, filterToolNames } from '../agent/tools/permissions.js'
-import { agentContextPolicy } from '../agent/context/source-policy.js'
 import { normalizeUserBotTools } from './user-bots.js'
 
 export type ImPlatform = 'feishu' | 'qq' | 'wechat' | 'telegram'
@@ -45,15 +43,12 @@ export function resolveImAccess(scope: ImAccessScope, bot: ImBotAccess | null): 
   if (!/^[1-9]\d*$/.test(scope.botId)) return unknown()
   if (!matches(bot, scope)) return scope.platform === 'qq'
     ? { role: 'unknown', allowedToolNames: normalizeUserBotTools(null) } : unknown()
-  // 飞书/微信旧私聊owner规则只适用于当前可信Bot连接，不能绕过Bot归属匹配。
-  if ((scope.platform === 'feishu' || scope.platform === 'wechat') && scope.chatType === 'c2c')
-    return { role: 'owner', allowedToolNames: null }
   const memberTools = normalizeUserBotTools(bot.groupAllowedTools)
   if (scope.platform === 'qq' && !bot.ownerPlatformUserId)
     return { role: 'unknown', allowedToolNames: normalizeUserBotTools(null) }
   if (scope.platformUserId && bot.ownerPlatformUserId === scope.platformUserId)
     return { role: 'owner', allowedToolNames: null, groupMemberToolNames: memberTools }
-  if (scope.platform === 'telegram' && (scope.chatType !== 'group' || !scope.platformUserId)) return unknown()
+  if (scope.chatType !== 'group' || !scope.platformUserId) return unknown()
   return { role: 'member', allowedToolNames: memberTools }
 }
 
@@ -107,8 +102,7 @@ function intersect(left: readonly string[] | null, right: readonly string[] | nu
   return right === null ? [...left] : left.filter(name => right.includes(name))
 }
 function memberTools(access: ImAccess): readonly string[] {
-  // Python 的空 member 白名单在 owner 降级时同样采用最低默认集合。
-  return access.groupMemberToolNames?.length ? access.groupMemberToolNames : defaultImTools
+  return access.groupMemberToolNames ?? defaultImTools
 }
 
 /** 纯规则移植；访问解析端口可复用同一可信 Bot 快照，不读取 Host 数据库。 */
@@ -137,42 +131,10 @@ export function resolveImActor(input: ImActorInput, resolve: (scope: ImAccessSco
     })
     verifiedOwner = speakers.length > 1 && role === 'owner' && allOwners
   } else if (speakers.length && input.chatType === 'group' && role === 'owner') verifiedOwner = true
-  else if (input.chatType === 'group' && role === 'owner' && !ownerMentionAuthorized) {
-    role = 'member'
-    allowedToolNames = memberTools(access)
-  }
   return Object.freeze({ ownerId: input.ownerId, botId: input.botId, platform: input.platform, chatType: input.chatType,
     platformUserId: input.platformUserId, chatId: input.chatType === 'group' ? input.chatId : null, role,
     allowedToolNames: allowedToolNames === null ? null : Object.freeze([...allowedToolNames]),
     speakerRoles: speakerRoles === null ? null : Object.freeze(speakerRoles), verifiedOwner, ownerMentionAuthorized })
-}
-
-export function imContextPolicy(actor: ImActor, bot: ImBotAccess | null, memoryEnabled: boolean) {
-  if (typeof memoryEnabled !== 'boolean') throw new TypeError('IM 记忆开关必须由可信配置提供')
-  return Object.freeze({ ...agentContextPolicy({ source: actor.platform, actorContext: actor, memoryEnabled }),
-    groupOwnerMemoryEnabled: actor.chatType === 'group' && (actor.role === 'owner' || actor.verifiedOwner) && matches(bot, actor) && bot.groupOwnerMemoryEnabled })
-}
-
-/** 群聊中的主人个人记忆只可在可信平台身份已验证且开关开启时召回。 */
-export function imCanUseGroupOwnerMemory(actor: ImActor, enabled: boolean): boolean {
-  if (typeof enabled !== 'boolean') throw new TypeError('群主个人记忆开关必须由可信配置提供')
-  return actor.chatType === 'group' && actor.role === 'owner' && actor.verifiedOwner && enabled
-}
-
-const delegationTools = new Set(['agent_message', 'agent_wait', 'agent_inbox', 'agent_cancel', 'agent_inspect', 'subagent_result'])
-
-export function isImInternalDelegationTool(name: unknown): boolean {
-  return typeof name === 'string' && delegationTools.has(name)
-}
-
-/** 复用现有发现/派发规则；平台不支持的工具在两个入口均不可见和不可执行。 */
-export function imCanUseTool(actor: ImActor, name: string, groupAutoReply = false): boolean {
-  if (isImInternalDelegationTool(name)
-    && (actor.role !== 'owner' || actor.chatType !== 'c2c')) return false
-  if (name === 'save_attachment' && (actor.role !== 'owner' || actor.chatType !== 'c2c')) return false
-  if (name === 'react' && actor.platform !== 'feishu') return false
-  return canUseTool(name, { allowedToolNames: actor.allowedToolNames, imRole: actor.role, platform: actor.platform,
-    chatType: actor.chatType, currentIm: { chatType: actor.chatType, groupAutoReply } })
 }
 
 /** 展示偏好不改变工具权限；群隐藏过程，飞书私聊固定完整展示。 */
@@ -184,7 +146,4 @@ export function imDisplayPolicy(platform: ImPlatform, chatType: ImChatType, valu
   const intermediate=data.show_intermediate_replies
   const truthy=Array.isArray(intermediate)?intermediate.length>0:intermediate&&typeof intermediate==='object'?Object.keys(intermediate).length>0:!!intermediate
   return{toolDisplay:mode==='off'||mode==='slow_only'?mode:'all',showIntermediateReplies:truthy}
-}
-export function imVisibleToolNames(actor: ImActor, system: readonly string[], groupAutoReply = false): string[] {
-  return filterToolNames(system, actor.allowedToolNames).filter(name => imCanUseTool(actor, name, groupAutoReply))
 }

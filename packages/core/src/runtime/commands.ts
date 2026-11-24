@@ -57,26 +57,31 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'im.inbox.delivery': ['platform', 'connectionId', 'eventKey', 'runId', 'action', 'noticeKey', 'replyFact'],
   'im.inbox.prompt': ['platform', 'connectionId', 'action', 'promptId', 'messageId', 'eventKey', 'runId'],
   'im.inbox.reject': ['platform', 'connectionId', 'eventKey'],
-  'im.inbox.recordGroup': ['platform', 'connectionId', 'eventKey', 'text', 'attachments', 'platformUserId', 'platformUserName', 'ownerPlatformUserId'],
+  'im.inbox.recordGroup': ['platform', 'connectionId', 'eventKey', 'text', 'quotedText', 'attachments', 'platformUserId', 'platformUserName', 'ownerPlatformUserId', 'platformBotUserId', 'otherBotNames', 'platformSentMs', 'eventReceivedMs'],
   'im.inbox.groupAttentionHistory': ['platform', 'connectionId'],
   'im.inbox.resumePendingAsk': ['platform', 'connectionId', 'eventKey', 'sealedEvent', 'ownerPlatformUserId', 'platformUserId', 'text'],
   'im.inbox.pendingConnection': ['platform', 'after'],
   'im.inbox.prepare': ['platform', 'connectionId', 'chatType', 'ownerPlatformUserId'],
   'im.inbox.admit': ['platform', 'connectionId', 'eventKey', 'sealedEvent', 'attachments', 'sourceMessageId'],
+  'im.inbox.status': ['platform', 'connectionId', 'chatType', 'platformUserId', 'ownerPlatformUserId'],
+  'im.inbox.cancelRun': ['platform', 'connectionId', 'chatType', 'platformUserId', 'ownerPlatformUserId'],
   'im.inbox.attachmentReference': ['platform', 'connectionId', 'sourceMessageId', 'sourceIndex'],
   'agent.sessions.list': [],
-  'agent.sessions.workspace': ['id', 'action'],
-  'agent.sessions.setWorkspace': ['id', 'action', 'directoryId'],
-  'agent.sessions.goal': ['id', 'action'],
-  'agent.sessions.compact': ['id', 'model', 'text', 'clientId', 'queueClaim'],
+  'agent.sessions.workspace': ['id', 'action', 'imPlatform', 'imConnectionId'],
+  'agent.sessions.clearWorkspaceBindings': ['directoryId'],
+  'agent.sessions.setWorkspace': ['id', 'action', 'directoryId', 'imPlatform', 'imConnectionId'],
+  'agent.sessions.goal': ['id', 'action', 'imPlatform', 'imConnectionId', 'imGroupSenderId'],
+  'agent.sessions.compact': ['id', 'model', 'text', 'clientId', 'queueClaim', 'imPlatform', 'imConnectionId', 'imGroupSenderId'],
   'agent.sessions.recoverStartup': [],
   'agent.sessions.create': ['title', 'greeting'],
   'agent.sessions.rename': ['id', 'title'],
+  'agent.sessions.resetImContext': ['id', 'imPlatform', 'imConnectionId', 'imGroupSenderId'],
   'agent.sessions.delete': ['id'],
   'agent.sessions.messages': ['id'],
   'agent.sessions.messageLocation': ['messageId'],
   'agent.sessions.history': ['id', 'before'],
   'agent.sessions.toolDetails': ['id', 'messageId', 'index'],
+  'agent.sessions.subagentSnapshot': ['id', 'runId', 'childId'],
   'agent.sessions.events': ['id', 'runId', 'after', 'stateOnly', 'imDelivery', 'imStream'],
   'agent.memory.invalidateEmbedding': [],
   'agent.memory.resumeReflections': [],
@@ -85,7 +90,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'agent.memory.clear': [],
   'agent.memory.forget': ['query', 'revision'],
   'agent.sessions.cancelRun': ['id', 'runId'],
-  'agent.sessions.startRun': ['id', 'text', 'clientId', 'model', 'embedding', 'interactive', 'modelId', 'attachments', 'references', 'queueClaim', 'locale', 'groupSender', 'resumePassiveMessage'],
+  'agent.sessions.startRun': ['id', 'text', 'clientId', 'model', 'embedding', 'interactive', 'modelId', 'attachments', 'references', 'queueClaim', 'locale', 'groupSender', 'resumePassiveMessage', 'quotedText'],
   'agent.attachments.stage': ['attachment'],
   'agent.attachments.deleteDraft': ['attach_id'],
   'agent.attachments.clearDrafts': [],
@@ -93,7 +98,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'agent.attachments.forSession': ['id'],
   'agent.sessions.runModel': ['id', 'runId'],
   'agent.sessions.respond': ['id', 'runId', 'promptId', 'eventId', 'token', 'selectedOptionIds', 'customAnswer', 'text', 'secrets', 'model', 'embedding'],
-  'agent.sessions.append': ['id', 'text', 'reply'],
+  'agent.sessions.append': ['id', 'text', 'reply', 'clientId'],
   'agent.sessions.queue': ['action', 'queue_id', 'session_id', 'items', 'removed_keys', 'key', 'claim_token'],
   'skills.list': ['offset'],
   'skills.tools': ['offset'],
@@ -125,7 +130,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'projects.rename': ['id', 'version', 'name'],
   'projects.update': ['id', 'version', 'fields'],
   'projects.board.list': ['collection', 'offset'],
-  'projects.board.get': ['id'],
+  'projects.board.get': ['id', 'includeDeleted'],
   'projects.board.create': ['fields'],
   'projects.board.update': ['id', 'version', 'fields'],
   'projects.board.delete': ['id'],
@@ -286,8 +291,9 @@ export function validateCommandParams(method: string, params: Fields): void {
       || (params.interactive !== undefined && typeof params.interactive !== 'boolean')
       || (params.resumePassiveMessage !== undefined && typeof params.resumePassiveMessage !== 'boolean')
       || (params.modelId !== undefined && (typeof params.modelId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(params.modelId)))
+      || (params.quotedText !== undefined && (typeof params.quotedText !== 'string' || Buffer.byteLength(params.quotedText) > 32_000))
       || typeof params.text !== 'string' || Buffer.byteLength(params.text) > 12_000
-      || (!params.text.trim() && (!Array.isArray(params.attachments) || !params.attachments.length)
+      || (!params.text.trim() && !params.quotedText && (!Array.isArray(params.attachments) || !params.attachments.length)
         && (!Array.isArray(params.references) || !params.references.length))
       || (params.attachments !== undefined && (!Array.isArray(params.attachments) || params.attachments.length > 32
         || params.attachments.some(id => typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id))))
@@ -340,9 +346,21 @@ export function validateCommandParams(method: string, params: Fields): void {
       }
     }
   }
+  if (method === 'agent.sessions.resetImContext' || method === 'agent.sessions.goal'
+    && (params.imPlatform !== undefined || params.imConnectionId !== undefined || params.imGroupSenderId !== undefined)) {
+    safeInteger(params.id)
+    if (!['qq', 'wechat', 'telegram', 'feishu'].includes(String(params.imPlatform))
+      || typeof params.imConnectionId !== 'string' || !/^[a-f0-9]{64}$/u.test(params.imConnectionId)
+      || (params.imGroupSenderId !== undefined && (typeof params.imGroupSenderId !== 'string'
+        || !params.imGroupSenderId.trim() || params.imGroupSenderId.length > 256)))
+      throw new CoreError('invalid_request', 'IM 会话参数无效')
+  }
   if (method === 'agent.sessions.compact') {
     safeInteger(params.id)
     object(params.model)
+    if (params.imGroupSenderId !== undefined && (typeof params.imGroupSenderId !== 'string'
+      || !params.imGroupSenderId.trim() || params.imGroupSenderId.length > 256 || params.imConnectionId === undefined))
+      throw new CoreError('invalid_request', 'IM 群发起者无效')
     const command = typeof params.text === 'string' && Buffer.byteLength(params.text) <= 12_000
       ? parseAgentCommand(params.text) : null
     if (!command?.recognized || command.name !== 'compact' || isAgentCommandHelpArgument(command.argument)
@@ -363,16 +381,25 @@ export function validateCommandParams(method: string, params: Fields): void {
     if (params.action !== 'status' && params.action !== 'pause' && params.action !== 'cancel' && params.action !== 'resume')
       throw new CoreError('invalid_request', '目标任务操作无效')
   }
+  if (method === 'agent.sessions.workspace' || method === 'agent.sessions.setWorkspace' || method === 'agent.sessions.compact') {
+    if ((params.imPlatform !== undefined || params.imConnectionId !== undefined)
+      && (!['qq', 'wechat', 'telegram', 'feishu'].includes(String(params.imPlatform))
+        || typeof params.imConnectionId !== 'string' || !/^[a-f0-9]{64}$/u.test(params.imConnectionId)))
+      throw new CoreError('invalid_request', 'IM 工作区范围无效')
+  }
   if (method === 'agent.sessions.workspace') {
     safeInteger(params.id)
     if (params.action !== 'list' && params.action !== 'show')
       throw new CoreError('invalid_request', '工作区查询操作无效')
   }
+  if (method === 'agent.sessions.clearWorkspaceBindings'
+    && (typeof params.directoryId !== 'string' || !/^desktop:[a-f0-9-]{36}$/iu.test(params.directoryId)))
+    throw new CoreError('invalid_request', '工作区 ID 无效')
   if (method === 'agent.sessions.setWorkspace') {
     safeInteger(params.id)
     if (params.action !== 'bind' && params.action !== 'unlink'
       || (params.action === 'bind' && (typeof params.directoryId !== 'string'
-        || !/^desktop:[a-f0-9-]{36}$/u.test(params.directoryId)))
+        || !params.directoryId.trim() || params.directoryId.length > 256 || /[\p{Cc}]/u.test(params.directoryId)))
       || (params.action === 'unlink' && params.directoryId !== undefined))
       throw new CoreError('invalid_request', '工作区绑定操作无效')
   }
@@ -488,7 +515,7 @@ export async function execute(
     case 'projects.board.list':
       return listDesktopProjects(data.projects, params.collection, safeInteger(params.offset ?? 0, 0))
     case 'projects.board.get':
-      return getDesktopProject(data.projects, safeInteger(params.id))
+      return getDesktopProject(data.projects, safeInteger(params.id), params.includeDeleted === true)
     case 'projects.board.create':
       return projectResponse(await data.projects.create(desktopProjectFields(params.fields)), 0)
     case 'projects.board.update':

@@ -1,5 +1,5 @@
 import type { ProjectRecord } from '../contracts/index.js'
-import { ProjectTrashStoragePathError, type ProjectTrashFile, type ProjectTrashFolder } from './project-trash.js'
+import { ProjectTrashStoragePathError, type ProjectTrashFile } from './project-trash.js'
 
 // 旧模型 ID 仅用于兼容已有归属元数据；实际文件定位与移动使用逻辑路径。
 const INVALID_NAME = /[\\/:*?"<>|]/g
@@ -21,7 +21,7 @@ export function safeKey(ownerId: string, key: string): string[] {
 }
 
 export function trashKey(ownerId: string, file: ProjectTrashFile): string {
-  const segments = safeKey(ownerId, file.storage_key)
+  const segments = safeKey(ownerId, file.path)
   const logicalParent = segments.slice(1, -1)
   if (logicalParent.length) logicalParent.shift()
   const parent = logicalParent.length ? `${logicalParent.join('/')}/` : ''
@@ -39,7 +39,6 @@ export type OriginalProjectFileKey = (
   ownerId: string,
   file: ProjectTrashFile,
   project: ProjectRecord,
-  folders: ProjectTrashFolder[],
 ) => Promise<string> | string
 
 export interface ProjectTrashPathMetadataReader {
@@ -53,12 +52,6 @@ export interface ProjectTrashPathMetadataReader {
     deletedAt: string | null
   } | null>
   getOwnedMindMap(ownerId: string, mindMapId: number): Promise<{ title: string } | null>
-  resolveOwnedFolderPath(
-    ownerId: string,
-    folderId: number,
-    projectId: number | null,
-    workspaceDirectoryId: number | null,
-  ): Promise<string | null>
 }
 
 export interface OriginalStorageKeyParts {
@@ -86,7 +79,7 @@ export function buildOriginalKey(ownerId: string, file: Pick<ProjectTrashFile, '
     return `${ownerId}/${directory}${folder ? `/${folder}` : ''}/${filename}`
   }
   if (file.space === 'mind') {
-    return `${ownerId}/思维/${safeName(parts.mindMapTitle)} #${parts.mindMapId}/${filename}`
+    return `${ownerId}/思维/${safeName(parts.mindMapTitle)} #${parts.mindMapId}/${folder ? `${folder}/` : ''}${filename}`
   }
   if (file.space === 'asset') return `${ownerId}/素材板/${filename}`
   if (file.space === 'workspace') {
@@ -98,11 +91,23 @@ export function buildOriginalKey(ownerId: string, file: Pick<ProjectTrashFile, '
   return `${ownerId}/个人文件/${folder ? `${folder}/` : ''}${filename}`
 }
 
-/** Python `original_storage_key` 关系读取语义：Workspace 严格，MindMap/Project 缺失时保留空名称，坏 folder chain 为空路径。 */
+/** 从稳定的存储路径恢复目录层级；回收站 key 保留了原空间根目录之后的相对路径。 */
+function folderPathFromStorageKey(ownerId: string, file: ProjectTrashFile): string {
+  const segments = safeKey(ownerId, file.path).slice(1)
+  const inTrash = segments[0] === 'trash'
+  const logical = inTrash ? segments.slice(1) : segments
+  const scopeLength = inTrash
+    ? file.space === 'project' ? 3 : file.space === 'workspace' || file.space === 'mind' ? 1 : 0
+    : file.space === 'project' ? 4 : file.space === 'workspace' || file.space === 'mind' ? 2 : 1
+  if (logical.length <= scopeLength + 1) return ''
+  return logical.slice(scopeLength, -1).map(safeName).join('/')
+}
+
+/** Python `original_path` 关系读取语义：Workspace 严格，MindMap/Project 缺失时保留空名称，坏 folder chain 为空路径。 */
 export function createProjectTrashOriginalStorageKeyResolver(
   reader: ProjectTrashPathMetadataReader,
 ): OriginalProjectFileKey {
-  return async (ownerId, file, _project, _folders) => {
+  return async (ownerId, file, _project) => {
     let workspaceDirectoryName = ''
     if (file.workspace_directory_id !== null) {
       const directory = await reader.getOwnedWorkspaceDirectory(ownerId, file.workspace_directory_id)
@@ -113,12 +118,7 @@ export function createProjectTrashOriginalStorageKeyResolver(
     const projectRow = file.project_id
       ? await reader.getOwnedProject(ownerId, file.project_id)
       : null
-    let folderPath = ''
-    if (file.folder_id) {
-      folderPath = await reader.resolveOwnedFolderPath(
-        ownerId, file.folder_id, file.project_id, file.workspace_directory_id,
-      ) ?? ''
-    }
+    const folderPath = folderPathFromStorageKey(ownerId, file)
     const mindMap = file.mind_map_id
       ? await reader.getOwnedMindMap(ownerId, file.mind_map_id)
       : null
@@ -137,35 +137,11 @@ export function createProjectTrashOriginalStorageKeyResolver(
   }
 }
 
-function folderPath(file: ProjectTrashFile, folders: ProjectTrashFolder[]): string {
-  if (file.folder_id == null) return ''
-  const byId = new Map(folders.map((folder) => [folder.id, folder]))
-  const names: string[] = []
-  const seen = new Set<number>()
-  let current = byId.get(file.folder_id)
-  if (!current || current.user_id !== file.user_id
-    || current.project_id !== file.project_id
-    || current.workspace_directory_id !== file.workspace_directory_id) return ''
-  while (current) {
-    if (seen.has(current.id)) return ''
-    seen.add(current.id)
-    names.unshift(safeName(current.name))
-    if (current.parent_id == null) break
-    const parent = byId.get(current.parent_id)
-    if (!parent || parent.user_id !== file.user_id
-      || parent.project_id !== file.project_id
-      || parent.workspace_directory_id !== file.workspace_directory_id) return ''
-    current = parent
-  }
-  return names.join('/')
-}
-
 /** 项目文件默认 key builder；非项目空间可由 Host 注入带 mind-map/workspace 元数据的解析器。 */
 export function projectOriginalStorageKey(
   ownerId: string,
   file: ProjectTrashFile,
   project: ProjectRecord,
-  folders: ProjectTrashFolder[],
 ): string {
   return buildOriginalKey(ownerId, file, {
     projectName: file.project_id ? project.name : '',
@@ -174,7 +150,7 @@ export function projectOriginalStorageKey(
     mindMapTitle: '',
     mindMapId: file.mind_map_id || 0,
     workspaceDirectoryName: '',
-    folderPath: folderPath(file, folders),
+    folderPath: folderPathFromStorageKey(ownerId, file),
   })
 }
 

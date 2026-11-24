@@ -1,13 +1,13 @@
+import { createProjectWorkspaceBindingTool, type ProjectWorkspaceBindingPort } from './workspaces.js'
 import { CoreError } from '../../contracts/index.js'
 import { agentProjectDispatchKey } from './projects/creation-port.js'
-import { createPresentFileTool, createListRecentAttachmentsTool, createDeleteFileTool, createDeleteFolderTool, createListTrashTool, createTrashRestoreTools } from './index.js'
+import { createPresentFileTool, createListRecentAttachmentsTool, createDeleteFileTool } from './index.js'
 import { createGroupContextSearchTool, createImOwnerSessionBindTool, type GroupContextSearchPort, type ImOwnerSessionBindPort } from './index.js'
 import { createImReactionTools, type ImReactionPort } from '../../im/reaction-tool.js'
 import { createNoteLifecycleTools, createNoteWriteTools, type NoteLifecyclePort, type createNoteWritePort, type ToolDefinition } from './index.js'
 import { createLinkButtonsTools, type LinkButtonDeliveryPort } from './index.js'
 import { createAskUserTool, createCallToolAdapter, type AskUserAuthorizationPort } from './index.js'
-import type { FileFolderDeletePort, FileDeletePort, RecentAttachmentsPort, FilePresentationPort } from './index.js'
-import type { TrashRestorePort } from './index.js'
+import type { FileDeletePort, RecentAttachmentsPort, FilePresentationPort } from './index.js'
 import { createConversationReadTool, createConversationSearchTool, type ConversationReadPort, type ConversationSearchPort } from './index.js'
 import { createMemorySearchTool, createRememberTool, type MemorySearchPort, type RememberMemoryPort } from './index.js'
 import { createKnowledgeReadTool, createKnowledgeWriteTools, type KnowledgeReadPort, type KnowledgeWritePort } from './index.js'
@@ -20,11 +20,11 @@ import type { createAgentCalendarReader, CalendarEventReadPort } from '../../cal
 import type { createAgentMindReader } from '../../mind/index.js'
 import type { SqlDataRuntime } from '../../data/index.js'
 import { type GlobalSearchOperations, type createAgentWorkspaceQueries } from '../../index.js'
-import { createClientTools, createClientDeleteTool, createCanvasReadTools, createWorkspaceUpdateTool, createWorkspaceTool, createWorkspaceUnlinkTool, createNoteReadTools, createSearchToolsTool, createProjectStageTools, createListEventsTool, createCalendarEventCreateTool, createCalendarEventUpdateTool, createCalendarDeleteTool, createWorkspaceReadTools, createProjectMutationTools, createGlobalSearchTool, createUpcomingTool, createGetProjectTool, createListProjectsTool, createListScheduledTasksTool, createProjectCreationPort, createProjectTool, createTimeTool, createToolRegistry, createUseSkillTool, createHttpGetTool } from './index.js'
-import type { ClientDeletePort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, WorkspaceMutationPort, WorkspaceCreatePort, ProjectMutationPort, TrashListPort, ProjectFileOverview, ScheduledTaskListPort, UseSkillPorts } from './index.js'
+import { createClientTools, createClientDeleteTool, createCanvasReadTools, createWorkspaceUpdateTool, createWorkspaceTool, createNoteReadTools, createSearchToolsTool, createProjectStageTools, createListEventsTool, createCalendarEventCreateTool, createCalendarEventUpdateTool, createCalendarDeleteTool, createWorkspaceReadTools, createProjectMutationTools, createGlobalSearchTool, createUpcomingTool, createGetProjectTool, createListProjectsTool, createListScheduledTasksTool, createProjectCreationPort, createProjectTool, createTimeTool, createToolRegistry, createUseSkillTool, createHttpGetTool } from './index.js'
+import type { ClientDeletePort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, WorkspaceMutationPort, WorkspaceCreatePort, ProjectMutationPort, ProjectFileOverview, ScheduledTaskListPort, UseSkillPorts } from './index.js'
 import type { ProjectCreateRuntime } from '../../projects/project-create.js'
 
-type AuthorizedToolName = 'shell' | 'create_project' | 'list_contacts' | 'create_contact' | 'update_contact' | 'delete_contact' | 'list_projects' | 'get_project' | 'get_current_time' | 'use_skill' | 'list_scheduled_tasks' | 'create_scheduled_task' | 'update_scheduled_task' | 'delete_scheduled_task' | 'global_search' | 'get_upcoming' | 'list_trash' | 'restore_file' | 'restore_folder' | 'permanent_delete' | 'list_events' | 'create_event' | 'update_event' | 'delete_event' | 'list_workspaces' | 'create_workspace' | 'unlink_workspace' | 'delete_workspace_directory' | 'undo_last_action' | 'update_project' | 'set_color' | 'archive_project' | 'add_stage' | 'remove_stage' | 'rename_stage' | 'set_stages' | 'update_stage' | 'note_search' | 'note_get' | 'search_tools' | 'canvas_list' | 'canvas_get' | 'canvas_search' | 'canvas_focus_node' | 'update_workspace' | 'canvas_search_placeable' | 'canvas_create' | 'canvas_batch' | 'canvas_delete_note' | 'canvas_disconnect' | 'canvas_delete' | 'list_skills' | 'create_skill' | 'update_skill' | 'call_tool' | 'manage_mcp_servers' | 'http_get' | 'web_search' | 'similar_image_search' | 'deep_research' | 'delete_skill' | 'note_create' | 'note_update' | 'canvas_update_node' | 'canvas_remove_node' | 'canvas_update_note' | 'canvas_create_note' | 'canvas_add_node' | 'canvas_update_anchor' | 'canvas_connect' | 'note_delete' | 'note_restore' | 'note_undo' | 'view_image' | 'delete_folder' | 'delete_file' | 'send_file' | 'present_file' | 'save_attachment' | 'list_recent_attachments' | 'send_email' | 'delete_knowledge' | 'delete_project' | 'web_download' | 'remember'
+type AuthorizedToolName = 'shell' | 'create_project' | 'list_contacts' | 'create_contact' | 'update_contact' | 'delete_contact' | 'list_projects' | 'get_project' | 'get_current_time' | 'use_skill' | 'list_scheduled_tasks' | 'create_scheduled_task' | 'update_scheduled_task' | 'delete_scheduled_task' | 'global_search' | 'get_upcoming' | 'list_trash' | 'restore_file' | 'restore_folder' | 'permanent_delete' | 'list_events' | 'create_event' | 'update_event' | 'delete_event' | 'list_workspaces' | 'create_workspace' | 'set_project_workspace' | 'undo_last_action' | 'update_project' | 'set_color' | 'archive_project' | 'add_stage' | 'remove_stage' | 'rename_stage' | 'set_stages' | 'update_stage' | 'note_search' | 'note_get' | 'search_tools' | 'canvas_list' | 'canvas_get' | 'canvas_search' | 'canvas_focus_node' | 'update_workspace' | 'canvas_search_placeable' | 'canvas_create' | 'canvas_batch' | 'canvas_delete_note' | 'canvas_disconnect' | 'canvas_delete' | 'list_skills' | 'create_skill' | 'update_skill' | 'call_tool' | 'manage_mcp_servers' | 'http_get' | 'web_search' | 'similar_image_search' | 'deep_research' | 'delete_skill' | 'note_create' | 'note_update' | 'canvas_update_node' | 'canvas_remove_node' | 'canvas_update_note' | 'canvas_create_note' | 'canvas_add_node' | 'canvas_update_anchor' | 'canvas_connect' | 'note_delete' | 'note_restore' | 'note_undo' | 'view_image' | 'delete_file' | 'delete_item' | 'send_item' | 'open_item' | 'save_attachment' | 'list_recent_attachments' | 'send_email' | 'delete_knowledge' | 'delete_project' | 'web_download' | 'remember'
 
 import type { RunIdentity } from '../models.js'
 
@@ -62,12 +62,12 @@ export interface OwnerToolOptions {
   viewImage?: ToolDefinition
   presentFile?: FilePresentationPort
   shell?: import('./index.js').ToolDefinition
-  fileFolderDelete?: FileFolderDeletePort
   fileDelete?: FileDeletePort
   saveAttachment?: ToolDefinition
   recentAttachments?: RecentAttachmentsPort
   /** 文件库、附件与安全公网图片的产物准备能力；没有能力时不注册。 */
   sendFile?: ToolDefinition
+  sendItemCards?: boolean
   /** 仅提供可信渠道与可恢复投递时开放；不会推断或降级渠道。 */
   linkButtons?: LinkButtonDeliveryPort
   /** 仅由具备持久确认和实际 SMTP 的 Host 注入。 */
@@ -98,10 +98,6 @@ export interface OwnerToolOptions {
   calendarUpdate?: CalendarEventUpdateToolPort
   /** 必须是 Host 提供的固定公网目标且不跟随重定向的读取端口；缺失时不注册。 */
   httpGet?: Parameters<typeof createHttpGetTool>[0]
-  trash?: TrashListPort
-  /** 文件恢复后端需提供持久防重放和归属校验。 */
-  trashRestore?: TrashRestorePort
-  trashPurge?: ToolDefinition
   diskTrashTools?: readonly ToolDefinition[]
   canvasPlaceableSearch?: ReturnType<typeof createAgentPlaceableSearch>
   canvasPlacements?: CanvasEditPort
@@ -124,13 +120,12 @@ export interface OwnerToolOptions {
   workspaceMutations?: WorkspaceMutationPort
   workspaceCreation?: WorkspaceCreatePort
   /** 解绑声明必须同时提供持久确认能力。 */
-  workspaceUnlink?: import('./index.js').WorkspaceUnlinkConfirmation
-  workspaceDirectoryDelete?: ToolDefinition
   undoLastAction?: ToolDefinition
   noteWrites?: ReturnType<typeof createNoteWritePort>
   noteLifecycle?: NoteLifecyclePort
   notes?: ReturnType<typeof createAgentMindReader>
   calendar?: ReturnType<typeof createAgentCalendarReader>
+  projectWorkspaceBinding?: ProjectWorkspaceBindingPort
   workspaces?: ReturnType<typeof createAgentWorkspaceQueries>
   /** 必须提供收据恢复能力；旧的仅apply桥接不会被Host开放。 */
   projectMutations?: ProjectMutationPort
@@ -170,18 +165,10 @@ export function createOwnerToolRegistry(options: OwnerToolOptions) {
         ...(options.presentFile ? [createPresentFileTool(options.presentFile)] : []),
         ...(options.saveAttachment ? [options.saveAttachment] : []),
         ...(options.recentAttachments ? [createListRecentAttachmentsTool(options.recentAttachments)] : []),
-        ...(options.fileDelete && !options.diskTrashTools?.some(tool => tool.definition.name === 'delete_file') ? [createDeleteFileTool(options.fileDelete)] : []),
-        ...(options.fileFolderDelete ? [createDeleteFolderTool(options.fileFolderDelete)] : []),
-        ...(options.sendFile ? [options.sendFile] : []),
+        ...(options.fileDelete && !options.diskTrashTools?.some(tool => tool.definition.name === 'delete_item') ? [createDeleteFileTool(options.fileDelete)] : []),
+        ...(options.sendFile ? [options.sendFile] : options.sendItemCards && options.presentFile ? [createPresentFileTool(options.presentFile, 'send_item')] : []),
       ] },
       ...(options.diskTrashTools ? [{ id: 'trash', name: '磁盘回收站', tools: options.diskTrashTools.filter(tool => !tool.destructive) }] : []),
-      ...(!options.diskTrashTools && (options.trash || options.trashRestore || options.trashPurge) ? [{
-        id: 'trash', name: '回收站', tools: [
-          ...(options.trash ? [createListTrashTool(options.trash)] : []),
-          ...(options.trashRestore ? createTrashRestoreTools(options.trashRestore) : []),
-          ...(options.trashPurge?.requiresInteraction && options.trashPurge.confirmationReplay ? [options.trashPurge] : []),
-        ],
-      }] : []),
       { id: 'clients', name: '联系人', tools: [...createClientTools(options.core), ...(clientDelete && !clientDelete.destructive ? [clientDelete] : [])] },
       ...(options.conversations || options.conversationSearch ? [{ id:'conversations', name:'历史对话', tools:[...(options.conversations?[createConversationReadTool(options.conversations)]:[]),...(options.conversationSearch?[createConversationSearchTool(options.conversationSearch)]:[])] }] : []),
       ...(options.memorySearch || options.remember ? [{ id: 'memory', name: '记忆', tools: [
@@ -218,12 +205,11 @@ export function createOwnerToolRegistry(options: OwnerToolOptions) {
         ...(options.httpGet ? [createHttpGetTool(options.httpGet)] : []),
         ...(options.webDownload ? [options.webDownload] : []),
       ] }] : []),
-      ...(options.workspaces || options.workspaceMutations || options.workspaceCreation || options.workspaceUnlink || options.workspaceDirectoryDelete ? [{ id: 'workspaces', name: '工作区', tools: [
+      ...(options.workspaces || options.workspaceMutations || options.workspaceCreation || options.projectWorkspaceBinding ? [{ id: 'workspaces', name: '工作区', tools: [
+        ...(options.projectWorkspaceBinding ? [createProjectWorkspaceBindingTool(options.projectWorkspaceBinding)] : []),
         ...(options.workspaces ? createWorkspaceReadTools(options.workspaces) : []),
         ...(options.workspaceCreation ? [createWorkspaceTool(options.workspaceCreation)] : []),
         ...(options.workspaceMutations ? [createWorkspaceUpdateTool(options.workspaceMutations)] : []),
-        ...(options.workspaceUnlink && options.workspaces ? [createWorkspaceUnlinkTool(options.core, options.workspaces, options.workspaceUnlink)] : []),
-        ...(options.workspaceDirectoryDelete ? [options.workspaceDirectoryDelete] : []),
       ] }] : []),
       ...(options.undoLastAction ? [{ id: 'undo', name: '撤销', tools: [options.undoLastAction] }] : []),
       ...(options.canvases || options.canvasPlaceableSearch || options.canvasCreation || options.canvasEdits || options.canvasPlacements || options.canvasRelations || options.canvasBatch?.confirmation || options.canvasDeleteNote?.confirmation || options.canvasDisconnect?.confirmation || options.canvasDelete?.confirmation ? [{id:'canvas',name:'画布',tools:[

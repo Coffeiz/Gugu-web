@@ -255,14 +255,6 @@
     "keyBehavior": "生产认证、持久通知及实时投递",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/host/main/admin/quota.integration.test.ts": {
-    "domain": "admin",
-    "layer": "L2",
-    "owner": "apps/web-host/src/modules/admin/storage.ts",
-    "productionEntry": "apps/web-host/src/main.ts",
-    "keyBehavior": "生产鉴权和Redis对账状态",
-    "ci": "node-webui"
-  },
   "apps/web-host/tests/host/main/preferences.postgres.integration.test.ts": {
     "domain": "preferences",
     "layer": "L2",

@@ -2,7 +2,7 @@
 
 /* ── Sidebar ───────────────────────────────────────────────────── */
 html[data-theme][data-family] .sidebar {
-  background: var(--sidebar-bg);
+  background: color-mix(in srgb, var(--sidebar-bg) 76%, transparent);
   border-right-color: var(--sidebar-border);
   box-shadow: inset -1px 0 0 var(--sidebar-highlight);
   color: var(--content-primary);

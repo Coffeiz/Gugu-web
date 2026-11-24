@@ -27,6 +27,8 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
   let queued = false;
   let refreshAfterSleep = false;
   let stopping = false;
+  let suspended = false;
+  let connecting: AbortController | undefined;
   let listener: Promise<void> | undefined;
   let subscription: GatewaySubscription | undefined;
   let configRetry: AbortController | undefined;
@@ -56,8 +58,21 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
     // 清理失败时拒绝替代启动，不能让两个消费者同时存在。
     await entry.connection.stop();
   }
+  async function drainActiveConnections() {
+    const entries = [...active.entries()];
+    const results = await Promise.allSettled(entries.map(([, entry]) => drain(entry)));
+    return results.flatMap((result, index) => {
+      const key = entries[index]![0];
+      if (result.status === 'rejected') {
+        uncertain.add(key);
+        return [result.reason];
+      }
+      active.delete(key); uncertain.delete(key); failures.delete(key);
+      return [];
+    });
+  }
   async function reconcile() {
-    if (stopping) return;
+    if (stopping || suspended) return;
     let specs: readonly S[];
     try { specs = await ports.read(); }
     catch (error) {
@@ -71,7 +86,7 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
       }
       return;
     }
-    if (stopping) return;
+    if (stopping || suspended) return;
     const afterSleep = refreshAfterSleep;
     refreshAfterSleep = false;
     configuration = 'ready';
@@ -90,8 +105,9 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
       active.delete(key); uncertain.delete(key); failures.delete(key);
     }
     for (const spec of desired.values()) {
-      if (stopping || active.has(spec.key) || retries.has(spec.key) || uncertain.has(spec.key)) continue;
+      if (stopping || suspended || active.has(spec.key) || retries.has(spec.key) || uncertain.has(spec.key)) continue;
       const controller = new AbortController();
+      connecting = controller;
       const cancel = () => controller.abort();
       lifetime.signal.addEventListener('abort', cancel, { once: true });
       try {
@@ -111,17 +127,17 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
             if (!stopping) ports.report?.('cleanup-failed', error);
           }
         });
-        if (stopping) { await drain(entry); active.delete(spec.key); }
+        if (stopping || suspended) { await drain(entry); active.delete(spec.key); }
       } catch (error) {
         if (error instanceof GatewayConnectionCleanupError) {
           uncertain.add(spec.key);
           if (!stopping) ports.report?.('cleanup-failed', error);
-        } else if (!stopping) { ports.report?.('connection-failed', error); retry(spec); }
-      } finally { lifetime.signal.removeEventListener('abort', cancel); }
+        } else if (!stopping && !suspended) { ports.report?.('connection-failed', error); retry(spec); }
+      } finally { connecting = undefined; lifetime.signal.removeEventListener('abort', cancel); }
     }
   }
   function notify() {
-    if (stopping || queued) return;
+    if (stopping || suspended || queued) return;
     queued = true;
     serial = serial.then(async () => {
       queued = false;
@@ -176,8 +192,22 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
     /** Host提交后的配置/绑定失效沿同一串行全量对账处理。 */
     refresh: notify,
     onConfigurationChanged(listener: () => void) { onConfigured = listener; },
+    suspend() {
+      if (stopping || suspended) return serial;
+      suspended = true;
+      connecting?.abort();
+      configRetry?.abort(); configRetry = undefined;
+      for (const retry of retries.values()) retry.controller.abort();
+      retries.clear(); failures.clear();
+      for (const entry of active.values()) entry.controller.abort();
+      serial = serial.then(async () => {
+        for (const error of await drainActiveConnections()) ports.report?.('cleanup-failed', error);
+      });
+      return serial;
+    },
     /** 睡眠前的长连接可能仍显示在线，重新对账并排空旧连接后再启动。 */
     resume() {
+      suspended = false;
       refreshAfterSleep = true;
       notify();
       return serial;
@@ -194,16 +224,9 @@ export function createGatewaySupervisor<S extends GatewayBotSpec>(ports: Gateway
       await listener;
       await serial;
       // 排空所有连接后再返回；失败向调用方传播，不能声称已释放消费者。
-      const entries = [...active.entries()];
-      const results = await Promise.allSettled(entries.map(([, entry]) => drain(entry)));
-      results.forEach((result, index) => {
-        const key = entries[index]![0];
-        if (result.status === 'fulfilled') { active.delete(key); uncertain.delete(key); }
-        else uncertain.add(key);
-      });
+      const errors = await drainActiveConnections();
       await Promise.allSettled([...timers]);
-      const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-      if (errors.length) throw new AggregateError(errors.map(result => result.reason), '网关连接未能完全停止');
+      if (errors.length) throw new AggregateError(errors, '网关连接未能完全停止');
       // 初次握手失败时可能没有可交付的connection，不能因active为空声称已释放消费者。
       if (uncertain.size) throw new GatewayConnectionCleanupError();
     },

@@ -1,11 +1,11 @@
-import { formatToolResults } from '../../../src/agent/providers/tool-result-format.js'
+import { formatToolResult, formatToolResults } from '../../../src/agent/providers/tool-result-format.js'
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { buildFixedRequestPrefix } from '../../../src/agent/context/assemble.js'
 import { formatSqliteAgentOverview } from '../../../src/agent/context/sqlite-overview.js'
 import type { ContextSourcePorts, CanonicalContextPorts, AgentRunnerPorts } from '../../../src/agent/ports.js'
 import type { CanonicalRunContext, CanonicalMessage, Json, ProviderEvent } from '../../../src/agent/models.js'
-import { agentContextSnapshotPrefix, createMainContextBuilder, createWebAgentContextBuilder, contextAccessScopeHash, createCanonicalContextPort, createCanonicalRunner, createCanonicalSourceLoader, createCompactionSummarizer, isEarlyExit, stableJson } from '../../../src/agent/index.js'
+import { agentContextSnapshotPrefix, createWebAgentContextBuilder, contextAccessScopeHash, createCanonicalContextPort, createCanonicalRunner, createCanonicalSourceLoader, createCompactionSummarizer, isEarlyExit, stableJson } from '../../../src/agent/index.js'
 import { connectProviderHarness } from '../../../src/agent/providers/runtime.js'
 import { ProviderError, classifyProviderError } from '../../../src/agent/providers/errors.js'
 import { openaiPolicy } from '../../../src/agent/providers/openai/driver.js'
@@ -208,12 +208,12 @@ describe('真实Provider到Canonical Harness组合', () => {
   })
   it.each([
     ['web', 'openai'], ['web', 'anthropic'], ['desktop', 'openai'], ['desktop', 'anthropic'],
-  ] as const)('%s 主场景迁移前后的 %s 首轮与工具轮 Provider 请求一致', async (host, protocol) => {
+  ] as const)('%s 默认组装的 %s 首轮与工具轮支持复用持久快照', async (host, protocol) => {
     const selection = { modelIdentity: 'model-a', contextWindow: 10000, locale: 'zh-CN', groupChat: false, workspaceBinding: null,
       contextPolicy: { loadOwnerContext: true, memoryEnabled: true } }
     const accessScopeHash = contextAccessScopeHash(identity, selection, digest)
     const signal = new AbortController().signal
-    const legacyBuilder: ContextSourcePorts['builder'] = host === 'web'
+    const defaultBuilder: ContextSourcePorts['builder'] = host === 'web'
       ? createWebAgentContextBuilder({
         now: () => 0, staticPrompt: () => ({
           base: '固定人格', persona: '', skills: '', policy: '', skillIndex: '', locale: 'zh-CN', timezone: 'UTC', now: new Date(0),
@@ -240,7 +240,7 @@ describe('真实Provider到Canonical Harness组合', () => {
       data: { loadTimezone: async () => 'UTC', loadProjects: async () => [], loadEvents: async () => [], loadNotes: async () => [],
         loadFilesOverview: async () => ({}), loadStylePreferences: async () => ({}), loadImChannels: async () => ({}),
         loadMemory: async () => ({}), loadImMemory: async () => ({}), loadKnowledge: async () => [] },
-      builder: legacyBuilder,
+      builder: defaultBuilder,
     }
     const { config, streamTool, streamFinal } = protocolFixture(protocol)
     async function capture(builder: ContextSourcePorts['builder'], run = identity) {
@@ -257,18 +257,16 @@ describe('真实Provider到Canonical Harness组合', () => {
         expect(first).toContain('固定人格')
         expect(first).toContain('上一轮合成问题')
         expect(first).toContain('lookup')
-        return { bodies: value.sent.map(request => JSON.stringify(request.body)), effect: loaded.sourceEffects }
+        expect(stableJson(value.sent[1]!.body)).toContain('原参数')
+        return loaded.sourceEffects
       } finally { await value.provider.close() }
     }
-    const migrated = createMainContextBuilder(legacyBuilder)
-    const cold = await capture(legacyBuilder)
-    expect(await capture(migrated)).toEqual(cold)
-    // 下一 Run 两条路径都从迁移前的持久快照起步。
-    ports.readSnapshot = async () => structuredClone(cold.effect.sessionSnapshot.state)
+    const cold = await capture(defaultBuilder)
+    // 下一 Run 复用第一次执行持久化的快照。
+    ports.readSnapshot = async () => structuredClone(cold.sessionSnapshot.state)
     const nextRun = { ...identity, runId: 'run-next' }
-    const warm = await capture(legacyBuilder, nextRun)
-    expect(warm.effect.sessionSnapshot.phase).toBe('hit')
-    expect(await capture(migrated, nextRun)).toEqual(warm)
+    const warm = await capture(defaultBuilder, nextRun)
+    expect(warm.sessionSnapshot.phase).toBe('hit')
   })
   it('实际OpenAI请求先清孤儿历史再放缓存断点，诊断报告真实删除位置且Canonical原文不变', async () => {
     const probes: ProviderRequestProbe[] = []
@@ -715,14 +713,21 @@ describe('共享重试、池与前缀协调契约', () => {
 })
 
 it('模型投影包装试点工具并保留历史原文、调用配对和原生媒体', () => {
-  const shell = { ok: false, stdout: '一行\n```\n另一行\n', stderr: '失败', exit_code: 2 }
+  const shell = { ok: false, stdout: '【原始输出】\n```\n另一行\n', stderr: '失败', exit_code: 2 }
   const values = [
-    { name: 'get_project', value: { id: 42, name: '合成项目', sandbox_path: '/project/2026/11/合成项目 #42' } },
+    { name: 'get_project', value: { id: 42, name: '合成项目', client: '小北', location: { kind: 'sandbox', value: '/project/2026/11/合成项目 #42' } } },
     { name: 'list_projects', value: [{ id: 42, name: '合成项目' }] },
     { name: 'global_search', value: { total: 0, groups: [] } },
     { name: 'shell', value: shell, error: true },
     { name: 'shell', value: { status: 'unknown' }, error: true },
     { name: 'lookup', value: { untouched: true } },
+    { name: 'create_project', value: { project_id: 42, name: '合成项目', stage_details: [{ key: 's0', todo_count: 2 }] } },
+    { name: 'update_stage', value: { error: '阶段不存在', hint: '请检查阶段键' }, error: true },
+    { name: 'get_upcoming', value: { from: '2026-11-23', to: '2026-11-30', count: 3, items: [
+      { kind: 'deadline', date: '2026-11-26', title: '材料截止', event_id: 8 },
+      { kind: 'project_deadline', date: '2026-11-25', title: '合成项目', project_id: 42 },
+      { kind: 'event', date: '2026-11-25', title: '开会', event_id: 7, project_id: 42 },
+    ] } },
   ]
   const messages: CanonicalMessage[] = [{ role: 'user', content: values.map(({ name, value, error }, index) => ({
     type: 'tool_result', tool_name: name, tool_call_id: String(index), content: JSON.stringify(value),
@@ -731,19 +736,57 @@ it('模型投影包装试点工具并保留历史原文、调用配对和原生�
   const original = structuredClone(messages)
   const [projected] = formatToolResults(messages)
   const blocks = projected!.content as { tool_call_id: string; content: string; is_error?: boolean }[]
-  expect(blocks.map(block => block.tool_call_id)).toEqual(['0', '1', '2', '3', '4', '5'])
-  expect(blocks[0]!.content).toContain('【沙箱路径】/project/2026/11/合成项目 #42')
-  expect(blocks[1]!.content).toContain('【摘要】返回 1 个项目')
-  expect(blocks[2]!.content).toContain('【命中数】0')
+  expect(blocks.map(block => block.tool_call_id)).toEqual(['0', '1', '2', '3', '4', '5', '6', '7', '8'])
+  expect(blocks[0]!.content).toContain('[路径]/project/2026/11/合成项目 #42')
+  expect(blocks[0]!.content).toContain('[联系人]小北')
+  expect(blocks[1]!.content).toContain('[工具结果]项目列表（list_projects） · 成功 · 1 项')
+  expect(blocks[2]!.content).toContain('[命中数]0')
   expect(blocks[3]).toMatchObject({ is_error: true })
-  expect(blocks[3]!.content).toContain('【执行状态】失败')
+  expect(blocks[3]!.content).toContain('[执行状态]失败')
   expect(blocks[3]!.content).toContain('````\n' + shell.stdout + '````')
-  expect(blocks[4]!.content).toContain('【执行状态】结果未确认')
+  expect(blocks[4]!.content).toContain('[执行状态]结果未确认')
   expect(blocks[5]!.content).toBe('{"untouched":true}')
+  expect(blocks[6]!.content).toContain('[工具结果]新建项目（create_project） · 成功')
+  expect(blocks[6]!.content).toContain('[待办数量]2')
+  expect(blocks[7]!.content).toContain(' · 失败 · 阶段不存在\n[提示]请检查阶段键')
+  expect(blocks[7]!.content).not.toContain('[原因]')
+  expect(formatToolResult('get_project', JSON.stringify({ error: '未找到项目\n请检查项目名称' }), true))
+    .toContain('[原因]\n```\n未找到项目\n请检查项目名称')
+  expect(blocks[8]!.content).toMatch(/近期事项.*成功 · 3 项 · 2026-11-23 → 2026-11-30/u)
+  expect(blocks[8]!.content).toContain('[2026-11-25]\n- 合成项目（项目截止 · 项目 ID 42）\n- 开会（日程 · 项目 ID 42 · 事件 ID 7）')
+  expect(blocks[8]!.content).toContain('[2026-11-26]\n- 材料截止（截止事项 · 事件 ID 8）')
+  expect(formatToolResult('get_upcoming', '{"items":[]}', false)).toContain('成功 · 0 项\n[事项]所选日期范围内暂无事项')
+  expect(blocks[8]!.content.match(/\[2026-11-25\]/gu)).toHaveLength(1)
   expect(messages).toEqual(original)
   const media: CanonicalMessage[] = [{ role: 'user', content: [{
     type: 'tool_result', tool_name: 'global_search', tool_call_id: 'media',
     content: [{ type: 'image', source: { type: 'base64', data: 'AAAA' } }],
   }] }]
   expect(formatToolResults(media)).toEqual(media)
+})
+
+it('日历回执展示事件标识、时间、提醒与批量结果', () => {
+  const reminders = [{ lead_minutes: 15, channels: ['qq'], enabled: true, delivery_mode: 'owner_private' }]
+  const format = (name: string, value: unknown, isError = false) => formatToolResult(name, JSON.stringify(value), isError)
+
+  expect(format('get_current_time', { date: '2026-11-25', time: '09:00:00', timezone: 'Asia/Shanghai' }))
+    .toContain('[时区]Asia/Shanghai')
+  const list = format('list_events', [{ id: 7, title: '周会', time: null, end_time: null, project_id: 42, reminders }])
+  expect(list).toContain('[工具结果]查询日历事件（list_events） · 成功 · 1 项')
+  expect(list).toContain('[事件 ID]7')
+  expect(list).toContain('[项目 ID]42')
+  expect(list).toContain('[时间]未设置（null）')
+  expect(list).toContain('[提前分钟数]15')
+  expect(list).toContain('[投递方式]owner_private')
+  expect(format('list_events', [])).toContain(' · 成功 · 0 项')
+  expect(format('create_event', { success: true, event_id: 7, reminders })).toContain('[事件 ID]7')
+  expect(format('update_event', { success: true, event_id: 7, reminders: [] })).toContain('[提醒]\n  （无条目）')
+  const deletion = format('delete_event', { success: true, deleted_count: 1, results: [{ deleted_event_id: 7, deleted_reminders: 2 }] })
+  expect(deletion).toContain('[删除数量]1')
+  expect(deletion).toContain('[已删除的事件 ID]7')
+  expect(deletion).toContain('[已删除的提醒]2')
+  const failure = format('update_event', { error: '事件标题重名', candidates: [{ id: 7, title: '周会' }] }, true)
+  expect(failure).toContain(' · 失败 · 事件标题重名\n[候选事件]')
+  expect(failure).toContain('[事件 ID]7')
+  expect(failure).not.toContain('[原因]')
 })

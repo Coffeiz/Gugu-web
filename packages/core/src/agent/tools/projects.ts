@@ -73,16 +73,26 @@ export interface ProjectFileOverview {
   total_file_count: number
   root_file_count: number
   total_folder_count: number
-  sandbox_path?: string
+  location?: import('../sessions/reference-context.js').ResolvedObjectPath
+  workspaces?: Array<{ id: string | number; name: string; available: boolean; location?: import('../sessions/reference-context.js').ResolvedObjectPath }>
 }
 
 const getInput = z.object({ project_id: z.number().int().safe().optional(), project: z.string().optional() }).passthrough()
+const locationInput = z.object({
+    kind: z.enum(['sandbox', 'host_absolute']),
+    value: z.string().min(1).max(4096),
+  }).strict().refine(({ kind, value }) => !value.includes('\0') && !value.split(/[\\/]/u).some(part => part === '..' || part === '.')
+    && (kind === 'sandbox' ? /^\/(?:project|workspace)\//u.test(value) : value.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(value))).optional()
+const projectLocationInput = locationInput.refine(location => location?.kind !== 'sandbox' || location.value.startsWith('/project/'))
 const overviewInput = z.object({
   total_file_count: z.number().int().nonnegative().safe(),
   root_file_count: z.number().int().nonnegative().safe(),
   total_folder_count: z.number().int().nonnegative().safe(),
-  sandbox_path: z.string().regex(/^\/project\/(?:[^/]+\/)*[^/]+$/u)
-    .refine(path => !path.includes('\0') && !path.includes('\\') && !path.split('/').some(part => part === '..' || part === '.')).optional(),
+  location: projectLocationInput,
+  workspaces: z.array(z.object({
+    id: z.union([z.string().regex(/^desktop:[a-f0-9-]{36}$/u), z.number().int().positive().safe()]), name: z.string(),
+    available: z.boolean(), location: locationInput.refine(location => location?.kind !== 'sandbox' || location.value.startsWith('/workspace/')),
+  }).strict()).optional(),
 }).strict().refine(value => value.root_file_count <= value.total_file_count)
 
 /** Host 必须提供可信 owner-scoped 实时文件概览；缺能力时不构造或开放此工具。 */
@@ -93,7 +103,7 @@ export function createGetProjectTool(options: {
   if (typeof options.fileOverview !== 'function') throw new Error('项目文件概览能力未装配')
   return {
     definition: { name: 'get_project', schema: { type: 'function', function: {
-      name: 'get_project', description: '读取项目结构。返回的 sandbox_path 是项目文件在 Shell 沙箱中的路径，读写仍受当前授权限制。', parameters: { type: 'object', properties: {
+      name: 'get_project', description: '读取项目结构。目录可定位时返回 location；已关联工作区在 workspaces 中单独列出；sandbox 表示 Web 沙箱路径，host_absolute 表示本机绝对路径。沙箱 Shell 无法读取桌面目录；宿主机 Shell 仍须遵循当前授权。未返回相应字段时不要根据项目名称推导路径。', parameters: { type: 'object', properties: {
         project_id: { type: 'integer' }, project: { type: 'string' },
       }, required: [] },
     } } },
@@ -107,11 +117,13 @@ export function createGetProjectTool(options: {
         data => resolveProject(data, input as z.infer<typeof getInput>), { signal: scope.signal })
       if ('error' in project) return { kind: 'completed', successful: false, mutated: false, value: project }
       scope.signal.throwIfAborted()
-      const { sandbox_path, ...files } = overviewInput.parse(await options.fileOverview(scope.identity, project.id, scope.signal))
+      const { location, workspaces, ...files } = overviewInput.parse(await options.fileOverview(scope.identity, project.id, scope.signal))
       const stages = projectStages(project)
       return { kind: 'completed', successful: true, mutated: false, value: {
         id: project.id, name: project.name, status: project.status, priority: project.priority,
-        summary: project.summary, files, ...(sandbox_path ? { sandbox_path } : {}), client: project.client, start_date: project.start_date,
+        summary: project.summary, files, ...(location ? { location } : {}),
+        ...(workspaces?.length ? { workspaces } : {}),
+        client: project.client, start_date: project.start_date,
         deadline: project.deadline, color: projectColorKey(project.color), current_stage: project.current_stage,
         archived: project.archived, stages: stages.map(stage => ({
           key: stage.key ?? null, label: stage.label ?? null, done: stage.done === undefined ? false : stage.done,
@@ -313,9 +325,9 @@ const stageSchemas={
 export function createProjectStageTools(port:ProjectMutationPort):ToolDefinition[]{
   if(typeof port.apply!=='function'||typeof port.reconcile!=='function')throw new Error('阶段修改需要持久调用收据后端')
   const descriptions:Record<keyof typeof stageSchemas,string>={
-    add_stage:'给项目新增阶段；position指定插入位置。阶段key为稳定标识。',remove_stage:'按key或唯一名称删除阶段及其待办；至少保留一个阶段，删除当前阶段后切换到剩余首项。',
+    add_stage:'给项目新增阶段；position指定插入位置。阶段键是稳定标识，同名阶段请用键定位。',remove_stage:'按key或唯一名称删除阶段及其待办；至少保留一个阶段，删除当前阶段后切换到剩余首项。',
     rename_stage:'按key或唯一名称重命名阶段；同名阶段必须使用key。',set_stages:'整体声明阶段；省略todos保留原待办，提供todos则重建为未完成；同名阶段须提供key。',
-    update_stage:'只传stage切换当前阶段；add新增待办；todos按id、精确文本或唯一模糊文本批量勾选、改名、移动或删除。带add/todos时stage只限定范围；失败项零副作用，成功项一次提交。',
+    update_stage:'只传stage切换当前阶段；add新增待办；todos按id、精确文本或唯一模糊文本批量勾选、改名、移动或删除。带 add 时 stage 指定新增阶段，修改待办时 todos[].stage 或外层 stage 限定源阶段，to_stage 指定移动目标；失败项零副作用，成功项一次提交。',
   }
   return (Object.keys(stageSchemas) as (keyof typeof stageSchemas)[]).map(name=>({
     definition:{name,schema:{type:'function',function:{name,description:descriptions[name],parameters:z.toJSONSchema(stageSchemas[name]) as Record<string,Json>}}},
@@ -336,13 +348,13 @@ type ProjectDeleteInput = z.infer<typeof projectDeleteInput>
 type ProjectDeleteRequest = { args: ProjectDeleteInput; identity: RunIdentity; roundId: string; toolCallId: string }
 
 export interface ProjectDeleteFileJournal {
-  record(fileId: number, from: string, to: string): Promise<void>
+  record(from: string, to: string): Promise<void>
   finish(): Promise<void>
 }
 
 export interface ProjectDeleteRuntime {
   transactionPort(tx: Transaction<Database>): ProjectTrashTransaction
-  storage: Pick<ProjectTrashStorage, 'moveToTrash'>
+  storage: Pick<ProjectTrashStorage, 'moveToTrash' | 'moveProjectDirectory'>
   /** Host 须在移动前持久化校验和恢复所需的路径日志，以调用收据作为完成依据。 */
   withJournal<T>(ownerId: string, operationId: string, work: (journal: ProjectDeleteFileJournal) => Promise<T>): Promise<T>
   recoverJournal(ownerId: string, operationId: string): Promise<void>
@@ -445,7 +457,7 @@ export function createProjectDeleteTool(core: SqlDataRuntime, runtime: ProjectDe
                 { undoContextId: request.identity.sessionId }, {
                   signal,
                   addRollback: undo => compensation.push(undo),
-                  beforeMove: (fileId, from, to) => journal.record(fileId, from, to),
+                  beforeMove: (from, to) => journal.record(from, to),
                 })
               events = result.events
               await enqueueAgentRagRebuildInTransaction(tx, core.backend, owner, 'project')

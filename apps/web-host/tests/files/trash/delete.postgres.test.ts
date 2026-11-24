@@ -11,6 +11,7 @@ import { lockFileSyncPath } from '../../../src/modules/files/storage/sync.js'
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '11111111-1111-4111-8111-111111111111'
 const otherOwnerId = '22222222-2222-4222-8222-222222222222'
+const fileKey = `${ownerId}/个人文件/notes/memo.txt`
 
 function fakePool(state: { file: Record<string, unknown>; undoWrites: number; collision: boolean; failUpdate?: boolean; failCommit?: boolean;
   receipts?: Map<string, { method: string; fingerprint: string; result_json: string }>; beforeFailure?: () => Promise<void> }) {
@@ -29,15 +30,16 @@ function fakePool(state: { file: Record<string, unknown>; undoWrites: number; co
         return { rows: [], rowCount: 1 }
       }
       if (normalized.startsWith('SELECT * FROM FILES')) {
-        if (String(values[0]) !== String(state.file.id) || values[1] !== state.file.user_id || state.file.deleted_at !== null)
+        const requested = Array.isArray(values[0]) ? values[0].map(String) : [String(values[0])]
+        if (!requested.includes(String(state.file.path)) || values[1] !== state.file.user_id || state.file.deleted_at !== null)
           return { rows: [], rowCount: 0 }
         return { rows: [{ ...state.file } as Row], rowCount: 1 }
       }
       if (normalized.startsWith('SELECT 1 FROM FILES'))
         return { rows: [], rowCount: state.collision ? 1 : 0 }
-      if (normalized.startsWith('UPDATE FILES SET STORAGE_KEY=')) {
+      if (normalized.startsWith('UPDATE FILES SET PATH=')) {
         if (state.failUpdate) { await state.beforeFailure?.(); throw new Error('synthetic database failure') }
-        state.file.storage_key = values[2]
+        state.file.path = values[2]
         state.file.deleted_at = new Date('2026-11-13T01:02:03.000Z')
         state.file.version = Number(state.file.version) + 1
         return { rows: [{ ...state.file } as Row], rowCount: 1 }
@@ -56,9 +58,9 @@ function fakePool(state: { file: Record<string, unknown>; undoWrites: number; co
 
 function fileRow() {
   return {
-    id: 7, user_id: ownerId, display_name: 'memo', ext: 'txt', space: 'personal',
-    project_id: null, folder_id: null, workspace_directory_id: null, stage_name: '', mind_map_id: null,
-    storage_key: `${ownerId}/个人文件/notes/memo.txt`, version: 1, size: '4 B', size_bytes: 4,
+    user_id: ownerId, display_name: 'memo', ext: 'txt', space: 'personal',
+    project_id: null, workspace_directory_id: null, stage_name: '', mind_map_id: null,
+    path: `${ownerId}/个人文件/notes/memo.txt`, version: 1, size: '4 B', size_bytes: 4,
     mime_type: 'text/plain', img_width: null, img_height: null, deleted_at: null,
   }
 }
@@ -66,7 +68,7 @@ function fileRow() {
 test('Local 删除将正文移入回收站、递增版本并保存撤销状态', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-file-delete-'))
   const state = { file: fileRow(), undoWrites: 0, collision: false }
-  const events: number[] = []
+  const events: string[] = []
   try {
     const source = path.join(root, ownerId, '个人文件', 'notes', 'memo.txt')
     await mkdir(path.dirname(source), { recursive: true })
@@ -76,23 +78,23 @@ test('Local 删除将正文移入回收站、递增版本并保存撤销状态',
       async publishChanged(event) { events.push(event.entityId) },
     })
 
-    await operations.remove(ownerId, 7, 'undo-context', 'renderer')
+    await operations.remove(ownerId, fileKey, 'undo-context', 'renderer')
 
     const target = path.join(root, ownerId, 'trash', 'notes', 'memo.txt')
     assert.equal(await readFile(target, 'utf8'), 'body')
     await assert.rejects(readFile(source), { code: 'ENOENT' })
-    assert.equal(state.file.storage_key, `${ownerId}/trash/notes/memo.txt`)
+    assert.equal(state.file.path, `${ownerId}/trash/notes/memo.txt`)
     assert.notEqual(state.file.deleted_at, null)
     assert.equal(state.file.version, 2)
     assert.equal(state.undoWrites, 1)
-    assert.deepEqual(events, [7])
+    assert.deepEqual(events, [fileKey])
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
 test('Agent 文件删除在事务内保存 owner 收据并重放原结果而不重复软删', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-file-delete-receipt-'))
   const state = { file: fileRow(), undoWrites: 0, collision: false, receipts: new Map<string, { method: string; fingerprint: string; result_json: string }>() }
-  const events: number[] = []
+  const events: string[] = []
   const source = path.join(root, ownerId, '个人文件', 'notes', 'memo.txt')
   try {
     await mkdir(path.dirname(source), { recursive: true }); await writeFile(source, 'body')
@@ -101,15 +103,15 @@ test('Agent 文件删除在事务内保存 owner 收据并重放原结果而不�
     })
     const operation = { receipt: { operationId: randomUUID(), fingerprint: 'd'.repeat(64), method: 'agent.file.delete_file' as const },
       signal: new AbortController().signal, async authorize() {} }
-    const first = await operations.remove(ownerId, 7, 'agent-session-33', null, operation)
-    const replay = await operations.remove(ownerId, 7, 'agent-session-33', null, operation)
+    const first = await operations.remove(ownerId, fileKey, 'agent-session-33', null, operation)
+    const replay = await operations.remove(ownerId, fileKey, 'agent-session-33', null, operation)
     assert.deepEqual(replay, { ...first, replayed: true })
-    assert.deepEqual(first, { replayed: false, result: { success: true, file_id: 7, name: 'memo.txt',
-      note: '已移入回收站，30 天内可还原', _file_op: { op: 'remove', kind: 'file', id: 7 } } })
+    assert.deepEqual(first, { replayed: false, result: { success: true, name: 'memo.txt',
+      note: '已移入回收站，30 天内可还原' } })
     assert.equal(state.receipts.size, 1)
     assert.equal(state.file.version, 2)
     assert.equal(state.undoWrites, 1)
-    assert.deepEqual(events, [7])
+    assert.deepEqual(events, [fileKey])
     assert.equal(await readFile(path.join(root, ownerId, 'trash', 'notes', 'memo.txt'), 'utf8'), 'body')
     await assert.rejects(readFile(source), { code: 'ENOENT' })
   } finally { await rm(root, { recursive: true, force: true }) }
@@ -118,7 +120,7 @@ test('Agent 文件删除在事务内保存 owner 收据并重放原结果而不�
 test('Agent 批量软删除遇到 owner 缺失 ID 时在任何磁盘/Undo 副作用前整体失败', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-file-delete-batch-missing-'))
   const state = { file: fileRow(), undoWrites: 0, collision: false, receipts: new Map<string, { method: string; fingerprint: string; result_json: string }>() }
-  const events: number[] = []
+  const events: string[] = []
   try {
     const source = path.join(root, ownerId, '个人文件', 'notes', 'memo.txt')
     await mkdir(path.dirname(source), { recursive: true })
@@ -129,7 +131,7 @@ test('Agent 批量软删除遇到 owner 缺失 ID 时在任何磁盘/Undo 副作
     })
     const operation = { receipt: { operationId: randomUUID(), fingerprint: 'b'.repeat(64), method: 'agent.file.delete_file' as const },
       signal: new AbortController().signal, async authorize() {} }
-    await assert.rejects(operations.removeMany!(ownerId, [7, 999], 'undo-context', 'renderer', operation), /文件不存在/)
+    await assert.rejects(operations.removeMany!(ownerId, [fileKey, `${ownerId}/个人文件/missing.txt`], 'undo-context', 'renderer', operation), /文件不存在/)
     assert.equal(await readFile(source, 'utf8'), 'body')
     assert.equal(state.file.deleted_at, null)
     assert.equal(state.undoWrites, 0)
@@ -149,7 +151,7 @@ test('Local 删除不访问或移动其他 owner 的文件', async () => {
       async publishChanged() {},
     })
 
-    await assert.rejects(operations.remove(otherOwnerId, 7, null, null), (error: unknown) =>
+    await assert.rejects(operations.remove(otherOwnerId, fileKey, null, null), (error: unknown) =>
       error instanceof Error && error.message === '文件不存在')
     assert.equal(await readFile(source, 'utf8'), 'body')
     assert.equal(state.undoWrites, 0)
@@ -168,9 +170,9 @@ test('数据库更新失败时回滚物理移动并保留原文件', async () =>
       async publishChanged() { assert.fail('回滚写入不得发布删除事件') },
     })
 
-    await assert.rejects(operations.remove(ownerId, 7, 'undo-context', null), /synthetic database failure/)
+    await assert.rejects(operations.remove(ownerId, fileKey, 'undo-context', null), /synthetic database failure/)
     assert.equal(await readFile(source, 'utf8'), 'body')
-    assert.equal(state.file.storage_key, `${ownerId}/个人文件/notes/memo.txt`)
+    assert.equal(state.file.path, `${ownerId}/个人文件/notes/memo.txt`)
     assert.equal(state.file.deleted_at, null)
     assert.equal(state.undoWrites, 0)
   } finally { await rm(root, { recursive: true, force: true }) }
@@ -184,13 +186,13 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 2 })
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-file-delete-pg-'))
-  const events: number[] = []
+  const events: string[] = []
   try {
     await pool.query(`
       CREATE TABLE files (
         id serial PRIMARY KEY, user_id uuid NOT NULL, display_name text NOT NULL, ext text NOT NULL,
-        space text NOT NULL, project_id integer, folder_id integer, workspace_directory_id integer,
-        stage_name text NOT NULL, mind_map_id integer, storage_key text NOT NULL, version integer NOT NULL,
+        space text NOT NULL, project_id integer, workspace_directory_id integer,
+        stage_name text NOT NULL, mind_map_id integer, path text NOT NULL, version integer NOT NULL,
         size text NOT NULL, size_bytes bigint NOT NULL, mime_type text, img_width integer, img_height integer,
         created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz
       );
@@ -205,7 +207,7 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
         method varchar(100) NOT NULL, result_json text NOT NULL, created_at timestamptz NOT NULL,
         PRIMARY KEY(owner_id,operation_id)
       );
-      INSERT INTO files (user_id,display_name,ext,space,stage_name,storage_key,version,size,size_bytes,
+      INSERT INTO files (user_id,display_name,ext,space,stage_name,path,version,size,size_bytes,
         mime_type,created_at,updated_at) VALUES
         ('${ownerId}','笔记','md','personal','','${ownerId}/个人文件/资料/笔记.md',4,'6 B',6,
          'text/markdown',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
@@ -230,14 +232,14 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
     const operations = createPostgresFileDeleteOperations(pool, {
       storageRoot: root,
       async publishChanged(event) {
-        const committed = await pool.query<{ deleted_at: Date | null; storage_key: string }>(
-          'SELECT deleted_at,storage_key FROM files WHERE id=$1 AND user_id=$2', [event.entityId, ownerId],
+        const committed = await pool.query<{ deleted_at: Date | null; path: string }>(
+          'SELECT deleted_at,path FROM files WHERE id=$1 AND user_id=$2', [event.entityId, ownerId],
         )
         assert.ok(committed.rows[0]?.deleted_at)
         const expectedKey = new Map<number, string>([
           [1, `${ownerId}/trash/资料/笔记.md`], [2, `${ownerId}/trash/a.txt`], [4, `${ownerId}/trash/z.txt`],
         ]).get(event.entityId)
-        assert.equal(committed.rows[0]?.storage_key, expectedKey)
+        assert.equal(committed.rows[0]?.path, expectedKey)
         events.push(event.entityId)
       },
     })
@@ -274,10 +276,10 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
       lockHolder.release()
     }
 
-    const file = await pool.query<{ storage_key: string; version: number; deleted_at: Date | null }>(
-      'SELECT storage_key,version,deleted_at FROM files WHERE id=1 AND user_id=$1', [ownerId],
+    const file = await pool.query<{ path: string; version: number; deleted_at: Date | null }>(
+      'SELECT path,version,deleted_at FROM files WHERE id=1 AND user_id=$1', [ownerId],
     )
-    assert.equal(file.rows[0]?.storage_key, `${ownerId}/trash/资料/笔记.md`)
+    assert.equal(file.rows[0]?.path, `${ownerId}/trash/资料/笔记.md`)
     assert.equal(file.rows[0]?.version, 5)
     assert.ok(file.rows[0]?.deleted_at)
     assert.equal(await readFile(path.join(root, ownerId, 'trash', '资料', '笔记.md'), 'utf8'), '正文内容')
@@ -295,10 +297,10 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
     await assert.rejects(operations.removeMany!(ownerId, [2, 4], 'failed-batch-tab', 'renderer'), /synthetic batch update failure/)
     assert.equal(await readFile(firstBatchSource, 'utf8'), '批量正文 A')
     assert.equal(await readFile(secondBatchSource, 'utf8'), '批量正文 Z')
-    const rolledBack = await pool.query<{ id: number; deleted_at: Date | null; storage_key: string }>(
-      'SELECT id,deleted_at,storage_key FROM files WHERE id=ANY($1::integer[]) ORDER BY id', [[2, 4]],
+    const rolledBack = await pool.query<{ id: number; deleted_at: Date | null; path: string }>(
+      'SELECT id,deleted_at,path FROM files WHERE id=ANY($1::integer[]) ORDER BY id', [[2, 4]],
     )
-    assert.deepEqual(rolledBack.rows.map((row) => [row.id, row.deleted_at, row.storage_key]), [
+    assert.deepEqual(rolledBack.rows.map((row) => [row.id, row.deleted_at, row.path]), [
       [2, null, `${ownerId}/个人文件/a.txt`], [4, null, `${ownerId}/个人文件/z.txt`],
     ])
     assert.deepEqual(events, [1])
@@ -318,7 +320,7 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
     assert.equal(batchUndo.rows[0]?.before_state.items['file:2']?.version, 1)
     assert.equal(batchUndo.rows[0]?.before_state.items['file:4']?.version, 1)
     assert.deepEqual(events, [1, 2, 4])
-    const corrupt = await pool.query<{id:number}>(`INSERT INTO files(user_id,display_name,ext,space,stage_name,storage_key,version,size,size_bytes,mime_type,created_at,updated_at) VALUES($1,'私有','txt','personal','',$2,1,'4 B',4,'text/plain',now(),now()) RETURNING id`,[ownerId,`${otherOwnerId}/个人文件/私有.txt`])
+    const corrupt = await pool.query<{id:number}>(`INSERT INTO files(user_id,display_name,ext,space,stage_name,path,version,size,size_bytes,mime_type,created_at,updated_at) VALUES($1,'私有','txt','personal','',$2,1,'4 B',4,'text/plain',now(),now()) RETURNING id`,[ownerId,`${otherOwnerId}/个人文件/私有.txt`])
     await assert.rejects(operations.removeMany!(ownerId,[corrupt.rows[0]!.id],null,null),/文件不存在/)
     assert.equal(await readFile(foreignSource,'utf8'),'其他用户正文')
   } finally {
@@ -336,8 +338,8 @@ test('并发删除重名文件时两份正文都保存在回收站', { skip: !da
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 3 })
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-delete-race-'))
   try {
-    await pool.query(`CREATE TABLE files (id serial PRIMARY KEY,user_id uuid,display_name text,ext text,space text,project_id int,folder_id int,workspace_directory_id int,stage_name text,mind_map_id int,storage_key text,version int,size text,size_bytes bigint,mime_type text,img_width int,img_height int,deleted_at timestamptz,updated_at timestamptz);
-      INSERT INTO files(user_id,display_name,ext,space,stage_name,storage_key,version,size,size_bytes) VALUES
+    await pool.query(`CREATE TABLE files (id serial PRIMARY KEY,user_id uuid,display_name text,ext text,space text,project_id int,workspace_directory_id int,stage_name text,mind_map_id int,path text,version int,size text,size_bytes bigint,mime_type text,img_width int,img_height int,deleted_at timestamptz,updated_at timestamptz);
+      INSERT INTO files(user_id,display_name,ext,space,stage_name,path,version,size,size_bytes) VALUES
       ('${ownerId}','memo','txt','personal','','${ownerId}/个人文件/notes/memo.txt',1,'1 B',1),
       ('${ownerId}','memo','txt','project','','${ownerId}/项目文件/notes/memo.txt',1,'1 B',1)`)
     for (const [dir, body] of [['个人文件','A'],['项目文件','B']]) {
@@ -362,9 +364,9 @@ test('并发删除重名文件时两份正文都保存在回收站', { skip: !da
     } } as unknown as Pool
     const ops = createPostgresFileDeleteOperations(wrapped, { storageRoot: root, async publishChanged() {} })
     await Promise.all([ops.remove(ownerId, 1, null, null), ops.remove(ownerId, 2, null, null)])
-    const rows = await pool.query<{storage_key:string}>('SELECT storage_key FROM files ORDER BY id')
-    assert.equal(new Set(rows.rows.map(row => row.storage_key)).size, 2)
-    const contents = await Promise.all(rows.rows.map(row => readFile(path.join(root, ...row.storage_key.split('/')), 'utf8')))
+    const rows = await pool.query<{path:string}>('SELECT path FROM files ORDER BY id')
+    assert.equal(new Set(rows.rows.map(row => row.path)).size, 2)
+    const contents = await Promise.all(rows.rows.map(row => readFile(path.join(root, ...row.path.split('/')), 'utf8')))
     assert.deepEqual(contents.sort(), ['A', 'B'])
   } finally { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end(); await rm(root, {recursive:true,force:true}) }
 })
@@ -377,7 +379,7 @@ test('删除提交结果未知时保留原路径和回收站正文', async () =>
   try {
     await mkdir(path.dirname(source),{recursive:true});await writeFile(source,'正文')
     const ops=createPostgresFileDeleteOperations(fakePool(state),{storageRoot:root,async publishChanged(){throw new Error('不应发布')}})
-    await assert.rejects(ops.remove(ownerId,7,null,null),/模拟提交后断连/)
+    await assert.rejects(ops.remove(ownerId,fileKey,null,null),/模拟提交后断连/)
     assert.equal(await readFile(source,'utf8'),'正文');assert.equal(await readFile(target,'utf8'),'正文')
   } finally {await rm(root,{recursive:true,force:true})}
 })
@@ -390,7 +392,7 @@ test('删除失败回滚不覆盖并发创建的原路径', async () => {
   try {
     await mkdir(path.dirname(source),{recursive:true});await writeFile(source,'原正文')
     const ops=createPostgresFileDeleteOperations(fakePool(state),{storageRoot:root,async publishChanged(){}})
-    await assert.rejects(ops.remove(ownerId,7,null,null),/synthetic database failure/)
+    await assert.rejects(ops.remove(ownerId,fileKey,null,null),/synthetic database failure/)
     assert.equal(await readFile(source,'utf8'),'并发新正文')
     assert.equal(await readFile(target,'utf8'),'原正文')
   } finally {await rm(root,{recursive:true,force:true})}
@@ -403,7 +405,7 @@ test('文件系统不支持硬链接时删除失败并保留源正文', async ()
   try {
     await mkdir(path.dirname(source),{recursive:true});await writeFile(source,'原正文')
     const ops=createPostgresFileDeleteOperations(fakePool(state),{storageRoot:root,async createDeleteLink(){throw Object.assign(new Error('不支持'),{code:'EXDEV'})},async publishChanged(){throw new Error('不应发布')}})
-    await assert.rejects(ops.remove(ownerId,7,null,null),{code:'EXDEV'})
+    await assert.rejects(ops.remove(ownerId,fileKey,null,null),{code:'EXDEV'})
     assert.equal(await readFile(source,'utf8'),'原正文');assert.equal(state.file.deleted_at,null)
   } finally {await rm(root,{recursive:true,force:true})}
 })
@@ -411,11 +413,11 @@ test('文件系统不支持硬链接时删除失败并保留源正文', async ()
 test('损坏的跨用户存储 key 不得删除另一用户正文', async () => {
   const root=await mkdtemp(path.join(tmpdir(),'gugu-delete-owner-key-'))
   const foreign=path.join(root,otherOwnerId,'个人文件','memo.txt')
-  const state={file:{...fileRow(),storage_key:`${otherOwnerId}/个人文件/memo.txt`},undoWrites:0,collision:false}
+  const state={file:{...fileRow(),path:`${otherOwnerId}/个人文件/memo.txt`},undoWrites:0,collision:false}
   try {
     await mkdir(path.dirname(foreign),{recursive:true});await writeFile(foreign,'他人正文')
     const ops=createPostgresFileDeleteOperations(fakePool(state),{storageRoot:root,async publishChanged(){throw new Error('不应发布')}})
-    await assert.rejects(ops.remove(ownerId,7,null,null),/文件不存在/)
+    await assert.rejects(ops.remove(ownerId,fileKey,null,null),/文件不存在/)
     assert.equal(await readFile(foreign,'utf8'),'他人正文')
   } finally {await rm(root,{recursive:true,force:true})}
 })

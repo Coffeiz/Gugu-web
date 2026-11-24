@@ -19,7 +19,7 @@ const baseSchema = z.union([
   }) }).strict(),
 ])
 
-const attachmentSchema = z.object({ attach_id: z.string().regex(/^[0-9a-f]{32}$/u) }).strict()
+const attachmentSchema = z.object({ attach_id: z.string().regex(/^(?:[0-9a-f]{16}|[0-9a-f]{32})$/u) }).strict()
 
 type ImageEntry = { scope: string; data: string; digest: string; mime: string; expires: number }
 const images = new Map<string, ImageEntry>()
@@ -124,11 +124,11 @@ export function createViewImageTool(options: {
     definition: { name: 'view_image', schema: { type: 'function', function: {
       name: 'view_image', description: '让当前模型查看一张图片。path 使用会话沙箱路径，url 使用公网 HTTP(S) 图片直链。支持 PNG、JPEG、WebP 和 GIF。GIF 按原始文件传给模型。'
         + (options.requiresHostConfirmation ? ' 桌面宿主机绝对路径需要会话文件访问授权，已添加的文件引用可直接读取。' : '')
-        + (supportsAttachments ? ' 也可使用 attach_id 查看当前消息的图片附件。' : ''),
+        + (supportsAttachments ? ' 也可使用 attach_id 查看图片附件。已授权的 owner 可以按精确 ID 查看其他会话的附件。' : ''),
       parameters: { type: 'object', properties: {
         path: { type: 'string', minLength: 1, maxLength: 2048, description: '会话沙箱中的图片路径' },
         url: { type: 'string', format: 'uri', minLength: 1, maxLength: 2048, description: '公网 HTTP(S) 图片直链' },
-        ...(supportsAttachments ? { attach_id: { type: 'string', pattern: '^[0-9a-f]{32}$' } } : {}),
+        ...(supportsAttachments ? { attach_id: { type: 'string', pattern: '^(?:[0-9a-f]{16}|[0-9a-f]{32})$' } } : {}),
       }, oneOf: (supportsAttachments ? ['path', 'url', 'attach_id'] : ['path', 'url'])
         .map(field => ({ required: [field], maxProperties: 1 })), additionalProperties: false },
     } } },
@@ -145,7 +145,7 @@ export function createViewImageTool(options: {
         let bytes: Buffer
         if ('attach_id' in input) {
           const file = await options.openAttachment?.(identity, input.attach_id, signal)
-          if (!file) return error('当前消息没有可用的图片附件')
+          if (!file) return error('没有找到可访问的图片附件')
           bytes = await readImageFile(file, signal)
         } else if ('path' in input) {
           const file = await options.openPath(identity, input.path, signal, scope, call)

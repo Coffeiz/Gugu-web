@@ -32,7 +32,6 @@ test('loadConfig supplies stable local defaults and keeps the database URL priva
     staticRoot: fileURLToPath(new URL('../../../../ui/dist', import.meta.url)),
   })
   assert.equal(config.databaseUrl, 'postgres://synthetic:synthetic-only@db.invalid/gugu_test')
-  assert.equal(config.storageDefaultLimitBytes, null)
   assert.equal(config.adminUsername, 'admin')
   assert.equal(config.adminPassword, '')
   assert.equal(config.adminAllowedHosts, '')
@@ -132,27 +131,6 @@ test('loadConfig refuses a legacy OSS backend setting until its data has been mi
     SECRET_KEY: 'synthetic-secret',
     STORAGE__BACKEND: 'remote',
   }), /只支持本地文件系统/)
-})
-
-test('loadConfig reads the optional default storage quota without exposing it', () => {
-  const config = loadConfig({
-    GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
-    SECRET_KEY: 'synthetic-secret',
-    QUOTA__DEFAULT_STORAGE_LIMIT_BYTES: '0',
-  })
-
-  assert.equal(config.storageDefaultLimitBytes, 0)
-  assert.equal(Object.keys(config).includes('storageDefaultLimitBytes'), false)
-  assert.equal(loadConfig({
-    GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
-    SECRET_KEY: 'synthetic-secret',
-    QUOTA__DEFAULT_STORAGE_LIMIT_BYTES: '-1',
-  }).storageDefaultLimitBytes, -1)
-  assert.throws(() => loadConfig({
-    GUGU_WEBUI_DATABASE_URL: 'postgres://db.invalid/gugu',
-    SECRET_KEY: 'synthetic-secret',
-    QUOTA__DEFAULT_STORAGE_LIMIT_BYTES: '-2',
-  }), /QUOTA__DEFAULT_STORAGE_LIMIT_BYTES/)
 })
 
 test('loadConfig reflects public email capabilities without exposing SMTP secrets', () => {

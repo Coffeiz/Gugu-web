@@ -1,57 +1,16 @@
 import { type FastifyInstance } from 'fastify'
 import { requestContext } from '@gugu/core'
 import type { UserAuthOptions } from '../auth/contracts.js'
-import { registerFileBrowserRoutes, registerFileReadRoutes, registerFolderReadRoutes } from './browse.js'
-import { registerFolderWriteRoutes } from './folders/write.js'
-import { registerFolderCopyRoute } from './folders/copy.js'
-import { registerFolderDeleteRoute } from './folders/delete.js'
+import { registerFileReadRoutes } from './browse.js'
 import { registerXlsxPreviewRoutes, registerFileThumbnailRoute, registerFileContentRoutes } from './content.js'
-import { registerFileDeleteRoutes, registerFileRestoreRoutes, registerTrashRoutes } from './trash/service.js'
+import { registerFileDeleteRoutes, registerFileRestoreRoutes } from './trash/service.js'
 import { registerFileUpdateRoutes, registerFileCopyRoutes } from './store.js'
-import { registerFileConflictRoutes, registerFileUploadRoutes } from './upload.js'
-import { registerFileBatchDownloadRoutes, registerFolderDownloadRoutes } from './download.js'
-import { registerFileArchiveRoutes } from './archive/service.js'
+import { registerFileUploadRoutes } from './upload.js'
 import { registerGlobalSearchRoute } from '../search/search.js'
 import type { WebUiOptions } from '../../http/options.js'
 import { registerProtectedDomain } from '../../http/user.js'
 
 export function registerFileRoutes(app: FastifyInstance, auth: UserAuthOptions, options: WebUiOptions) {
-  if (options.fileBrowser) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerFileBrowserRoutes(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        operations: options.fileBrowser!,
-      })
-    })
-  }
-  if (options.folderWrites) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerFolderWriteRoutes(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        operations: options.folderWrites!,
-      })
-    })
-  }
-  if (options.folderCopy) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerFolderCopyRoute(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        operations: options.folderCopy!,
-      })
-    })
-  }
-  if (options.folderDelete) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerFolderDeleteRoute(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        operations: options.folderDelete!,
-      })
-    })
-  }
   if (options.fileReads) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
       registerFileReadRoutes(routes, {
@@ -64,8 +23,8 @@ export function registerFileRoutes(app: FastifyInstance, auth: UserAuthOptions, 
           requireUser: async (request) => { void userFromRequest(request) },
           ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
           operations: {
-            preview: (ownerId, fileId) => options.fileReads!.xlsxPreview!(ownerId, fileId),
-            image: (ownerId, fileId, imageId) => options.fileReads!.xlsxPreviewImage!(ownerId, fileId, imageId),
+            preview: (ownerId, filePath) => options.fileReads!.xlsxPreview!(ownerId, filePath),
+            image: (ownerId, filePath, imageId) => options.fileReads!.xlsxPreviewImage!(ownerId, filePath, imageId),
           },
         })
       }
@@ -73,15 +32,6 @@ export function registerFileRoutes(app: FastifyInstance, auth: UserAuthOptions, 
         requireUser: async (request) => { void userFromRequest(request) },
         ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
         operations: options.fileReads!,
-      })
-    })
-  }
-  if (options.folderReads) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerFolderReadRoutes(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        operations: options.folderReads!,
       })
     })
   }
@@ -112,15 +62,6 @@ export function registerFileRoutes(app: FastifyInstance, auth: UserAuthOptions, 
       })
     })
   }
-  if (options.trash) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerTrashRoutes(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        operations: options.trash!,
-      })
-    })
-  }
   if (options.fileContents) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
       registerFileContentRoutes(routes, {
@@ -148,48 +89,12 @@ export function registerFileRoutes(app: FastifyInstance, auth: UserAuthOptions, 
       })
     })
   }
-  if (options.fileConflicts) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerFileConflictRoutes(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        operations: options.fileConflicts!,
-      })
-    })
-  }
-  if (options.fileBatchDownloads) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerFileBatchDownloadRoutes(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        operations: options.fileBatchDownloads!,
-      })
-    })
-  }
-  if (options.fileArchives) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerFileArchiveRoutes(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        operations: options.fileArchives!,
-      })
-    })
-  }
   if (options.globalSearch) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => {
       registerGlobalSearchRoute(routes, {
         requireUser: async (request) => { void userFromRequest(request) },
         ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
         operations: options.globalSearch!,
-      })
-    })
-  }
-  if (options.folderDownloads) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerFolderDownloadRoutes(routes, {
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId,
-        operations: options.folderDownloads!,
       })
     })
   }

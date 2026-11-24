@@ -1,6 +1,6 @@
 import { desktopImEventKey } from '../src/main/im/gateway/inbound/inbox.js'
 import { expect, it, vi } from 'vitest'
-import { createDesktopImDispatch } from '../src/main/im/gateway/delivery/dispatch.js'
+import { createDesktopImDispatch, stopDesktopImRun } from '../src/main/im/gateway/delivery/dispatch.js'
 import { DesktopError } from '../src/main/core-host.js'
 import { createRuntimeLog } from '@gugu/log/runtime'
 import type { IpcHost } from '../src/main/ipc/types.js'
@@ -164,11 +164,15 @@ it('运行期间发送已结束的中间轮和慢工具，最终正文单独投�
     }
     if (method === 'agent.sessions.events') {
       expect(params?.imDelivery).toBe(true)
-      if (params?.after === 0) return { status: 'running', cursor: 3, hasMore: true, events: [
+      if (params?.after === 0) return { status: 'running', cursor: 1, hasMore: true, events: [
         { type: 'im_round_end', sequence: 1, text: '阶段回复' },
-        { type: 'im_round_continues' },
-        { type: 'display_event', item: { kind: 'tool', eventId: 'slow', toolName: 'list_projects', toolLabelOverride: '查询项目列表', toolStatus: 'success', toolDurationMs: 6000 } },
       ] }
+      if (params?.after === 1) {
+        expect(sent).toEqual(['阶段回复'])
+        return { status: 'running', cursor: 3, hasMore: true, events: [
+        { type: 'display_event', item: { kind: 'tool', eventId: 'slow', toolName: 'list_projects', toolLabelOverride: '查询项目列表', toolStatus: 'success', toolDurationMs: 6000 } },
+        ] }
+      }
       expect(sent).toEqual(['阶段回复', '✅ 查询项目列表完成'])
       return { status: 'completed', cursor: 5, hasMore: false, events: [
         { type: 'display_event', item: { kind: 'tool', eventId: 'slow', toolName: 'list_projects', toolLabelOverride: '查询项目列表', toolStatus: 'success', toolDurationMs: 6000 } },
@@ -372,17 +376,19 @@ it('桌面群调度只向已授权的原群发送最终正文', async () => {
   const authorizeMessage = vi.fn(async () => true)
   const send = vi.fn(async () => 'accepted' as const)
   await dispatch({ connection, connectionId: 'a'.repeat(64), signal: controller.signal,
-    group: { id: 'group', ownerPlatformUserId: 'synthetic-owner', authorizeMessage }, async authorize() { return true }, send })
-  expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ recipient: 'group', text: '最终正文' }), undefined)
+    group: { id: 'group', ownerPlatformUserId: 'synthetic-owner', authorizeMessage, async authorizeFile() { return false } }, async authorize() { return true }, send })
+  expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    recipient: 'group', originalMessageId: event.eventId, text: '最终正文',
+  }), undefined)
   expect(authorizeMessage).toHaveBeenCalledOnce()
 })
 
-it('重复 RPC 故障退避，只记录一次安全诊断，恢复后继续补读', async () => {
+it.each(['storage_error', 'busy'])('重复 RPC 故障 %s 退避，只记录一次安全诊断，恢复后继续补读', async (errorCode) => {
   const controller = new AbortController()
   const regular = vi.fn()
   const diagnostic = vi.fn()
   const log = createRuntimeLog({ regular, diagnostic })
-  const failure = new DesktopError('storage_error', '合成内部详情')
+  const failure = new DesktopError(errorCode, '合成内部详情')
   const timestamps: number[] = []
   const request = vi.fn(async () => {
     timestamps.push(performance.now())
@@ -407,7 +413,139 @@ it('重复 RPC 故障退避，只记录一次安全诊断，恢复后继续补�
   expect(regular).toHaveBeenCalledOnce()
   expect(diagnostic).toHaveBeenCalledOnce()
   expect(JSON.parse(regular.mock.calls[0]![0])).toMatchObject({
-    attributes: { code: 'dispatch_unavailable', errorCode: 'storage_error', rpcMethod: 'im.inbox.prepare' },
+    attributes: { code: 'dispatch_unavailable', errorCode, rpcMethod: 'im.inbox.prepare' },
   })
   expect(diagnostic.mock.calls[0]![0]).not.toContain('合成内部详情')
 }, 10_000)
+
+it.each(['slow_only', 'off'] as const)('QQ 整理按展示偏好发送主动回执并保留最终被动回复（%s）', async imToolDisplayMode => {
+  const controller = new AbortController()
+  const connection = { platform: 'qq', botId: 'bot', ownerId: 'desktop' } as const
+  const event = { version: 1, kind: 'message.received', eventId: 'trigger', platformMessageId: 'ref', text: '测试',
+    quotedText: null, botMentioned: false, scope: { ...connection, chatType: 'c2c', chatId: null, platformUserId: 'user' } }
+  const notices = vi.fn(async () => 'accepted' as const)
+  const send = vi.fn(async () => 'accepted' as const)
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'im.inbox.prepare') return { sessionId: 8, runId: 'run', eventKey: desktopImEventKey(event), sealedEvent: 'AQ==', clientId: 'client' }
+    if (method === 'agent.sessions.events') return { status: 'completed', cursor: 4, hasMore: false, events: [
+      { type: 'im_compaction', sequence: 1, phase: 'started' },
+      { type: 'im_compaction', sequence: 2, phase: 'completed', applied: false },
+      { type: 'im_compaction', sequence: 3, phase: 'completed', applied: true },
+      { type: 'im_final_text', text: '最终回复' },
+    ] }
+    if (method !== 'im.inbox.delivery') throw new Error('请求无效')
+    if (params?.action === 'accepted' && !params.noticeKey) controller.abort()
+    return true
+  })
+  const dispatch = createDesktopImDispatch({ request: request as IpcHost['request'] }, {
+    async decryptStringAsync() { return { result: JSON.stringify({ event }), shouldReEncrypt: false } },
+  }, { resolveRunModelSelection: vi.fn() }, async () => ({
+    theme: 'system', themeFamily: 'mono', palette: 'neutral', showIntermediateReplies: false, imToolDisplayMode,
+  }))
+  await dispatch({ connection, connectionId: 'a'.repeat(64), userId: 'user', signal: controller.signal,
+    authorize: async () => !controller.signal.aborted, send, sendActiveNotice: notices })
+  expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ originalMessageId: 'trigger', text: '最终回复' }), undefined)
+  expect(notices.mock.calls).toEqual(imToolDisplayMode === 'off' ? [] : [
+    [expect.objectContaining({ originalMessageId: undefined, text: '上下文较长，正在整理后继续处理。' })],
+    [expect.objectContaining({ originalMessageId: undefined, text: '本次未能整理上下文，继续处理。' })],
+    [expect.objectContaining({ originalMessageId: undefined, text: '上下文整理完成。' })],
+  ])
+})
+
+it.each([
+  { text: '@咕咕 /shell', methods: [], reply: '/shell 范围切换已退役' },
+  { text: '@咕咕 /help shell', methods: [], reply: '/shell 范围切换已退役' },
+  { text: '@咕咕 /help', group: 'member', methods: [], reply: '当前入口可用命令' },
+  { text: '/help', methods: [], reply: '当前入口可用命令' },
+  { text: '@咕咕 /workspace', methods: ['agent.sessions.workspace'], reply: '当前会话绑定的工作区' },
+  { text: '@咕咕 /workspace unbind', methods: ['agent.sessions.setWorkspace'], reply: '已解除当前会话的工作区绑定' },
+  { text: '@咕咕 助手 /workspace list', methods: ['agent.sessions.workspace'], reply: '1. 合成目录' },
+  { text: '@咕咕 /workspace god', methods: [], reply: '桌面端当前不提供完整用户沙箱授权' },
+  { text: '@咕咕 /workspace delete 1', methods: [], reply: '确认请发送 /workspace delete 1 confirm' },
+  { text: '@咕咕 /workspace delete 1 confirm', methods: [], reply: '已删除工作区' },
+  { text: '@咕咕 /workspace delete 1 confirm', group: 'owner', methods: [], reply: '请在私聊中' },
+  { text: '@咕咕 /status', group: 'member', methods: ['im.inbox.status'], status: 'waiting', reply: '正在等待你的确认' },
+  { text: '@咕咕 /status', group: 'member', methods: ['im.inbox.status'], status: 'waiting_agent', reply: '正在等待子 Agent 的消息' },
+  { text: '@咕咕 /goal status', methods: ['agent.sessions.goal'], reply: '当前目标任务' },
+  { text: '@咕咕 /goal 小北的测试目标', group: 'member', methods: [], reply: '只有绑定 Bot 的用户' },
+  { text: '@咕咕 /new', methods: ['agent.sessions.resetImContext'], reply: '旧的对话上下文已清空' },
+  { text: '@咕咕 /new', group: 'member', methods: [], reply: '只有绑定 Bot 的用户' },
+  { text: '@咕咕 /mem', group: 'owner', methods: ['agent.memory.read'], reply: '已私聊发送个人记忆' },
+  { text: '@咕咕 /mem', group: 'member', methods: [], reply: '只有绑定 Bot 的用户' },
+  { text: '@咕咕 /mem', methods: ['agent.memory.read'], reply: '合成长期记忆' },
+  { text: '@咕咕 /forget 小北', methods: ['agent.memory.forget', 'agent.memory.forget'], reply: '已忘掉匹配的 2 条记忆' },
+  { text: '@咕咕 /forget 小北', group: 'member', methods: [], reply: '只有绑定 Bot 的用户' },
+  { text: '@咕咕 /compact', methods: ['agent.sessions.compact', 'agent.sessions.events'], reply: '上下文已整理' },
+  { text: '@咕咕 /compact', group: 'owner', methods: ['agent.sessions.compact', 'agent.sessions.events'], reply: '上下文已整理' },
+  { text: '@咕咕 /compact', group: 'member', methods: [], reply: '只有绑定 Bot 的用户' },
+])('IM 命令 $text 只进入对应处理器', async ({ text, methods, reply, group, status }) => {
+  const controller = new AbortController()
+  const connection = { platform: 'qq', botId: 'bot', ownerId: 'desktop' } as const
+  const event = { version: 1, kind: 'message.received', eventId: 'trigger', platformMessageId: 'ref', text,
+    quotedText: null, botMentioned: text.startsWith('@'), scope: { ...connection, chatType: group ? 'group' : 'c2c', chatId: group ? 'group' : null, platformUserId: group ?? 'user' } }
+  const request = vi.fn(async (method: string, params?: unknown) => {
+    if (method === 'im.inbox.prepare') return { sessionId: 8, runId: null, eventKey: desktopImEventKey(event), sealedEvent: 'AQ==', clientId: 'client' }
+    if (method === 'im.inbox.reject') return true
+    if (method === 'agent.sessions.setWorkspace') {
+      expect(params).toMatchObject({ action: 'unlink' })
+      return { workspace: null }
+    }
+    if (method === 'agent.sessions.workspace' && text.endsWith('/workspace')) {
+      expect(params).toMatchObject({ action: 'show' })
+      return { workspace: { workspace_name: '合成目录' } }
+    }
+    if (method === 'agent.sessions.workspace') return { workspaces: [{ id: 'desktop:11111111-1111-4111-8111-111111111111', name: '合成目录', commandNumber: 1 }] }
+    if (method === 'agent.memory.read') return { text: '合成长期记忆' }
+    if (method === 'im.inbox.status') {
+      expect(params).toMatchObject({ chatType: 'group', platformUserId: 'member', ownerPlatformUserId: 'owner' })
+      return { status }
+    }
+    if (method === 'agent.sessions.goal') return { text: '当前目标任务：合成目标' }
+    if (method === 'agent.sessions.resetImContext') return { reset: true }
+    if (method === 'agent.memory.forget') {
+      expect(params).toMatchObject({ query: '小北' })
+      return { count: 2, revision: 'a'.repeat(64) }
+    }
+    if (method === 'agent.sessions.compact') {
+      if (group) expect(params).toMatchObject({ imGroupSenderId: 'owner' })
+      return { operation: 'compact-1' }
+    }
+    if (method === 'agent.sessions.events') return { status: 'completed', events: [{ type: 'content', text: '上下文已整理' }] }
+    throw new Error('斜杠命令不应创建运行')
+  })
+  const resolveRunModelSelection = vi.fn().mockResolvedValue({ config: {} })
+  const send = vi.fn(async () => { controller.abort(); return 'accepted' as const })
+  const remove = vi.fn(async () => undefined)
+  const dispatch = createDesktopImDispatch({ request: request as IpcHost['request'] }, {
+    async decryptStringAsync() { return { result: JSON.stringify({ event }), shouldReEncrypt: false } },
+  }, { resolveRunModelSelection }, undefined, undefined, undefined, {
+    async list() { return [{ id: 'desktop:synthetic', name: '合成目录', commandNumber: 1 }] }, remove,
+  })
+  const sendOwnerPrivate = vi.fn(async () => 'accepted' as const)
+  await dispatch({ connection, sendOwnerPrivate, connectionId: 'a'.repeat(64), signal: controller.signal,
+    ...(group ? { group: { id: 'group', ownerPlatformUserId: 'owner',
+      async authorizeMessage() { return true }, async authorizeFile() { return false } } } : { userId: 'user' }),
+    authorize: async () => !controller.signal.aborted, send })
+  expect(request.mock.calls.map(([method]) => method)).toEqual(['im.inbox.prepare', 'im.inbox.reject', ...methods])
+  expect(sendOwnerPrivate.mock.calls).toEqual(group === 'owner' && text.endsWith('/mem') ? [['合成长期记忆']] : [])
+  expect(remove).toHaveBeenCalledTimes(!group && text.endsWith('delete 1 confirm') ? 1 : 0)
+  expect(resolveRunModelSelection).toHaveBeenCalledTimes(methods.includes('agent.sessions.compact') ? 1 : 0)
+  expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    originalMessageId: 'trigger', text: expect.stringContaining(reply),
+  }), undefined)
+})
+
+it('即时停止命令重投复用原操作标识，保留群发起者范围', async () => {
+  const request = vi.fn(async (_method: string, _params: unknown, _operation?: string) => ({ outcome: 'requested' }))
+  const scope = { platform: 'feishu', ownerId: 'desktop', botId: 'synthetic-bot',
+    chatType: 'group', chatId: 'synthetic-room', platformUserId: 'synthetic-sender' } as const
+  const event = { version: 1, kind: 'message.received', eventId: 'synthetic-first', scope, text: '@咕咕 /stop',
+    quotedText: null, botMentioned: true } as const
+  const host = { request: request as IpcHost['request'] }
+  await stopDesktopImRun(host, event, 'a'.repeat(64), 'synthetic-owner')
+  await stopDesktopImRun(host, event, 'a'.repeat(64), 'synthetic-owner')
+  await stopDesktopImRun(host, { ...event, eventId: 'synthetic-second' }, 'a'.repeat(64), 'synthetic-owner')
+  expect(request.mock.calls[0]?.[1]).toMatchObject({ platformUserId: 'synthetic-sender', ownerPlatformUserId: 'synthetic-owner' })
+  expect(request.mock.calls[0]?.[2]).toBe(request.mock.calls[1]?.[2])
+  expect(request.mock.calls[0]?.[2]).not.toBe(request.mock.calls[2]?.[2])
+})

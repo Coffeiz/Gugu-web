@@ -9,6 +9,8 @@ import { createUserToken } from '../../../src/modules/auth/session/token.js'
 const ownerId = '00000000-0000-4000-8000-000000000071'
 const otherOwnerId = '00000000-0000-4000-8000-000000000072'
 const secret = 'synthetic-file-thumbnail-host-secret'
+const filePath = `${ownerId}/个人文件/合成图片.png`
+const thumbnailUrl = (size: string) => `/api/v1/files/by-path/thumb?${new URLSearchParams({ path: filePath, size })}`
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=',
   'base64',
@@ -24,8 +26,8 @@ afterEach(async () => {
 async function makeApp(mimeType: string | null = 'image/png', hasPhysicalFile = true) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'gugu-file-thumbnail-'))
   directories.push(directory)
-  const filePath = path.join(directory, '合成图片.png')
-  await writeFile(filePath, png)
+  const diskFilePath = path.join(directory, '合成图片.png')
+  await writeFile(diskFilePath, png)
   const calls: unknown[] = []
   const app = createApp({
     appName: '合成测试应用',
@@ -49,20 +51,20 @@ async function makeApp(mimeType: string | null = 'image/png', hasPhysicalFile = 
       },
     },
     fileReads: {
-      async getFile(owner, fileId) {
-        calls.push(['file', owner, fileId])
-        return owner === ownerId && fileId === 23 ? { id: fileId, mimeType, version: 4 } : null
+      async getFile(owner, requestedPath) {
+        calls.push(['file', owner, requestedPath])
+        return owner === ownerId && requestedPath === `${ownerId}/个人文件/合成图片.png` ? { filePath: requestedPath, mimeType, version: 4 } : null
       },
       async getFileLocation() { return null },
       async getSummary() { return {} },
       async getLibraryCounts() { return {} },
       async getStorage() { return {} },
-      async openContent(owner, fileId) {
-        calls.push(['content', owner, fileId])
-        if (owner !== ownerId || fileId !== 23 || !hasPhysicalFile) return null
-        const handle = await open(filePath, 'r')
+      async openContent(owner, requestedPath) {
+        calls.push(['content', owner, requestedPath])
+        if (owner !== ownerId || requestedPath !== `${ownerId}/个人文件/合成图片.png` || !hasPhysicalFile) return null
+        const handle = await open(diskFilePath, 'r')
         return {
-          file: { id: fileId, mimeType, version: 4 },
+          file: { filePath: requestedPath, mimeType, version: 4 },
           handle,
           size: (await handle.stat()).size,
           fileName: '合成 图片.png',
@@ -83,9 +85,9 @@ async function makeApp(mimeType: string | null = 'image/png', hasPhysicalFile = 
 test('File thumbnail full size returns the owned image bytes and private cache policy', async () => {
   const { app, token, calls } = await makeApp()
 
-  const unauthorized = await app.inject({ url: '/api/v1/files/23/thumb?size=full' })
+  const unauthorized = await app.inject({ url: thumbnailUrl('full') })
   const response = await app.inject({
-    url: '/api/v1/files/23/thumb?size=full',
+    url: thumbnailUrl('full'),
     headers: { authorization: `Bearer ${token}` },
   })
 
@@ -94,39 +96,39 @@ test('File thumbnail full size returns the owned image bytes and private cache p
   assert.equal(response.headers['content-type'], 'image/png')
   assert.equal(response.headers['cache-control'], 'private, max-age=86400')
   assert.deepEqual(response.rawPayload, png)
-  assert.deepEqual(calls, [['file', ownerId, 23], ['content', ownerId, 23]])
+  assert.deepEqual(calls, [['file', ownerId, filePath], ['content', ownerId, filePath]])
 })
 
 test('File thumbnail reports an owned record with a missing physical file as 404', async () => {
   const { app, token, calls } = await makeApp('image/png', false)
 
   const response = await app.inject({
-    url: '/api/v1/files/23/thumb?size=full',
+    url: thumbnailUrl('full'),
     headers: { authorization: `Bearer ${token}` },
   })
 
   assert.equal(response.statusCode, 404)
   assert.equal(response.json<{ detail: string }>().detail, '物理文件丢失')
-  assert.deepEqual(calls, [['file', ownerId, 23], ['content', ownerId, 23]])
+  assert.deepEqual(calls, [['file', ownerId, filePath], ['content', ownerId, filePath]])
 })
 
 test('File thumbnail hides another owner and returns unsupported-media for non-image content', async () => {
   const { app, token, otherToken, calls } = await makeApp('text/plain')
 
   const forbidden = await app.inject({
-    url: '/api/v1/files/23/thumb?size=full',
+    url: thumbnailUrl('full'),
     headers: { authorization: `Bearer ${otherToken}` },
   })
   const unsupported = await app.inject({
-    url: '/api/v1/files/23/thumb?size=full',
+    url: thumbnailUrl('full'),
     headers: { authorization: `Bearer ${token}` },
   })
 
   assert.equal(forbidden.statusCode, 404)
   assert.equal(unsupported.statusCode, 415)
   assert.deepEqual(calls, [
-    ['file', otherOwnerId, 23],
-    ['file', ownerId, 23],
+    ['file', otherOwnerId, filePath],
+    ['file', ownerId, filePath],
   ])
 })
 
@@ -134,7 +136,7 @@ test('File thumbnail tiny size is rendered as WebP', async () => {
   const { app, token } = await makeApp()
 
   const response = await app.inject({
-    url: '/api/v1/files/23/thumb?size=tiny',
+    url: thumbnailUrl('tiny'),
     headers: { authorization: `Bearer ${token}` },
   })
 

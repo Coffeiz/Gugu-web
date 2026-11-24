@@ -11,15 +11,16 @@ export { canonicalBaselineHash } from '@gugu/core/agent'
 
 async function prepareDurableCompaction(client: PoolClient, identity: RunIdentity, context: CanonicalRunContext, anchorSeq: string | undefined) {
   if (!await lockCanonicalHistoryBaseline(client, identity, context)) return null
-  const rows = await client.query<{ id: string; role: string; content: string; content_json: unknown; effective: string }>(
-    `SELECT id::text, role, content, content_json, coalesce(history_anchor_seq,conversation_seq)::text AS effective
-     FROM conversation_messages WHERE session_id = $1 AND role <> 'summary'
+  const rows = await client.query<Parameters<typeof projectDurableHistoryCompaction>[1][number]>(
+    `SELECT id::text, role, content, content_json, coalesce(history_anchor_seq,conversation_seq)::text AS effective,
+       run_id AS "runId", round_id AS "roundId", canonical_batch_id::text AS "canonicalBatchId", covers_until_seq AS "coversUntilSeq"
+     FROM conversation_messages WHERE session_id = $1
        AND (run_id IS NULL OR run_id NOT LIKE 'im-pending:%')
        AND NOT (role = 'assistant' AND canonical_batch_id IS NULL AND display_timeline IS NOT NULL
          AND btrim(coalesce(content, '')) = '' AND content_json IS NULL
          AND (files IS NULL OR files = '[]'::jsonb) AND coalesce(quoted_text, '') = '')
-       AND coalesce(history_anchor_seq,conversation_seq) > $2
-     ORDER BY coalesce(history_anchor_seq,conversation_seq), (history_anchor_seq IS NULL), conversation_seq`,
+       AND (role='summary' OR coalesce(history_anchor_seq,conversation_seq) > $2)
+     ORDER BY (role<>'summary'),coalesce(history_anchor_seq,conversation_seq), (history_anchor_seq IS NULL), conversation_seq`,
     [identity.sessionId, context.historyBaseline!.baselineSeq])
   return projectDurableHistoryCompaction(context, rows.rows, anchorSeq)
 }
@@ -49,10 +50,11 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
       if (!anchor) throw new Error('Agent 历史锚点不存在')
     }
     if (delta.userAnchorSequence !== null && !anchor) throw new Error('Agent 历史锚点无效')
-    // 只持久化覆盖证明完整且当前仍适用的压缩链。
-    const compacted = !options?.postCommitCompaction && history.outcome === 'success' && context.compactions.length
-      && context.compactions.every(item => item.result.coversUnpersisted === false)
-      ? await prepareDurableCompaction(client, identity, context, anchor?.conversation_seq) : null
+    // 在终态事务中校验基线和用户锚点，再按统一保留规则整理旧历史。
+    const compacted = !options?.postCommitCompaction && history.outcome === 'success'
+      && (context.compactions.length || context.overflowTrimmed)
+      && context.historyBaseline && context.sourceEffects && anchor
+      ? await prepareDurableCompaction(client, identity, context, anchor.conversation_seq) : null
     const receipt = await client.query(`INSERT INTO conversation_batches (session_id, version, run_id, round_id, digest, created_at)
       VALUES ($1,'finalize-v1',$2,'round-1',$3,clock_timestamp()) ON CONFLICT (session_id,digest) DO NOTHING RETURNING id`,
     [identity.sessionId, identity.runId, receiptDigest])
@@ -97,8 +99,8 @@ export function createCanonicalHistoryWriter(resolveConfig: (identity: RunIdenti
     }
     if (display) {
       await client.query(`INSERT INTO conversation_messages (session_id,conversation_seq,role,content,files,display_timeline,run_id,round_id,created_at,sent_at)
-        VALUES ($1,$2,'assistant',$3,$4::jsonb,$5::jsonb,$6,'round-1',clock_timestamp(),clock_timestamp())`,
-      [identity.sessionId, ++sequence, display.text, display.files, display.timeline, identity.runId])
+        VALUES ($1,$2,'assistant',$3,$4::jsonb,$5::jsonb,$6,$7,clock_timestamp(),clock_timestamp())`,
+      [identity.sessionId, ++sequence, display.text, display.files, display.timeline, identity.runId, display.roundId])
     }
     if (!failed && ((context.compactions.length === 0 && !context.overflowTrimmed) || compacted) && context.providerCacheAnchor) await client.query(`UPDATE conversation_sessions SET session_context = jsonb_set(coalesce(session_context::jsonb,'{}'::jsonb), '{provider_cache_anchor}', $3::jsonb)
       WHERE id = $1 AND user_id = $2`, [identity.sessionId, identity.ownerId, JSON.stringify(context.providerCacheAnchor.anchor)])

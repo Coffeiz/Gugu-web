@@ -267,10 +267,12 @@ export function normalizeHistoryMessage(message: Record<string, Json | undefined
   for (const value of Array.isArray(rawAttachments) ? rawAttachments : [rawAttachments]) {
     if (!value || typeof value !== 'object' || Array.isArray(value))
       continue
-    const id = value.attach_id || value.id || value.file_id
-    if (!id)
-      continue
-    const ref: Block = { type: 'attachment_ref', attach_id: String(id) }
+    const attachId = value.attach_id
+    const filePath = value.file_path
+    const ref: Block | null = typeof attachId === 'string' && attachId
+      ? { type: 'attachment_ref', attach_id: attachId }
+      : typeof filePath === 'string' && filePath ? { type: 'attachment_ref', file_path: filePath } : null
+    if (!ref) continue
     for (const key of ['kind', 'mime', 'ext', 'title', 'name', 'size_bytes'])
       if (value[key] != null)
         ref[key] = copy(value[key])
@@ -327,7 +329,7 @@ export function isCompactedSummaryMessage(message: CanonicalMessage): boolean {
     text = blocks(message.content).map(block => String(block.text ?? '')).join('\n')
   else
     return false
-  text = text.trim().replace(/^【消息时间】[^\n]*\n【消息正文】\n|^【消息正文】\n/, '').trim()
+  text = text.trim().replace(/^【消息时间】[^\n]*\n【消息正文】\n|^【消息正文】\n|^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?: \/ [^\]\n]+)?\]: /u, '').trim()
   return text.startsWith('<compacted-summary>') && text.endsWith('</compacted-summary>')
 }
 

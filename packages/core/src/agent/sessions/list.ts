@@ -34,6 +34,24 @@ export function projectAgentSessionGoal(state: Record<string, unknown>): {
   return { goalActive: goalStatus === 'active' && truth(state.goal_mode), goalStatus }
 }
 
+export function applyAgentGoalCommand(context: Record<string, unknown>, action: 'status' | 'pause' | 'resume' | 'cancel') {
+  const text = typeof context.goal_text === 'string' ? context.goal_text.trim() : ''
+  if (action === 'status') return { changed: false, text: text
+    ? `当前目标任务（${context.goal_status === 'paused' ? '已暂停' : '进行中'}）：${text}`
+    : '当前会话没有进行中的目标任务。' }
+  if (action === 'pause' && !text) return { changed: false, text: '当前会话没有可暂停的目标任务。' }
+  if (action === 'resume' && !text) return { changed: false, text: '当前会话没有可恢复的目标任务。' }
+  if (action === 'resume') context.goal_status = 'active'
+  else if (action === 'pause') context.goal_status = 'paused'
+  else {
+    delete context.goal_text
+    delete context.goal_status
+  }
+  context.goal_mode = action === 'resume'
+  return { changed: true, text: action === 'resume' ? '目标任务已恢复。'
+    : action === 'pause' ? '目标任务已暂停。发送 /goal resume 可继续。' : '已取消当前目标任务。' }
+}
+
 export function readAgentSessionContext(value: unknown, backend: 'postgres' | 'sqlite'): Record<string, unknown> {
   if (backend === 'sqlite' && typeof value === 'string') {
     try { value = JSON.parse(value) } catch { throw new CoreError('storage_error', '会话上下文数据格式无效') }

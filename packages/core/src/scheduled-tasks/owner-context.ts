@@ -1,5 +1,5 @@
 import { loadContextData } from '../agent/context/prepare.js'
-import { assembleScheduledTaskContext } from '../agent/scenes/task/definition.js'
+import { assembleScheduledTaskContext } from '../agent/scenes/task/index.js'
 import type { ContextSourceSelection, RunIdentity } from '../agent/models.js'
 import type { ContextDataPorts, ContextSourcePorts } from '../agent/ports.js'
 import type { ScheduledTaskExecutionPlan } from './run-now-read.js'
@@ -14,7 +14,7 @@ export function createScheduledTaskContextLoader(options: {
   currentTimeReminder?: boolean
   memoryEnabled: boolean
   identity: RunIdentity
-  task: Pick<ScheduledTaskExecutionPlan, 'id' | 'ownerId' | 'payload' | 'groupScope'>
+  task: Pick<ScheduledTaskExecutionPlan, 'id' | 'ownerId' | 'payload' | 'groupScope'> & Partial<Pick<ScheduledTaskExecutionPlan, 'channels'>>
   model: { modelIdentity: string; contextWindow: number; accessScopeHash: string }
   prompt: string
 }) {
@@ -26,6 +26,8 @@ export function createScheduledTaskContextLoader(options: {
 
   const selection: ContextSourceSelection = {
     modelIdentity, contextWindow, locale: 'zh-CN', groupChat: Boolean(options.task.groupScope), workspaceBinding: null,
+    scene: options.task.groupScope || options.task.channels?.some(channel => ['qq', 'wechat', 'feishu', 'telegram'].includes(channel))
+      ? 'im' : 'default',
     contextPolicy: { loadOwnerContext: !options.task.groupScope, memoryEnabled: options.memoryEnabled && !options.task.groupScope },
   }
   const dataPorts: ContextDataPorts = {

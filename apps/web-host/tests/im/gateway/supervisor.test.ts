@@ -240,3 +240,37 @@ test('唤醒期间读取配置失败，补读成功后仍会更新睡眠前的�
   assert.equal(f.connections.length, 2);
   await f.supervisor.stop();
 });
+
+test('挂起时等旧消费者完成清理，期间的配置通知不会启动连接', async () => {
+  const cleanup = deferred();
+  let notify = () => {};
+  let connects = 0;
+  let signal: AbortSignal | undefined;
+  const supervisor = createGatewaySupervisor({
+    async read() { return [{ key: 'qq:synthetic', revision: '1' }]; },
+    async subscribe(callback) {
+      notify = callback;
+      return { disconnected: new Promise<void>(() => {}), async close() {} };
+    },
+    async connect(_spec, currentSignal) {
+      connects++;
+      signal = currentSignal;
+      return { closed: cleanup.promise, async stop() { await cleanup.promise; } };
+    },
+  });
+
+  await supervisor.start();
+  await supervisor.settled();
+  const paused = supervisor.suspend();
+  assert.equal(signal?.aborted, true);
+  notify();
+  const resumed = supervisor.resume();
+  await flush();
+  assert.equal(connects, 1);
+  cleanup.resolve();
+  await paused;
+  await resumed;
+  assert.equal(connects, 2);
+  assert.equal(signal?.aborted, false);
+  await supervisor.stop();
+});

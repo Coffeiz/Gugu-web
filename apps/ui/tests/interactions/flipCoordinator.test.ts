@@ -208,11 +208,11 @@ describe('FLIP 协调器', () => {
     expect(received).toEqual([120])
   })
 
-  it('不同对象类型使用同值 id 时不会互相覆盖', () => {
+  it('项目编号与文件路径不会互相覆盖', () => {
     const project = document.createElement('div')
     project.dataset.projectId = '12'
     const file = document.createElement('div')
-    file.dataset.fileId = '12'
+    file.dataset.filePath = '/personal/计划.txt'
     const registry = createFlipRetargetRegistry()
     const received: string[] = []
     registry.set(project, () => received.push('project'))

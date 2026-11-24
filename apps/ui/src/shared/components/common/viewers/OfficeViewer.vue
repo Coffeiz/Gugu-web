@@ -4,7 +4,7 @@
     v-if="previewComponent"
     :blob-url="props.blobUrl"
     :ext="props.ext"
-    :file-id="props.fileId"
+    :file-path="props.filePath"
     :file-version="props.fileVersion"
     @content-size="emitContentSize"
     @csv-render-failed="emitCsvRenderFailed"
@@ -21,7 +21,7 @@ import DocxPreview from './office/DocxOfficePreview.vue'
 import SpreadsheetPreview from './office/SpreadsheetOfficePreview.vue'
 import PptxPreview from './office/PptxOfficePreview.vue'
 
-const props = defineProps<{ blobUrl?: string; ext: string; fileId?: number; fileVersion?: number }>()
+const props = defineProps<{ blobUrl?: string; ext: string; filePath?: string; fileVersion?: number }>()
 const emit = defineEmits<{
   (e: 'content-size', width: number, height: number): void
   (e: 'csv-render-failed'): void

@@ -700,13 +700,13 @@ describe('Canonical上下文与Run运行时组合', () => {
           const prefix = stableJson(restoredRequest.area.requestPrefix)
           expect(prefix).toContain('合成实时Shell状态')
           expect(prefix).toContain('合成技能目录')
-          expect(prefix).not.toContain('present_file')
+          expect(prefix).not.toContain('open_item')
           if (request.round === 2 && fail) { yield { type: 'error', error: new Error('合成后续模型故障') }; return }
           if (request.round === 1) yield { type: 'usage', usage: { input: 20, output: 1, cacheRead: 65, cacheWrite: 0, contextInput: 85 } }
           yield { type: 'token', text: request.round === 1 ? '执行中' : '已完成' }
           yield {
             type: 'complete', text: request.round === 1 ? '执行中' : '已完成', calls: request.round === 1
-              ? unavailable ? [{ ...call, name: 'present_file' }] : nativeUnknown ? [call, { ...call, id: 'tool-2' }] : [call] : []
+              ? unavailable ? [{ ...call, name: 'open_item' }] : nativeUnknown ? [call, { ...call, id: 'tool-2' }] : [call] : []
           }
         }
       },
@@ -744,14 +744,14 @@ describe('Canonical上下文与Run运行时组合', () => {
             ownerId: owner.ownerId,
             subject: { kind: 'session', id: owner.sessionId }, workspaceId: 'workspace-1'
           },
-          source: 'telegram', toolNames: ['synthetic_tool', 'shell', 'present_file']
+          source: 'telegram', toolNames: ['synthetic_tool', 'shell', 'open_item']
         }),
         discover: async ({ identity: owner }) => {
           discoveryStarted = true
           await Promise.resolve()
           expect(recallStarted).toBe(true)
           expect(owner.subject).toEqual({ kind: 'session', id: identity.sessionId })
-          return ['synthetic_tool', 'shell', 'present_file'].map(name => ({ name, schema: { type: 'object' } }))
+          return ['synthetic_tool', 'shell', 'open_item'].map(name => ({ name, schema: { type: 'object' } }))
         },
         capabilities: {
           workspaceSupported: true, filterConfigured: async names => names,

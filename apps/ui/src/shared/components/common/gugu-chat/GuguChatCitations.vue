@@ -11,7 +11,9 @@
             </div>
           </div>
         </div>
-        <MarkdownView v-else :html="block.html" :text="text" chat :stream-motion="presenting && !block.smart" :render-math="!presenting && !block.smart" />
+        <MarkdownView v-else :html="block.html" chat
+          :stream-motion="presenting && !block.smart && !block.cards"
+          :render-math="!presenting && !block.smart && !block.cards" />
       </div>
     </div>
   </div>
@@ -80,12 +82,14 @@ const skillHtml = useChatSkillCards(() => eventHtml.value, () => !props.presenti
 const scheduleHtml = useChatScheduleCards(() => skillHtml.value, () => !props.presenting)
 // 裸地址要等换行或回复播完，避免提前请求仍在增长的引用。
 const objectHtml = useChatFileCards(() => scheduleHtml.value,
-  () => props.presenting ? props.text.slice(props.text.lastIndexOf('\n') + 1).trim() : '')
+  () => props.presenting ? props.text.slice(props.text.lastIndexOf('\n') + 1).trim() : '', desktop)
 function showLoadedImage(event: Event) {
   const image = event.target
   if (!(image instanceof HTMLImageElement)) return
   if (image.classList.contains('chat-object-image-preview')) {
     image.classList.toggle('is-portrait', image.naturalHeight > image.naturalWidth)
+    image.classList.add('is-loaded')
+  } else if (image.parentElement?.classList.contains('chat-folder-card-tile')) {
     image.classList.add('is-loaded')
   } else if (image.parentElement?.classList.contains('chat-source-icon')) {
     image.classList.add('is-loaded')
@@ -109,8 +113,8 @@ const decorated = computed(() => {
 
 const blocks = computed(() => {
   const { html } = decorated.value
-  const original: { html: string; smart: boolean; stream?: SmartStreamLayout }[] = [{ html, smart: false }]
-  if (!html.includes('chat-smart-view')) return original
+  const original: { html: string; smart: boolean; cards?: boolean; stream?: SmartStreamLayout }[] = [{ html, smart: false }]
+  if (!html.includes('chat-smart-view') && !html.includes('chat-object-cards')) return original
   const content = document.createElement('template')
   content.innerHTML = html
   const result: typeof original = []
@@ -124,12 +128,16 @@ const blocks = computed(() => {
     if (node instanceof HTMLElement && node.matches('section.chat-smart-view')) {
       flushProse()
       result.push({ html: node.outerHTML, smart: true, stream: readSmartStream(node) })
+    } else if (node instanceof HTMLElement && node.matches('.chat-object-cards')) {
+      // 已生成的对象卡片独立渲染，后续文字增量不会重建卡片及其图片。
+      flushProse()
+      result.push({ html: node.outerHTML, smart: false, cards: true })
     } else {
       prose.content.appendChild(node)
     }
   }
   flushProse()
-  return result.some(block => block.smart) ? result : original
+  return result.some(block => block.smart || block.cards) ? result : original
 })
 
 const messageContent = ref<HTMLElement>()

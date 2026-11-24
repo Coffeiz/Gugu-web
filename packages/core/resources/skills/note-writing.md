@@ -2,7 +2,7 @@
 name: 思维笔记
 description: 用于查找、创建、编辑、恢复普通时间流 Markdown 笔记，并引用文件、项目或活动。
 category: notes
-related_tools: note_search, note_get, note_create, note_update, note_delete, note_restore, note_undo, present_file
+related_tools: note_search, note_get, note_create, note_update, note_delete, note_restore, note_undo, open_item
 emoji: 📝
 ---
 
@@ -22,7 +22,7 @@ emoji: 📝
 
 普通笔记统一使用 Markdown。创建用 `markdown`，追加用 `append_markdown`。标题写在首行 `# 标题`，待办用 `- [ ]` 和 `- [x]`，加粗、列表、引用和围栏代码按 Markdown 书写。
 
-- 引用文件时，先通过文件工具查到目标，调用 `present_file` 并传 `reference_only: true`，使用返回的 `link` 写成 `[文件名](链接)`。工作区使用路径引用，桌面宿主机文件遵循本机授权。不要自己编码引用，也不要填数字文件 ID。桌面回执同时有真实绝对路径 `path` 时，把它原样作为行内代码写在文件引用旁，方便以后读取；点击仍使用 `link`。
+- 引用文件时，先通过文件工具查到目标，调用 `open_item` 并传 `reference_only: true`，使用返回的 `link` 写成 `[文件名](链接)`。工作区使用路径引用，桌面宿主机文件遵循本机授权。不要自己编码引用，也不要填数字文件 ID。桌面回执同时有真实绝对路径 `location.value` 时，把它原样作为行内代码写在文件引用旁，方便以后读取；点击仍使用 `link`。
 - 引用项目或活动时，使用工具确认过的 ID 写成 `[名称](gugu://open-object/project/ID)` 或 `[名称](gugu://open-object/event/ID)`。保存后会显示可点击的引用。
 - 颜色参数只传 `amber`、`coral`、`blue`、`teal` 或 `null`。
 

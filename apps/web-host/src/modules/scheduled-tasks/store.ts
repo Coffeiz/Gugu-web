@@ -15,7 +15,7 @@ type TaskWriteQuery = Pick<PoolClient, 'query'>
 type TaskRow = Record<string, any> & { schedule_kind: string; end_at: Date | null; enabled: boolean }
 
 export interface ResolvedTaskFields {
-  workspace_id: number | null; delivery_targets: unknown; email_attachment_file_ids: number[]; reminder_lead_minutes: number | null
+  workspace_id: number | null; delivery_targets: unknown; email_attachment_file_paths: string[]; reminder_lead_minutes: number | null
 }
 
 export interface TaskWriteOptions {
@@ -53,7 +53,7 @@ function taskWrites(transact: TaskWriteTransaction, options: TaskWriteOptions, c
       try {
         row = await transact(async client => {
           const mode = input.event_id == null ? input.execution_mode ?? 'instruction' : 'reminder'
-          await validateTaskReferences(client, owner, mode === 'reminder' ? null : input.workspace_id ?? null, input.email_attachment_file_ids ?? [])
+          await validateTaskReferences(client, owner, mode === 'reminder' ? null : input.workspace_id ?? null, input.email_attachment_file_paths ?? [])
           if (input.event_id != null) {
             const event = await client.query('SELECT id FROM calendar_events WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR SHARE', [input.event_id, owner])
             if (!event.rowCount) throw new TypeError('绑定的日历事件不存在')
@@ -61,7 +61,7 @@ function taskWrites(transact: TaskWriteTransaction, options: TaskWriteOptions, c
             if (existing.rows[0]) return existing.rows[0]
           }
           const resolved = await options.resolve(client, owner, { ...input, execution_mode: mode }, spec, null)
-          const result = await client.query<TaskRow>(`INSERT INTO scheduled_tasks(user_id,event_id,workspace_id,name,payload,cron,schedule_kind,interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,reminder_lead_minutes,execution_mode,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::json,$14::json,$15::json,$16,$17,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) RETURNING *,${taskPreciseColumns}`, [owner, input.event_id ?? null, resolved.workspace_id, input.name, input.payload || '', spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), normalizeScheduledTaskChannels(input.channels ?? ['web']), input.enabled ?? true, JSON.stringify(resolved.delivery_targets ?? null), JSON.stringify(mode === 'reminder' ? [] : normalizeScheduledTaskTools(input.authorized_tools)), JSON.stringify(resolved.email_attachment_file_ids), resolved.reminder_lead_minutes, mode])
+          const result = await client.query<TaskRow>(`INSERT INTO scheduled_tasks(user_id,event_id,workspace_id,name,payload,cron,schedule_kind,interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_paths,reminder_lead_minutes,execution_mode,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::json,$14::json,$15::json,$16,$17,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) RETURNING *,${taskPreciseColumns}`, [owner, input.event_id ?? null, resolved.workspace_id, input.name, input.payload || '', spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), normalizeScheduledTaskChannels(input.channels ?? ['web']), input.enabled ?? true, JSON.stringify(resolved.delivery_targets ?? null), JSON.stringify(mode === 'reminder' ? [] : normalizeScheduledTaskTools(input.authorized_tools)), JSON.stringify(resolved.email_attachment_file_paths), resolved.reminder_lead_minutes, mode])
           const task = result.rows[0]!
           if (input.event_id != null) await attachReminder(client, owner, undoContextId, Number(input.event_id), task)
           await enqueueScheduledTaskRagRebuild(client, owner, Number(task.id))
@@ -123,7 +123,7 @@ function taskWrites(transact: TaskWriteTransaction, options: TaskWriteOptions, c
         const nextChannels = has('channels') && normalizedPatch.channels != null ? normalizeScheduledTaskChannels(normalizedPatch.channels) : current.channels
         const nextTools = mode === 'reminder' ? [] : has('authorized_tools') && normalizedPatch.authorized_tools != null ? normalizeScheduledTaskTools(normalizedPatch.authorized_tools)
           : has('payload') && normalizedPatch.payload != null || scheduleKeys.some(has) || has('channels') && normalizedPatch.channels != null ? [] : current.authorized_tools
-        const result = await client.query<TaskRow>(`UPDATE scheduled_tasks SET name=$3,payload=$4,cron=$5,schedule_kind=$6,interval_minutes=$7,start_at=CASE WHEN $17::boolean THEN $8::timestamptz ELSE start_at END,end_at=CASE WHEN $17::boolean THEN $9::timestamptz ELSE end_at END,channels=$10,enabled=$11,workspace_id=$12,delivery_targets=$13::json,authorized_tools=$14::json,email_attachment_file_ids=$15::json,reminder_lead_minutes=$16,execution_mode=$18,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND user_id=$2 RETURNING *,${taskPreciseColumns}`, [taskId, owner, normalizedPatch.name ?? current.name, normalizedPatch.payload ?? current.payload, spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), nextChannels, normalizedPatch.enabled ?? current.enabled, resolvedFields.workspace_id, JSON.stringify(resolvedFields.delivery_targets ?? null), JSON.stringify(nextTools ?? []), JSON.stringify(resolvedFields.email_attachment_file_ids), resolvedFields.reminder_lead_minutes, scheduleChanged, mode])
+        const result = await client.query<TaskRow>(`UPDATE scheduled_tasks SET name=$3,payload=$4,cron=$5,schedule_kind=$6,interval_minutes=$7,start_at=CASE WHEN $17::boolean THEN $8::timestamptz ELSE start_at END,end_at=CASE WHEN $17::boolean THEN $9::timestamptz ELSE end_at END,channels=$10,enabled=$11,workspace_id=$12,delivery_targets=$13::json,authorized_tools=$14::json,email_attachment_file_paths=$15::json,reminder_lead_minutes=$16,execution_mode=$18,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND user_id=$2 RETURNING *,${taskPreciseColumns}`, [taskId, owner, normalizedPatch.name ?? current.name, normalizedPatch.payload ?? current.payload, spec.cron, spec.schedule_kind, spec.interval_minutes, scheduleTimestamp(spec.start_at), scheduleTimestamp(spec.end_at), nextChannels, normalizedPatch.enabled ?? current.enabled, resolvedFields.workspace_id, JSON.stringify(resolvedFields.delivery_targets ?? null), JSON.stringify(nextTools ?? []), JSON.stringify(resolvedFields.email_attachment_file_paths), resolvedFields.reminder_lead_minutes, scheduleChanged, mode])
         await enqueueScheduledTaskRagRebuild(client, owner, taskId)
         return result.rows[0]!
       })
@@ -164,29 +164,34 @@ export interface TaskExternalResolution {
 
 const has = (row: object, key: string) => Object.prototype.hasOwnProperty.call(row, key)
 
-export async function validateTaskReferences(client: ResolverQuery, owner: string, workspace: unknown, attachments: unknown): Promise<number[]> {
+export async function validateTaskReferences(client: ResolverQuery, owner: string, workspace: unknown, attachments: unknown): Promise<string[]> {
   if (workspace != null) {
     if (!Number.isSafeInteger(workspace) || Number(workspace) < 1) throw new ScheduledTaskReferenceError('工作区不存在或已停用')
     const result = await client.query('SELECT id FROM workspaces WHERE id=$1 AND user_id=$2 AND enabled=TRUE', [workspace, owner])
     if (!result.rowCount) throw new ScheduledTaskReferenceError('工作区不存在或已停用')
   }
-  if (!Array.isArray(attachments) || attachments.length > 5 || attachments.some(id => !Number.isSafeInteger(id) || id <= 0))
-    throw new ScheduledTaskReferenceError('file_ids 只能包含正整数 file_id，附件最多 5 个')
-  const ids: number[] = [...new Set(attachments)]
-  if (ids.length) {
-    const files = await client.query('SELECT id FROM files WHERE user_id=$1 AND id=ANY($2::int[]) AND deleted_at IS NULL', [owner, ids])
-    if (files.rowCount !== ids.length) throw new ScheduledTaskReferenceError('定时任务附件不存在、已删除或不属于当前用户')
+  if (!Array.isArray(attachments) || attachments.length > 5 || attachments.some(path => typeof path !== 'string' || !path.startsWith('/')))
+    throw new ScheduledTaskReferenceError('附件路径无效，最多 5 个')
+  const paths: string[] = [...new Set(attachments)]
+  for (const path of paths) {
+    const files = await client.query(`SELECT 1 FROM files WHERE user_id=$1 AND deleted_at IS NULL AND
+      CASE split_part(path,'/',2)
+        WHEN '个人文件' THEN '/personal/' || substring(path FROM length($1 || '/个人文件/')+1)
+        WHEN '项目文件' THEN '/project/' || substring(path FROM length($1 || '/项目文件/')+1)
+        WHEN 'workspace' THEN '/workspace/' || substring(path FROM length($1 || '/workspace/')+1)
+        ELSE '' END = $2 LIMIT 1`, [owner, path])
+    if (!files.rowCount) throw new ScheduledTaskReferenceError('定时任务附件不存在、已删除或不属于当前用户')
   }
-  return ids
+  return paths
 }
 
 export function createPostgresTaskResolver(external: TaskExternalResolution) {
   return async (client: ResolverQuery, owner: string, input: Record<string, unknown>, spec: ScheduleSpec, previous: ResolveRow | null): Promise<ResolvedTaskFields> => {
     const workspace = input.execution_mode === 'reminder' ? null : has(input, 'workspace_id') ? input.workspace_id : previous?.workspace_id ?? null
-    const attachments = has(input, 'email_attachment_file_ids') ? input.email_attachment_file_ids ?? [] : previous?.email_attachment_file_ids ?? []
-    const ids = await validateTaskReferences(client, owner,
+    const attachments = has(input, 'email_attachment_file_paths') ? input.email_attachment_file_paths ?? [] : previous?.email_attachment_file_paths ?? []
+    const paths = await validateTaskReferences(client, owner,
       !previous || has(input, 'workspace_id') ? workspace : null,
-      !previous || has(input, 'email_attachment_file_ids') ? attachments : [])
+      !previous || has(input, 'email_attachment_file_paths') ? attachments : [])
     if (previous && (input.enabled === false || input.execution_mode === 'reminder') && previous.event_id == null && previous.filesystem_authorization_grant_id != null)
       await external.revokeFilesystem(client, owner, previous)
     const delivery = !previous || input.channels != null || has(input, 'qq_delivery') || has(input, 'im_delivery')
@@ -205,7 +210,7 @@ export function createPostgresTaskResolver(external: TaskExternalResolution) {
       const minutes = Number(BigInt(base) * 1000n - fireWall) / 60_000_000, floor = Math.floor(minutes)
       lead = minutes - floor === 0.5 ? (floor % 2 === 0 ? floor : floor + 1) : Math.round(minutes)
     }
-    return { workspace_id: workspace as number | null, delivery_targets: delivery, email_attachment_file_ids: !previous || has(input, 'email_attachment_file_ids') ? ids : attachments, reminder_lead_minutes: lead }
+    return { workspace_id: workspace as number | null, delivery_targets: delivery, email_attachment_file_paths: !previous || has(input, 'email_attachment_file_paths') ? paths : attachments, reminder_lead_minutes: lead }
   }
 }
 

@@ -1,60 +1,62 @@
+import { sceneAllowsTool } from '../../../src/agent/scenes/index.js'
 import { describe, expect, it, vi } from 'vitest'
-import { canUseTool, filterToolNames, type ToolPermissionContext } from '../../../src/agent/tools/permissions.js'
+import { desktopImGroupToolAllowed, imCanUseTool, imUnavailableTool } from '../../../src/agent/scenes/im/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
+import type { ImActor } from '../../../src/im/access.js'
 import type { ToolDefinition, ToolScope } from '../../../src/agent/tools/contracts.js'
 
-const web: ToolPermissionContext = { allowedToolNames: null, imRole: null, platform: null, chatType: null, currentIm: null }
-const member: ToolPermissionContext = { allowedToolNames: [], imRole: 'member', platform: 'qq', chatType: 'group', currentIm: { chatType: 'group', groupAutoReply: false } }
+type Actor = Parameters<typeof imCanUseTool>[0]
+const member: Actor = { allowedToolNames: [], role: 'member', platform: 'qq', chatType: 'group', verifiedOwner: false }
 
-describe('Python 工具发现与派发权限规则', () => {
-  it('发现按白名单顺序过滤，空白名单只追加系统中存在的安全时间工具', () => {
-    const system = ['files', 'get_current_time', 'web_search']
-    expect(filterToolNames(system, null)).toEqual(system)
-    expect(filterToolNames(system, ['web_search', 'missing', 'web_search'])).toEqual(['web_search', 'web_search', 'get_current_time'])
-    expect(filterToolNames(system, [])).toEqual(['get_current_time'])
-    expect(filterToolNames(['files'], [])).toEqual([])
-  })
-  it('空白名单、固定工具和技能管理角色遵循派发规则', () => {
-    expect(canUseTool('files', web)).toBe(true)
-    expect(canUseTool('files', member)).toBe(false)
-    for (const name of ['get_current_time', 'call_tool', 'search_tools', 'use_skill', 'ask_user']) expect(canUseTool(name, member)).toBe(true)
+describe('工具发现与派发权限规则', () => {
+  it('空白名单保留固定入口，技能管理只向已验证的私聊 owner 开放', () => {
+    for (const name of ['get_current_time', 'call_tool', 'search_tools', 'use_skill', 'ask_user'])
+      expect(imCanUseTool(member, name)).toBe(true)
     for (const name of ['list_skills', 'create_skill', 'update_skill', 'delete_skill']) {
-      expect(canUseTool(name, web)).toBe(true)
-      expect(canUseTool(name, { ...member, imRole: 'owner' })).toBe(true)
-      expect(canUseTool(name, member)).toBe(false)
-      expect(canUseTool(name, { ...member, imRole: 'unknown', allowedToolNames: [name] })).toBe(false)
+      const owner = { ...member, role: 'owner' as const, verifiedOwner: true }
+      expect(imCanUseTool({ ...owner, chatType: 'c2c' }, name)).toBe(true)
+      expect(imCanUseTool(owner, name)).toBe(false)
+      expect(imCanUseTool({ ...member, allowedToolNames: [name] }, name)).toBe(false)
+      expect(imCanUseTool({ ...owner, chatType: 'c2c', verifiedOwner: false }, name)).toBe(false)
     }
   })
-  it('present_file 仅开放 Web 与桌面端，不开放 IM 平台', () => {
-    expect(canUseTool('present_file', { ...web, allowedToolNames: ['present_file'] })).toBe(true)
-    expect(canUseTool('present_file', { ...web, allowedToolNames: ['present_file'], platform: 'desktop' })).toBe(true)
-    expect(canUseTool('present_file', { ...member, allowedToolNames: ['present_file'] })).toBe(false)
+  it('限制 IM 界面工具和原生回复控制，未知平台拒绝工具', () => {
+    expect(sceneAllowsTool('default', 'open_item')).toBe(true)
+    expect(imCanUseTool({ ...member, allowedToolNames: ['open_item'] }, 'open_item')).toBe(false)
+    expect(sceneAllowsTool('im', 'send_item', 'app_card')).toBe(false)
+    expect(sceneAllowsTool('im', 'send_item', 'native')).toBe(true)
+    for (const platform of ['qq', 'telegram', 'feishu', 'wechat'] as const)
+      expect(imCanUseTool({ ...member, platform }, 'send_link_buttons')).toBe(false)
+    expect(imCanUseTool({ ...member, platform: 'other' as ImActor['platform'] }, 'get_current_time')).toBe(false)
+    expect(imCanUseTool(member, 'choose_no_reply')).toBe(false)
+    expect(imCanUseTool(member, 'choose_no_reply', true)).toBe(true)
+    expect(imCanUseTool({ ...member, chatType: 'c2c' }, 'choose_no_reply', true)).toBe(false)
   })
-  it('平台和群自动回复特例优先于普通白名单', () => {
-    expect(canUseTool('present_file', { ...member, allowedToolNames: ['present_file'] })).toBe(false)
-    expect(canUseTool('present_file', web)).toBe(true)
-    for (const platform of ['qq', 'telegram', 'feishu', 'wechat']) expect(canUseTool('send_link_buttons', { ...member, platform })).toBe(true)
-    expect(canUseTool('send_link_buttons', { ...member, platform: 'other' })).toBe(false)
-    expect(canUseTool('send_link_buttons', { ...member, chatType: 'private' })).toBe(false)
-    expect(canUseTool('choose_no_reply', web)).toBe(false)
-    expect(canUseTool('choose_no_reply', { ...member, allowedToolNames: null })).toBe(false)
-    expect(canUseTool('choose_no_reply', { ...member, currentIm: { chatType: 'group', groupAutoReply: true } })).toBe(true)
-    expect(canUseTool('choose_no_reply', { ...member, currentIm: { chatType: 'private', groupAutoReply: true } })).toBe(false)
+  it('桌面群聊区分已验证 owner、群设置和固定入口', () => {
+    expect(desktopImGroupToolAllowed('qq', true, [], 'web_search')).toBe(true)
+    expect(desktopImGroupToolAllowed('qq', true, [], 'list_projects')).toBe(false)
+    expect(desktopImGroupToolAllowed('qq', true, [], 'canvas_focus_node')).toBe(false)
+    expect(desktopImGroupToolAllowed('qq', false, [], 'web_search')).toBe(false)
+    expect(desktopImGroupToolAllowed('qq', false, ['web_search'], 'web_search')).toBe(true)
+    expect(desktopImGroupToolAllowed('qq', false, [], 'call_tool')).toBe(true)
+    expect(desktopImGroupToolAllowed('qq', false, [], 'use_skill')).toBe(true)
+    expect(desktopImGroupToolAllowed('qq', false, [], 'create_scheduled_task')).toBe(false)
   })
-  it('缺少可信上下文字段时拒绝，而不是隐式当作 Web 放行', () => {
-    expect(() => canUseTool('files', {} as ToolPermissionContext)).toThrow()
-    expect(() => filterToolNames(['files'], undefined as never)).toThrow()
+  it('IM 拒绝结果区分场景限制、未授权工具和未知工具', () => {
+    expect(imUnavailableTool('open_item').error_code).toBe('tool_unsupported_in_scene')
+    expect(imUnavailableTool('list_projects').error_code).toBe('tool_not_allowed')
+    expect(imUnavailableTool('synthetic_unknown_tool').error_code).toBe('tool_not_found')
   })
   it('注册器发现后白名单撤销会阻止真实派发及副作用', async () => {
     const execute = vi.fn<ToolDefinition['execute']>().mockResolvedValue({ kind: 'completed', successful: true, mutated: false, value: '完成' })
-    const tool: ToolDefinition = { definition: { name: 'files', schema: { type: 'function', function: { name: 'files', parameters: { type: 'object', properties: {} } } } }, effect: 'read', validate: input => ({ success: true, data: input }), execute }
-    let policy: ToolPermissionContext = { ...member, allowedToolNames: ['files'] }
-    const registry = createToolRegistry({ tools: [tool], authorize: async () => canUseTool('files', policy) })
+    const tool: ToolDefinition = { definition: { name: 'group_context_search', schema: { type: 'function', function: { name: 'group_context_search', parameters: { type: 'object', properties: {} } } } }, effect: 'read', validate: input => ({ success: true, data: input }), execute }
+    let policy: Actor = { ...member, allowedToolNames: ['group_context_search'] }
+    const registry = createToolRegistry({ tools: [tool], authorize: async () => imCanUseTool(policy, 'group_context_search') })
     const identity = { ownerId: 'owner', sessionId: '1', runId: 'run' }
     const scope: ToolScope = { identity, roundId: 'round', signal: new AbortController().signal, execute: vi.fn(), resolution: null }
     expect(await registry.capabilities(identity)).toHaveLength(1)
     policy = { ...policy, allowedToolNames: [] }
-    expect(await registry.tools.dispatch({ id: 'call', name: 'files', input: {} }, scope)).toMatchObject({ successful: false, executed: false })
+    expect(await registry.tools.dispatch({ id: 'call', name: 'group_context_search', input: {} }, scope)).toMatchObject({ successful: false, executed: false })
     expect(execute).not.toHaveBeenCalled()
   })
 })

@@ -100,3 +100,17 @@ it('另一owner不能用本工具写入；请求取消时不留下收据或事�
   expect((await sql`SELECT id FROM calendar_events`.execute(core.db)).rows).toHaveLength(0)
   expect((await sql`SELECT operation_id FROM core_operation_receipts`.execute(core.db)).rows).toHaveLength(0)
 })
+
+it('全天与定时约束在工具回执中指出要补齐或移除的时间字段', async () => {
+  const tools = registry()
+  const base = { title: '评审', date: '2026-12-12' }
+  expect(await tools.tools.dispatch(call({ ...base, all_day: false }, 'missing-time'), scope()))
+    .toMatchObject({ successful: false, value: { issues: [
+      { path: 'time', rule: 'required', message: 'all_day=false 时必须提供开始时间 time。' },
+    ] } })
+  expect(await tools.tools.dispatch(call({ ...base, all_day: true, time: '09:00', end_time: '10:00' }, 'all-day-times'), scope()))
+    .toMatchObject({ successful: false, value: { issues: [
+      { path: 'end_time', rule: 'forbidden', message: 'all_day=true 时请移除 end_time。' },
+      { path: 'time', rule: 'forbidden', message: 'all_day=true 时请移除 time。' },
+    ] } })
+})

@@ -1,15 +1,14 @@
 <template>
   <div class="brand" :class="`brand--${variant}`">
-    <div class="brand-mark" aria-hidden="true">
-      <span class="brand-mark-mask" :class="{ 'brand-mark-mask--auth': variant === 'auth' }" />
+    <div v-if="variant !== 'sidebar'" class="brand-mark" aria-hidden="true">
+      <span class="brand-mark-mask" />
     </div>
     <div class="brand-content">
       <span
         class="brand-wordmark-mask"
         :class="{ 'brand-wordmark-mask--auth': variant === 'auth' }"
-        :aria-hidden="variant !== 'auth'"
-        :role="variant === 'auth' ? 'img' : undefined"
-        :aria-label="variant === 'auth' ? t('chatUi.gugu') : undefined"
+        role="img"
+        :aria-label="t('chatUi.gugu')"
       />
       <span v-if="subtitle" class="brand-subtitle">{{ subtitle }}</span>
     </div>
@@ -61,25 +60,20 @@ withDefaults(defineProps<{
 .brand-mark-mask {
   width: 100%;
   height: 100%;
-  -webkit-mask-image: url('/logo-small.png');
-  mask-image: url('/logo-small.png');
-}
-
-.brand-mark-mask--auth {
-  -webkit-mask-image: url('/logo-large2.png');
-  mask-image: url('/logo-large2.png');
+  -webkit-mask-image: url('/brand/bird-solid.svg');
+  mask-image: url('/brand/bird-solid.svg');
 }
 
 .brand-wordmark-mask {
   width: 100%;
   height: 100%;
-  -webkit-mask-image: url('/logo-text.png');
-  mask-image: url('/logo-text.png');
+  -webkit-mask-image: url('/brand/wordmark.svg');
+  mask-image: url('/brand/wordmark.svg');
 }
 
 .brand-wordmark-mask--auth {
-  -webkit-mask-image: url('/logo-text2.png');
-  mask-image: url('/logo-text2.png');
+  -webkit-mask-image: url('/brand/wordmark-login.svg');
+  mask-image: url('/brand/wordmark-login.svg');
 }
 
 .brand-content {
@@ -140,12 +134,6 @@ withDefaults(defineProps<{
   gap: 4px;
   padding: 0 8px;
   margin-bottom: 10px;
-}
-
-.brand--sidebar .brand-mark,
-.brand--sidebar .brand-mark-mask {
-  width: 30px;
-  height: 30px;
 }
 
 .brand--sidebar .brand-wordmark,

@@ -137,8 +137,8 @@ const columns = [
   width: 42px;
   height: 23px;
   background: currentColor;
-  -webkit-mask: url('/logo-text.png') center / contain no-repeat;
-  mask: url('/logo-text.png') center / contain no-repeat;
+  -webkit-mask: url('/brand/wordmark.svg') center / contain no-repeat;
+  mask: url('/brand/wordmark.svg') center / contain no-repeat;
 }
 
 .preview-nav { display: grid; gap: var(--space-xs); }

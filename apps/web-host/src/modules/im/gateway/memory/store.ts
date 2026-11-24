@@ -2,8 +2,8 @@ import { sessionSnapshotContextSql } from '../../../agent/context/effects.js'
 import { createHash, createHmac, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { ProviderWire } from '@gugu/core/providers'
-import { MessageArea, compactContext, stableJson, projectManualHistoryCompaction,
-  updateBaselineSnapshot, loadSessionHistory, restoreHistoryForRequest, formatAgentHistoryMessageTime, type CompactionPort, type RunIdentity, type SessionSnapshotState } from '@gugu/core/agent'
+import { stableJson, projectManualHistoryCompaction, selectHistoryCompactionPrefix, summarizeHistoryPrefix,
+  updateBaselineSnapshot, type CompactionPort, type RunIdentity, type SessionSnapshotState } from '@gugu/core/agent'
 import type { ImPreflightScope } from '@gugu/gateway'
 import { resolveImAccess } from '@gugu/core/im/access'
 import { withPostgresTransaction } from '../../../../adapters/database/postgres-transaction.js'
@@ -11,7 +11,6 @@ import { normalizeOwnerId } from '../../../../shared/owner-context.js'
 import { enqueuePostgresAgentRagRebuild } from '../../../agent/rag/jobs.js'
 import { createPostgresImAccess } from '../inbound/access.js'
 import { imSessionScopeSql } from '../agent/conversations.js'
-import { createPostgresCanonicalHistoryReader } from '../../../agent/chat/canonical.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 export class ImCompactError extends Error { constructor() { super('IM 会话整理暂不可用'); this.name = 'ImCompactError' } }
@@ -20,10 +19,8 @@ export const imCompactReply = (state: State): string => state === 'compacted' ? 
   : state === 'not_needed' ? '当前历史还不够长，暂时无需整理上下文。'
     : state === 'no_session' ? '当前还没有可压缩的对话。' : state === 'busy' ? '当前会话仍在处理中，请结束后再整理上下文。'
       : state === 'denied' ? '只有绑定 Bot 的用户可以执行会读取个人数据或修改账号、会话状态的命令。' : '这次压缩没有完成，请稍后再试。'
-interface HistoryRow { id: string; role: string; content: string; content_json: unknown; effective: string }
+type HistoryRow = Parameters<typeof projectManualHistoryCompaction>[1][number]
 export interface ImCompactRuntime {
-  modelIdentity: string
-  timezone: string
   compaction: CompactionPort<ProviderWire>
   close(): Promise<void>
   /** 与摘要/baseline同事务记入实际Provider用量，不能借一次普通Run的账本。 */
@@ -117,21 +114,23 @@ export function createPostgresImCompact(options: {
         WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND token=$4 AND fence=$5 AND expires_at>clock_timestamp() RETURNING fence`,[...args,ttl]);if(result.rowCount!==1)throw new ImCompactError()}).catch(()=>{controller.abort(new ImCompactError())})},Math.max(100,Math.floor(ttl/3)));timer.unref?.()
       try{
         const session=claim.session
-        const rows=(await options.pool.query<HistoryRow>(`SELECT id::text,role,content,content_json,coalesce(history_anchor_seq,conversation_seq)::text AS effective FROM conversation_messages
-          WHERE session_id=$1 AND (role='summary' OR coalesce(history_anchor_seq,conversation_seq)>$2)
-          AND (run_id IS NULL OR run_id NOT LIKE 'im-pending:%') ORDER BY CASE WHEN role='summary' THEN 0 ELSE 1 END,coalesce(history_anchor_seq,conversation_seq),(history_anchor_seq IS NULL),conversation_seq`,[receipt.session_id,session.baseline_message_seq])).rows
+        async function readHistory(client: Pick<Pool, 'query'> | PoolClient) {
+          return (await client.query<HistoryRow>(`SELECT id::text,role,content,content_json,coalesce(history_anchor_seq,conversation_seq)::text AS effective,
+            run_id AS "runId",round_id AS "roundId",canonical_batch_id::text AS "canonicalBatchId",covers_until_seq::text AS "coversUntilSeq"
+            FROM conversation_messages WHERE session_id=$1 AND (role='summary' OR coalesce(history_anchor_seq,conversation_seq)>$2)
+            AND EXISTS (SELECT 1 FROM conversation_sessions WHERE id=$1 AND user_id=$3)
+            AND (run_id IS NULL OR run_id NOT LIKE 'im-pending:%')
+            AND NOT (role='assistant' AND canonical_batch_id IS NULL AND display_timeline IS NOT NULL
+              AND btrim(coalesce(content,''))='' AND content_json IS NULL
+              AND (files IS NULL OR files='[]'::jsonb) AND coalesce(quoted_text,'')='')
+            ORDER BY coalesce(history_anchor_seq,conversation_seq),(history_anchor_seq IS NULL),conversation_seq`,
+          [receipt.session_id,session.baseline_message_seq,scope.ownerId])).rows
+        }
+        const rows=await readHistory(options.pool)
+        const plan=selectHistoryCompactionPrefix(rows,Number(session.baseline_message_seq))
         if(!await current())throw new ImCompactError()
         runtime=await options.runtime({identity,scope,authorize:current,signal:controller.signal})
-        const history=await loadSessionHistory(identity,createPostgresCanonicalHistoryReader(options.pool),controller.signal,{loadImages:false})
-        if(history.effectiveBaselineSeq!==Number(session.baseline_message_seq))throw new ImCompactError()
-        const timezone=runtime.timezone
-        const messages=history.rows.flatMap(row=>{
-          const value=restoreHistoryForRequest(row,{groupChat:scope.chatType==='group',userTimezone:timezone,
-            formatMessageTime:formatAgentHistoryMessageTime})
-          return value?[value]:[]
-        })
-        const area=new MessageArea({digest,nextId:randomUUID},messages)
-        const result=await compactContext(area,runtime.compaction,{modelIdentity:runtime.modelIdentity,signal:controller.signal})
+        const candidate=plan?await summarizeHistoryPrefix(plan,runtime.compaction,controller.signal):''
         if(!await current())throw new ImCompactError()
         const state=await tx(async client=>{
           const fresh=(await client.query('SELECT * FROM conversation_sessions WHERE user_id=$1 AND id=$2 FOR UPDATE',[scope.ownerId,receipt.session_id])).rows[0]
@@ -141,9 +140,8 @@ export function createPostgresImCompact(options: {
             ||stableJson([fresh.source,fresh.bot_id,fresh.chat_type,fresh.chat_id,fresh.platform_user_id])!==stableJson([session.source,session.bot_id,session.chat_type,session.chat_id,session.platform_user_id])
             ||!Number.isSafeInteger(Number(fresh.last_message_seq)+1))throw new ImCompactError()
           let state:State='not_needed'
-          if(result.changed){
-            const actual=(await client.query<HistoryRow>(`SELECT id::text,role,content,content_json,coalesce(history_anchor_seq,conversation_seq)::text AS effective FROM conversation_messages WHERE session_id=$1 AND role<>'summary' AND coalesce(history_anchor_seq,conversation_seq)>$2 AND (run_id IS NULL OR run_id NOT LIKE 'im-pending:%') ORDER BY coalesce(history_anchor_seq,conversation_seq),(history_anchor_seq IS NULL),conversation_seq`,[receipt.session_id,session.baseline_message_seq])).rows
-            const { baseline, summary: text, hash } = projectManualHistoryCompaction(result, rows, actual, Number(session.baseline_message_seq))!
+          if(candidate){
+            const { baseline, summary: text, hash } = projectManualHistoryCompaction(candidate, rows, await readHistory(client), Number(session.baseline_message_seq))
             if(!Number.isSafeInteger(Number(fresh.last_message_seq))||Number(fresh.last_message_seq)<0||!Number.isSafeInteger(Number(fresh.last_message_seq)+1))throw new ImCompactError()
             // 旧Web/IM会话可以没有snapshot；有snapshot时沿正式更新契约，无snapshot仍保持待真实重建。
             const original:SessionSnapshotState={ownerId:scope.ownerId,sessionId:identity.sessionId,context:session.session_context,contextEpoch:session.context_epoch,snapshotHash:session.snapshot_hash,sessionInfoHash:session.session_info_hash,snapshotExpiresAt:session.snapshot_expires_at?new Date(session.snapshot_expires_at).getTime():null,baselineMessageSeq:Number(session.baseline_message_seq)}

@@ -1,3 +1,4 @@
+import { resolveImToolLabel } from '@gugu/core/im/run-delivery';
 import { formatImToolReceipt } from '../../ir/tool-receipt.js';
 import { buildFeishuCardElements } from './sender.js';
 const clip = (text, size) => [...text].slice(0, size).join('');
@@ -214,7 +215,7 @@ export class FeishuPresentation {
         return this.elements().flatMap(element => element.tag === 'markdown' ? [String(element.content ?? '')]
             : element.tag === 'collapsible_panel' && Array.isArray(element.elements) ? element.elements.map(child => child && typeof child === 'object' ? String(child.content ?? '') : '') : []).filter(Boolean).join('\n\n');
     }
-    label(event) { return clip(this.policy.sanitize((event.label || event.name || '工具').trim().replace(/\s+/g, ' ')), 80); }
+    label(event) { return clip(this.policy.sanitize((event.label?.trim() || resolveImToolLabel(event.name, event.display, undefined, this.policy.locale)).replace(/\s+/g, ' ')), 80); }
     detail(value) {
         if (typeof value === 'string') {
             try {
@@ -237,7 +238,7 @@ export class FeishuPresentation {
     }
     entry(event) {
         if (!this.policy.includeDetails)
-            return formatImToolReceipt(event, this.policy.sanitize);
+            return formatImToolReceipt(event, this.policy.sanitize, this.policy.locale);
         const status = event.status ?? '', label = this.label(event), done = event.type === 'tool_done';
         const [icon, state] = done ? ({ success: ['✅', '已完成'], ok: ['✅', '已完成'], waiting: ['⏸️', '等待确认'], cancelled: ['⏹️', '已停止'] }[status] ?? ['⚠️', '未完成'])
             : ({ queued: ['⏳', '排队中'], running: ['⏳', '执行中'], invalid: ['⚠️', '未执行'], cancelled: ['⏹️', '已停止'] }[status] ?? ['⏳', '执行中']);

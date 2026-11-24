@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readSessionSnapshot, type ContextData, type ContextSourceSelection, type SnapshotPayload } from '@gugu/core/agent'
 import { resolveImActor } from '@gugu/core/im/access'
-import { createImAgentContextBuilder } from '../../../../src/modules/im/gateway/agent/context.js'
+import { createImAgentContextBuilder } from '@gugu/core/agent/scenes/im'
 
 const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }
 /** buildRequest消费持久快照投影，不能把尚未写入的SnapshotPayload冒充完整请求契约。 */
@@ -17,7 +17,7 @@ function fixture(group = true, role: 'member' | 'owner' = 'member') {
     chatId: group ? '-9' : null, platformUserId: 'sender-a', botMentioned: true, mentionsOtherBot: false },
   () => ({ role, allowedToolNames: role === 'owner' ? null : [] }))
   const selection: ContextSourceSelection = { modelIdentity: 'model-a', contextWindow: 10_000, locale: 'zh-CN', groupChat: group,
-    workspaceBinding: null, contextScopeKey: 'scope-a', contextPolicy: { loadOwnerContext: role === 'owner', memoryEnabled: true } }
+    workspaceBinding: null, contextScopeKey: 'scope-a', contextPolicy: { loadOwnerContext: !group && role === 'owner', memoryEnabled: true } }
   const data: ContextData = { userTimezone: 'UTC', projects: ['owner-project'], events: ['owner-calendar'], notes: ['owner-note'],
     filesOverview: { marker: 'owner-file' }, stylePreferences: { marker: 'owner-style' }, memory: { marker: 'owner-memory' },
     imChannels: { feishu: true }, knowledge: ['owner-knowledge'], imMemory: {

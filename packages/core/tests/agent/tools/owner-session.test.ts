@@ -1,7 +1,7 @@
 import {describe,it,expect} from 'vitest'
 import {createImOwnerSessionBindTool,type ImOwnerSessionBindInput} from '../../../src/agent/tools/conversations.js'
 import {createToolRegistry} from '../../../src/agent/tools/registry.js'
-import {canUseTool} from '../../../src/agent/tools/permissions.js'
+import {imCanUseTool} from '../../../src/agent/scenes/im/index.js'
 const identity={ownerId:'synthetic-owner',sessionId:'1',runId:'synthetic-run'},signal=new AbortController().signal
 describe('owner私聊显式绑定网页会话',()=>{
  it('参数只包含正整数目标会话，拒绝模型指定owner/平台和多余权限字段',()=>{
@@ -22,10 +22,13 @@ describe('owner私聊显式绑定网页会话',()=>{
   expect(await tool.reconcile!(call.input,{...identity,roundId:'round'},call)).toMatchObject({successful:true})
   expect(recoveries).toMatchObject([{identity,roundId:'round',toolCallId:'call',sessionId:3}])
  })
- it('即使白名单包含工具，Web/群/成员/未知平台仍拒绝，取消不执行端口',async()=>{
-  for(const platform of ['qq','telegram','feishu','wechat',null,'other'])for(const imRole of ['owner','member',null])for(const chatType of ['c2c','group',null]){
-   expect(canUseTool('bind_web_session',{platform,imRole,chatType,allowedToolNames:['bind_web_session'],currentIm:null})).toBe(platform!==null&&platform!=='other'&&imRole==='owner'&&chatType==='c2c')
-  }
+ it('即使白名单包含工具，群聊和未验证身份仍拒绝，取消不执行端口',async()=>{
+  for(const platform of ['qq','telegram','feishu','wechat'] as const)
+   for(const role of ['owner','member','unknown'] as const)
+    for(const chatType of ['c2c','group'] as const){
+     const verifiedOwner=role==='owner'
+     expect(imCanUseTool({platform,role,chatType,verifiedOwner,allowedToolNames:['bind_web_session']},'bind_web_session')).toBe(verifiedOwner&&chatType==='c2c')
+    }
   const tool=createImOwnerSessionBindTool({async bind(){throw Error('取消后不调用')},async recover(){return 'unknown'}})
   await expect(tool.execute({session_id:3},{identity,roundId:'round',signal:AbortSignal.abort(),resolution:null,execute:async()=>{throw Error('不执行')}},{id:'call',name:'bind_web_session',input:{session_id:3}})).rejects.toThrow()
  })

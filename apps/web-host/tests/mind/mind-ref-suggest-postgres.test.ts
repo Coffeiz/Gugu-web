@@ -13,8 +13,6 @@ test('recent suggestions return owner-scoped resource categories in Python order
     async query(sql: string, values?: unknown[]) {
       calls.push({ sql, values })
       if (sql.includes('FROM projects')) return { rows: [{ id: 1, name: '项目', client: '小北' }] }
-      if (sql.includes('FROM files')) return { rows: [{ id: 2, display_name: '计划', ext: 'md', space: 'mind' }] }
-      if (sql.includes('FROM folders')) return { rows: [{ id: 3, name: '资料夹' }] }
       if (sql.includes('FROM calendar_events')) return { rows: [{ id: 4, title: '评审', date: '2026-11-14' }] }
       if (sql.includes('JOIN mind_canvas_items')) return { rows: [{ id: 5, title: null, canvas_id: '6' }] }
       if (sql.includes('FROM user_skills')) return { rows: [{ id: 7, name: '写作', skill_id: 'write' }] }
@@ -31,15 +29,13 @@ test('recent suggestions return owner-scoped resource categories in Python order
 
   assert.deepEqual(result, [
     { type: 'project', id: 1, label: '项目', subtitle: '小北' },
-    { type: 'file', id: 2, label: '计划.md', subtitle: 'mind' },
-    { type: 'folder', id: 3, label: '资料夹', subtitle: null },
     { type: 'event', id: 4, label: '评审', subtitle: '2026-11-14' },
     { type: 'canvas_note', id: 5, label: '无标题画布便签', subtitle: '画布 6' },
     { type: 'skill', id: 7, label: '写作', subtitle: 'write' },
     { type: 'mcp', id: 'mcp-id', label: '工具服务', subtitle: 'http' },
     { type: 'scheduled_task', id: 8, label: '提醒', subtitle: '0 9 * * *' },
   ])
-  assert.equal(calls.length, 8)
+  assert.equal(calls.length, 6)
   assert.ok(calls.every(({ values }) => values?.[0] === ownerId && values?.[1] === 1))
   assert.ok(calls.some(({ sql }) => sql.includes("n.kind='canvas_note'") && sql.includes('ci.deleted_at IS NULL')))
   assert.ok(calls.some(({ sql }) => sql.includes("scope='platform'")))
@@ -52,11 +48,6 @@ test('query suggestions reuse typed global search results and return individual 
   let messageArgs: unknown[] | undefined
   const pool = {
     async query(sql: string, values?: unknown[]) {
-      if (sql.includes('FROM files')) {
-        assert.deepEqual(values, [ownerId, 3, '%检索词%'])
-        return { rows: [{ id: 8, display_name: '检索词', ext: 'md', space: 'mind' }] }
-      }
-      if (sql.includes('FROM folders')) return { rows: [] }
       messageSql = sql
       messageArgs = values
       return { rows: [{ id: 19, content: '前文包含需要精确定位的检索词以及后续说明', session_title: '讨论记录' }] }
@@ -72,11 +63,15 @@ test('query suggestions reuse typed global search results and return individual 
 
   const result = await createMindReferenceSuggester({
     ...createPostgresMindReferenceSuggestionPorts(pool), globalSearch: search,
+    async matchingFileReferences(owner, query, limit) {
+      assert.deepEqual([owner, query, limit], [ownerId, '检索词', 3])
+      return [{ type: 'file', id: 'path-c2FtcGxl', label: '检索词.md', subtitle: '/personal/检索词.md' }]
+    },
   }).suggest(ownerId, '  检索词  ', 3)
 
   assert.deepEqual(result, [
     { type: 'project', id: 2, label: '项目命中', subtitle: '客户' },
-    { type: 'file', id: 8, label: '检索词.md', subtitle: 'mind' },
+    { type: 'file', id: 'path-c2FtcGxl', label: '检索词.md', subtitle: '/personal/检索词.md' },
     { type: 'conversation', id: 19, label: '前文包含需要精确定位的检索词以及后续说明', subtitle: '讨论记录' },
   ])
   const input = searchInput as { requestOwner: string; input: { q: string; queries: string[]; mode: string; perType: number; types: string[] } }

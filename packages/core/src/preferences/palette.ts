@@ -21,3 +21,15 @@ export function themePaletteColor(palette: ThemePalette, theme: 'light' | 'dark'
 export function normalizeThemePalette(value: unknown): ThemePalette {
   return isThemePalette(value) ? value : 'neutral'
 }
+/** IM 渲染只读取账号的外观字段，兼容 Web 已保存的旧键名。 */
+export function normalizeImChartAppearance(value: unknown) {
+  const data = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+  const { theme } = data
+  const mode: 'light' | 'dark' | 'system' = theme === 'dark' || theme === 'system' ? theme : 'light'
+  return {
+    theme: mode,
+    themeFamily: (data.themeFamily ?? data.theme_family) === 'mono' ? 'mono' as const : 'glass' as const,
+    palette: normalizeThemePalette(data.palette),
+  }
+}

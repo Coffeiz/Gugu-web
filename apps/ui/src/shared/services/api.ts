@@ -141,23 +141,6 @@ export const dataPortabilityApi = {
   },
 }
 
-export function uploadDirectWithProgress(url: string, file: File, onProgress: (p: number) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('PUT', url)
-    if (file.type) xhr.setRequestHeader('Content-Type', file.type)
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(e.loaded / e.total)
-    }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve()
-      else reject(new Error(i18n.global.t('errors.http', { status: xhr.status })))
-    }
-    xhr.onerror = () => reject(new Error(i18n.global.t('errors.network')))
-    xhr.send(file)
-  })
-}
-
 // ── ScheduledTasks（定时任务）─────────────────────────────────────────────────
 export type ScheduledTaskKind = 'cron' | 'interval' | 'once'
 export type ScheduledTaskMode = 'reminder' | 'instruction'
@@ -176,7 +159,7 @@ export interface ScheduledTaskInput {
   im_delivery?: Partial<Record<'qq' | 'feishu' | 'telegram', { mode: 'private' } | { mode: 'group'; chat_id: string }>>
   event_id?: number | null
   authorized_tools?: string[]
-  email_attachment_file_ids?: number[]
+  email_attachment_file_paths?: string[]
   workspace_id?: number | null
 }
 export interface ScheduledTaskResponse extends Omit<ScheduledTaskInput, 'schedule_kind'> {
@@ -191,7 +174,7 @@ export interface ScheduledTaskResponse extends Omit<ScheduledTaskInput, 'schedul
   last_run_failed?: boolean
   delivery_targets?: unknown
   authorized_tools: string[]
-  email_attachment_file_ids: number[]
+  email_attachment_file_paths: string[]
   filesystem_authorized: boolean
 }
 
@@ -268,34 +251,8 @@ export const mcpApi = {
 }
 
 // ── Files ─────────────────────────────────────────────────────────────────────
-interface FileListParams {
-  space?: string
-  projectId?: number
-  folderId?: number
-  workspaceDirectoryId?: number
-  mindMapId?: number
-  ext?: string
-  q?: string
-}
-export interface CursorPage<T> {
-  items: T[]
-  next_cursor: string | null
-  has_more: boolean
-}
-export interface CursorPageParams {
-  limit?: number
-  cursor?: string | null
-  sortBy?: 'name' | 'type' | 'stage' | 'createdAt' | 'size' | 'id'
-  sortOrder?: 'asc' | 'desc'
-}
-
-function pageQuery(params: CursorPageParams): URLSearchParams {
-  const query = new URLSearchParams()
-  if (params.limit != null) query.set('limit', String(params.limit))
-  if (params.cursor) query.set('cursor', params.cursor)
-  if (params.sortBy) query.set('sort_by', params.sortBy)
-  if (params.sortOrder) query.set('sort_order', params.sortOrder)
-  return query
+function filePathUrl(resource: string, path: string) {
+  return `/files/by-path${resource ? `/${resource}` : ''}?${new URLSearchParams({ path })}`
 }
 
 export const filesApi = {
@@ -304,75 +261,21 @@ export const filesApi = {
     projectFileCount: number; projectFolderCount: number
     trashFileCount: number; trashFolderCount: number
   }>('/files/library-counts'),
-  page: (filters: FileListParams & CursorPageParams = {}) => {
-    const params = pageQuery(filters)
-    for (const [key, value] of Object.entries(filters)) {
-      if (value == null || ['limit', 'cursor', 'sortBy', 'sortOrder'].includes(key)) continue
-      const name = key.replace(/[A-Z]/g, match => `_${match.toLowerCase()}`)
-      params.set(name, String(value))
-    }
-    return get<CursorPage<Schemas['FileResponse']>>(`/files?${params}`)
-  },
-  location: (id: number) => get<{
+  location: (path: string) => get<{
     file: Schemas['FileResponse']
-    folderPath: Array<Schemas['FolderResponse']>
-    pathFile?: PathFileRef
-  }>(`/files/${id}/location`),
-  resolvePaths: (id: number, paths: string[]) => post<Array<{
-    path: string
-    file: Schemas['FileResponse'] | null
-    folder: ApiFolderResponse | null
-  }>>(`/files/${id}/resolve-paths`, { paths }),
+    pathFile: PathFileRef
+  }>(filePathUrl('location', path)),
   summary: (recentLimit = 12) => get<FileSummaryResponse>(`/files/summary?recent_limit=${recentLimit}`),
-  get:     (id: number) => get<Schemas['FileResponse']>(`/files/${id}`),
+  get:     (path: string) => get<Schemas['FileResponse']>(filePathUrl('', path)),
   storage: ()         => get('/files/storage'),
-  archive: (data: { fileIds: number[]; folderIds: number[]; folderId?: number | null; name?: string }) =>
-    post<Schemas['FileResponse']>('/files/archive', data),
-  unarchive: (data: { fileId: number; folderId?: number | null; folderName?: string; format?: string }) =>
-    post<{
-      created_count: number
-      file_count: number
-      folder_count: number
-      skipped_count: number
-      rejected_count: number
-      file_ids: number[]
-      folder_ids: number[]
-    }>('/files/unarchive', data),
-  // workspaceDirectoryId：后端 schema 已支持，旧 OpenAPI 类型生成未覆盖，先由领域类型承接。
-  update: (id: number, data: Schemas['FileUpdate'] & { workspaceDirectoryId?: number | null }, meta?: RequestMeta) => patch<Schemas['FileResponse']>(`/files/${id}`, data, meta),
-  saveContent: (id: number, content: string, version: number) => put<Schemas['FileResponse']>(`/files/${id}/content`, { content, version }),   // 改文本正文（md 勾选框等）
-  delete:      (id: number, meta?: RequestMeta)   => del(`/files/${id}`, meta),
-  batchDelete: (ids: number[], meta?: RequestMeta)  => post('/files/batch-delete', { ids }, meta),
-  copy: (id: number, body: Schemas['FileCopyBody'] & { workspaceDirectoryId?: number | null }) => post<Schemas['FileResponse']>(`/files/${id}/copy`, body),
-  batchDownload: async (ids: number[], folderIds: number[] = [], filename = 'files.zip') => {
-    const res = await fetch(`${BASE_URL}/files/batch-download`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getCsrfHeaders(),
-      },
-      body: JSON.stringify({ ids, folderIds }),
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
-  },
-  presign: (data: any) => post('/files/presign', data),
-  confirm: (data: any) => post('/files/confirm', data),
-  // 批量探测同名冲突（上传前调用），items: [{filename, space, projectId?, folderId?}]
-  checkConflicts: (items: { filename: string; space: string; projectId?: number | null; folderId?: number | null; workspaceDirectoryId?: number | null }[]) =>
-    post<{ filename: string; conflict: boolean; existing_file: any }[]>('/files/check-conflicts', {
-      items: items.map(it => ({ filename: it.filename, space: it.space, project_id: it.projectId ?? null, folder_id: it.folderId ?? null, workspace_directory_id: it.workspaceDirectoryId ?? null })),
-    }),
+  update: (path: string, data: Schemas['FileUpdate'] & { workspaceDirectoryId?: number | null }, meta?: RequestMeta) => patch<Schemas['FileResponse']>(filePathUrl('', path), data, meta),
+  saveContent: (path: string, content: string, version: number) => put<Schemas['FileResponse']>(filePathUrl('content', path), { content, version }),
+  delete:      (path: string, meta?: RequestMeta)   => del(filePathUrl('', path), meta),
+  batchDelete: (paths: string[], meta?: RequestMeta)  => post('/files/by-path/batch-delete', { paths }, meta),
+  copy: (path: string, body: Schemas['FileCopyBody'] & { workspaceDirectoryId?: number | null }) => post<Schemas['FileResponse']>(filePathUrl('copy', path), body),
   // 返回单文件信息和短时效签名 URL，供预览入口避免加载整个文件库。
-  getStreamUrl: (id: number) => get<{ file: Schemas['FileResponse']; url: string }>(`/files/${id}/stream-url`),
-  xlsxPreview: (id: number) => get<{
+  getStreamUrl: (path: string) => get<{ file: Schemas['FileResponse']; url: string }>(filePathUrl('stream-url', path)),
+  xlsxPreview: (path: string) => get<{
     version: number
     sheets: Array<{
       images: Record<string, Array<{ id: number; width?: number; height?: number }>>
@@ -386,9 +289,9 @@ export const filesApi = {
         cols?: number
       }
     }>
-  }>(`/files/${id}/xlsx-preview`),
-  xlsxPreviewImage: async (id: number, imageId: number, version: number) => {
-    const res = await fetch(`${BASE_URL}/files/${id}/xlsx-preview-image/${imageId}?v=${encodeURIComponent(version)}`, {
+  }>(filePathUrl('xlsx-preview', path)),
+  xlsxPreviewImage: async (path: string, imageId: number, version: number) => {
+    const res = await fetch(`${BASE_URL}/files/by-path/xlsx-preview-image/${imageId}?${new URLSearchParams({ path, v: String(version) })}`, {
       credentials: 'include',
       headers: getCsrfHeaders(),
     })
@@ -396,8 +299,8 @@ export const filesApi = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return res.blob()
   },
-  download: async (id: number, filename: string) => {
-    const res = await fetch(`${BASE_URL}/files/${id}/download`, {
+  download: async (path: string, filename: string) => {
+    const res = await fetch(`${BASE_URL}${filePathUrl('download', path)}`, {
       credentials: 'include',
       headers: getCsrfHeaders(),
     })
@@ -552,121 +455,6 @@ export interface MindCanvasNoteCreate {
   z?: number
 }
 
-// ── Folders ───────────────────────────────────────────────────────────────────
-export type ApiFolderResponse = Schemas['FolderResponse'] & { workspaceDirectoryId?: number | null }
-export const foldersApi = {
-  page: (filters: { projectId?: number; parentId?: number; workspaceDirectoryId?: number } & CursorPageParams = {}) => {
-    const params = pageQuery(filters)
-    if (filters.projectId != null) params.set('project_id', String(filters.projectId))
-    if (filters.parentId != null) params.set('parent_id', String(filters.parentId))
-    if (filters.workspaceDirectoryId != null) params.set('workspace_directory_id', String(filters.workspaceDirectoryId))
-    return get<CursorPage<ApiFolderResponse>>(`/folders?${params}`)
-  },
-  get: (id: number) => get<ApiFolderResponse>(`/folders/${id}`),
-  location: (id: number) => get<{
-    folder: ApiFolderResponse
-    ancestors: ApiFolderResponse[]
-  }>(`/folders/${id}/location`),
-  resolvePaths: (filters: { projectId?: number | null; workspaceDirectoryId?: number | null; parentId?: number | null; paths: string[] }) =>
-    post<ApiFolderResponse[]>('/folders/resolve-paths', {
-      projectId: filters.projectId ?? null,
-      workspaceDirectoryId: filters.workspaceDirectoryId ?? null,
-      parentId: filters.parentId ?? null,
-      paths: filters.paths,
-    }),
-  create: (projectId: number | null, name: string, parentId: number | null = null, workspaceDirectoryId: number | null = null) => post<ApiFolderResponse>('/folders', {
-    ...(projectId != null ? { projectId } : {}),
-    ...(parentId  != null ? { parentId  } : {}),
-    ...(workspaceDirectoryId != null ? { workspaceDirectoryId } : {}),
-    name,
-  }),
-  // version：乐观锁，必传当前文件夹的 version（改名/移动即失效，见 stores/filesCache 的更新逻辑）；
-  // 版本对不上后端给 409，同 projectsApi.update 的并发保护模式。
-  rename: (id: number, name: string, version: number, meta?: RequestMeta) =>
-    patch<ApiFolderResponse>(`/folders/${id}`, { name, version }, meta),
-  move:   (id: number, parentId: number | null, version: number, projectId: number | null = null, meta?: RequestMeta, workspaceDirectoryId: number | null = null) =>
-    patch<ApiFolderResponse>(`/folders/${id}/parent`, { parentId, version, projectId, workspaceDirectoryId }, meta),
-  copy:   (id: number, parentId: number | null, projectId: number | null, workspaceDirectoryId: number | null = null) =>
-    post<ApiFolderResponse>(`/folders/${id}/copy`, { parentId, projectId, workspaceDirectoryId }),
-  delete: (id: number, meta?: RequestMeta)           => del(`/folders/${id}`, meta),
-  download: async (id: number, name: string) => {
-    const downloadPath = `${BASE_URL}/folders/${id}/download`
-    const downloadUrl = new URL(downloadPath, window.location.origin)
-
-    // 同源下载交给浏览器直接处理，避免大文件经过 fetch + Blob 占用额外内存，
-    // 也避免不同浏览器对 Blob URL 下载接管时序的差异。登录时设置的 HttpOnly
-    // Cookie 会随同源导航发送，后端 Content-Disposition 提供下载文件名。
-    if (downloadUrl.origin === window.location.origin) {
-      const a = document.createElement('a')
-      a.href = downloadUrl.href
-      a.download = `${name}.zip`
-      a.style.display = 'none'
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      return
-    }
-
-    const res = await fetch(downloadUrl.href, {
-      credentials: 'include',
-      headers: getCsrfHeaders(),
-    })
-    if (isUnauthorizedResponse(res)) throw new Error(i18n.global.t('errors.loginRequired'))
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${name}.zip`
-    a.style.display = 'none'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    // 下载由浏览器异步接管；立即 revoke 会和 Chrome 的 Blob URL 读取竞态。
-    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
-  },
-}
-
-// ── Trash ─────────────────────────────────────────────────────────────────────
-export type TrashFolderMeta = Schemas['TrashFolderResponse']
-export interface TrashPurgeJob {
-  id: number
-  status: 'queued' | 'running' | 'completed' | 'failed'
-  progressCurrent: number
-  progressTotal: number
-  failedCount: number
-  errorCode?: string | null
-}
-export interface TrashFolderContentsPage {
-  folders: CursorPage<TrashFolderMeta>
-  files: CursorPage<Schemas['FileResponse']>
-}
-/** UI 中已经连续加载的有限目录内容，不是后端数组响应。 */
-export interface TrashFolderContentsSnapshot {
-  folders: TrashFolderMeta[]
-  files: Schemas['FileResponse'][]
-}
-
-export const trashApi = {
-  page: (params: CursorPageParams = {}) => get<CursorPage<Schemas['FileResponse']>>(`/trash/page?${pageQuery(params)}`),
-  foldersPage: (params: CursorPageParams = {}) => get<CursorPage<TrashFolderMeta>>(`/trash/folders/page?${pageQuery(params)}`),
-  folderContentsPage: (id: number, params: { limit?: number; folderCursor?: string | null; fileCursor?: string | null } = {}) => {
-    const query = new URLSearchParams()
-    if (params.limit != null) query.set('limit', String(params.limit))
-    if (params.folderCursor) query.set('folder_cursor', params.folderCursor)
-    if (params.fileCursor) query.set('file_cursor', params.fileCursor)
-    return get<TrashFolderContentsPage>(`/trash/folders/${id}/contents/page?${query}`)
-  },
-  restore:       (id: number) => post(`/trash/${id}/restore`, {}),
-  restoreFolder: (id: number) => post(`/trash/folders/${id}/restore`, {}),
-  hardDeleteFolder: (id: number) => del(`/trash/folders/${id}`),
-  hardDelete:    (id: number) => del(`/trash/${id}`),
-  startEmpty:    ()           => post<TrashPurgeJob>('/trash/empty', {}),
-  activeEmpty:   ()           => get<TrashPurgeJob | null>('/trash/empty/active'),
-  getEmptyJob:   (id: number) => get<TrashPurgeJob>(`/trash/empty/${id}`),
-  empty:         ()           => del<TrashPurgeJob>('/trash'),
-}
-
 // ── Clients ────────────────────────────────────────────────────────────────────
 export const clientsApi = {
   list:   ()                            => get<Schemas['ClientResponse'][]>('/clients'),
@@ -689,7 +477,7 @@ export const preferencesApi = {
 
 export const workspacesApi = {
   status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; automaticModeGlobalEnabled: boolean; userAutomaticModeEnabled: boolean; filesystemAuthorizationEnabled: boolean; workspaceSupported: boolean; storageBackend: 'local' | 'oss'; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: unknown[] }>('/workspaces'),
-  create: (data: { name: string; kind: 'folder' | 'project' | 'directory'; folderId?: number; projectId?: number; directoryId?: number }) => post('/workspaces', data),
+  create: (data: { name: string; kind: 'project' | 'directory'; projectId?: number; directoryId?: number }) => post('/workspaces', data),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),
   current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),
@@ -774,8 +562,38 @@ export function downloadPathFile(file: PathFileRef, url: string) {
 }
 
 export const pathFilesApi = {
-  reference: (file: PathFileRef) =>
-    get<{ type: 'file'; id: string; label: string }>(pathFileEndpoint(file, 'reference')),
+  sandboxContentUrl(path: string, download = false) {
+    const query = new URLSearchParams({ path, ...(download ? { download: '1' } : {}) })
+    return `${BASE_URL}/files/by-path/content?${query}`
+  },
+  downloadSandboxPath(path: string, filename: string) {
+    const anchor = document.createElement('a')
+    anchor.href = this.sandboxContentUrl(path, true)
+    anchor.download = filename
+    anchor.click()
+  },
+  async downloadArchive(directory: PathFileRef, paths: string[], filename = 'files.zip') {
+    const response = await fetch(`${BASE_URL}${pathFileEndpoint(directory, 'download-archive')}`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+      body: JSON.stringify({ paths }),
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const url = URL.createObjectURL(await response.blob())
+    try {
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      anchor.click()
+    } finally { URL.revokeObjectURL(url) }
+  },
+  compressArchive: (directory: PathFileRef, paths: string[], name: string) =>
+    post<{ relativePath: string }>(pathFileEndpoint(directory, 'compress'), { paths, name }),
+  extractArchive: (file: PathFileRef, folderName: string) =>
+    post<{ relativePath: string; skipped: number }>(pathFileEndpoint(file, 'extract'), { folderName }),
+  resolveRelative: (file: PathFileRef, paths: string[]) =>
+    post<Array<{ path: string; file: { relativePath: string; name: string } | null; folder: { relativePath: string; name: string } | null }>>(pathFileEndpoint(file, 'resolve-relative'), { paths }),
+  reference: (file: PathFileRef, kind: 'file' | 'folder' = 'file') =>
+    get<{ type: 'file' | 'folder'; id: string; label: string }>(pathFileEndpoint(file, 'reference') + (kind === 'folder' ? '&kind=folder' : '')),
   entries: (directoryId: PathDirectory, relativePath = '') =>
     get<PathFileEntry[]>(pathFileEndpoint({ directoryId, relativePath }, 'entries')),
   contentUrl: pathContentUrl,

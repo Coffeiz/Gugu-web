@@ -12,7 +12,23 @@ import { claimDesktopChatAttachments } from '../attachments/desktop-store.js'
 import type { DesktopAgentChatReference } from '../../contracts/desktop.js'
 import { resolveDesktopChatReferences } from '../sessions/desktop-references.js'
 
-export type DesktopGroupSender = { id: string; name?: string }
+export type DesktopGroupSender = { id: string; name?: string; botId?: string; otherBotNames?: unknown; platformSentMs?: number; eventReceivedMs?: number }
+
+export function desktopImTimestamp(value: unknown): number | null {
+  if (value === undefined) return null
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0 || value > 8_640_000_000_000_000)
+    throw new CoreError('invalid_request', '即时通讯消息时间无效')
+  return value
+}
+
+export function serializeDesktopOtherBotNames(otherBotNames: unknown): string | null {
+  if (otherBotNames === undefined) return null
+  if (!Array.isArray(otherBotNames) || otherBotNames.length > 32
+    || otherBotNames.some(bot => !bot || typeof bot.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/u.test(bot.id)
+      || typeof bot.name !== 'string' || !bot.name.trim() || bot.name.length > 256))
+    throw new CoreError('invalid_request', '群机器人名称无效')
+  return otherBotNames.length ? JSON.stringify({ otherBotNames: otherBotNames.map(({ id, name }) => ({ id, name })) }) : null
+}
 
 export interface SqliteAgentChatInput {
   session_id: number
@@ -22,11 +38,12 @@ export interface SqliteAgentChatInput {
   attachments?: string[]
   references?: DesktopAgentChatReference[]
   groupSender?: DesktopGroupSender
+  quotedText?: string
   /** Gateway 已确认的桌面群延迟唤醒可复用同一条被动历史消息。 */
   resumePassiveMessage?: boolean
 }
 
-interface SessionRow { session_context: string | null; active_run_id: string | null; execution_state: string; last_message_seq: number }
+interface SessionRow { chat_type: string | null; platform_user_id: string | null; session_context: string | null; active_run_id: string | null; execution_state: string; last_message_seq: number }
 
 function sessionScope(ownerId: string, session: number) {
   const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
@@ -36,7 +53,7 @@ function sessionScope(ownerId: string, session: number) {
 
 async function readSession(db: Kysely<Database>, owner: string, session: number) {
   // 旧版可能写入问候却遗漏更新会话序号，入队时以已提交消息补齐序号。
-  return (await sql<SessionRow>`SELECT s.active_run_id, s.execution_state, s.session_context,
+  return (await sql<SessionRow>`SELECT s.active_run_id, s.execution_state, s.session_context, s.chat_type, s.platform_user_id,
     max(s.last_message_seq, coalesce((SELECT max(m.conversation_seq) FROM conversation_messages m
       WHERE m.session_id=s.id), 0)) AS last_message_seq
     FROM conversation_sessions s WHERE s.user_id=${owner} AND s.id=${session}
@@ -110,8 +127,11 @@ export function createSqliteAgentAdmission(
     async prepare(ownerId: string, input: SqliteAgentChatInput) {
       const { owner, session } = sessionScope(ownerId, input.session_id)
       const message = typeof input.message === 'string' ? input.message.trim() : ''
+      if (input.quotedText !== undefined && (typeof input.quotedText !== 'string' || Buffer.byteLength(input.quotedText) > 32_000))
+        throw new CoreError('invalid_request', '引用消息无效')
+      const quotedText = input.quotedText?.trim() || null
       const clientId = input.client_message_id
-      if (typeof input.message !== 'string' || (!message && !input.attachments?.length && !input.references?.length) || message.length > 32_000 || (clientId != null && !/^[A-Za-z0-9:_-]{1,64}$/.test(clientId)))
+      if (typeof input.message !== 'string' || (!message && !quotedText && !input.attachments?.length && !input.references?.length) || message.length > 32_000 || (clientId != null && !/^[A-Za-z0-9:_-]{1,64}$/.test(clientId)))
         throw new CoreError('invalid_request', '聊天请求无效')
       if (input.resumePassiveMessage !== undefined && typeof input.resumePassiveMessage !== 'boolean'
         || input.resumePassiveMessage === true && (!clientId || !input.groupSender || input.attachments?.length || input.references?.length))
@@ -119,10 +139,18 @@ export function createSqliteAgentAdmission(
       const prepared = await db.transaction().execute(async tx => {
         const current = await readSession(tx, owner, session)
         if (!current) throw new CoreError('not_found', '会话不存在')
+        if (quotedText) {
+          const im = await sql`SELECT 1 FROM desktop_im_sessions WHERE owner_id=${owner} AND session_id=${session}`.execute(tx)
+          if (!im.rows.length) throw new CoreError('invalid_request', '引用消息仅适用于即时通讯会话')
+        }
         const sender = input.groupSender
+        const mentionFacts = serializeDesktopOtherBotNames(sender?.otherBotNames)
+        const platformSentMs = desktopImTimestamp(sender?.platformSentMs)
+        const eventReceivedMs = desktopImTimestamp(sender?.eventReceivedMs)
         if (sender !== undefined) {
           if (!sender || typeof sender.id !== 'string' || !sender.id.trim() || sender.id.length > 256
-            || (sender.name !== undefined && (typeof sender.name !== 'string' || sender.name.length > 256)))
+            || (sender.name !== undefined && (typeof sender.name !== 'string' || sender.name.length > 256))
+            || (sender.botId !== undefined && (typeof sender.botId !== 'string' || !sender.botId || sender.botId.length > 128)))
             throw new CoreError('invalid_request', '群发言人资料无效')
           const group = await sql`SELECT 1 FROM desktop_im_sessions im JOIN conversation_sessions s
             ON s.id=im.session_id AND s.user_id=im.owner_id
@@ -131,21 +159,24 @@ export function createSqliteAgentAdmission(
         }
         let passiveMessageId: number | undefined
         if (clientId != null) {
-          const previous = (await sql<{ run_id: string | null; id: number; content: string; files: string | null; references_json: string | null; platform_user_id: string | null; platform_user_name: string | null }>`
-            SELECT a.run_id,m.id,m.content,m.files,m.references_json,m.platform_user_id,m.platform_user_name FROM conversation_messages m
+          const previous = (await sql<{ run_id: string | null; id: number; content: string; quoted_text: string | null; files: string | null; references_json: string | null; platform_user_id: string | null; platform_user_name: string | null }>`
+            SELECT a.run_id,m.id,m.content,m.quoted_text,m.files,m.references_json,m.platform_user_id,m.platform_user_name FROM conversation_messages m
             LEFT JOIN agent_run_admissions a ON a.session_id=m.session_id AND a.user_id=${owner} AND a.user_message_id=m.id
             WHERE m.session_id=${session} AND m.client_message_id=${clientId}`.execute(tx)).rows[0]
           if (previous) {
             const previousIds = previous.files ? (JSON.parse(previous.files) as Array<{ attach_id?: string }>).map(file => file.attach_id).filter(Boolean) : []
             const requestedIds = [...new Set(input.attachments ?? [])]
             const previousReferences = previous.references_json ? JSON.parse(previous.references_json) : []
-            if (previous.run_id && previous.content === message && JSON.stringify(previousIds) === JSON.stringify(requestedIds)
+            const sameBody = previous.content === message && previous.quoted_text === quotedText
+            const legacyBody = input.quotedText && previous.quoted_text === null
+              && previous.content === `引用消息：${JSON.stringify(input.quotedText)}\n\n${input.message}`.trim()
+            if (previous.run_id && (sameBody || legacyBody) && JSON.stringify(previousIds) === JSON.stringify(requestedIds)
               && JSON.stringify(previousReferences) === JSON.stringify(input.references ?? []))
               return { identity: { ownerId, sessionId: String(session), runId: previous.run_id }, userMessageId: previous.id, replay: true }
             const sessionType = (await sql<{ chat_type: string | null }>`SELECT chat_type FROM conversation_sessions
               WHERE id=${session} AND user_id=${owner}`.execute(tx)).rows[0]?.chat_type
             if (input.resumePassiveMessage !== true || sessionType !== 'group' || previous.run_id
-              || previous.content !== message || previous.platform_user_id !== input.groupSender?.id
+              || previous.content !== message || previous.quoted_text !== quotedText || previous.platform_user_id !== input.groupSender?.id
               || (input.groupSender?.name !== undefined && previous.platform_user_name !== input.groupSender.name)
               || previousIds.length || requestedIds.length || JSON.stringify(previousReferences) !== '[]'
               || (input.references?.length ?? 0) > 0)
@@ -164,11 +195,11 @@ export function createSqliteAgentAdmission(
         const referencedText = await resolveDesktopChatReferences(tx, ownerId, references, message)
         const contentJson = referencedText === message ? null : JSON.stringify([{ type: 'text', text: referencedText }])
         const { rows } = passiveMessageId === undefined ? await sql<{ id: number }>`INSERT INTO conversation_messages
-          (session_id,conversation_seq,role,content,client_message_id,references_json,content_json,created_at,platform_user_id,platform_user_name)
-          VALUES(${session},${sequence},'user',${message},${clientId ?? null},${references.length ? JSON.stringify(references) : null},${contentJson},${at},${sender?.id ?? null},${sender?.name ?? null}) RETURNING id`.execute(tx) : { rows: [{ id: passiveMessageId }] }
+          (session_id,conversation_seq,role,content,quoted_text,client_message_id,references_json,content_json,created_at,platform_user_id,platform_user_name,platform_bot_user_id,im_mention_facts,im_platform_sent_ms,im_event_received_ms)
+          VALUES(${session},${sequence},'user',${message},${quotedText},${clientId ?? null},${references.length ? JSON.stringify(references) : null},${contentJson},${at},${sender?.id ?? null},${sender?.name ?? null},${sender?.botId ?? null},${mentionFacts},${platformSentMs},${eventReceivedMs}) RETURNING id`.execute(tx) : { rows: [{ id: passiveMessageId }] }
         const userMessageId = rows[0]!.id
         const files = await claimDesktopChatAttachments(tx, ownerId, userMessageId, input.attachments ?? [], session, clientId)
-        if (!message && referencedText === message && !files.some(file => file.kind === 'text' || file.kind === 'image'
+        if (!message && !quotedText && referencedText === message && !files.some(file => file.kind === 'text' || file.kind === 'image'
           || (file.kind === 'voice' && typeof file.transcript === 'string' && file.transcript.trim())))
           throw new CoreError('invalid_request', '此附件暂不能单独发送，请补充文字说明')
         if (files.length) await sql`UPDATE conversation_messages SET files=${JSON.stringify(files)} WHERE id=${userMessageId} AND session_id=${session}`.execute(tx)
@@ -176,7 +207,8 @@ export function createSqliteAgentAdmission(
         const context = readAgentSessionContext(current.session_context, 'sqlite')
         const command = parseAgentCommand(message)
         if (command?.recognized && command.name === 'goal' && !isAgentCommandHelpArgument(command.argument)
-          && parseAgentGoalArgument(command.argument) === 'create') {
+          && parseAgentGoalArgument(command.argument) === 'create'
+          && (current.chat_type !== 'group' || sender?.id === current.platform_user_id)) {
           Object.assign(context, { goal_text: command.argument, goal_mode: true, goal_status: 'active' })
           await sql`UPDATE conversation_sessions SET session_context=${JSON.stringify(context)}
             WHERE id=${session} AND user_id=${owner}`.execute(tx)

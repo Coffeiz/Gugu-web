@@ -300,15 +300,14 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       CREATE TABLE user_skills(owner_id uuid,skill_id text,name text,description_short text,category text,related_tools jsonb,
         managed_by text,enabled boolean,source text,body text,content_digest text);
       CREATE TABLE scheduled_tasks(id int PRIMARY KEY,user_id uuid,enabled boolean,name text,payload text,channels text,
-        delivery_targets jsonb,authorized_tools jsonb,email_attachment_file_ids jsonb,workspace_id int,
+        delivery_targets jsonb,authorized_tools jsonb,email_attachment_file_paths jsonb,workspace_id int,
         filesystem_authorization_grant_id int,schedule_kind text,end_at timestamptz,start_at timestamptz,
         last_run_at timestamptz,last_run_failed boolean,cron text DEFAULT '* * * * *',interval_minutes integer,
         event_id integer,reminder_lead_minutes integer,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now());
       CREATE TABLE projects(id int PRIMARY KEY,user_id uuid,name text,status text,priority text,start_date date,deadline date,
         done_at timestamptz,contact_name text,summary text,stages_json text,deleted_at timestamptz,archived boolean);
       CREATE TABLE calendar_events(user_id uuid,date text,title text,deleted_at timestamptz);
-      CREATE TABLE folders(id int PRIMARY KEY,user_id uuid,name text,project_id int,workspace_directory_id int,parent_id int,deleted_at timestamptz);
-      CREATE TABLE files(id int PRIMARY KEY,user_id uuid,display_name text,ext text,space text,folder_id int,project_id int,
+      CREATE TABLE files(id int PRIMARY KEY,user_id uuid,display_name text,ext text,space text,project_id int,
         deleted_at timestamptz,updated_at timestamptz,storage_key text,storage_backend text,size_bytes int,mime_type text);
       CREATE TABLE agent_usage(id serial PRIMARY KEY,user_id uuid,session_id integer,tokens_in integer,tokens_out integer,
         cache_read integer,cache_write integer,cache_round_stats jsonb,model text,provider text,is_byok boolean,
@@ -331,7 +330,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       (22,$1,TRUE,'崩溃任务','不自动重试','web','{}','[]','[]',NULL,NULL,'once',
       NULL,NOW()-interval '11 minutes',NOW()-interval '11 minutes',FALSE)`, [owner])
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,interval_minutes,start_at,end_at,event_id) VALUES
+      email_attachment_file_paths,schedule_kind,interval_minutes,start_at,end_at,event_id) VALUES
       (23,$1,TRUE,'周期到期任务','合成周期执行','web','{}','[]','[]','interval',1,NOW()+interval '1 day',NULL,NULL),
       (24,$1,FALSE,'已结束独立任务','不执行','web','{}','[]','[]','interval',1,NOW()-interval '1 hour',NOW()-interval '5 minutes',NULL),
       (25,$1,FALSE,'已结束日历提醒','不执行','web','{}','[]','[]','interval',1,NOW()-interval '1 hour',NOW()-interval '5 minutes',1),
@@ -457,7 +456,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       SELECT id,id,'user',CASE WHEN id=31 THEN '合成部署本群证据' ELSE '合成部署隔离证据' END,NULL,1,'synthetic-member','小北',NOW()
       FROM conversation_sessions`)
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,start_at,last_run_failed) VALUES
+      email_attachment_file_paths,schedule_kind,start_at,last_run_failed) VALUES
       (27,$1,TRUE,'群历史定时','合成群历史搜索','web,qq',$2,'[]','[]','once',NOW()+interval '1 day',FALSE),
       (28,$1,TRUE,'群历史撤权','合成群历史搜索撤权','web,qq',$2,'[]','[]','once',NOW()+interval '1 day',FALSE)`,
     [owner, { qq: { platform: 'qq', chat_type: 'group', chat_id: 'synthetic-group', channel_id: '5' } }])
@@ -474,7 +473,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
     assert.doesNotMatch(revokedRequests[1]!, /合成部署(?:本群|隔离)证据/u)
 
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,start_at,last_run_failed) VALUES
+      email_attachment_file_paths,schedule_kind,start_at,last_run_failed) VALUES
       (29,$1,TRUE,'预授权邮件','合成邮件工具发送','web','{}','["send_email"]','[]','once',NOW()+interval '1 day',FALSE),
       (30,$1,TRUE,'撤权邮件','合成邮件工具撤权','web','{}','["send_email"]','[]','once',NOW()+interval '1 day',FALSE)`, [owner])
     assert.equal((await run(29, other)).status, 404)
@@ -497,7 +496,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
         { method: 'agent.email.outcome' }, { method: 'agent.email.outcome' }])
 
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,start_at,last_run_at,last_run_failed) VALUES
+      email_attachment_file_paths,schedule_kind,start_at,last_run_at,last_run_failed) VALUES
       (31,$1,TRUE,'兼容渠道','合成旧 IM 别名','web,im','{}','[]','[]','once',NOW()+interval '1 day',NOW(),TRUE)`, [owner])
     const alias = await run(31, owner)
     assert.equal(alias.status, 200)
@@ -527,7 +526,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       (37,$1,'wechat','6','c2c',NULL,'synthetic-private',0,now()),
       (38,$2,'wechat','6','c2c',NULL,'synthetic-private',0,now())`, [owner, other])
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,start_at,last_run_failed) VALUES
+      email_attachment_file_paths,schedule_kind,start_at,last_run_failed) VALUES
       (32,$1,TRUE,'旧私聊','旧 IM 私聊正文','im,wechat','{}','[]','[]','once',NOW()+interval '1 day',FALSE),
       (33,$1,TRUE,'无效目标','旧 IM 固定目标正文','im','{"wechat":null}','[]','[]','once',NOW()+interval '1 day',FALSE),
       (34,$1,TRUE,'未连接的显式渠道','合成 Telegram 正文','im,telegram','{}','[]','[]','once',NOW()+interval '1 day',FALSE)`, [owner])
@@ -613,7 +612,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       VALUES(7,$1,'synthetic-schedule','txt','personal',$3,'local',30,'text/plain'),
       (8,$2,'synthetic-foreign','txt','personal',$4,'local',20,'text/plain')`, [owner, other, report, `${other}/personal/foreign.txt`])
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,start_at,last_run_failed) VALUES
+      email_attachment_file_paths,schedule_kind,start_at,last_run_failed) VALUES
       (35,$1,TRUE,'定时附件邮件','合成定时附件发送','email','{}','[]','[]','once',NOW()+interval '1 day',FALSE),
       (36,$1,TRUE,'异主附件邮件','合成定时附件异主','email','{}','[]','[]','once',NOW()+interval '1 day',FALSE)`, [owner])
     const sendArtifact = await run(35, owner)
@@ -641,7 +640,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       VALUES(39,$1,'feishu','7','group','oc_synthetic')`, [owner])
     reachKeys.push('imsession:feishu:7:oc_synthetic')
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,start_at,last_run_at,last_run_failed)
+      email_attachment_file_paths,schedule_kind,start_at,last_run_at,last_run_failed)
       VALUES(37,$1,TRUE,'飞书附件','合成定时附件飞书','feishu',
       '{"feishu":{"platform":"feishu","channel_id":"7","chat_type":"group","chat_id":"oc_synthetic"}}',
       '[]','[]','once',NOW()+interval '1 day',NOW(),TRUE)`, [owner])
@@ -670,7 +669,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       VALUES(40,$1,'qq','8','group','synthetic-qq-group')`, [owner])
     reachKeys.push('imsession:qq:8:synthetic-qq-group')
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,start_at,last_run_failed)
+      email_attachment_file_paths,schedule_kind,start_at,last_run_failed)
       VALUES(38,$1,TRUE,'QQ 附件','合成定时附件 QQ','qq',
       '{"qq":{"platform":"qq","channel_id":"8","chat_type":"group","chat_id":"synthetic-qq-group"}}',
       '[]','[]','once',NOW()+interval '1 day',FALSE)`, [owner])
@@ -714,7 +713,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       platform: 'wechat', channel_id: 6, chat_type: 'c2c', puid: 'synthetic-private', context_token: 'synthetic-context',
     }), 60), true)
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,start_at,last_run_failed)
+      email_attachment_file_paths,schedule_kind,start_at,last_run_failed)
       VALUES(39,$1,TRUE,'微信附件','合成定时附件微信','wechat','{}','[]','[]','once',NOW()+interval '1 day',FALSE)`, [owner])
     wechatRefreshReach = reach
     const wechatResult = await run(39, owner)
@@ -750,7 +749,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
     await writeFile(config, JSON.stringify({ im: { qq: true },
       safe_egress: { enabled: true, proxy_url: `http://127.0.0.1:${proxyAddress.port}` } }))
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,start_at,last_run_failed)
+      email_attachment_file_paths,schedule_kind,start_at,last_run_failed)
       VALUES(40,$1,TRUE,'网络图片','合成定时附件 URL','email','{}','[]','[]','once',NOW()+interval '1 day',FALSE),
       (41,$1,TRUE,'私网跳转','合成定时附件 URL 私网','email','{}','[]','[]','once',NOW()+interval '1 day',FALSE),
       (42,$1,TRUE,'下载时停用','合成定时附件 URL 停用','email','{}','[]','[]','once',NOW()+interval '1 day',FALSE)`, [owner])
@@ -782,7 +781,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
       [owner, 'synthetic-remote'])).rows[0].count, 1)
 
     await pool.query(`INSERT INTO scheduled_tasks(id,user_id,enabled,name,payload,channels,delivery_targets,authorized_tools,
-      email_attachment_file_ids,schedule_kind,start_at,last_run_failed)
+      email_attachment_file_paths,schedule_kind,start_at,last_run_failed)
       VALUES(43,$1,TRUE,'到期网络图片','合成定时附件 URL 到期','email','{}','[]','[]','once',NOW()+interval '1 day',FALSE)`, [owner])
     const updated = await host.app.inject({ method: 'PATCH', url: '/api/v1/scheduled-tasks/43', headers: auth,
       payload: { start_at: new Date(Date.now() + 3000).toISOString() } })

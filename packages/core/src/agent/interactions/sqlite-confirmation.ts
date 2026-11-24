@@ -1,3 +1,6 @@
+import { parseDesktopTrashCommand } from '../../runtime/desktop-shell-trash.js'
+import { describeShellActivity } from '../shell-activity.js'
+import { shellActivityLabel, toolNames } from '../sessions/tool-labels.js'
 import { canonicalAgentToolName } from '../tools/configuration.js'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
@@ -18,7 +21,7 @@ import type { AgentPromptSpec } from './prompt-description.js'
 export function createSqliteToolConfirmation(
   db: Kysely<Database>,
   authorize: (db: Kysely<Database>, identity: RunIdentity, signal: AbortSignal) => Promise<boolean>,
-  action: 'delete_scheduled_task' | 'delete_event' | 'delete_client' | 'delete_skill' | 'delete_knowledge' | 'remove_mcp_server' | 'update_mcp_server' | 'add_mcp_server' | 'shell' | 'present_file' | 'view_image' | 'send_email' | keyof typeof canvasConfirmationLabels,
+  action: 'delete_scheduled_task' | 'delete_event' | 'delete_client' | 'delete_skill' | 'delete_knowledge' | 'remove_mcp_server' | 'update_mcp_server' | 'add_mcp_server' | 'shell' | 'open_item' | 'send_item' | 'delete_item' | 'view_image' | 'send_email' | keyof typeof canvasConfirmationLabels,
   describeTarget?: (tx: Transaction<Database>, identity: RunIdentity, input: unknown,
     snapshot: { targetsDigest: string; versionsDigest: string }) => Promise<string>,
 ) {
@@ -104,18 +107,32 @@ export function createSqliteToolConfirmation(
       if (action === 'shell') {
         if (!input || typeof input !== 'object' || !('command' in input) || typeof input.command !== 'string')
           throw new CoreError('invalid_request', 'Shell 命令无效')
-        summary = 'cwd' in input && typeof input.cwd === 'string' && isAbsolute(input.cwd)
-          ? `允许此会话在未来 30 分钟执行宿主机命令。\n工作目录：${input.cwd}\n命令：${input.command.trim()}`
-          : `在桌面隔离目录内执行命令：${input.command.trim()}`
+        const command = input.command.trim()
+        const cwd = 'cwd' in input && typeof input.cwd === 'string' && isAbsolute(input.cwd) ? input.cwd : undefined
+        const trash = parseDesktopTrashCommand(command)
+        const label = shellActivityLabel(describeShellActivity(input), 'zh-CN', true) ?? toolNames['zh-CN'].shell
+        const action = trash.kind === 'trash'
+          ? `${label}，将以下目标移入系统废纸篓：\n${trash.paths.join('\n')}`
+          : `${label}${cwd ? '（宿主机）' : '（桌面隔离目录）'}`
+        summary = [action, cwd && `工作目录：${cwd}`, `命令：${command}`,
+          cwd && trash.kind !== 'trash' && '确认后允许此会话在未来 30 分钟执行宿主机命令。'].filter(Boolean).join('\n')
       } else if (action === 'view_image') {
         if (!input || typeof input !== 'object' || !('path' in input) || typeof input.path !== 'string' || !isAbsolute(input.path))
           throw new CoreError('invalid_request', '本机图片路径无效')
         summary = `查看本机图片并将图片传给当前模型：${input.path}\n允许此会话在未来 30 分钟访问宿主机文件及执行宿主机 Shell 命令。`
-      } else if (action === 'present_file') {
-        if (!input || typeof input !== 'object' || !('file' in input) || typeof input.file !== 'string' || !isAbsolute(input.file))
+      } else if (action === 'open_item' || action === 'send_item') {
+        const target = input && typeof input === 'object'
+          ? ('item' in input ? input.item : 'path' in input ? input.path : undefined) : undefined
+        if (typeof target !== 'string' || !isAbsolute(target))
           throw new CoreError('invalid_request', '本机文件路径无效')
-        const actionLabel = 'reference_only' in input && input.reference_only === true ? '引用' : '打开'
-        summary = `${actionLabel}本机文件：${input.file}\n允许此会话在未来 30 分钟打开本机文件及执行宿主机 Shell 命令。`
+        const actionLabel = action === 'send_item' ? '发送引用' : input && typeof input === 'object'
+          && 'reference_only' in input && input.reference_only === true ? '引用' : '打开'
+        summary = `${actionLabel}本机文件：${target}\n允许此会话在未来 30 分钟打开本机文件及执行宿主机 Shell 命令。`
+      } else if (action === 'delete_item') {
+        if (!input || typeof input !== 'object' || !('path' in input) || typeof input.path !== 'string')
+          throw new CoreError('invalid_request', '废纸篓路径无效')
+        const target = 'kind' in input && input.kind === 'folder' ? '文件夹及其所有子项' : '文件'
+        summary = `将${target}移入系统废纸篓：${input.path}`
       } else if (action === 'delete_event') {
         summary = await describeCalendarDeleteTargets({ db: tx, backend: 'sqlite' }, identity.ownerId, input, snapshot)
       } else if (action === 'delete_client') {

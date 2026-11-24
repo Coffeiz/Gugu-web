@@ -19,9 +19,8 @@ function mount(){registry=createToolRegistry({groups:[{id:'workspaces',name:'工
 beforeEach(async()=>{
  folder=await mkdtemp(join(tmpdir(),'gugu-workspace-write-'))
  await initializeSqlite(join(folder,'core.db'));const opened=await openSqliteRuntime(join(folder,'core.db'));core=opened.runtime;owner=opened.ownerId;other=randomUUID();allowed=true
- await query('CREATE TABLE folders(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,deleted_at TEXT)')
  await query('CREATE TABLE workspace_directories(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,directory_name TEXT,is_system INTEGER,is_default INTEGER,deleted_at TEXT,created_at TEXT,updated_at TEXT)')
- await query('CREATE TABLE workspaces(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,kind TEXT,folder_id INTEGER,project_id INTEGER,directory_id INTEGER,enabled INTEGER,is_default INTEGER,created_at TEXT,updated_at TEXT)')
+ await query('CREATE TABLE workspaces(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,kind TEXT,project_id INTEGER,directory_id INTEGER,enabled INTEGER,is_default INTEGER,created_at TEXT,updated_at TEXT)')
  const own=owner.replaceAll('-',''),foreign=other.replaceAll('-','')
  await query("INSERT INTO workspace_directories VALUES(7,'"+own+"','目录','固定物理段',0,0,NULL,'2026-01-01','2026-01-01'),(8,'"+own+"','重名','other',0,0,NULL,'2026-01-01','2026-01-01')")
  await query("INSERT INTO workspaces VALUES(1,'"+own+"','目录','directory',NULL,NULL,7,1,0,'2026-01-01','2026-01-01'),(2,'"+own+"','别名','directory',NULL,NULL,7,1,0,'2026-01-01','2026-01-01'),(3,'"+foreign+"','他人','directory',NULL,NULL,7,1,0,'2026-01-01','2026-01-01')")

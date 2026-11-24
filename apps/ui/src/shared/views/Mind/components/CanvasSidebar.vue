@@ -360,8 +360,6 @@ onMounted(() => {
   position: sticky;
   top: 1px;
   z-index: 2;
-  --input-bg: var(--surface-canvas-card);
-  --input-bg-focus: var(--surface-canvas-card);
 }
 /* 给 sticky 顶边补一个同色像素，卡片滚过筛选框时不会从边缘露出。 */
 .project-search::before {
@@ -369,7 +367,7 @@ onMounted(() => {
   position: absolute;
   inset: -2px -1px auto;
   height: 1px;
-  background: var(--surface-canvas-card);
+  background: inherit;
   pointer-events: none;
 }
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }

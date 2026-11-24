@@ -64,7 +64,7 @@ export function desktopScheduledTasks<DB>(db: Kysely<DB>, ownerId: string) {
     const tasks = rows.slice(0, size).map(row => projectScheduledTaskForWeb(row, false))
     return { tasks, nextBefore: rows.length > size ? tasks.at(-1)!.id : null }
   }
-  async function get(id: number, eventId: number | null = null) {
+  async function get(id: number, eventId: number | null | 'all' = null) {
     const [row] = await read(owner, eventId, undefined, id)
     if (!row) throw new CoreError('not_found', '定时任务不存在')
     return row
@@ -93,7 +93,7 @@ export function desktopScheduledTasks<DB>(db: Kysely<DB>, ownerId: string) {
         WHERE id=${id} AND user_id=${key} AND execution_mode='instruction'
           AND last_run_at=${sqliteTime(new Date(fireAt).toISOString())}`.execute(db)
     },
-    async get(id: number, eventId: number | null = null) { return projectScheduledTaskForWeb(await get(id, eventId), false) },
+    async get(id: number, eventId: number | null | 'all' = null) { return projectScheduledTaskForWeb(await get(id, eventId), false) },
     async create(input: unknown, eventId: number | null = null, targets: readonly DesktopScheduleImTarget[] = []) {
       const body = { ...validateFields(input, targets), event_id: eventId } as unknown as ScheduledTaskCreateInput
       if (eventId !== null) {

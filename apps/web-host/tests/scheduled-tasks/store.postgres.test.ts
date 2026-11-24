@@ -33,7 +33,7 @@ test('定时任务写入验证 owner、事务与实际到期消费', { skip: !ur
       CREATE TABLE conversation_sessions(id int PRIMARY KEY,user_id uuid,source text,chat_type text,chat_id text,bot_id text);
       CREATE TABLE filesystem_authorization_grants(id int PRIMARY KEY,user_id uuid,revoked_at timestamptz,updated_at timestamptz);
       CREATE TABLE security_events(user_id uuid,event_type text,resource_type text,resource_fingerprint text,owner_fingerprint text,client_fingerprint text,ip_fingerprint text,user_agent_fingerprint text,action text,reason_code text,metadata_json jsonb,occurred_at timestamptz,expires_at timestamptz);
-      CREATE TABLE scheduled_tasks(id serial PRIMARY KEY,user_id uuid,event_id int,workspace_id int,filesystem_authorization_grant_id int,name text,payload text,execution_mode text NOT NULL DEFAULT 'instruction',cron text,schedule_kind text,interval_minutes int,start_at timestamptz,end_at timestamptz,channels text,enabled boolean,delivery_targets json,authorized_tools json,email_attachment_file_ids json,reminder_lead_minutes int,last_run_at timestamptz,last_run_failed boolean,created_at timestamptz,updated_at timestamptz);
+      CREATE TABLE scheduled_tasks(id serial PRIMARY KEY,user_id uuid,event_id int,workspace_id int,filesystem_authorization_grant_id int,name text,payload text,execution_mode text NOT NULL DEFAULT 'instruction',cron text,schedule_kind text,interval_minutes int,start_at timestamptz,end_at timestamptz,channels text,enabled boolean,delivery_targets json,authorized_tools json,email_attachment_file_paths json,reminder_lead_minutes int,last_run_at timestamptz,last_run_failed boolean,created_at timestamptz,updated_at timestamptz);
       CREATE TABLE rag_index_jobs(id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,pending_source_ids json,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation int NOT NULL,completed_generation int NOT NULL,attempts int NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_error_code text,last_started_at timestamptz,last_succeeded_at timestamptz,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type));
       CREATE UNIQUE INDEX task_event ON scheduled_tasks(user_id,event_id,cron) WHERE event_id IS NOT NULL;
       CREATE TABLE undo_operations(id text PRIMARY KEY,user_id uuid,undo_context_id text,actor_type text,resource text,action text,status text,created_at timestamptz,after_state json,target_refs json,base_versions json)`)
@@ -50,7 +50,7 @@ test('定时任务写入验证 owner、事务与实际到期消费', { skip: !ur
       resolve,
       async publish() { events++ },
     })
-    const input = { name: '提醒', schedule_kind: 'once', start_at: '2099-01-01T08:00:00.123456', event_id: 1, workspace_id: 1, email_attachment_file_ids: [1,1] }
+    const input = { name: '提醒', schedule_kind: 'once', start_at: '2099-01-01T08:00:00.123456', event_id: 1, workspace_id: 1, email_attachment_file_paths: [1,1] }
     const secret = 'synthetic-task-write-secret'
     const app = createApp({ appName: 'Gugu', isReady: async () => true,
       userAuth: { secret, lookupUser: async id => ({ id, username: 'synthetic', displayName: null, email: 'synthetic@example.test', isActive: true, accountStatus: 'active', securityVersion: 1, avatarUrl: null, createdAt: null, timezone: null, emailSubscribed: false, imChannels: [] }) },
@@ -71,7 +71,7 @@ test('定时任务写入验证 owner、事务与实际到期消费', { skip: !ur
       assert.equal((await pool.query('SELECT generation FROM rag_index_jobs WHERE user_id=$1 AND source_type=$2', [owner, 'scheduled_task'])).rows[0].generation, 1)
       const foreignHeaders = { authorization: `Bearer ${signedUserToken(secret, other)}` }
       assert.equal((await app.inject({ method: 'PATCH', url: `/api/v1/scheduled-tasks/${created.json().id}`, headers: foreignHeaders, payload: { name: '越权' } })).statusCode, 404)
-      const invalid = await app.inject({ method: 'PATCH', url: `/api/v1/scheduled-tasks/${created.json().id}`, headers, payload: { name: '必须回滚', email_attachment_file_ids: [2] } })
+      const invalid = await app.inject({ method: 'PATCH', url: `/api/v1/scheduled-tasks/${created.json().id}`, headers, payload: { name: '必须回滚', email_attachment_file_paths: [2] } })
       assert.equal(invalid.statusCode, 400)
       assert.equal((await pool.query('SELECT name FROM scheduled_tasks WHERE id=$1', [created.json().id])).rows[0].name, '提醒')
     } finally { await app.close() }
@@ -79,13 +79,13 @@ test('定时任务写入验证 owner、事务与实际到期消费', { skip: !ur
     assert.equal(a.task.id, b.task.id)
     assert.equal(a.task.start_at, '2099-01-01T00:00:00.123456Z')
     assert.equal(events, 1)
-    await assert.rejects(writes.create(owner, { ...input, email_attachment_file_ids: [2] }, null, null), /附件不存在/)
+    await assert.rejects(writes.create(owner, { ...input, email_attachment_file_paths: [2] }, null, null), /附件不存在/)
     await assert.rejects(writes.update(other, a.task.id, { name: '越权' }, null), /任务不存在/)
     reject = true
     await assert.rejects(writes.update(owner, a.task.id, { name: '失败', channels: ['web'] }, null), /目标不可用/)
     assert.equal((await pool.query('SELECT name FROM scheduled_tasks WHERE id=$1', [a.task.id])).rows[0].name, '提醒')
     reject = false
-    await assert.rejects(writes.update(owner, a.task.id, { email_attachment_file_ids: [2] }, null), /附件不存在/)
+    await assert.rejects(writes.update(owner, a.task.id, { email_attachment_file_paths: [2] }, null), /附件不存在/)
     const updated = await writes.update(owner, a.task.id, { name: '新提醒' }, null)
     assert.equal(updated.name, '新提醒')
     const updateJob = (await pool.query('SELECT source_id,pending_source_ids,generation FROM rag_index_jobs WHERE user_id=$1 AND source_type=$2', [owner, 'scheduled_task'])).rows[0]
@@ -98,12 +98,12 @@ test('定时任务写入验证 owner、事务与实际到期消费', { skip: !ur
     const retained = await writes.update(owner, a.task.id, { name: '仍可修改', channels: null }, null)
     assert.equal(retained.name, '仍可修改')
     assert.equal(retained.workspace_id, null)
-    assert.deepEqual(retained.email_attachment_file_ids, [1])
-    await assert.rejects(writes.update(owner, a.task.id, { email_attachment_file_ids: [1] }, null), /附件不存在/)
+    assert.deepEqual(retained.email_attachment_file_paths, [1])
+    await assert.rejects(writes.update(owner, a.task.id, { email_attachment_file_paths: [1] }, null), /附件不存在/)
     reject = false
     await pool.query('UPDATE workspaces SET enabled=TRUE WHERE id=1')
     await pool.query('UPDATE files SET deleted_at=NULL WHERE id=1')
-    assert.deepEqual((await writes.update(owner, a.task.id, { email_attachment_file_ids: null }, null)).email_attachment_file_ids, [])
+    assert.deepEqual((await writes.update(owner, a.task.id, { email_attachment_file_paths: null }, null)).email_attachment_file_paths, [])
     const rescheduled = await writes.update(owner, a.task.id, { end_at: null }, null)
     assert.equal(rescheduled.start_at, '2099-01-01T00:00:00.123456Z')
     assert.equal(rescheduled.cron, '@once:2099-01-01T00:00:00.123456+00:00')
@@ -185,7 +185,7 @@ test('定时任务写入验证 owner、事务与实际到期消费', { skip: !ur
       assert.equal(windowError.message, 'start_at 必须是合法的 ISO 日期时间')
       for (const [input, error] of [
         [{ workspace_id: 2 }, '工作区不存在或已停用'],
-        [{ email_attachment_file_ids: [2] }, '定时任务附件不存在、已删除或不属于当前用户'],
+        [{ email_attachment_file_paths: [2] }, '定时任务附件不存在、已删除或不属于当前用户'],
       ] as const) {
         const rejected = await registry.tools.dispatch({ ...call, id: 'invalid-reference', input: { ...createArgs, ...input } }, scope)
         assert.ok(rejected.kind === 'completed' && !rejected.successful && !rejected.mutated)

@@ -13,6 +13,7 @@ export async function buildDesktopAgentRuntime() {
   mkdirSync(dirname(outfile), { recursive: true })
   await build({
     entryPoints: [resolve(desktop, 'src/main/agent/runtime.ts')],
+    tsconfig: resolve(desktop, 'tsconfig.json'),
     outfile,
     bundle: true,
     packages: 'external',

@@ -1,21 +1,24 @@
+import { classifyGatewayGroupMessage } from '@gugu/gateway'
+import { desktopImGroupToolAllowed } from '@gugu/core/agent/scenes/im'
 import { transcribeDesktopImFile, type DesktopImVoice } from '../../inbound/voice.js'
-import { classifyImGroupInbound, resolveImActor } from '@gugu/core/im/access'
-import { updateUserBotGroupTools, userBotGroupFileToolsAllowed, userBotGroupToolAllowed } from '@gugu/core/im/user-bots'
+import { resolveImActor } from '@gugu/core/im/access'
+import { updateUserBotGroupTools, userBotGroupFileToolsAllowed } from '@gugu/core/im/user-bots'
 import { createHash } from 'node:crypto'
 import { desktopTransportOptions } from '@gugu/core/providers/node'
+import { isExplicitImCancel, parseImControlCommand } from '@gugu/core/im/shortcut'
 import { describeQqMedia, type QqMediaRequirement, createQqInboundPreparation, createQqFaceResolver, processQqMedia, handleQqBinding, parseQqMessage, QqMediaIngressError } from '@gugu/gateway/qq'
-import { createImMediaBudget, createGatewaySupervisor, readImReceivedInteraction, readImReceivedMessage, parseImReceivedMessage } from '@gugu/gateway'
+import { createImMediaBudget, createGatewaySupervisor, imSemanticText, readImReceivedInteraction, readImReceivedMessage, parseImReceivedMessage } from '@gugu/gateway'
 import { createPersistentQqProjection, createQqChartPreparation, createQqMediaUploader, sendQqChart, createQqClient, createQqConnection, createQqSender, createQqSocketFactory } from '@gugu/gateway/qq'
 import type { createDesktopQqPairing } from '../../../connect/platforms/qq/index.js'
 import type { createDesktopImCallback } from '../../interactions/callback.js'
-import type { createDesktopImDispatch } from '../../delivery/dispatch.js'
+import { readDesktopImRunStatus, stopDesktopImRun, type createDesktopImDispatch } from '../../delivery/dispatch.js'
 import { DesktopError } from '../../../../core-host.js'
 import { MAX_DESKTOP_ATTACHMENT_BYTES, readDesktopAgentAttachment } from '../../../../agent/attachments.js'
 import { desktopImEventKey, type createDesktopImInbox, type DesktopImFile } from '../../inbound/inbox.js'
 
 import { createDesktopImProjectionReceipts } from '../../delivery/projection.js'
 
-type ProjectionRuntime = { dataDirectory?: string; references?: ReturnType<typeof import('./references.js').createDesktopQqReferences>; voice?: DesktopImVoice; host: Parameters<typeof createDesktopImProjectionReceipts>[0]; encryption: Parameters<typeof createDesktopImProjectionReceipts>[1] }
+type ProjectionRuntime = { observeUpload?: Parameters<typeof createQqMediaUploader>[0]['observe']; dataDirectory?: string; references?: ReturnType<typeof import('./references.js').createDesktopQqReferences>; voice?: DesktopImVoice; host: Parameters<typeof createDesktopImProjectionReceipts>[0]; encryption: Parameters<typeof createDesktopImProjectionReceipts>[1] }
 type Transport = NonNullable<Parameters<typeof createQqClient>[0]['transport']>
 
 function groupConnectionId(botId: string, groupId: string, userId: string) {
@@ -50,11 +53,12 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
       })
       const mediaTransport = runtime ? transport() : undefined
       const faces = mediaTransport ? createQqFaceResolver({ transport: mediaTransport, report }) : undefined
-      const uploader = mediaTransport ? createQqMediaUploader({ client, transport: mediaTransport }) : undefined
+      const uploader = mediaTransport ? createQqMediaUploader({ client, transport: mediaTransport, observe: runtime?.observeUpload }) : undefined
       const controller = new AbortController()
       const active = AbortSignal.any([signal, controller.signal])
       let delivery: Promise<void> | undefined
       const groupDeliveries = new Map<string, Promise<void>>()
+      const groupMembers = new Map<string, Map<string, string | undefined>>()
       async function readActive() {
         if (active.aborted) return null
         const current = await pairing.read()
@@ -125,6 +129,12 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
               async close() { if (stream) await stream.close?.(); else await charts.close?.() },
             }
           } } : {}),
+          async sendActiveNotice(reply) {
+            const current = await readActive()
+            if (current?.userId !== userId || reply.recipient !== userId) return 'rejected'
+            return (await sender.text({ id: userId, chatType: 'c2c', messageFormat: current.privateMessageFormat },
+              reply.text, active, authorize)).outcome
+          },
           async send(reply) {
             const current = await readActive()
             if (!reply.originalMessageId || current?.userId !== userId) return 'rejected'
@@ -147,7 +157,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
         const authorizeMessage = async (message: Parameters<typeof admit>[1]) => {
           const current = await readActive()
           return current?.groupChatEnabled === true && current.userId === userId
-            && current.groupReplyMode !== 'record_only' && (message.botMentioned || current.groupReplyMode === 'reply_all')
+            && current.groupReplyMode !== 'record_only' && (message.botMentioned || message.qqAtEventOnly || current.groupReplyMode === 'reply_all')
         }
         const authorizeFile = async (message: Parameters<typeof admit>[1]) => {
           const current = await readActive()
@@ -158,11 +168,22 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
           const work = dispatch({ connection, connectionId, signal: active, authorize,
             group: { id: groupId, ownerPlatformUserId: userId, authorizeMessage, authorizeFile },
             ...(uploader ? { media: { platform: 'qq' as const, sender, mediaUpload: uploader } } : {}),
-            async send(reply) {
-              if (!reply.originalMessageId || reply.recipient !== groupId || !await authorize()) return 'rejected'
+            async sendOwnerPrivate(text) {
+              const current = await readActive()
+              if (current?.userId !== userId || !await authorize()) return 'rejected'
+              return (await sender.text({ id: userId, chatType: 'c2c', messageFormat: current.privateMessageFormat }, text, active, authorize)).outcome
+            },
+            async send(reply, _replyContext, senderName) {
+              if (!reply.originalMessageId || reply.recipient !== groupId || reply.scope.chatId !== groupId
+                || reply.scope.botId !== bot.appId || !await authorize()) return 'rejected'
               const current = await readActive()
               if (!current) return 'rejected'
+              const members = groupMembers.get(connectionId)
+              const ambiguous = senderName && members && [...members].some(([id, name]) =>
+                id !== reply.scope.platformUserId && name === senderName)
               return (await sender.text({ id: groupId, chatType: 'group', messageId: reply.originalMessageId,
+                mentionUserId: reply.scope.platformUserId, mentionUserName: ambiguous ? undefined : senderName,
+                knownMemberIds: [...(members?.keys() ?? [])],
                 messageFormat: current.groupMessageFormat ?? 'compat' }, reply.text, active, authorize)).outcome
             },
           }).finally(() => { groupDeliveries.delete(connectionId) })
@@ -208,6 +229,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
         },
         report: (event, error) => report?.(`qq-${event}`, error),
         async onEvent(kind, data, signal) {
+          const eventReceivedMs = Date.now()
           const current = await readActive()
           if (!current || signal.aborted) return
           if (kind === 'INTERACTION_CREATE' && callback && current.userId) {
@@ -224,14 +246,20 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
           let parsed = parseQqMessage(kind, data, { botId: bot.appId, ownerId: connection.ownerId })
           if (!parsed || (!parsed.mediaItems.length && !parsed.payload.text.trim() && !parsed.quoteRequest && !parsed.payload.quoted_text)) return
           const userId = parsed.payload.platform_user_id
-          let event = readImReceivedMessage(connection, { ...parsed.payload })
-          if (group) {
-            if (!current.groupChatEnabled || !current.userId || current.bindingEventId === event.eventId
-              || current.groupReplyMode !== 'record_only' && classifyImGroupInbound({ platform: 'qq', chatType: 'group', chatId: event.scope.chatId,
-                groupMentioned: kind === 'GROUP_AT_MESSAGE_CREATE' || event.botMentioned,
-                mentionsOtherBot: parsed.payload.mentions_other_bot === true }, { requiresAt: current.groupReplyMode !== 'reply_all', readOnly: false }) !== 'reply') return
-            if (kind === 'GROUP_AT_MESSAGE_CREATE') parsed.payload.bot_mentioned = true
-          }
+          let event = readImReceivedMessage(connection, { ...parsed.payload, event_received_ms: eventReceivedMs })
+          const mentioned = event.botMentioned || event.qqAtEventOnly === true
+          const semantic = imSemanticText(event.text, mentioned)
+          const slash = parseImControlCommand(semantic)
+          const explicitStop = (!group || mentioned) && slash?.name === 'stop' && !slash.argument
+          const explicitStatus = (!group || mentioned) && slash?.name === 'status' && !slash.argument
+          const cancelControl = !parsed.mediaItems.length && !parsed.quoteRequest && !event.quotedText
+            && (explicitStop || isExplicitImCancel(semantic))
+          if (group && (!current.groupChatEnabled || !current.userId || current.bindingEventId === event.eventId)) return
+          const groupFacts = { platform: 'qq', chatType: 'group', chatId: event.scope.chatId,
+            groupMentioned: event.botMentioned || event.qqAtEventOnly === true,
+            mentionsOtherBot: parsed.payload.mentions_other_bot === true } as const
+          const groupDisposition = (mode: typeof current.groupReplyMode) =>
+            classifyGatewayGroupMessage(groupFacts, mode, cancelControl)
           if (!current.userId) {
             if (parsed.mediaItems.length) return
             await handleQqBinding(parsed.payload.text, async code => {
@@ -248,31 +276,71 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
             return
           }
           if ((!group && current.userId !== userId) || current.bindingEventId === event.eventId || signal.aborted) return
-          const recordOnly = group && current.groupReplyMode === 'record_only'
+          const disposition = group ? groupDisposition(current.groupReplyMode) : 'reply'
+          if (!disposition) return
+          const recordOnly = disposition === 'passive'
           if (group && !event.scope.chatId) return
           const groupId = event.scope.chatId
           const authorize = async () => {
             if (signal.aborted) return false
             const latest = await readActive()
             return group ? latest?.userId === current.userId && latest.groupChatEnabled === true
-              && (latest.groupReplyMode === 'record_only') === recordOnly : latest?.userId === userId
+              && groupDisposition(latest.groupReplyMode) === disposition : latest?.userId === userId
           }
           if (!await authorize()) return
           const connectionId = groupId
             ? recordOnly ? groupConnectionId(bot.appId, groupId, current.userId) : startGroupDispatch(groupId, current.userId).connectionId
             : startDispatch(userId)
+          if (groupId) {
+            const members = groupMembers.get(connectionId) ?? new Map<string, string | undefined>()
+            const name = event.platformUserName ?? members.get(userId)
+            members.delete(userId)
+            members.set(userId, name)
+            if (members.size > 256) members.delete(members.keys().next().value!)
+            groupMembers.delete(connectionId)
+            groupMembers.set(connectionId, members)
+            if (groupMembers.size > 128) groupMembers.delete(groupMembers.keys().next().value!)
+          }
+          if ((cancelControl || explicitStatus) && !recordOnly && runtime) {
+            const owner = group ? current.userId : undefined
+            let reply: string | null
+            if (explicitStatus) reply = await readDesktopImRunStatus(runtime.host, event, connectionId, owner)
+            else if (explicitStop) reply = await stopDesktopImRun(runtime.host, event, connectionId, owner)
+            else {
+              const result = await runtime.host.request<{ outcome: 'idle' | 'requested' | 'already_completed' | 'not_owner' }>('im.inbox.cancelRun', {
+                platform: 'qq', connectionId, chatType: event.scope.chatType,
+                platformUserId: event.scope.platformUserId,
+                ...(group ? { ownerPlatformUserId: owner } : {}),
+              })
+              reply = result.outcome === 'requested' ? '好的，那这个先不继续啦～'
+                : result.outcome === 'already_completed' ? '这个任务已经结束啦～'
+                  : result.outcome === 'not_owner' ? '这个不是你发起的任务哦，咕咕还在忙～' : null
+            }
+            if (reply) {
+              const latest = await readActive()
+              if (latest && await authorize()) {
+                try {
+                  await sender.text({ id: groupId ?? userId, chatType: group ? 'group' : 'c2c',
+                    messageId: event.platformMessageId ?? event.eventId,
+                    messageFormat: group ? latest.groupMessageFormat ?? 'compat' : latest.privateMessageFormat },
+                  reply, signal, authorize)
+                } catch (error) { if (!signal.aborted) report?.('qq_cancel_reply', error) }
+              }
+              return
+            }
+          }
           if (prepare) {
             parsed = await prepare.prepare(event.scope, parsed, signal)
             if (!parsed) return
-            event = readImReceivedMessage(connection, { ...parsed.payload })
+            event = readImReceivedMessage(connection, { ...parsed.payload, event_received_ms: eventReceivedMs })
           } else {
             await faces?.appendAssets(parsed, signal)
-            event = readImReceivedMessage(connection, { ...parsed.payload })
+            event = readImReceivedMessage(connection, { ...parsed.payload, event_received_ms: eventReceivedMs })
           }
           if (!await authorize()) return
           if (!parsed.mediaItems.length) {
             if (recordOnly) {
-              if (event.text.trim()) await admit(connectionId, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId, authorize })
+              if (event.text.trim() || event.quotedText) await admit(connectionId, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId, authorize })
             } else await admit(connectionId, event)
             return
           }
@@ -293,16 +361,19 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
             const processed = await processQqMedia(parsed.mediaItems, budget, downloadSignal, {
               transport: mediaTransport, resolve, authorize, file: appendFile,
               async quote(media, sourcePlatformMessageId) {
-                if (!runtime?.references || !runtime.dataDirectory) return
+                if (!runtime?.references || !runtime.dataDirectory) return false
                 const id = await runtime.references.attachment(event.scope, sourcePlatformMessageId, media.attachmentIndex, downloadSignal)
-                if (!id) return
+                if (!id) return false
                 try {
                   const quoted = await readDesktopAgentAttachment(runtime.host, runtime.dataDirectory, id)
                   if (!budget.consume(quoted.data.byteLength)) throw new QqMediaIngressError('qq_media_size')
                   const metadata = describeQqMedia({ filename: quoted.name, content_type: quoted.mime }, quoted.data)
-                  if (metadata) await appendFile(media, { ...metadata, bytes: quoted.data })
+                  if (!metadata) return false
+                  await appendFile(media, { ...metadata, bytes: quoted.data })
+                  return true
                 } catch (error) {
                   if (!(error instanceof DesktopError && error.code === 'not_found')) throw error
+                  return false
                 }
               },
             })
@@ -362,7 +433,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
       const { chatType, chatId } = message.scope
       if (chatType !== 'group' || !chatId || desktopImEventKey(message) !== eventKey
         || groupConnectionId(current.appId, chatId, current.userId) !== connectionId
-        || (!scheduled && !message.botMentioned && current.groupReplyMode !== 'reply_all')) return null
+        || (!scheduled && !message.botMentioned && !message.qqAtEventOnly && current.groupReplyMode !== 'reply_all')) return null
       return { current, message }
     } catch { return null }
   }
@@ -386,7 +457,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
         groupProviderSearchEnabled: current.groupProviderSearchEnabled,
         groupHistorySearchEnabled: current.groupHistorySearchEnabled,
       })
-      return userBotGroupToolAllowed(tools, name) && !signal.aborted
+      return desktopImGroupToolAllowed('qq', authorized.message.scope.platformUserId === current.userId, tools, name) && !signal.aborted
     },
     async readGroupMemoryContext(params: Record<string, unknown>, signal: AbortSignal) {
       const authorized = await readAuthorizedGroupMessage(params, signal)

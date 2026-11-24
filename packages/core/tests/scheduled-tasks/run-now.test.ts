@@ -9,7 +9,7 @@ import { ExecutionError } from '../../src/agent/executor/contracts.js'
 
 const task = {
   id: '42', ownerId: 'owner-a', name: '测试任务', payload: '查看最新计划', channels: ['web', 'chat', 'qq'],
-  deliveryTargets: {}, authorizedTools: [], emailAttachmentFileIds: [], workspaceId: null, filesystemGrantId: null,
+  deliveryTargets: {}, authorizedTools: [], emailAttachmentFilePaths: [], workspaceId: null, filesystemGrantId: null,
 }
 
 it('定时运行禁用推理续接并保留Host选中的模型与凭据', () => {

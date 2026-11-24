@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import { stableJson, type ContextSourceSelection, type RunIdentity } from '@gugu/core/agent'
-import { imContextPolicy, type ImActor, type ImBotAccess } from '@gugu/core/im/access'
+import { type ImActor, type ImBotAccess } from '@gugu/core/im/access'
+import { imContextPolicy } from '@gugu/core/agent/scenes/im'
 import { normalizeUserBotTools } from '@gugu/core/im/user-bots'
 import { agentContextAccessScope } from '../../../agent/llm/access.js'
 import { readConfiguredAgentProviderSettings } from '../../../agent/llm/settings.js'
@@ -28,7 +29,7 @@ export function freezeImAgentProviderScope(identity: RunIdentity, actor: ImActor
     frozenActor.allowedToolNames === null ? null : [...frozenActor.allowedToolNames].sort(),
     frozenActor.speakerRoles === null ? null : [...frozenActor.speakerRoles].sort((a, b) => a.platformUserId < b.platformUserId ? -1 : a.platformUserId > b.platformUserId ? 1 : 0),
     frozenBot.ownerPlatformUserId, normalizeUserBotTools(frozenBot.groupAllowedTools).sort(), frozenBot.groupOwnerMemoryEnabled, policy])
-  return Object.freeze({ groupChat: actor.chatType === 'group', contextPolicy: policy, contextBinding })
+  return Object.freeze({ scene: 'im' as const, groupChat: actor.chatType === 'group', contextPolicy: policy, contextBinding })
 }
 
 /** 复用文件锁 + PG repeatable-read 快照及原有可恢复 Provider；不创建另一套模型循环。 */
@@ -71,7 +72,7 @@ export async function createConfiguredImAgentProviderBinding(options: {
       return scoped(identity, actor, bot, memoryEnabled, async scope => {
         const bound = await binding.bind(identity, signal, recovery)
         const selection: ContextSourceSelection = Object.freeze({ modelIdentity: bound.modelIdentity, contextWindow: bound.contextWindow,
-          locale: selectedLocale, groupChat: scope.groupChat, workspaceBinding: null, contextPolicy: scope.contextPolicy, contextScopeKey: bound.contextScopeKey })
+          locale: selectedLocale, groupChat: scope.groupChat, scene: scope.scene, workspaceBinding: null, contextPolicy: scope.contextPolicy, contextScopeKey: bound.contextScopeKey })
         return { selection, resolve: bound.resolve, usageConfig: bound.usageConfig, release: bound.release }
       })
     },

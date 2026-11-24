@@ -7,7 +7,7 @@
     <span v-if="attUploading" class="chat-att-chip att-up">{{ t('common.status.processing') }}</span>
   </div>
   <div v-if="previewOnly" class="chat-preview-status" role="status">{{ t('chatUi.desktopPreview') }}</div>
-  <div :inert="previewOnly" ref="inputRowEl" class="chat-input-row" :class="{ 'is-expanded': expanded }">
+  <div :inert="previewOnly" ref="inputRowEl" class="chat-input-row" :class="{ 'is-expanded': expanded, 'has-command-menu': commandMenuVisible && filteredCommands.length }">
     <Transition name="chat-command-pop">
       <div v-if="commandMenuVisible && filteredCommands.length" class="chat-command-menu" role="listbox" :aria-label="t('chat.commandList')">
         <button
@@ -101,12 +101,12 @@
         <button v-if="voiceInputAvailable && !recording" class="att-btn" @click="onStartRecord" :title="t('chat.voiceInput')" :aria-label="t('chat.voiceInput')">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
         </button>
-        <button v-if="canStop && !recording" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
-          :disabled="interruptPending" :title="t('chatUi.interruptRun')" :aria-label="t('chatUi.interruptRun')"
-          @click="streaming ? onStopStreaming() : onInterruptDetachedRun?.()">
+        <button v-if="streaming && !recording" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
+          :title="t('chatUi.interruptRun')" :aria-label="t('chatUi.interruptRun')"
+          @click="onStopStreaming()">
           <Icon name="action.stop-fill" :size="expanded ? 14 : 13" />
         </button>
-        <button v-if="!canStop || hasDraft || recording" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
+        <button v-if="!streaming || hasDraft || recording" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
           @click="recording ? onStopRecord() : onSend()">
           <Icon :name="recording ? 'status.success' : 'action.next'" :size="expanded ? 14 : 13" />
         </button>
@@ -164,9 +164,6 @@ const props = defineProps<{
   expanded: boolean
   ownerZ: number
   streaming: boolean
-  canInterruptDetachedRun?: boolean
-  interruptPending?: boolean
-  onInterruptDetachedRun?: () => void
   automaticModeEnabled: boolean
   automaticModeAvailable: boolean
   automaticModeSaving: boolean
@@ -185,7 +182,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:references': [value: ChatReference[]] }>()
 const hasDraft = computed(() => Boolean(props.modelValue.trim() || props.pendingAtt.length || (props.standaloneReferences && props.references.length)))
-const canStop = computed(() => props.streaming || props.canInterruptDetachedRun)
 const commandMenuVisible = ref(false)
 const commandIndex = ref(0)
 const readChatCommands = inject(chatCommandCatalogKey, loadChatCommands)
@@ -193,7 +189,7 @@ const chatCommands = ref<ChatCommandOption[]>([])
 const inputRowEl = ref<HTMLElement | null>(null)
 
 // ── 拖文件卡进聊天 = @ 引用（Runtime 投放目标挂在 GuguChatWindow 的窗口根上）──
-// 这里只消费 Runtime 的 move action：解析 objectIds 还原文件/文件夹 id，插入
+// 这里只消费 Runtime 的 move action：解析 objectIds 还原文件/文件夹引用，插入
 // mindRef chip——references 数组是文档派生物，自动带上且天然去重。
 const filesCache = useFilesCacheStore()
 const mindStore = useMindStore()
@@ -207,13 +203,14 @@ function insertReferenceChip(reference: ChatReference) {
     .some(item => item.type === reference.type && item.id === reference.id)) return
   let label: string
   if (reference.type === 'folder') {
-    label = filesCache.getFolder(Number(reference.id))?.name || reference.label || `Folder ${reference.id}`
+    label = reference.label || `Folder ${reference.id}`
   } else if (reference.type === 'project') {
     label = projectStore.projects.find(project => project.id === Number(reference.id))?.name ?? (reference.label || `Project ${reference.id}`)
   } else if (reference.type === 'event' || reference.type === 'canvas_note') {
     label = reference.label || `${reference.type === 'event' ? 'Activity' : 'Canvas note'} ${reference.id}`
   } else {
-    label = filesCache.getFile(Number(reference.id))?.displayName || reference.label || `File ${reference.id}`
+    label = (typeof reference.id === 'string' ? filesCache.getFile(reference.id)?.displayName : null)
+      || reference.label || `File ${reference.id}`
   }
   editor.chain().focus('end')
     .insertContent({ type: 'mindRef', attrs: { refType: reference.type, refId: reference.id, label } })
@@ -223,9 +220,11 @@ function insertReferenceChip(reference: ChatReference) {
 
 async function handleRuntimeReferenceDrop(objectIds: readonly string[]) {
   const resolved = await Promise.all(objectIds.map(async objectId => {
-    const path = parseChatRuntimePathFile(objectId)
+    const file = parseChatRuntimePathFile(objectId)
+    const folder = file ? null : parseChatRuntimePathFile(objectId, 'folder')
+    const path = file ?? folder
     if (path) {
-      try { return await pathFilesApi.reference(path) }
+      try { return await pathFilesApi.reference(path, folder ? 'folder' : 'file') }
       catch { showAppNotice(t('mindUi.referenceMissing')); return null }
     }
 
@@ -235,8 +234,9 @@ async function handleRuntimeReferenceDrop(objectIds: readonly string[]) {
       ? mindStore.canvasItems.find(item => item.nodeId === nodeId)?.node
       : undefined
     const reference = parseMindCanvasChatReference(node) ?? parseChatRuntimeReference(objectId)
+    if (reference?.type === 'folder' || reference?.type === 'file') return null
     if (!reference || reference.label.trim()) return reference
-    const nameSelector = reference.type === 'folder' ? '.fd-name, .lr-filename' : '.fc-name, .lr-filename'
+    const nameSelector = '.fc-name, .lr-filename'
     const nameElement = element?.querySelector<HTMLElement>(nameSelector)
     const editingName = nameElement?.querySelector<HTMLInputElement>('input')?.value.trim()
     const sourceLabel = editingName || nameElement?.textContent?.trim()
@@ -285,7 +285,7 @@ function animateSourceReturn(objectId: string) {
   }
   requestAnimationFrame(tryAnimate)
 }
-const { items: referenceItems, loading: referenceLoading, active: referenceActive, search: searchReferences, reset: resetReferences, move: moveReferences } = useReferenceSuggest()
+const { items: referenceItems, loading: referenceLoading, active: referenceActive, search: searchReferences, reset: resetReferences, move: moveReferences } = useReferenceSuggest(180, true, item => (item.type !== 'folder' && item.type !== 'file') || /^(path|drop)-/u.test(String(item.id)))
 const referencePicker = ref({ open: false, query: '', from: 0, to: 0 })
 let lastReferenceQuery: string | null = null
 
@@ -502,7 +502,10 @@ function onInputSelection() {
     if (props.previewOnly || props.textOnly) return
     document.addEventListener('pointerdown', onOutsidePointerdown, true)
   document.addEventListener('selectionchange', onInputSelection)
-  void readChatCommands().then((items) => { chatCommands.value = items }).catch(() => {
+  void readChatCommands().then((items) => {
+    chatCommands.value = items
+    if (chatEditor.value?.isFocused) updateCommandMenu(props.modelValue)
+  }).catch(() => {
     // 命令注册表不可用时不展示过期的本地列表，避免把不存在的命令提示给用户。
     chatCommands.value = []
   })
@@ -704,10 +707,11 @@ defineExpose({
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
   flex-shrink: 0;
 }
+.chat-input-row.has-command-menu { z-index: calc(var(--scrollbar-overlay-z-index, 6) + 1); }
 .chat-command-menu {
   position: absolute;
-  left: 8px;
-  bottom: calc(100% + 8px);
+  inset-inline-start: 13px;
+  bottom: calc(100% + 4px);
   z-index: 5;
   width: min(290px, calc(100% - 16px));
   max-height: min(280px, calc(100vh - 120px));
@@ -756,7 +760,6 @@ defineExpose({
 .chat-command-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .chat-command-copy strong { font-size: 12px; font-weight: 650; }
 .chat-command-copy small { overflow: hidden; color: var(--content-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.chat-input-row.is-expanded .chat-command-menu { left: 42px; width: min(320px, calc(100% - 54px)); }
 /* 录音条：录音时替换输入框 */
 .rec-bar { flex: 1; display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-primary); height: 28px; min-width: 0; }   /* 与按钮(28)等高 → flex-end 底对齐时内容也居中对齐，不再偏低 */
 .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: #e15c5c; flex-shrink: 0; animation: rec-pulse 1s ease-in-out infinite; }

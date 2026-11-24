@@ -74,7 +74,7 @@ export function readChatSources(result: unknown): ChatSource[] {
   return [...sources.values()]
 }
 
-const chatSourceLabel = /^\s*(?:(?:以下(?:是|为)|下列(?:是|为))\s*)?(?:(?:主要|参考|数据|信息|引用)?来源(?:\s*(?:与|及|和)\s*(?:不确定性|口径)(?:说明)?)?|(?:Data\s+)?Sources?)\s*[:：]/iu
+const chatSourceLabel = /^\s*(?:(?:以下(?:是|为)|下列(?:是|为))\s*)?(?:(?:本次新增)?(?:主要|参考|数据|信息|引用|一手)?来源(?:\s*(?:与|及|和)\s*(?:不确定性|口径)(?:说明)?)?|参考(?:链接|资料)|(?:Data\s+)?Sources?)(?:\s*[（(][^\n（）()]{1,80}[）)])?\s*(?:[:：]|$)/iu
 
 export function decorateChatSources(html: string, sources: readonly ChatSource[]) {
   const groups: ChatSource[][] = []
@@ -109,6 +109,14 @@ export function decorateChatSources(html: string, sources: readonly ChatSource[]
     if (meaningful(title)) return source
     return { ...source, title: meaningful(label) ? label.slice(0, 200) : '' }
   }
+  function inSourceColumn(anchor: Element) {
+    const cell = anchor.closest<HTMLTableCellElement>('td')
+    const table = cell?.closest('table')
+    const header = cell && table?.tHead?.rows[0]?.cells[cell.cellIndex]
+    return Boolean(header && /^(?:出处|(?:(?:参考|数据|信息|引用)\s*)?来源|(?:data\s+)?sources?|references?)[:：]?$/iu
+      .test(header.textContent?.trim() ?? ''))
+  }
+
   function match(anchor: Element | null) {
     if (anchor?.tagName !== 'A' || anchor.closest('pre, code') || anchor.querySelector('img')) return
     const url = sourceUrl(anchor.getAttribute('href'))
@@ -120,7 +128,19 @@ export function decorateChatSources(html: string, sources: readonly ChatSource[]
     const matchesKnownPath = !url.search && !url.hash && pathsWithQuery.has(url.origin + url.pathname)
     const list = anchor.closest('ul, ol')
     const inSourceBlock = (paragraph && sourceBlocks.has(paragraph)) || (list && sourceBlocks.has(list))
-    if (!inSourceParagraph && !inSourceBlock && !matchesKnownPath) return
+    const attribution = anchor.closest('blockquote')
+      && anchor.previousSibling?.nodeType === Node.TEXT_NODE
+      && /(?:^|\n)\s*(?:——|—|–|--|[-–—]{2,})\s*$/u.test(anchor.previousSibling.textContent ?? '')
+    const previous = anchor.previousSibling
+    const next = anchor.nextSibling
+    const parentheticalCitation = paragraph
+      && previous?.nodeType === Node.TEXT_NODE && next?.nodeType === Node.TEXT_NODE
+      && /（\s*$/u.test(previous.textContent ?? '') && /^\s*）/u.test(next.textContent ?? '')
+    const asciiParentheticalCitation = paragraph
+      && previous?.nodeType === Node.TEXT_NODE && next?.nodeType === Node.TEXT_NODE
+      && /\(\s*$/u.test(previous.textContent ?? '') && /^\s*\)/u.test(next.textContent ?? '')
+    if (!inSourceParagraph && !inSourceBlock && !matchesKnownPath && !inSourceColumn(anchor)
+      && !attribution && !parentheticalCitation && !asciiParentheticalCitation) return
     return { url: url.href, site: url.hostname, title: '', summary: '', date: '', icon: sourceIcon(url) }
   }
   for (const anchor of root.querySelectorAll<HTMLAnchorElement>('a[href]')) {

@@ -15,8 +15,7 @@ type BindingRow = QueryResultRow & {
 }
 
 type WorkspaceRow = QueryResultRow & {
-  kind: 'project' | 'directory' | 'folder'
-  folder_id: number | string | null
+  kind: 'project' | 'directory'
   project_id: number | string | null
   directory_id: number | string | null
 }
@@ -95,7 +94,7 @@ async function workspaceSegments(
   workspaceId: number | string,
 ): Promise<string[] | null> {
   const result = await client.query<WorkspaceRow>(
-    `SELECT kind,folder_id,project_id,directory_id FROM workspaces
+    `SELECT kind,project_id,directory_id FROM workspaces
      WHERE id=$1 AND user_id=$2 AND enabled IS TRUE`, [workspaceId, ownerId],
   )
   const workspace = result.rows[0]
@@ -113,43 +112,7 @@ async function workspaceSegments(
     return name ? ['workspace', pathName(name)] : null
   }
 
-  if (workspace.kind !== 'folder' || workspace.folder_id == null) return null
-  const folders = await client.query<{
-    id: number | string
-    parent_id: number | string | null
-    name: string
-    project_id: number | string | null
-    workspace_directory_id: number | string | null
-  } & QueryResultRow>(
-    `WITH RECURSIVE chain AS (
-       SELECT id,parent_id,name,project_id,workspace_directory_id,0 AS depth
-       FROM folders WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL
-       UNION ALL
-       SELECT parent.id,parent.parent_id,parent.name,parent.project_id,parent.workspace_directory_id,chain.depth+1
-       FROM folders parent JOIN chain ON chain.parent_id=parent.id
-       WHERE parent.user_id=$2 AND parent.deleted_at IS NULL AND chain.depth < 64
-     ) SELECT id,parent_id,name,project_id,workspace_directory_id,depth FROM chain ORDER BY depth DESC`,
-    [workspace.folder_id, ownerId],
-  )
-  if (!folders.rows.length) return null
-  const leaf = folders.rows.at(-1)!
-  if (folders.rows[0]!.parent_id !== null || String(leaf.id) !== String(workspace.folder_id)) return null
-  if (folders.rows.some((folder) => String(folder.project_id ?? '') !== String(leaf.project_id ?? '')
-    || String(folder.workspace_directory_id ?? '') !== String(leaf.workspace_directory_id ?? ''))) return null
-  const folderNames = folders.rows.map((folder) => pathName(folder.name))
-  if (leaf.project_id != null) {
-    const base = await projectSegments(client, ownerId, leaf.project_id)
-    return base ? [...base, ...folderNames] : null
-  }
-  if (leaf.workspace_directory_id != null) {
-    const directory = await client.query<{ directory_name: string }>(
-      `SELECT directory_name FROM workspace_directories
-       WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, [leaf.workspace_directory_id, ownerId],
-    )
-    const name = directory.rows[0]?.directory_name
-    return name ? ['workspace', pathName(name), ...folderNames] : null
-  }
-  return ['个人文件', ...folderNames]
+  return null
 }
 
 async function bindingRoot(

@@ -15,3 +15,4 @@ export * from './runtime/media-format.js';
 export * from './runtime/media-budget.js';
 export * from './runtime/media-rollback.js';
 export * from './runtime/media-delivery.js';
+export * from './runtime/command-reply.js';

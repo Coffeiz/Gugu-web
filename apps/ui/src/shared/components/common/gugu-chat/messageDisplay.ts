@@ -6,22 +6,22 @@ import { toolActivityLabel } from './toolActivity'
 // 图片附件缩略图（与文件库共用 useThumbCache）
 export const IMG_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
 
-// 缩略图来源优先级：本地 _thumbUrl（刚发的，即时）> file_id（已落库，服务端图）
+// 缩略图来源优先级：本地 _thumbUrl（刚发的，即时）> file_path（文件库路径）
 // > attach_id（刷新后历史里的暂存图，走 /agent/attachment 端点，6h 内有效）；都没有则 ext 角标
 export function isImageFile(f: ChatFile) {
   if (f._thumbUrl) return true
   const isImg = IMG_EXTS.has((f.ext || '').toLowerCase())
-  return isImg && (!!f.file_id || !!f.attach_id)
+  return isImg && (!!f.file_path || !!f.attach_id)
 }
 
 export function isAnimatedImageFile(f: ChatFile) {
   const mime = (f.mime || '').toLowerCase()
   return (['gif', 'webp'].includes((f.ext || '').toLowerCase()) || mime === 'image/gif' || mime === 'image/webp')
-    && (!!f.file_id || !!f.attach_id)
+    && (!!f.file_path || !!f.attach_id)
 }
 
 export function canPreview(f: ChatFile) {
-  return (!!f.file_id || !!f.attach_id) && isPreviewable(f.ext, f.mime)
+  return (!!f.file_path || !!f.attach_id) && isPreviewable(f.ext, f.mime)
 }
 
 export function fmtSize(b?: number) {
@@ -61,15 +61,6 @@ export function displayQQFaces(text: string): string {
 
 export function localizedToolStatusLabel(event: { name?: string; label?: string; custom?: string; input?: unknown; shellActivity?: ChatMessage['shellActivity'] }): string {
   if (typeof event.custom === 'string' && event.custom.trim()) return event.custom.trim()
-  let toolName = event.name || ''
-  // 固定 Adapter 优先读取当前协议字段，兼容旧事件。
-  if (toolName === 'call_tool' && event.input && typeof event.input === 'object') {
-    const input = event.input as { tool_name?: unknown; name?: unknown }
-    const target = input.tool_name ?? input.name
-    if (typeof target === 'string' && target.trim()) toolName = target.trim()
-  }
-  const input = toolName === 'shell' && event.name === 'call_tool' && event.input && typeof event.input === 'object'
-    ? (event.input as { arguments?: unknown }).arguments ?? event.input : event.input
-  return toolActivityLabel({ toolName, toolLabel: event.label, toolInput: input, shellActivity: event.shellActivity },
+  return toolActivityLabel({ toolName: event.name, toolLabel: event.label, toolInput: event.input, shellActivity: event.shellActivity },
     (key, values) => values ? i18n.global.t(key, values) : i18n.global.t(key), key => i18n.global.te(key))
 }

@@ -66,15 +66,11 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
     );
     CREATE TABLE files (
       id serial PRIMARY KEY, user_id uuid NOT NULL, display_name varchar(300) NOT NULL,
-      ext varchar(20) NOT NULL, space varchar(20) NOT NULL, project_id integer, folder_id integer,
+      ext varchar(20) NOT NULL, space varchar(20) NOT NULL, project_id integer,
       workspace_directory_id integer, stage_name varchar(100), mind_map_id integer,
       storage_key varchar(500) NOT NULL, version integer NOT NULL, size varchar(50),
       size_bytes bigint NOT NULL, mime_type varchar(200), img_width integer, img_height integer,
       created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz
-    );
-    CREATE TABLE folders (
-      id serial PRIMARY KEY, user_id uuid NOT NULL, project_id integer, workspace_directory_id integer,
-      parent_id integer, name varchar(200) NOT NULL, version integer NOT NULL, deleted_at timestamptz
     );
     CREATE TABLE calendar_events (
       id serial PRIMARY KEY, user_id uuid NOT NULL, title varchar(300) NOT NULL,
@@ -142,10 +138,11 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
       assert.equal(committed.rows[0]?.version, 2, '项目事件只能在 PATCH 事务提交后发布')
       projectEvents.push(event.operation)
     },
+    async () => 0,
   )
   const trashRuntime = createPostgresProjectTrashRuntime(pool, async (event) => {
     projectEvents.push(`${event.resource}:${event.operation}`)
-  })
+  }, async () => 0)
   const trashStorage = createLocalProjectTrashStorage(
     storageRoot,
     createProjectTrashOriginalStorageKeyResolver(createPostgresProjectTrashPathMetadataReader(pool)),
@@ -267,16 +264,6 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
     const projectFilePath = join(storageRoot, ...projectFileKey.split('/'))
     await mkdir(dirname(projectFilePath), { recursive: true })
     await writeFile(projectFilePath, '项目关联正文')
-    const projectFileInserted = await pool.query<{ id: number }>(
-      `INSERT INTO files (
-         user_id,display_name,ext,space,project_id,stage_name,storage_key,version,
-         size,size_bytes,mime_type,created_at,updated_at
-       ) VALUES ($1,'关联文档','md','project',$2,'',$3,1,'18 B',18,'text/markdown',$4,$4)
-       RETURNING id`,
-      [ownerId, projectId, projectFileKey, stamp],
-    )
-    const projectFileId = projectFileInserted.rows[0]!.id
-
     const unauthenticatedFileWrite = await fetch(`${base}/api/v1/files/${fileId}/content`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ content: '未认证正文', version: 1 }),
@@ -325,15 +312,7 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
       method: 'DELETE', headers,
     })
     assert.equal(deletion.status, 204)
-    const deletedProjectFile = await pool.query<{
-      storage_key: string; version: number; deleted_at: Date | null
-    }>('SELECT storage_key,version,deleted_at FROM files WHERE id=$1 AND user_id=$2', [projectFileId, ownerId])
-    const projectFileTrashKey = `${ownerId}/trash/2026/11/已更新项目 #${projectId}/关联文档.md`
-    assert.equal(deletedProjectFile.rows[0]?.storage_key, projectFileTrashKey)
-    assert.equal(deletedProjectFile.rows[0]?.version, 2)
-    assert.ok(deletedProjectFile.rows[0]?.deleted_at)
-    assert.equal(await readFile(join(storageRoot, ...projectFileTrashKey.split('/')), 'utf8'), '项目关联正文')
-    await assert.rejects(readFile(projectFilePath), { code: 'ENOENT' })
+    assert.equal(await readFile(projectFilePath, 'utf8'), '项目关联正文')
     const deleted = await pool.query<{ project_deleted: Date | null; event_deleted: Date | null }>(
       `SELECT project.deleted_at AS project_deleted, event.deleted_at AS event_deleted
        FROM projects project JOIN calendar_events event ON event.project_id=project.id
@@ -355,17 +334,10 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
     assert.deepEqual(active.rows[0], {
       project_version: 4, project_deleted: null, event_version: 3, event_deleted: null,
     })
-    const restoredProjectFile = await pool.query<{
-      storage_key: string; version: number; deleted_at: Date | null
-    }>('SELECT storage_key,version,deleted_at FROM files WHERE id=$1 AND user_id=$2', [projectFileId, ownerId])
-    assert.deepEqual(restoredProjectFile.rows[0], {
-      storage_key: projectFileKey, version: 3, deleted_at: null,
-    })
     assert.equal(await readFile(projectFilePath, 'utf8'), '项目关联正文')
-    await assert.rejects(readFile(join(storageRoot, ...projectFileTrashKey.split('/'))), { code: 'ENOENT' })
     assert.deepEqual(projectEvents, [
-      'update', 'projects:delete', 'files:delete', 'calendar:delete',
-      'projects:create', 'files:create', 'calendar:create',
+      'update', 'projects:delete', 'calendar:delete',
+      'projects:create', 'calendar:create',
     ])
     const undo = await pool.query<{ count: number }>(
       `SELECT count(*)::int AS count FROM undo_operations WHERE user_id=$1 AND undo_context_id='vite-integration-tab'`,

@@ -171,7 +171,7 @@ it('子 Agent 操作留在普通工具组，输出用群成员消息展示一次
   const result = { childId, status: 'completed', finalMessage: '子任务原文' }
   const { rows, subagentNames } = projectChatRows([
     message(1, 'tool', { runId: 'earlier-parent', toolName: 'agent_message', toolResult: {
-      action: 'start', run: { childId, agentId: 'builtin:searcher' },
+      action: 'spawn', run: { childId, agentId: 'builtin:searcher' },
     } }),
     message(2, 'tool', { runId: 'parent', toolName: 'agent_wait', toolResult: result }),
     message(3, 'tool', { runId: 'parent', toolName: 'subagent_result', toolResult: result }),
@@ -198,4 +198,16 @@ it.each([
   [3_599_700, '1h00m00s'], [3_725_000, '1h02m05s'],
 ])('工具耗时 %i 毫秒显示为 %s', (elapsed, expected) => {
   expect(formatToolDuration(elapsed)).toBe(expected)
+})
+
+it('未匹配专用动作的 Shell 历史摘要显示命令名', () => {
+  expect(localizedToolStatusLabel({
+    name: 'shell', shellActivity: { action: 'command', target: 'rsync' },
+  })).toBe(i18n.global.t('toolNames.shell_command_target', { target: 'rsync' }))
+})
+
+it('聊天标题用同一份命令摘要显示分类和条数', () => {
+  const tool = message(1, 'tool', { toolName: 'shell', toolInput: { command: 'date; whoami; pwd' } })
+  const translate = (key: string, values?: Record<string, string>) => i18n.global.t(key, values ?? {}, { locale: 'en-US' })
+  expect(toolActivityLabel(tool, translate, key => i18n.global.te(key, 'en-US'))).toBe('View system information · 3 commands')
 })

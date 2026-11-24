@@ -22,7 +22,7 @@ function schemaTypes(schema: Schema): Set<string> {
 function actualType(value: unknown): string {
   return value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
 }
-function unionBranch(schema: Schema, input: unknown): unknown {
+function unionBranch(schema: Schema, input: unknown, field: string): unknown {
   if (!Array.isArray(schema.anyOf)) return null
   const branches = schema.anyOf.filter(object)
   const type = actualType(input)
@@ -30,6 +30,11 @@ function unionBranch(schema: Schema, input: unknown): unknown {
     const types = schemaTypes(branch)
     return types.has(type) || type === 'number' && typeof input === 'number' && Number.isInteger(input) && types.has('integer')
   })
+  if (typeof input === 'string' && field === 'ref_id' && schema['x-coerce-ref-id'] === true && /^#?[+-]?\d+$/u.test(input.trim())
+    && matches.length === 1 && typeof matches[0]!.pattern === 'string') {
+    const integers = branches.filter(branch => schemaTypes(branch).has('integer'))
+    if (integers.length === 1) return integers[0]
+  }
   if (matches.length === 1) return matches[0]
   // 与 Python string|object 联合类型一致：数值可转string，boolean不可转。
   if (!matches.length && type === 'number') {
@@ -73,7 +78,7 @@ function unwrapArray(schema: Schema, input: Record<string, unknown>, state: Norm
 
 function normalizeValue(schema: unknown, input: unknown, field: string, state: NormalizationState, path: string): unknown {
   if (!object(schema)) return input
-  const branch = unionBranch(schema, input)
+  const branch = unionBranch(schema, input, field)
   if (branch) return normalizeValue(branch, input, field, state, path)
   const types = schemaTypes(schema)
   if (object(input) && types.has('object') && object(schema.properties)) {
@@ -119,6 +124,13 @@ function normalizeValue(schema: unknown, input: unknown, field: string, state: N
   if (types.has('boolean') && /^(true|false)$/i.test(text)) {
     adapted(state, path, 'string_to_boolean')
     return text.toLowerCase() === 'true'
+  }
+  if (types.size === 1 && types.has('number') && schema['x-coerce-number'] === true && /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/u.test(text)) {
+    const number = Number(text)
+    if (Number.isFinite(number)) {
+      adapted(state, path, 'string_to_number')
+      return number
+    }
   }
   if (types.has('integer')) {
     const numeric = field.endsWith('_id') && text.startsWith('#') ? text.slice(1) : text

@@ -10,7 +10,7 @@ const CONFIRMATION_TTL_MINUTES = 10
 export interface FilesystemAuthorizationConfirmationPort {
   revoke(ownerId: string, summary: string, identity: string): Promise<boolean>
   createPending(ownerId: string, summary: string, identity: string, ttlMinutes: number): Promise<string | null>
-  redeem(ownerId: string, code: string): Promise<boolean>
+  redeem(ownerId: string, code: string, expected?: { summary: string; identity: string }): Promise<boolean>
   hasGrant(ownerId: string, summary: string, identity: string): Promise<boolean>
 }
 
@@ -134,6 +134,7 @@ export function createAgentSessionFilesystemAuthorization(
   runtime: AgentFilesystemAuthorizationRuntime,
 ) {
   return {
+    enabled: () => runtime.enabled(),
     async request(ownerId: string, sessionId: number): Promise<unknown> {
       const session = await findOwnedSession(pool, ownerId, sessionId)
       if (!session) throw notFound()
@@ -173,7 +174,7 @@ export function createAgentSessionFilesystemAuthorization(
       ensureEnabled(runtime)
       const summary = sessionSummary(session)
       const identity = confirmationIdentity(sessionId)
-      if (!await confirmations.redeem(ownerId, confirmCode)
+      if (!await confirmations.redeem(ownerId, confirmCode, { summary, identity })
         || !await confirmations.hasGrant(ownerId, summary, identity)) {
         throw new AgentFilesystemAuthorizationError(400, '授权确认已失效或不匹配，请重新确认')
       }

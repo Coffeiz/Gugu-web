@@ -34,16 +34,18 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data
 }
 
+export async function allocateDesktopSkillSequence<DB>(tx: Kysely<DB>) {
+  const { rows: [row] } = await sql<{ value: string }>`INSERT INTO core_runtime_meta(key,value)
+    VALUES('desktop_skill_sequence','2') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1 RETURNING value`.execute(tx)
+  return Number(row?.value)
+}
+
 export function createDesktopSkillManager<DB>(db: Kysely<DB>, knownTools: ReadonlySet<string> = new Set()) {
   return createUserSkillManager(db, 'sqlite', {
     knownTools: async () => knownTools,
     digest: text => createHash('sha256').update(text).digest('hex'),
     publish: async () => {},
-    async allocateSequence(tx) {
-      const { rows: [row] } = await sql<{ value: string }>`INSERT INTO core_runtime_meta(key,value)
-        VALUES('desktop_skill_sequence','2') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1 RETURNING value`.execute(tx)
-      return Number(row?.value)
-    },
+    allocateSequence: allocateDesktopSkillSequence,
   })
 }
 

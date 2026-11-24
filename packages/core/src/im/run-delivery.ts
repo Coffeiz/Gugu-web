@@ -1,13 +1,15 @@
-import { isImInternalDelegationTool } from './access.js'
+import { isImInternalDelegationTool } from '../agent/scenes/im/index.js'
 import { describeShellActivity, type ShellActivity } from '../agent/shell-activity.js'
+import { shellActivityLabel, toolDisplayIdentity, toolLabelLocale, toolNames } from '../agent/sessions/tool-labels.js'
 import { BUILTIN_AGENT_TOOL_STATE_LABELS } from '../agent/sessions/state-labels.js'
 import type { AgentRunner, PortableValue, RunEvent, RunIdentity } from '../agent/models.js'
 import { normalizePersistentArtifact } from '../agent/context/history/attachment-refs.js'
 
-const shellLabels: Readonly<Record<ShellActivity['action'], string>> = {
-  directory: '查看目录', read: '读取文件', search: '搜索内容', find: '查找文件',
-  check: '检查与统计', checks: '执行多项检查', git: '查看 Git 状态', git_diff: '查看 Git 差异',
-  git_history: '查看 Git 历史', build: '构建项目', test: '运行测试',
+/** 与旧版 IM 展示保持一致，忽略没有明确结果的完成事件。 */
+export function formatImCompactionNotice({ phase, applied }: { phase?: unknown; applied?: unknown }): string | null {
+  if (phase === 'started') return '上下文较长，正在整理后继续处理。'
+  if (phase !== 'completed' || typeof applied !== 'boolean') return null
+  return applied ? '上下文整理完成。' : '本次未能整理上下文，继续处理。'
 }
 
 function defaultToolLabel(name: string): string {
@@ -15,30 +17,62 @@ function defaultToolLabel(name: string): string {
 }
 
 /** IM 标题只使用动作，不带命令参数或本机文件名。 */
-export function resolveImToolLabel(name: string | undefined, display?: unknown, label?: string): string {
+export function resolveImToolLabel(name: string | undefined, display?: unknown, label?: string, locale?: string | null): string {
   const item = display && typeof display === 'object'
     ? display as { shellActivity?: ShellActivity; toolInput?: unknown; toolResult?: unknown; toolLabelOverride?: unknown }
     : undefined
-  if (name === 'shell' && item) {
-    const action = item.shellActivity?.action ?? describeShellActivity(item.toolInput, item.toolResult)?.action
-    if (action && Object.hasOwn(shellLabels, action)) return shellLabels[action]
+  const selected = toolDisplayIdentity(name?.trim(), item?.toolInput)
+  const language = toolLabelLocale(locale)
+  const labels: Readonly<Record<string, string>> = toolNames[language]
+  if (selected.name === 'shell') {
+    const shellLabel = shellActivityLabel(item?.shellActivity ?? describeShellActivity(selected.input, item?.toolResult), language)
+    if (shellLabel) return shellLabel
   }
   const override = typeof item?.toolLabelOverride === 'string' ? item.toolLabelOverride.trim() : ''
-  // IM 展示名称独立于旧回执指纹，重放时仍按原动作标识去重。
-  if (name === 'http_get') return label?.trim() || override || '抓取网页'
-  return label?.trim() || override || (name === 'shell' ? '执行 Shell 命令' : name?.trim() ? defaultToolLabel(name.trim()) : '工具')
+  const key = selected.name
+  return override || (Object.hasOwn(labels, key) ? labels[key]! : label?.trim() || selected.name)
+    || ({ 'zh-CN': '工具', 'ja-JP': 'ツール', 'en-US': 'Tool' })[language]
 }
 
-function toolStatusText(label: string, status: unknown): string {
-  if (status === 'success' || status === 'ok') return `✅ ${label}完成`
-  if (status === 'waiting') return `⏸️ ${label}：任务已暂停，等待确认`
-  return `⚠️ ${label}未完成`
+function toolStatusText(label: string, status: unknown, locale?: string | null): string {
+  const language = toolLabelLocale(locale)
+  if (status === 'success' || status === 'ok')
+    return { 'zh-CN': `✅ ${label}完成`, 'ja-JP': `✅ ${label}：完了`, 'en-US': `✅ ${label} completed` }[language]
+  if (status === 'waiting')
+    return { 'zh-CN': `⏸️ ${label}：任务已暂停，等待确认`, 'ja-JP': `⏸️ ${label}：確認待ち`, 'en-US': `⏸️ ${label}: awaiting confirmation` }[language]
+  return { 'zh-CN': `⚠️ ${label}未完成`, 'ja-JP': `⚠️ ${label}：未完了`, 'en-US': `⚠️ ${label} not completed` }[language]
 }
 
 export function formatImToolStatus(label: string, status: unknown,
-  sanitize: (label: string) => string = value => value): string {
+  sanitize: (label: string) => string = value => value, locale?: string | null): string {
   const safe = [...sanitize(label.replace(/\s+/gu, ' '))].slice(0, 80).join('')
-  return toolStatusText(safe, status)
+  return toolStatusText(safe, status, locale)
+}
+
+export interface ImToolReceipt {
+  display?: unknown
+  name?: string
+  label?: string
+  status?: string
+  result?: unknown
+}
+
+/** 展示已提交的工具状态。只读取明确允许展示的投递状态，不输出工具参数或原始结果。 */
+export function formatImToolReceipt(event: ImToolReceipt, sanitize: (label: string) => string = value => value, locale?: string | null): string {
+  const succeeded = event.status === 'success' || event.status === 'ok'
+  if (event.name === 'send_file') {
+    let result = event.result
+    if (typeof result === 'string') {
+      try { result = JSON.parse(result) } catch { result = null }
+    }
+    const delivery = result && typeof result === 'object' && 'delivery_status' in result ? result.delivery_status : null
+    const language = toolLabelLocale(locale)
+    if (delivery === 'sent') return { 'zh-CN': '✅ 平台已接受文件发送', 'ja-JP': '✅ プラットフォームがファイル送信を受理しました', 'en-US': '✅ Platform accepted the file delivery' }[language]
+    if (delivery === 'unknown') return { 'zh-CN': '⚠️ 文件发送结果未确认，请先检查是否收到', 'ja-JP': '⚠️ ファイル送信を確認できません。受信を確認してください', 'en-US': '⚠️ File delivery unconfirmed. Check whether it arrived' }[language]
+    if (delivery === 'failed') return { 'zh-CN': '⚠️ 文件未能发送，请检查原因后重新发起请求', 'ja-JP': '⚠️ ファイルを送信できませんでした。原因を確認して再試行してください', 'en-US': '⚠️ File delivery failed. Check the cause and try again' }[language]
+    if (succeeded) return { 'zh-CN': '📎 文件已准备，将在回复结束后尝试发送', 'ja-JP': '📎 ファイルを準備しました。返信後に送信します', 'en-US': '📎 File prepared for delivery after this reply' }[language]
+  }
+  return formatImToolStatus(event.label?.trim() || resolveImToolLabel(event.name, event.display, undefined, locale), event.status, sanitize, locale)
 }
 
 export type ImDeliveryResult = 'accepted' | 'rejected' | 'unknown'
@@ -65,6 +99,7 @@ export interface ImRunDeliveryPorts<C> {
   /** 同一持久投递入口的可选平台流投影；正文由它独占，不能在observeRun旁路发送。 */
   /** 宿主按平台与用户偏好决定是否提前发送普通消息的中间轮正文。 */
   readonly showIntermediateReplies?: boolean
+  readonly toolLocale?: string | null
   readonly stream?: { project(input: { identity: RunIdentity; deliveryId: string; event: RunEvent }): Promise<ImDeliveryAcknowledgement> }
   readonly sender: {
     text(input: { identity: RunIdentity; deliveryId: string; text: string }): Promise<ImDeliveryAcknowledgement>
@@ -155,18 +190,15 @@ function createDelivery<C>(ports: Omit<ImRunDeliveryPorts<C>, 'runner'>) {
       || !['answered', 'confirmed', 'cancelled', 'aborted', 'expired'].includes(String(event.payload.status)))) throw new Error('IM 交互结果身份无效')
     const internalTool = (event.type === 'tool_call' || event.type === 'tool_done')
       && isImInternalDelegationTool(event.payload.name)
-    if (ports.stream && (!internalTool || event.type === 'tool_call') && ['token', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_waiting', 'run_resumed'].includes(event.type)) {
+    const compactionBarrier = Boolean(ports.sender.compactionNotice && event.type === 'compaction' && event.payload.phase === 'started')
+    if (ports.stream && (!internalTool || event.type === 'tool_call') && (compactionBarrier || ['token', 'text_end', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_waiting', 'run_resumed'].includes(event.type))) {
       const streamed = internalTool ? { ...event, payload: {} }
         : event.type === 'interaction_required' ? { ...event, payload: { interactionId: event.payload.interactionId, kind: event.payload.kind, toolCallId: event.payload.toolCallId } }
         : event.type === 'interaction_resolved' ? { ...event, payload: { interactionId: event.payload.interactionId, status: event.payload.status } } : event
       await deliver(identity, `stream:${event.sequence}`, streamed, deliveryId => ports.stream!.project({ identity, deliveryId, event: streamed }), signal, fact)
     }
     if (ports.sender.compactionNotice && event.type === 'compaction') {
-      const { phase, applied } = event.payload
-      const notice = phase === 'started' ? '上下文较长，正在整理后继续处理。'
-        : phase === 'completed' && typeof applied === 'boolean'
-          ? applied ? '上下文整理完成。' : '本次未能整理上下文，继续处理。'
-          : null
+      const notice = formatImCompactionNotice(event.payload)
       if (notice) {
         try {
           await deliver(identity, `compaction-notice:${event.sequence}`, notice,
@@ -177,9 +209,10 @@ function createDelivery<C>(ports: Omit<ImRunDeliveryPorts<C>, 'runner'>) {
       }
     }
     if (ports.sender.toolNotice && event.type === 'tool_done' && !internalTool) {
-      const { name, status } = event.payload
+      const { name, status, display, result } = event.payload
       if (typeof name === 'string' && /^[\w.:-]{1,120}$/u.test(name) && name !== 'choose_no_reply') {
-        const notice = formatImToolStatus(resolveImToolLabel(name, event.payload.display), status)
+        const notice = formatImToolReceipt({ name, status: typeof status === 'string' ? status : undefined, display, result },
+          undefined, ports.toolLocale)
         try {
           // 提示独立记账，投递不明时不得阻塞后续正文或重复外发。
           // 保留已登记的摘要指纹，避免旧回执在恢复游标时产生冲突。

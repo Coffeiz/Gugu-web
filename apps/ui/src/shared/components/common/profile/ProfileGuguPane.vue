@@ -39,7 +39,7 @@
     <div class="pm-sep"></div>
     <ProfilePersonalityPane />
     <div class="pm-sep"></div>
-    <div class="pm-section"><div class="pm-section-label">{{ t('profileGuguUi.conversation') }}</div><div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('profileGuguUi.reopen') }}</span><span class="pm-field-hint">{{ t('profileGuguUi.reopenHint') }}</span></div><div class="pm-style-group"><button class="pm-style-chip" :class="{ active: reopenResume }" @click="setReopenResume(true)">{{ t('profileGuguUi.resume') }}</button><button class="pm-style-chip" :class="{ active: !reopenResume }" @click="setReopenResume(false)">{{ t('profileGuguUi.newConversation') }}</button></div></div></div>
+    <div class="pm-section"><div class="pm-section-label">{{ t('profileGuguUi.conversation') }}</div><div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t(desktop ? 'profileGuguUi.reopenDesktop' : 'profileGuguUi.reopen') }}</span><span class="pm-field-hint">{{ t(desktop ? 'profileGuguUi.reopenDesktopHint' : 'profileGuguUi.reopenHint') }}</span></div><div class="pm-style-group"><button class="pm-style-chip" :class="{ active: reopenResume }" @click="setReopenResume(true)">{{ t('profileGuguUi.resume') }}</button><button class="pm-style-chip" :class="{ active: !reopenResume }" @click="setReopenResume(false)">{{ t('profileGuguUi.newConversation') }}</button></div></div></div>
     <div class="pm-sep"></div>
     <div class="pm-section">
       <div class="pm-section-label">{{ t('profileGuguUi.memory') }}</div>

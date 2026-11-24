@@ -37,9 +37,11 @@
         @keydown.esc.prevent="cancel"
       />
     </span>
-    <span v-else class="exp-session-title" :class="{ 'is-running-title': running }" :title="title" :aria-label="running ? title : undefined">
-      <template v-if="running"><span v-for="(character, index) in titleCharacters" :key="index" class="session-title-character" :style="{ animationDelay: `${index * 60 % 1200}ms` }" aria-hidden="true">{{ character }}</span></template>
-      <template v-else>{{ title }}</template>
+    <span v-else ref="sidebarTitle" class="exp-session-title" :class="{ 'is-running-title': running, 'is-overflowing': titleOverflows }" :title="title" :aria-label="running ? title : undefined">
+      <span ref="sidebarTitleText" class="exp-session-title-text">
+        <template v-if="running"><span v-for="(character, index) in titleCharacters" :key="index" class="session-title-character" :style="{ animationDelay: `${index * 60 % 1200}ms` }" aria-hidden="true">{{ character }}</span></template>
+        <template v-else>{{ title }}</template>
+      </span>
     </span>
     <button
       class="exp-session-rename-btn"
@@ -54,9 +56,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick } from 'vue'
+import { computed, ref, nextTick, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
+
+const sidebarTitle = ref<HTMLElement | null>(null)
+const sidebarTitleText = ref<HTMLElement | null>(null)
+const titleOverflows = ref(false)
+watchEffect((onCleanup) => {
+  const titleElement = sidebarTitle.value
+  const textElement = sidebarTitleText.value
+  if (!titleElement || !textElement) return
+  const update = () => { titleOverflows.value = titleElement.scrollWidth > titleElement.clientWidth }
+  update()
+  const observer = new ResizeObserver(update)
+  observer.observe(titleElement)
+  observer.observe(textElement)
+  onCleanup(() => observer.disconnect())
+}, { flush: 'post' })
+
 /**
  * 会话标题内联编辑，两种模式：
  * - 侧边栏（header=false，默认）：标题 + 铅笔按钮，点按钮进入编辑（与文件重命名同款交互）。
@@ -136,7 +154,6 @@ function resetHeaderText() {
 .exp-session-title-wrap {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 2px;
-  padding-right: 26px;
   box-sizing: border-box;
 }
 /* 标题：纯文本，无 hover 浮出效果（侧边栏模式，按内容收缩，wrap 用 flex: 1 撑满） */
@@ -145,6 +162,11 @@ function resetHeaderText() {
   /* 小窗展开时会缩放整个面板，行盒需给 g/p/q 等下伸字形留足空间。 */
   font-size: 12.5px; line-height: 1.5; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.exp-session-title-text { display: inline-block; }
+.exp-session-title.is-overflowing {
+  text-overflow: clip;
+  mask-image: linear-gradient(to right, #000 calc(100% - 1em), transparent);
 }
 .is-running-title { padding-block:2px; margin-block:-2px; }
 .session-title-character { display:inline-block; white-space:pre; animation:session-title-wave 1.2s ease-in-out infinite; }
@@ -183,7 +205,7 @@ function resetHeaderText() {
   width: 22px; height: 22px; border-radius: var(--radius-compact); border: none;
   background: none; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; line-height: 1;
+  cursor: pointer; opacity: 0; pointer-events: none; line-height: 1;
   position: absolute;
   top: 50%; right: 34px;
   transform: translateY(-50%);
@@ -192,5 +214,5 @@ function resetHeaderText() {
 .exp-session-rename-btn:hover { background: color-mix(in srgb, var(--action-primary) 12%, transparent); color: var(--text-primary); }
 .exp-session-rename-btn svg { display: block; }
 /* 编辑态：按钮保持可见（即使光标移开会话项，勾选确认按钮也不会消失） */
-.exp-session-title-wrap.is-editing .exp-session-rename-btn { opacity: 1; }
+.exp-session-title-wrap.is-editing .exp-session-rename-btn { opacity: 1; pointer-events: auto; }
 </style>

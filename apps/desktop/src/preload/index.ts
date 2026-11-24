@@ -10,6 +10,8 @@ import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import type { DesktopBridge, DesktopProjectCollection } from '@gugu/core/desktop'
 import type { DesktopAppearancePreferences } from '@gugu/core/desktop'
 
+let droppedPaths: string[] = []
+
 if (typeof window !== 'undefined') {
   let lastFocus: EditingFocus | undefined
   function syncNativeEditing() {
@@ -29,6 +31,12 @@ if (typeof window !== 'undefined') {
   syncNativeEditing()
 
   const setNativeDragSource = createNativeFileDragGuard(window, file => webUtils.getPathForFile(file))
+  window.addEventListener('drop', event => {
+    if (!event.isTrusted || !event.dataTransfer) return
+    const paths = Array.from(event.dataTransfer.files, file => webUtils.getPathForFile(file))
+    droppedPaths = paths
+    setTimeout(() => { if (droppedPaths === paths) droppedPaths = [] }, 0)
+  }, true)
   ipcRenderer.on(DESKTOP_CHANNELS.nativeFileDragSource, (_event, path: unknown) => {
     setNativeDragSource(typeof path === 'string' ? path : null)
   })
@@ -78,7 +86,40 @@ const bridge: DesktopBridge = Object.freeze({
   createDroppedFileReference: (file: File) => ipcRenderer.invoke(DESKTOP_CHANNELS.createDroppedFileReference, webUtils.getPathForFile(file)),
   openDroppedFileReference: (id: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.openDroppedFileReference, id),
   startFileDrag: (directoryId: Parameters<NonNullable<DesktopBridge['startFileDrag']>>[0], path: string, preview?: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.startFileDrag, directoryId, path, preview),
-  files: (command: Parameters<DesktopBridge['files']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.files, command),
+  moveDroppedFiles: async (...[directoryId, path, decide, progress]: Parameters<NonNullable<DesktopBridge['moveDroppedFiles']>>) => {
+    const sources = droppedPaths
+    droppedPaths = []
+    if (!sources.length) return { ok: false, error: { code: 'invalid_request', message: '请直接拖入本机文件或文件夹' } }
+    let retained = 0
+    for (const [index, source] of sources.entries()) {
+      const progressId = crypto.randomUUID()
+      const listener = (_event: Electron.IpcRendererEvent, id: string, percent: number) => {
+        if (id === progressId) progress(Math.floor((index + percent / 100) * 100 / sources.length))
+      }
+      ipcRenderer.on(DESKTOP_CHANNELS.droppedFileProgress, listener)
+      const command = { action: 'move-dropped', directoryId, path, sources: [source], progressId, negotiate: true }
+      try {
+        let reply = await ipcRenderer.invoke(DESKTOP_CHANNELS.files, command)
+        if (!reply.ok) return reply
+        if (reply.result.conflict) {
+          const { filename, canOverwrite, identity } = reply.result.conflict
+          const choice = await decide(filename, canOverwrite)
+          if (choice === 'skip') continue
+          reply = await ipcRenderer.invoke(DESKTOP_CHANNELS.files, { ...command, negotiate: false, choice, identity })
+          if (!reply.ok) return reply
+        }
+        retained += reply.result.retained ?? 0
+      } finally {
+        ipcRenderer.removeListener(DESKTOP_CHANNELS.droppedFileProgress, listener)
+        progress(Math.floor((index + 1) * 100 / sources.length))
+      }
+    }
+    return { ok: true, result: { retained } }
+  },
+  files: (command: Parameters<DesktopBridge['files']>[0]) => {
+    if (String(command.action) === 'move-dropped') throw new Error('请直接拖入本机文件')
+    return ipcRenderer.invoke(DESKTOP_CHANNELS.files, command)
+  },
   auxiliaryModel: (command: Parameters<DesktopBridge['auxiliaryModel']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.auxiliaryModel, command),
   agentModel: (command: Parameters<DesktopBridge['agentModel']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentModel, command),
   onAgentRunChanged: (callback: Parameters<NonNullable<DesktopBridge['onAgentRunChanged']>>[0]) => {

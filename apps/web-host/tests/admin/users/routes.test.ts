@@ -28,15 +28,15 @@ function setup() {
             id: userIdA, username: '合成账号甲', email: 'alpha@example.invalid', display_name: '甲',
             is_active: true, account_status: 'active', suspended_until: null, is_developer: false,
             created_at: '2026-02-01T10:00:00.000+00:00', token_limit_6h: 100,
-            token_limit_weekly: 700, storage_limit_bytes: 4096, search_limit_daily: 20,
-            tokens_week: 31, tokens_6h: 7, storage_used: 55,
+            token_limit_weekly: 700, search_limit_daily: 20,
+            tokens_week: 31, tokens_6h: 7,
           },
           {
             id: userIdB, username: '合成账号乙', email: 'beta@example.invalid', display_name: null,
             is_active: false, account_status: 'suspended', suspended_until: '2026-02-02T10:00:00.000+00:00',
             is_developer: true, created_at: '2026-01-01T10:00:00.000+00:00', token_limit_6h: null,
-            token_limit_weekly: null, storage_limit_bytes: null, search_limit_daily: null,
-            tokens_week: 90, tokens_6h: 5, storage_used: 11,
+            token_limit_weekly: null, search_limit_daily: null,
+            tokens_week: 90, tokens_6h: 5,
           },
       ]
       const needle = search?.toLowerCase()
@@ -70,8 +70,8 @@ test('列表按创建时间倒序，q 对用户名和邮箱不区分大小写过
         id: userIdA, username: '合成账号甲', email: 'alpha@example.invalid', display_name: '甲',
         is_active: true, account_status: 'active', suspended_until: null, is_developer: false,
         created_at: '2026-02-01T10:00:00.000+00:00', tokens_week: 31, tokens_6h: 7,
-        storage_used: 55, token_limit_6h: 100, token_limit_weekly: 700,
-        storage_limit_bytes: 4096, search_limit_daily: 20,
+        token_limit_6h: 100, token_limit_weekly: 700,
+        search_limit_daily: 20,
       }],
       total: 1,
     })
@@ -79,7 +79,7 @@ test('列表按创建时间倒序，q 对用户名和邮箱不区分大小写过
   } finally { await ctx.cleanup() }
 })
 
-test('搜索邮箱命中，保留账户状态和空配额，并为无本地账本的用户使用文件记录统计', async () => {
+test('搜索邮箱命中，保留账户状态和空配额，且不返回文件配额', async () => {
   const ctx = setup()
   try {
     const response = await ctx.app.inject({ url: '/api/v1/admin/users?q=BETA@EXAMPLE', headers: { authorization: 'admin' } })
@@ -91,7 +91,6 @@ test('搜索邮箱命中，保留账户状态和空配额，并为无本地账�
     assert.equal(body.items[0].is_developer, true)
     assert.equal(body.items[0].tokens_week, 90)
     assert.equal(body.items[0].tokens_6h, 5)
-    assert.equal(body.items[0].storage_used, 11)
     assert.equal(body.items[0].token_limit_6h, null)
     assert.equal(ctx.calls[0], 'BETA@EXAMPLE')
   } finally { await ctx.cleanup() }

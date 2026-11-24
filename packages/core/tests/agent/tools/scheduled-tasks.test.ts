@@ -20,7 +20,7 @@ it('真实注册器经正式SQLite只读定时任务，隔离owner和提醒并�
   try {
     const owner = ownerId.replaceAll('-', ''), other = randomUUID()
     for (const [id, event, kind, enabled] of [[1, null, 'cron', 1], [2, 7, 'once', 1], [3, null, 'interval', 0]] as const)
-      await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,name,payload,cron,schedule_kind,interval_minutes,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,created_at,updated_at)
+      await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,name,payload,cron,schedule_kind,interval_minutes,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_paths,created_at,updated_at)
         VALUES(${id},${owner},${event},'合成任务','指令','0 9 * * *',${kind},10,'web,qq',${enabled},'{"qq":"private"}','["send_email"]','[5]','2026-01-01 00:00:00','2026-01-01 00:00:00')`.execute(runtime.db)
     const query = createScheduledTaskQueries(createKyselyScheduledTaskReader(runtime.db, 'sqlite'), () => ({ workspaceSupported: false, filesystemAuthorizationEnabled: false }), () => '2026-01-02T00:00:00Z')
     let authorized = true
@@ -32,7 +32,7 @@ it('真实注册器经正式SQLite只读定时任务，隔离owner和提醒并�
     expect((await registry.capabilities(identity)).map(item => item.name)).toEqual(['list_scheduled_tasks'])
     const result = await registry.tools.dispatch(call, scope)
     expect(result).toMatchObject({ kind: 'completed', successful: true, mutated: false, value: [
-      { id: 3, name: '合成任务', when: '每 10 分钟', schedule_kind: 'interval', cron: '0 9 * * *', interval_minutes: 10, start_at: null, end_at: null, schedule_status: 'disabled', instruction: '指令', execution_mode: 'reminder', channels: ['web', 'qq'], enabled: false, last_run_at: null, delivery_targets: { qq: 'private' }, authorized_tools: ['send_email'], email_attachment_file_ids: [5], workspace_id: null, filesystem_authorized: false },
+      { id: 3, name: '合成任务', when: '每 10 分钟', schedule_kind: 'interval', cron: '0 9 * * *', interval_minutes: 10, start_at: null, end_at: null, schedule_status: 'disabled', instruction: '指令', execution_mode: 'reminder', channels: ['web', 'qq'], enabled: false, last_run_at: null, delivery_targets: { qq: 'private' }, authorized_tools: ['send_email'], email_attachment_file_paths: [5], workspace_id: null, filesystem_authorized: false },
       { id: 1, when: '每天 09:00', schedule_status: 'active' },
     ] })
     expect((await registry.tools.dispatch(call, { ...scope, identity: { ...identity, ownerId: other } }))).toMatchObject({ successful: true, value: [] })
@@ -77,7 +77,7 @@ it('create/update 经注册器保存精确时间窗、保留省略字段并按�
           start_at: scheduleTimestamp(schedule.start_at), end_at: scheduleTimestamp(schedule.end_at),
           channels: String(input.channels ?? 'web'), enabled: input.enabled === false ? 0 : 1,
           delivery_targets: input.delivery_targets == null ? null : JSON.stringify(input.delivery_targets),
-          authorized_tools: JSON.stringify([]), email_attachment_file_ids: JSON.stringify([]), last_run_at: null,
+          authorized_tools: JSON.stringify([]), email_attachment_file_paths: JSON.stringify([]), last_run_at: null,
           last_run_failed: null, created_at: '2026-09-05 00:00:00', updated_at: '2026-09-05 00:00:00',
         }).returning('id').executeTakeFirstOrThrow()
         return Number(row.id)

@@ -120,7 +120,7 @@ test('定时结果附带 owner 的库文件与本轮产物，无法读取或超�
   })
   const deliver = createPostgresScheduledTaskResultDelivery(database as never, async () => false, { email })
   const task = { id: '3', ownerId: owner, name: '汇报', payload: '', channels: ['email'],
-    deliveryTargets: {}, authorizedTools: [], emailAttachmentFileIds: [1], workspaceId: null, filesystemGrantId: null }
+    deliveryTargets: {}, authorizedTools: [], emailAttachmentFilePaths: [1], workspaceId: null, filesystemGrantId: null }
   const result = { text: '执行结果', status: 'success' as const, files: [{ file_id: 1 }, { attach_id: 'fresh' }] }
   try {
     await mkdir(join(root, owner))
@@ -129,7 +129,7 @@ test('定时结果附带 owner 的库文件与本轮产物，无法读取或超�
     assert.deepEqual(await deliver(task, result), { 邮件: '已发送' })
     assert.deepEqual(sent[0]?.attachments?.map(file => [file.filename, file.mimeType, Buffer.from(file.content).toString()]),
       [['报告.txt', 'text/plain', 'hello'], ['图片.png', 'image/png', 'image']])
-    assert.deepEqual(await deliver({ ...task, emailAttachmentFileIds: [2] }, result),
+    assert.deepEqual(await deliver({ ...task, emailAttachmentFilePaths: [2] }, result),
       { 邮件: '附件不可用（附件不存在、已删除或不属于当前用户）' })
     assert.deepEqual(await deliver(task, { ...result, files: [{ attach_id: 'expired' }] }),
       { 邮件: '附件不可用（本轮生成的附件已过期，无法添加到邮件）' })
@@ -142,6 +142,42 @@ test('定时结果附带 owner 的库文件与本轮产物，无法读取或超�
     }
     assert.deepEqual(await deliver(task, { ...result, files: [{ attach_id: 'fresh' }, { attach_id: 'another' }] }),
       { 邮件: '附件不可用（附件总大小不能超过 25MB）' })
+    assert.equal(sent.length, 1)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('定时邮件读取本轮路径附件，无需查询旧文件表，缺失时不发信', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-scheduled-email-path-'))
+  const stored = join(root, 'report.txt')
+  const sent: SmtpTestDelivery[] = []
+  const database = {
+    async query(sql: string, values: unknown[]) {
+      assert.match(sql, /FROM users/u)
+      assert.deepEqual(values, [owner])
+      return { rows: [{ owner_email: 'owner@example.test', smtp_host: null }] }
+    },
+  }
+  const email = createPostgresScheduledTaskTestEmailDelivery(database as never, {
+    secretKey: secret, globalSmtp,
+    async openPath(ownerId, path) {
+      assert.equal(ownerId, owner)
+      if (path !== '/personal/报告.txt') return null
+      return { handle: await open(stored, 'r'), size: 6, fileName: '报告', ext: 'txt' }
+    },
+    async send(value) { sent.push(value) },
+  })
+  const deliver = createPostgresScheduledTaskResultDelivery(database as never, async () => false, { email })
+  const task = { id: '3', ownerId: owner, name: '汇报', payload: '', channels: ['email'],
+    deliveryTargets: {}, authorizedTools: [], emailAttachmentFilePaths: [], workspaceId: null, filesystemGrantId: null }
+  const result = { text: '执行结果', status: 'success' as const, files: [{ file_path: '/personal/报告.txt' }] }
+  try {
+    await writeFile(stored, 'report')
+    assert.deepEqual(await deliver(task, result), { 邮件: '已发送' })
+    const [attachment] = sent[0]?.attachments ?? []
+    assert.equal(attachment?.filename, '报告.txt')
+    assert.equal(new TextDecoder().decode(attachment?.content), 'report')
+    assert.deepEqual(await deliver(task, { ...result, files: [{ file_path: '/personal/缺失.txt' }] }),
+      { 邮件: '附件不可用（路径附件不存在或不可读取）' })
     assert.equal(sent.length, 1)
   } finally { await rm(root, { recursive: true, force: true }) }
 })

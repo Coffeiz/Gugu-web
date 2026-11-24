@@ -86,12 +86,12 @@ export async function createBuiltinSkillDefinitions(documents: readonly BuiltinS
   return definitions
 }
 
-export function formatBuiltinSkillIndex(builtinSkillDefinitions: readonly BuiltinSkillDefinition[]): string {
+export function formatBuiltinSkillIndex(builtinSkillDefinitions: readonly BuiltinSkillDefinition[], includeManagement = true): string {
   return builtinSkillDefinitions.length ? [
     '## 可用技能',
     '下列技能是带触发条件的做法剧本。命中场景时，第一工具调用必须是 `use_skill` 拉取对应正文；正文加载前禁止直接调用该技能负责的业务工具。',
     'Skill ID（S/U 编号）仅用于内部调用；对用户提及技能时使用技能名称，不展示内部 ID，除非用户明确询问。',
-    '列出当前账号的完整技能目录时调用 `list_skills`；目录包含停用项但不包含正文。',
+    ...(includeManagement ? ['列出当前账号的完整技能目录时调用 `list_skills`；目录包含停用项但不包含正文。'] : []),
     ...builtinSkillDefinitions.map(skill => `- ${skill.emoji ? `${skill.emoji} ` : ''}**${skill.name}**（Skill ID：\`${skill.id}\`）${skill.description ? ` — ${skill.description}` : ''}`),
   ].join('\n') : ''
 }

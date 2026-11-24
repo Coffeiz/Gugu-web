@@ -13,6 +13,7 @@ export function createFeishuRunEventProjector(options: {
   theme?: Parameters<typeof createImChartParser>[0]['theme']
   signal?: AbortSignal
   checkpoint?: unknown
+  toolSummary?: { locale?: string | null }
 } = {}) {
   const parser = createImChartParser({ ...options, renderCharts: options.renderCharts ?? (async () => []) })
   return {
@@ -24,7 +25,7 @@ export function createFeishuRunEventProjector(options: {
         return [{ type: 'token', text: payload.text }, ...await parser.append(payload.text)]
       if (event.type === 'tool_call' || event.type === 'tool_done') return [{ type: event.type,
         ...(typeof payload.toolCallId === 'string' ? { toolCallId: payload.toolCallId } : {}),
-        ...(typeof payload.name === 'string' ? { name: payload.name, label: resolveImToolLabel(payload.name, payload.display) } : {}),
+        ...(typeof payload.name === 'string' ? { name: payload.name, label: resolveImToolLabel(payload.name, payload.display, undefined, options.toolSummary?.locale) } : {}),
         ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
         ...('result' in payload ? { result: payload.result } : {}),
       }]

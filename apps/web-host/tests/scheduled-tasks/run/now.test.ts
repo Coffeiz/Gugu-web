@@ -142,11 +142,11 @@ test('定时执行复核工作区、文件系统授权和群聊归属', { skip: 
     await admin.query(`CREATE SCHEMA "${schema}"`)
     await pool.query(`CREATE TABLE scheduled_tasks(id integer PRIMARY KEY,user_id uuid,name text,payload text,
       schedule_kind text,start_at timestamptz,end_at timestamptz,channels text,enabled boolean,last_run_at timestamptz,
-      last_run_failed boolean,updated_at timestamptz,delivery_targets jsonb,authorized_tools jsonb,email_attachment_file_ids jsonb,
+      last_run_failed boolean,updated_at timestamptz,delivery_targets jsonb,authorized_tools jsonb,email_attachment_file_paths jsonb,
       workspace_id integer,filesystem_authorization_grant_id integer,event_id integer,execution_mode text NOT NULL DEFAULT 'instruction');
       CREATE TABLE calendar_events(id integer PRIMARY KEY,user_id uuid,title text,date date,time text,deleted_at timestamptz);
       CREATE TABLE workspaces(id integer PRIMARY KEY,user_id uuid,name text,kind text,enabled boolean,
-      directory_id integer,folder_id integer,project_id integer);
+      directory_id integer,project_id integer);
       CREATE TABLE workspace_directories(id integer PRIMARY KEY,user_id uuid,directory_name text,deleted_at timestamptz);
       CREATE TABLE filesystem_authorization_grants(id integer PRIMARY KEY,user_id uuid,subject_type text,subject_id text,
         scope text,permission text,revoked_at timestamptz,expires_at timestamptz);
@@ -427,7 +427,7 @@ test('实际 Redis 租约在模型返回前被接管时，旧任务不投递且�
     const time = databaseTime('2026-01-01T00:00:00.000000Z', 'sqlite')
     await db.insertInto('scheduled_tasks').values({
       id, user_id: ownerId.replaceAll('-', ''), name: '合成任务', payload: '合成指令', cron: '0 0 * * *',
-      schedule_kind: 'cron', channels: 'web', enabled: 1, delivery_targets: '{}', authorized_tools: '[]', email_attachment_file_ids: '[]',
+      schedule_kind: 'cron', channels: 'web', enabled: 1, delivery_targets: '{}', authorized_tools: '[]', email_attachment_file_paths: '[]',
       created_at: time, updated_at: time,
     }).execute()
     let attempts = 0
@@ -470,7 +470,7 @@ test('定时任务通过任务租约发现并调用共享工具，拒绝异次�
       id, user_id: ownerId.replaceAll('-', ''), name: '当前用户的例行汇报', payload: '查看定时任务', cron: '0 0 * * *',
       schedule_kind: 'cron', channels: 'web', enabled: 1, delivery_targets: '{}',
       // 已保存授权不能让定时任务取得尚未接通的交互式删除权限。
-      authorized_tools: '["delete_scheduled_task"]', email_attachment_file_ids: '[]',
+      authorized_tools: '["delete_scheduled_task"]', email_attachment_file_paths: '[]',
       created_at: time, updated_at: time,
     }).execute()
     const resources = createWebScheduledTaskToolResources({
@@ -534,7 +534,7 @@ test('HTTP 等待超时后，Host 关闭仍等待定时投递和租约释放', a
     await db.insertInto('scheduled_tasks').values({
       id: 743, user_id: ownerId.replaceAll('-', ''), name: '等待运行', payload: '合成指令', cron: '0 0 * * *',
       schedule_kind: 'cron', channels: 'web', enabled: 1, delivery_targets: '{}',
-      authorized_tools: '[]', email_attachment_file_ids: '[]', created_at: time, updated_at: time,
+      authorized_tools: '[]', email_attachment_file_paths: '[]', created_at: time, updated_at: time,
     }).execute()
     const redis = fakeRedis()
     let delivered = false, drained = false

@@ -30,6 +30,30 @@ afterEach(() => {
 })
 
 describe('共享 SQL 数据契约', () => {
+  it('桌面旧任务的不可解析文件编号迁成空路径列表并删除编号列', async () => {
+    const path = file()
+    await initializeSqlite(path)
+    const initial = await openSqliteRuntime(path)
+    const owner = initial.ownerId.replaceAll('-', '')
+    await initial.runtime.close()
+
+    const legacy = new SQLite(path)
+    legacy.exec('ALTER TABLE scheduled_tasks RENAME COLUMN email_attachment_file_paths TO email_attachment_file_ids')
+    legacy.prepare(`INSERT INTO scheduled_tasks(user_id,name,payload,cron,channels,enabled,email_attachment_file_ids,created_at,updated_at)
+      VALUES (?,'旧附件任务','{}','0 * * * *','desktop',1,'[17]','2026-11-24 00:00:00','2026-11-24 00:00:00')`).run(owner)
+    legacy.close()
+
+    const migrated = await openSqliteRuntime(path)
+    await migrated.runtime.close()
+    const current = new SQLite(path)
+    try {
+      const columns = current.pragma('table_info(scheduled_tasks)') as { name: string }[]
+      expect(columns.some(column => column.name === 'email_attachment_file_ids')).toBe(false)
+      expect(columns.some(column => column.name === 'email_attachment_file_paths')).toBe(true)
+      expect(current.prepare('SELECT email_attachment_file_paths FROM scheduled_tasks WHERE name=?').pluck().get('旧附件任务')).toBe('[]')
+    } finally { current.close() }
+  })
+
   it('编号基线可读写正式 RAG 索引表', async () => {
     const path = file()
     await initializeSqlite(path)

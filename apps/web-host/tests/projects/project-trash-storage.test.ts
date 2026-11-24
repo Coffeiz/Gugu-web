@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { ProjectRecord } from '@gugu/core'
-import type { ProjectTrashFile, ProjectTrashFolder } from '@gugu/core/project-trash'
+import type { ProjectTrashFile } from '@gugu/core/project-trash'
 import {
   createLocalProjectTrashStorage,
   createProjectTrashOriginalStorageKeyResolver,
@@ -23,15 +23,10 @@ const project = {
 } satisfies ProjectRecord
 const file = {
   id: 41, user_id: ownerId, display_name: '计划', ext: 'md', space: 'project',
-  project_id: 17, folder_id: 31, workspace_directory_id: null, stage_name: null,
-  mind_map_id: null, storage_key: originalKey, version: 1, size: '8', size_bytes: 8,
+  project_id: 17, workspace_directory_id: null, stage_name: null,
+  mind_map_id: null, path: originalKey, version: 1, size: '8', size_bytes: 8,
   mime_type: 'text/markdown', img_width: null, img_height: null, deleted_at: null,
 } satisfies ProjectTrashFile
-const folders: ProjectTrashFolder[] = [{
-  id: 31, user_id: ownerId, project_id: 17, workspace_directory_id: null,
-  parent_id: null, name: '文档', version: 1, deleted_at: null,
-}]
-
 test('删除和恢复在预检查后出现同名目标时原子拒绝，源和并发目标均保留', async t => {
   for (const direction of ['delete', 'restore'] as const) await t.test(direction, async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-race-'))
@@ -51,7 +46,7 @@ test('删除和恢复在预检查后出现同名目标时原子拒绝，源和�
       }
       await assert.rejects(direction === 'delete'
         ? storage.moveToTrash(ownerId, file, afterCheck)
-        : storage.restoreFromTrash(ownerId, { ...file, storage_key: trashKey }, project, folders, afterCheck),
+        : storage.restoreFromTrash(ownerId, { ...file, path: trashKey }, project, afterCheck),
       { code: 'EEXIST', name: 'ProjectPathMoveError' })
       assert.equal(checked, true)
       assert.equal(await readFile(path.join(root, sourceKey), 'utf8'), '原始正文')
@@ -70,7 +65,7 @@ test('删除和恢复的 rollback 遇到原位置已有新文件时保留两边�
       const storage = createLocalProjectTrashStorage(root, () => originalKey)
       const moved = direction === 'delete'
         ? await storage.moveToTrash(ownerId, file)
-        : await storage.restoreFromTrash(ownerId, { ...file, storage_key: trashKey }, project, folders)
+        : await storage.restoreFromTrash(ownerId, { ...file, path: trashKey }, project)
       assert.ok(moved.rollback)
       await writeFile(path.join(root, sourceKey), '新文件', { flag: 'wx' })
       await assert.rejects(moved.rollback(), { code: 'EEXIST', name: 'ProjectPathMoveError' })
@@ -89,7 +84,7 @@ test('目录不能借用文件移动能力，删除与恢复均拒绝并保留�
       await writeFile(path.join(root, sourceKey, '保留.md'), '目录内容')
       const storage = createLocalProjectTrashStorage(root, () => originalKey)
       await assert.rejects(direction === 'delete' ? storage.moveToTrash(ownerId, file)
-        : storage.restoreFromTrash(ownerId, { ...file, storage_key: trashKey }, project, folders), { code: 'ENOTSUP' })
+        : storage.restoreFromTrash(ownerId, { ...file, path: trashKey }, project), { code: 'ENOTSUP' })
       assert.equal(await readFile(path.join(root, sourceKey, '保留.md'), 'utf8'), '目录内容')
     } finally { await rm(root, { recursive: true, force: true }) }
   })
@@ -104,7 +99,7 @@ test('日志写入失败时不移动文件，缺失源文件不写移动日志',
     await assert.rejects(() => storage.moveToTrash(ownerId, file, async () => { throw new Error('日志失败') }))
     assert.equal(await readFile(path.join(root, originalKey), 'utf8'), '正文')
     let called = false
-    const restored = await storage.restoreFromTrash(ownerId, { ...file, storage_key: trashKey }, project, folders, async () => { called = true })
+    const restored = await storage.restoreFromTrash(ownerId, { ...file, path: trashKey }, project, async () => { called = true })
     assert.equal(called, false)
     assert.ok(restored.storageKey)
   } finally { await rm(root, { recursive: true, force: true }) }
@@ -133,7 +128,7 @@ test('Local 项目文件物理移入回收站，再恢复时按 Python 规则解
     const conflictingPath = path.join(root, originalKey)
     await mkdir(path.dirname(conflictingPath), { recursive: true })
     await writeFile(conflictingPath, '已有文件')
-    const restored = await storage.restoreFromTrash(ownerId, { ...file, storage_key: trashKey }, project, folders)
+    const restored = await storage.restoreFromTrash(ownerId, { ...file, path: trashKey }, project)
     assert.equal(restored.storageKey, `${ownerId}/项目文件/2026/11/计划 #17/文档/计划(1).md`)
     assert.equal(restored.displayName, '计划(1)')
     assert.equal(await readFile(path.join(root, restored.storageKey), 'utf8'), '原始内容')
@@ -148,8 +143,8 @@ test('Local 存储 adapter 对 owner key 越界拒绝操作，缺失源文件返
   const root = await mkdtemp(path.join(os.tmpdir(), 'gugu-project-trash-safe-'))
   try {
     const storage = createLocalProjectTrashStorage(root, () => originalKey)
-    await assert.rejects(storage.moveToTrash(ownerId, { ...file, storage_key: `${ownerId}/../outside.md` }))
-    const restored = await storage.restoreFromTrash(ownerId, { ...file, storage_key: trashKey }, project, folders)
+    await assert.rejects(storage.moveToTrash(ownerId, { ...file, path: `${ownerId}/../outside.md` }))
+  const restored = await storage.restoreFromTrash(ownerId, { ...file, path: trashKey }, project)
     assert.equal(restored.storageKey, originalKey)
     assert.equal(restored.displayName, '计划')
   } finally {
@@ -172,18 +167,14 @@ test('Python-compatible resolver owner-scopes MindMap metadata and follows its k
       calls.push(['mind', owner, id])
       return { title: '路线图' }
     },
-    async resolveOwnedFolderPath(owner, folderId, projectId, workspaceDirectoryId) {
-      calls.push(['folder', owner, folderId, projectId, workspaceDirectoryId])
-      return '设计/评审'
-    },
   })
   const key = await resolveKey(ownerId, {
-    ...file, space: 'mind', project_id: 17, folder_id: 31, mind_map_id: 9,
-  }, project, folders)
-  assert.equal(key, `${ownerId}/思维/路线图 #9/计划.md`)
+    ...file, space: 'mind', project_id: 17, mind_map_id: 9,
+    path: `${ownerId}/trash/路线图 #9/设计/评审/计划.md`,
+  }, project)
+  assert.equal(key, `${ownerId}/思维/路线图 #9/设计/评审/计划.md`)
   assert.deepEqual(calls, [
     ['project', ownerId, 17],
-    ['folder', ownerId, 31, 17, null],
     ['mind', ownerId, 9],
   ])
 })
@@ -197,15 +188,12 @@ test('workspace restore uses stable directory_name and rejects missing or delete
       return { directoryName: 'workspace-f1-data', deletedAt: null }
     },
     async getOwnedMindMap() { return null },
-    async resolveOwnedFolderPath(owner, folderId, projectId, workspaceDirectoryId) {
-      assert.deepEqual([owner, folderId, projectId, workspaceDirectoryId], [ownerId, 31, null, 27])
-      return '资料/会议'
-    },
   })
   const key = await resolveKey(ownerId, {
-    ...file, space: 'workspace', project_id: null, folder_id: 31,
+    ...file, space: 'workspace', project_id: null,
     workspace_directory_id: 27, mind_map_id: null,
-  }, project, folders)
+    path: `${ownerId}/trash/workspace-f1-data/资料/会议/计划.md`,
+  }, project)
   assert.equal(key, `${ownerId}/workspace/workspace-f1-data/资料/会议/计划.md`)
 
   for (const directory of [null, { directoryName: 'workspace-old', deletedAt: '2026-11-01T00:00:00Z' }]) {
@@ -213,12 +201,12 @@ test('workspace restore uses stable directory_name and rejects missing or delete
       async getOwnedProject() { return null },
       async getOwnedWorkspaceDirectory() { return directory },
       async getOwnedMindMap() { return null },
-      async resolveOwnedFolderPath() { return null },
     })
     await assert.rejects(async () => missing(ownerId, {
-      ...file, space: 'workspace', project_id: null, folder_id: null,
+      ...file, space: 'workspace', project_id: null,
       workspace_directory_id: 27, mind_map_id: null,
-    }, project, []), /工作区目录不存在/)
+      path: `${ownerId}/trash/workspace-f1-data/计划.md`,
+    }, project), /工作区目录不存在/)
   }
 })
 
@@ -227,11 +215,11 @@ test('Python-compatible resolver matches missing MindMap and invalid folder fall
     async getOwnedProject() { return null },
     async getOwnedWorkspaceDirectory() { return null },
     async getOwnedMindMap() { return null },
-    async resolveOwnedFolderPath() { return null },
   })
   const key = await resolveKey(ownerId, {
-    ...file, space: 'mind', project_id: null, folder_id: 999, mind_map_id: 9,
-  }, project, [])
+    ...file, space: 'mind', project_id: null, mind_map_id: 9,
+    path: `${ownerId}/trash/ #9/计划.md`,
+  }, project)
   assert.equal(key, `${ownerId}/思维/ #9/计划.md`)
 })
 
@@ -245,7 +233,7 @@ test('Local restore rejects a symlinked metadata target instead of swallowing th
     await symlink(outside, path.join(ownerRoot, '思维'), process.platform === 'win32' ? 'junction' : 'dir')
     const storage = createLocalProjectTrashStorage(root, () => `${ownerId}/思维/路线图 #9/note.md`)
     await assert.rejects(
-      storage.restoreFromTrash(ownerId, { ...file, space: 'mind', storage_key: `${ownerId}/trash/note.md` }, project, []),
+      storage.restoreFromTrash(ownerId, { ...file, space: 'mind', path: `${ownerId}/trash/note.md` }, project),
       { name: 'ProjectTrashStoragePathError' },
     )
     assert.deepEqual(await readFile(path.join(outside, '路线图 #9', 'note.md')).catch(() => null), null)

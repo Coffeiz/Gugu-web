@@ -2,7 +2,7 @@ import { CoreError } from '../../../../../packages/core/src/contracts/index.js'
 import type { WorkspaceAgentReadPort } from '../../../../../packages/core/src/workspaces/workspace-list.js'
 
 type HostRequest = (method: string, params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>
-type WorkspaceDirectory = { id: string; name: string }
+type WorkspaceDirectory = { id: string; name: string; available?: boolean; location?: { kind: 'host_absolute'; value: string } }
 
 const desktopWorkspaceId = /^desktop:[0-9a-f-]{36}$/u
 
@@ -16,7 +16,16 @@ function directories(value: unknown): WorkspaceDirectory[] {
     if (typeof item.id !== 'string' || !desktopWorkspaceId.test(item.id)
       || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 100)
       throw new CoreError('storage_error', '桌面工作区记录无效')
-    return [{ id: item.id, name: item.name }]
+    const location = item.location
+    const path = location && typeof location === 'object' && 'kind' in location
+      && location.kind === 'host_absolute' && 'value' in location ? location.value : undefined
+    if (location !== undefined && (typeof path !== 'string' || !/^(?:\/|[a-z]:[\\/])/iu.test(path)
+      || path.includes('\0') || path.split(/[\\/]/u).some(segment => segment === '.' || segment === '..')))
+      throw new CoreError('storage_error', '桌面工作区路径无效')
+    return [{ id: item.id, name: item.name,
+      ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
+      ...(typeof path === 'string' ? { location: { kind: 'host_absolute' as const, value: path } } : {}),
+    }]
   })
 }
 
@@ -33,9 +42,10 @@ export function createDesktopWorkspaceReadPort(hostRequest: HostRequest): Worksp
       name: row.name,
       kind: 'directory',
       project_id: null,
-      folder_id: null,
       directory_id: row.id,
       directory_name: row.name,
+      ...(row.available !== undefined ? { available: row.available } : {}),
+      ...(row.location ? { location: row.location } : {}),
     }))
   } }
 }

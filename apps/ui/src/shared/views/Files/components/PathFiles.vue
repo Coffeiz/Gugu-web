@@ -1,13 +1,15 @@
 <template>
   <section class="workspace-files" :aria-busy="pending">
-    <div v-if="error" role="alert">
-      <p>{{ error }}</p>
-      <ActionButton variant="secondary" @click="load">{{ t('common.actions.retry') }}</ActionButton>
+    <div v-if="error" class="workspace-error" role="alert">
+      <span class="workspace-error-icon"><Icon name="file.folder" :size="22" /></span>
+      <strong>{{ workspaceUnavailable ? t('filesUi.workspaceDisconnected') : error }}</strong>
+      <p v-if="workspaceUnavailable">{{ t('filesUi.workspaceReconnectHint') }}</p>
+      <ActionButton variant="secondary" fit @click="load">
+        {{ t(workspaceUnavailable ? 'filesUi.workspaceReconnect' : 'common.actions.retry') }}
+      </ActionButton>
     </div>
-    <SkeletonGate v-else-if="loading">
-      <PageSkeleton :variant="viewMode" :collection="viewMode === 'grid' ? 'files' : undefined" />
-    </SkeletonGate>
-    <FileBrowserList v-else-if="(!pending || entries.length) && viewMode === 'list'" :layout-collection="runtimeSurfaceId" class="workspace-file-list">
+    <PageSkeleton v-else-if="loading" :variant="viewMode" :collection="viewMode === 'grid' ? 'files' : undefined" />
+    <FileBrowserList v-else-if="(!pending || loaded) && viewMode === 'list'" :layout-collection="runtimeSurfaceId" class="workspace-file-list">
       <div class="list-head">
         <button v-for="key in sortColumns" :key="key" class="lh-sortable workspace-file-open"
           :class="{ active: sortKey === key }" type="button" @click="emit('sortSelect', key)">
@@ -34,8 +36,8 @@
           <component v-else :is="fileListIcon(fileName(entry).ext)" class="lr-file-icon" :size="16"
             :style="{ color: fileIconColor(fileName(entry).ext) }" />
           <RenameInput v-if="renamingPath === entry.relativePath" v-model="renameName" @commit="commitRename(entry)" @cancel="cancelRename" />
-          <button v-else type="button" class="lr-filename workspace-file-open" :title="entry.name"
-            @click.stop="openEntry(entry, $event)">{{ entry.name }}</button>
+          <button v-else type="button" class="lr-filename workspace-file-open" :title="entryLabel(entry)"
+            @click.stop="openEntry(entry, $event)">{{ entryLabel(entry) }}</button>
         </span>
         <span class="lr-type-cell"><span v-if="entry.kind === 'file'" class="lr-ext">{{ fileName(entry).ext }}</span></span>
         <span class="lr-text">{{ entry.kind === 'file' ? fmtBytes(entry.size) : folderCountLabel(entry) }}</span>
@@ -61,10 +63,10 @@
         :name="ghost.name" :ext="ghost.ext" :progress="ghost.progress" :error="ghost.error" />
       <FileUploadButton :label="fileOpenAccess ? t('filesUi.addDesktopFile') : undefined" mode="list" data-flip-target @select="selectFiles" />
     </FileBrowserList>
-    <FileBrowserGrid v-else-if="!pending || entries.length" :layout-collection="runtimeSurfaceId">
+    <FileBrowserGrid v-else-if="!pending || loaded" :layout-collection="runtimeSurfaceId">
       <template v-for="entry in sortedEntries" :key="entryObjectId(entry)">
         <RuntimeFolderCard v-if="entry.kind === 'directory'"
-          :card-props="{ displayName: entry.name, accentColor: directoryAccent, countLabel: folderCountLabel(entry), cut: cutPaths?.has(entry.relativePath), selected: selected(entry), preSelected: preSelected(entry), selectionMode: selectionMode && !isDownloads(entry) }"
+          :card-props="{ displayName: entryLabel(entry), accentColor: directoryAccent, countLabel: folderCountLabel(entry), cut: cutPaths?.has(entry.relativePath), selected: selected(entry), preSelected: preSelected(entry), selectionMode: selectionMode && !isDownloads(entry) }"
           data-layout-role="card" :data-layout-key="entryObjectId(entry)"
           :runtime-id="entryObjectId(entry)" :runtime-surface-id="runtimeSurfaceId"
           :runtime-selected="selected(entry)" :data-path-folder="isDownloads(entry) ? undefined : entry.relativePath"
@@ -74,12 +76,15 @@
           @contextmenu.prevent.stop="openContext(entry, $event)"
           @keydown.enter.self.prevent="openEntry(entry, $event)" @keydown.space.self.prevent="openEntry(entry, $event)">
           <template #icon>
-            <Icon v-if="isDownloads(entry)" name="action.download" class="fd-big-icon" :size="92" />
-            <component v-else :is="directoryIcon" class="fd-big-icon" :size="92" />
+            <FolderMaterialPreview :directory-id="directoryId" :relative-path="entry.relativePath" :reload="reload"
+              :entry-count="entry.fileCount === undefined || entry.folderCount === undefined ? undefined : entry.fileCount + entry.folderCount">
+              <Icon v-if="isDownloads(entry)" name="action.download" class="fd-big-icon" :size="92" />
+              <component v-else :is="directoryIcon" class="fd-big-icon" :size="92" />
+            </FolderMaterialPreview>
           </template>
           <template #name>
             <RenameInput v-if="renamingPath === entry.relativePath" v-model="renameName" @commit="commitRename(entry)" @cancel="cancelRename" />
-            <template v-else>{{ entry.name }}</template>
+            <template v-else>{{ entryLabel(entry) }}</template>
           </template>
           <template #actions>
             <button v-if="!isDownloads(entry)" type="button" class="file-card-btn" :title="t('sharedUi.rename')"
@@ -137,6 +142,10 @@
         </template>
         <button v-if="!fileOpenAccess && contextEntry.kind === 'file'" type="button" class="ctx-item popup-menu-item"
           @click="runContext(download)"><Icon name="action.download" :size="13" />{{ t('sharedUi.download') }}</button>
+        <button v-if="pathFilesApi.extractArchive && isArchive(contextEntry)" type="button" class="ctx-item popup-menu-item"
+          @click="runContext(openExtraction)"><Icon name="action.archive" :size="13" />{{ t('filesViewUi.extractTo') }}</button>
+        <button v-if="pathFilesApi.compressArchive" type="button" class="ctx-item popup-menu-item"
+          @click="runContext(openCompression)"><Icon name="action.archive" :size="13" />{{ t('filesUi.compress') }}</button>
         <button type="button" class="ctx-item popup-menu-item"
           @click="runContext(startRename)"><Icon name="action.edit" :size="13" />{{ t('sharedUi.rename') }}</button>
         <button type="button" class="ctx-item popup-menu-item"
@@ -145,6 +154,10 @@
           @click="runContext(entry => emit('trash', entry))"><Icon name="action.delete" :size="13" />{{ t('sharedUi.moveToTrash') }}</button>
       </template>
     </FileBrowserContextMenu>
+    <ArchiveOperationDialog :show="!!archiveTarget" mode="extract" :initial-name="archiveName"
+      :busy="extracting" :error="extractError" success="" @close="archiveTarget = null" @submit="submitExtraction" />
+    <ArchiveOperationDialog :show="!!compressTarget" mode="compress" :initial-name="archiveName"
+      :busy="extracting" :error="extractError" success="" @close="compressTarget = null" @submit="submitCompression" />
     <FileInfoPopup :show="!!fileInfo" :file="fileInfo?.file" :location="fileInfo?.location"
       :x="fileInfo?.x" :y="fileInfo?.y" @close="fileInfo = null" />
     <UploadConflictDialog ref="conflictDialog" />
@@ -152,7 +165,7 @@
 </template>
 
 <script setup lang="ts">
-import SkeletonGate from '@/components/common/feedback/skeleton/SkeletonGate.vue'
+import { useDelayedSkeleton } from '@/composables/core/useDelayedSkeleton'
 import PageSkeleton from '@/components/common/feedback/skeleton/PageSkeleton.vue'
 
 import { computed, nextTick, onScopeDispose, ref, watch } from 'vue'
@@ -164,6 +177,7 @@ import FileInfoPopup from '@/components/common/file-browser/FileInfoPopup.vue'
 import FileBrowserGrid from '@/components/common/file-browser/FileBrowserGrid.vue'
 import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vue'
 import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vue'
+import FolderMaterialPreview from '@/components/common/file-browser/FolderMaterialPreview.vue'
 import RuntimeFolderCard from '@/components/common/file-browser/RuntimeFolderCard.vue'
 import RuntimeListRow from '@/components/common/file-browser/RuntimeListRow.vue'
 import FileUploadButton from '@/components/common/file-browser/FileUploadButton.vue'
@@ -171,7 +185,7 @@ import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhos
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import UploadConflictDialog from '@/components/common/overlays/UploadConflictDialog.vue'
-import { errorMessage, showAppError } from '@/composables/core/useAppToast'
+import { errorMessage, showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { filesToItems, readDroppedEntries, uploadWorkspaceFile, type UploadItem } from '@/composables/files/useFileUploadCore'
 import { useDesktopFileDrag } from '@/composables/files/useDesktopFileDrag'
 import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLibraryFolderPresentation'
@@ -179,7 +193,8 @@ import type { usePathFileSelection } from '@/composables/files/usePathFileSelect
 import { fileObjectId, folderSurfaceId } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
 import type { TargetItem } from '@/interaction/runtime'
 import { useUploadQueue } from '@/composables/shared/useUploadQueue'
-import { type PathDirectory, type PathFileEntry } from '@/services/api'
+import { type PathDirectory, type PathFileEntry, type PathFileRef } from '@/services/api'
+import ArchiveOperationDialog from './ArchiveOperationDialog.vue'
 import { usePathFileAccess } from '@/services/pathFileAccess'
 import { isPreviewable, usePreviewStore } from '@/stores/preview'
 import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
@@ -212,6 +227,7 @@ const emit = defineEmits<{
   trash: [entry: PathFileEntry]
   select: [entry: PathFileEntry, event: MouseEvent | KeyboardEvent]
   renamed: []
+  compressed: []
 }>()
 const fileOpenAccess = useFileOpenAccess()
 const { t } = useI18n()
@@ -228,11 +244,12 @@ function thumbnailUrl(entry: PathFileEntry) {
     || failedThumbnails.value.has(entry.relativePath)) return undefined
   return pathFilesApi.thumbnailUrl(fileTarget(entry))
 }
-const loading = ref(false)
 const pending = ref(false)
-let loadingTimer: ReturnType<typeof setTimeout> | undefined
+const loaded = ref(false)
+const loading = useDelayedSkeleton(() => pending.value && !loaded.value)
 let previousLocation: { directory: PathDirectory; path: string; epoch: number } | undefined
 const error = ref('')
+const workspaceUnavailable = ref(false)
 const renamingPath = ref('')
 const renameName = ref('')
 const renaming = ref(false)
@@ -247,10 +264,14 @@ const contextX = ref(0)
 const contextY = ref(0)
 const { uploadingItems, createGhost, updateGhostProgress, removeGhost, failGhost } = useUploadQueue()
 let request = 0
-const downloadsPath = '下载'
+const downloadsPath = 'download'
 const isPersonalRoot = computed(() => props.directoryId === 'personal' && props.relativePath === '')
 function isDownloads(entry: PathFileEntry) {
   return isPersonalRoot.value && entry.kind === 'directory' && entry.relativePath === downloadsPath
+}
+
+function entryLabel(entry: PathFileEntry) {
+  return isDownloads(entry) ? t('filesUi.downloadsFolder') : entry.name
 }
 
 function folderCountLabel(entry: PathFileEntry) {
@@ -272,13 +293,14 @@ async function load() {
   const generation = ++request
   const location = { directory: props.directoryId, path: props.relativePath, epoch: accountBoundaryEpoch.value }
   if (previousLocation?.directory !== location.directory || previousLocation.path !== location.path
-    || previousLocation.epoch !== location.epoch) entries.value = []
+    || previousLocation.epoch !== location.epoch) {
+    entries.value = []
+    loaded.value = false
+  }
   previousLocation = location
-  clearTimeout(loadingTimer)
-  loading.value = false
   pending.value = true
   error.value = ''
-  if (!entries.value.length) loadingTimer = setTimeout(() => { loading.value = true }, 180)
+  workspaceUnavailable.value = false
   try {
     let listed = await pathFilesApi.entries(location.directory, location.path)
     if (generation !== request) return
@@ -295,13 +317,17 @@ async function load() {
       if (generation === request && creationError && !listed.some(isDownloads))
         showAppError(errorMessage(creationError))
     }
-    if (generation === request) entries.value = listed
+    if (generation === request) {
+      entries.value = listed
+      loaded.value = true
+    }
   } catch (cause) {
-    if (generation === request) error.value = errorMessage(cause)
+    if (generation === request) {
+      workspaceUnavailable.value = !!cause && typeof cause === 'object' && 'code' in cause && cause.code === 'workspace_unavailable'
+      error.value = errorMessage(cause)
+    }
   } finally {
     if (generation === request) {
-      clearTimeout(loadingTimer)
-      loading.value = false
       pending.value = false
     }
   }
@@ -313,7 +339,7 @@ watch([() => props.directoryId, () => props.relativePath, accountBoundaryEpoch],
   contextEntry.value = null
   fileInfo.value = null
 })
-onScopeDispose(() => { request++; clearTimeout(loadingTimer) })
+onScopeDispose(() => { request++ })
 
 function selected(entry: PathFileEntry) { return props.selectedPaths?.has(entry.relativePath) ?? false }
 function preSelected(entry: PathFileEntry) { return props.previewPaths?.has(entry.relativePath) ?? false }
@@ -331,6 +357,74 @@ function runContext(action: (entry: PathFileEntry) => void) {
   const entry = contextEntry.value
   contextEntry.value = null
   if (entry) action(entry)
+}
+
+const archiveTarget = ref<PathFileRef | null>(null)
+const compressTarget = ref<PathFileRef | null>(null)
+const compressPaths = ref<string[]>([])
+const archiveName = ref('')
+const extracting = ref(false)
+const extractError = ref('')
+const archiveSuffix = /\.(?:tar\.gz|tgz|tar|zip)$/iu
+
+function openCompression(entry: PathFileEntry) {
+  archiveName.value = entry.kind === 'file' ? fileName(entry).base : entry.name
+  compressTarget.value = fileTarget(entry)
+  compressPaths.value = [entry.relativePath]
+  extractError.value = ''
+}
+
+function openSelectedCompression() {
+  const entries = selectedEntries()
+  if (!entries.length || !pathFilesApi.compressArchive) return
+  const first = entries[0]!
+  archiveName.value = first.kind === 'file' ? fileName(first).base : first.name
+  compressTarget.value = fileTarget(entries[0]!)
+  compressPaths.value = entries.map(entry => entry.relativePath)
+  extractError.value = ''
+}
+
+async function submitCompression({ name }: { name: string }) {
+  const target = compressTarget.value
+  if (!target || extracting.value || !pathFilesApi.compressArchive) return
+  const epoch = accountBoundaryEpoch.value
+  extracting.value = true
+  extractError.value = ''
+  try {
+    await pathFilesApi.compressArchive(target, compressPaths.value, name)
+    if (epoch === accountBoundaryEpoch.value) {
+      await load()
+      emit('compressed')
+    }
+    compressTarget.value = null
+  } catch (error) {
+    if (epoch === accountBoundaryEpoch.value) extractError.value = errorMessage(error)
+  } finally { extracting.value = false }
+}
+
+function isArchive(entry: PathFileEntry) {
+  return entry.kind === 'file' && archiveSuffix.test(entry.name)
+}
+
+function openExtraction(entry: PathFileEntry) {
+  archiveName.value = entry.name.replace(archiveSuffix, '')
+  archiveTarget.value = fileTarget(entry)
+  extractError.value = ''
+}
+
+async function submitExtraction({ name }: { name: string }) {
+  const target = archiveTarget.value
+  if (!target || extracting.value || !pathFilesApi.extractArchive) return
+  const epoch = accountBoundaryEpoch.value
+  extracting.value = true
+  extractError.value = ''
+  try {
+    await pathFilesApi.extractArchive(target, name)
+    if (epoch === accountBoundaryEpoch.value) await load()
+    archiveTarget.value = null
+  } catch (error) {
+    if (epoch === accountBoundaryEpoch.value) extractError.value = errorMessage(error)
+  } finally { extracting.value = false }
 }
 
 function openInfo(entry: PathFileEntry) {
@@ -401,7 +495,37 @@ function selectFiles(event: Event) {
 }
 
 async function handleDrop(event: DragEvent) {
-  if (event.dataTransfer) await uploadItems(await readDroppedEntries(event.dataTransfer))
+  if (!event.dataTransfer?.types.includes('Files')) return
+  const target = { directoryId: props.directoryId, relativePath: props.relativePath }
+  const epoch = accountBoundaryEpoch.value
+  const folder = (event.target instanceof Element ? event.target : null)?.closest<HTMLElement>('[data-path-folder]')
+  const { base, ext } = splitName(event.dataTransfer.files[0]?.name ?? '')
+  let ghost: ReturnType<typeof createGhost> | undefined
+  const move = pathFilesApi.moveDropped?.(target.directoryId, folder?.dataset.pathFolder ?? target.relativePath,
+    async (filename, canOverwrite) => {
+      if (epoch !== accountBoundaryEpoch.value) return 'skip'
+      const choices = await conflictDialog.value?.show([{ filename, canOverwrite }])
+      return epoch === accountBoundaryEpoch.value ? choices?.get(filename)?.action ?? 'skip' : 'skip'
+    },
+    percent => {
+      if (epoch !== accountBoundaryEpoch.value) return
+      if (ghost === undefined && percent === 100) return
+      ghost ??= createGhost(base, ext)
+      updateGhostProgress(ghost, percent)
+    })
+  if (!move) {
+    await uploadItems(await readDroppedEntries(event.dataTransfer))
+    return
+  }
+  try {
+    if ((await move).retained) showAppNotice('已复制到目标文件夹')
+  } catch (cause) {
+    showAppError(errorMessage(cause))
+  } finally {
+    if (ghost !== undefined) removeGhost(ghost)
+    if (epoch === accountBoundaryEpoch.value && target.directoryId === props.directoryId
+      && target.relativePath === props.relativePath) void load()
+  }
 }
 
 function entryObjectId(entry: PathFileEntry) {
@@ -434,7 +558,7 @@ async function handleMoveAction(
   })
 }
 
-defineExpose({ handleDrop, handleMoveAction, selectedEntries, selectableEntries })
+defineExpose({ handleDrop, handleMoveAction, selectedEntries, selectableEntries, openSelectedCompression })
 
 function download(entry: PathFileEntry) {
   void pathFilesApi.download({ directoryId: props.directoryId, relativePath: entry.relativePath }).catch(error => showAppError(errorMessage(error)))
@@ -483,16 +607,34 @@ function openFile(entry: PathFileEntry) {
 }
 
 function previewFile(entry: PathFileEntry) {
-  const { base, ext } = fileName(entry)
-  previewStore.open({
-    displayName: base,
-    ext, mimeType: entry.mimeType, sizeBytes: entry.size,
-    workspaceFile: fileTarget(entry),
-  }, null, true)
+  const toPreview = (item: PathFileEntry) => {
+    const { base, ext } = fileName(item)
+    return { displayName: base, ext, mimeType: item.mimeType, sizeBytes: item.size, workspaceFile: fileTarget(item) }
+  }
+  previewStore.open(toPreview(entry), entries.value.filter(item => item.kind === 'file').map(toPreview), true)
 }
 </script>
 
 <style scoped>
+.workspace-error {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-sm);
+  padding: clamp(36px, 12vh, 120px) var(--space-md) var(--space-lg);
+  text-align: center;
+  color: var(--content-primary);
+}
+.workspace-error-icon {
+  display: grid;
+  place-items: center;
+  inline-size: 48px;
+  block-size: 48px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--content-secondary);
+}
+.workspace-error p { max-inline-size: 30em; margin: 0; color: var(--content-secondary); }
+
 
 .workspace-file-list :is(.list-head, .list-row) {
   grid-template-columns: minmax(0, 1fr) 64px 72px 34px;

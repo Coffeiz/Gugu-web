@@ -10,13 +10,13 @@ import { lockAgentRunSession } from '../../../agent/run/start.js'
 import { createPostgresImAccess } from '../inbound/access.js'
 
 export interface ImShortcutState {
-  state: 'idle' | 'thinking' | 'waiting_confirm'; awaiting: boolean
+  state: 'idle' | 'thinking' | 'waiting_confirm' | 'waiting_agent'; awaiting: boolean
   initiatorIds: readonly string[]; cancelReference?: string
 }
 export class ImShortcutUnavailable extends Error {
   constructor() { super('IM 快捷控制暂不可用'); this.name = 'ImShortcutUnavailable' }
 }
-interface Target { session_id: number; run_id: string; sequence: string; nonce: Buffer; payload: Buffer; state: string; status: string | null; admitted: boolean }
+interface Target { session_id: number; run_id: string; sequence: string; nonce: Buffer; payload: Buffer; state: string; status: string | null; agent_wait: boolean; admitted: boolean }
 interface Receipt { reference: string; session_id: number; run_id: string; dispatch_sequence: string; facts_hash: string; state: string }
 const idle = (): ImShortcutState => ({ state: 'idle', awaiting: false, initiatorIds: [] })
 const fail = () => new ImShortcutUnavailable()
@@ -75,6 +75,8 @@ export function createPostgresImShortcut(options: {
   }
   async function targetRows(client: PoolClient, scope: ImPreflightScope, receipt?: Receipt) {
     return (await client.query<Target>(`SELECT d.session_id,d.run_id,d.sequence::text,d.nonce,d.payload,d.state,c.status,
+        (EXISTS (SELECT 1 FROM agent_inbox_waits w WHERE w.owner_id=d.user_id::text AND w.session_id=d.session_id::text AND w.run_id=d.run_id)
+          OR EXISTS (SELECT 1 FROM agent_subagent_waits w WHERE w.owner_id=d.user_id::text AND w.parent_session_id=d.session_id::text AND w.parent_run_id=d.run_id)) AS agent_wait,
         a.created_at<=$5::timestamptz AS admitted
       FROM agent_run_dispatch d JOIN conversation_sessions s ON s.id=d.session_id AND s.user_id=d.user_id
       JOIN agent_run_startups a ON a.user_id=d.user_id AND a.session_id=d.session_id AND a.run_id=d.run_id AND a.status<>'failed'
@@ -117,7 +119,7 @@ export function createPostgresImShortcut(options: {
           [scope.ownerId,eventHash,reference,item.target.session_id,item.target.run_id,item.target.sequence,item.facts.digest])
           const frozen = (await client.query<Receipt>('SELECT * FROM gugu_im_shortcut_controls WHERE user_id=$1 AND event_hash=$2',[scope.ownerId,eventHash])).rows[0]
           if (!frozen || frozen.facts_hash !== item.facts.digest || frozen.run_id !== item.target.run_id || frozen.session_id !== item.target.session_id) throw fail()
-          return { state: item.target.status === 'waiting' ? 'waiting_confirm' : 'thinking', awaiting: item.target.status === 'waiting', initiatorIds: item.facts.initiators, cancelReference: frozen.reference }
+          return { state: item.target.status === 'waiting' ? item.target.agent_wait ? 'waiting_agent' : 'waiting_confirm' : 'thinking', awaiting: item.target.status === 'waiting' && !item.target.agent_wait, initiatorIds: item.facts.initiators, cancelReference: frozen.reference }
         },fail)
       } catch { throw fail() }
     },

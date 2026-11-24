@@ -101,8 +101,8 @@ const uploadOpen    = ref(false)
 // Dashboard 只消费后端限量返回的最近文件；不为展示几张卡片初始化全局文件索引。
 const store         = useFilesCacheStore()
 const { t } = useI18n()
-const rawFiles      = computed(() => [...props.files].sort((a, b) => b.id - a.id))
-const thumbMap      = shallowRef<Record<number, { version?: number; tiny?: string | null; card?: string | null }>>({}) // id → 当前正文版本的缩略图，shallowRef 批量更新减少 trigger 次数
+const rawFiles      = computed(() => [...props.files].sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
+const thumbMap      = shallowRef<Record<string, { version?: number; tiny?: string | null; card?: string | null }>>({}) // 路径 → 当前正文版本的缩略图，shallowRef 批量更新减少 trigger 次数
 const renamingId    = ref<number | string | null>(null)
 const renameText    = ref('')
 const renameExtension = ref('')
@@ -310,7 +310,7 @@ onUnmounted(() => {
 
 const files = computed(() =>
   rawFiles.value.slice(0, displayCount.value).map(f => ({
-    id:           f.id,
+    id:           f.filePath,
     _raw:         f,
     name:         f.displayName,
     ext:          f.ext,

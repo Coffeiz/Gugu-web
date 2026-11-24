@@ -10,6 +10,7 @@ export type RuntimeEvent =
   | 'web_push.failed'
   | 'host.trash_purge_unavailable' | 'host.search_usage_unavailable'
   | 'gateway.started' | 'gateway.stopped' | 'gateway.start_failed' | 'gateway.stop_failed' | 'gateway.degraded'
+  | 'gateway.qq_upload_timing' | 'gateway.qq_upload_failed' | 'gateway.qq_file_message_failed' | 'gateway.qq_file_delivery_started' | 'gateway.qq_file_delivery_result'
   | 'gateway.rag_timeout' | 'gateway.rag_late_completion'
   | 'sandbox.probe_failed' | 'sandbox.command_failed' | 'sandbox.system_completed'
 
@@ -26,6 +27,11 @@ export type RuntimeLog = (event: RuntimeEvent, details?: {
   code?: string
   exitCode?: number
   frames?: readonly string[]
+  deliveryOutcome?: string
+  uploadMetrics?: Readonly<Record<string, number>>
+  uploadStage?: string
+  httpStatus?: number
+  upstreamCode?: number
   rpcMethod?: string
   ok?: boolean
   timedOut?: boolean

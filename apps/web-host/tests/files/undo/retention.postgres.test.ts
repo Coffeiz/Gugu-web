@@ -13,7 +13,8 @@ const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '11111111-1111-4111-8111-111111111111'
 
 test('Undo 保留清理删除到期正文与旧错位目录，并保留未到期记录', {
-  skip: !databaseUrl && '设置 GUGU_WEBUI_TEST_DATABASE_URL 后运行隔离 PostgreSQL Undo 保留清理回归',
+  skip: !databaseUrl ? '设置 GUGU_WEBUI_TEST_DATABASE_URL 后运行隔离 PostgreSQL Undo 保留清理回归'
+    : process.platform !== 'linux' && '安全文件系统删除实现需要 Linux',
 }, async () => {
   const schema = `gugu_undo_retention_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })

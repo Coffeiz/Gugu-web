@@ -1,8 +1,9 @@
 import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/shared/useThumbCache'
 import { API_BASE } from './chatConstants'
+import { pathFilesApi } from '@/services/api'
 
 // IntersectionObserver 懒加载指令：进视口附近才取 card 尺寸缩略图。
-// 值为数字 file_id → 文件库缩略图；为字符串 attach_id → 暂存附件缩略图端点。
+// 值为 file_path → 文件库内容；为 attach_id → 暂存附件缩略图端点。
 export interface ThumbEl extends HTMLImageElement {
   _thumbObs?: IntersectionObserver | null
   _thumbKey?: string
@@ -15,7 +16,7 @@ function releaseAttachmentUrl(el: ThumbEl) {
   el._attachmentUrl = undefined
 }
 
-export function bindLazyThumb(el: ThumbEl, id: number | string | undefined | null, size = 'card',
+export function bindLazyThumb(el: ThumbEl, id: string | undefined | null, size = 'card',
   readAttachment?: (id: string) => Promise<Blob>) {
   releaseAttachmentUrl(el)
   el._thumbObs?.disconnect()
@@ -27,14 +28,16 @@ export function bindLazyThumb(el: ThumbEl, id: number | string | undefined | nul
   el.removeAttribute('src')
   if (!id) return
 
-  const isAttach = typeof id === 'string'
-  const key = isAttach ? `att:${id}_${size}` : `${id}_${size}`
+  const isSandboxPath = typeof id === 'string' && id.startsWith('/')
+  const isAttach = typeof id === 'string' && !isSandboxPath
+  const key = isSandboxPath ? `path:${id}_${size}` : isAttach ? `att:${id}_${size}` : `${id}_${size}`
   const readLocal = isAttach ? readAttachment : undefined
   const cached = readLocal ? null : isAttach ? getCachedThumbUrl(key) : getCachedThumb(id, size)
   if (cached) { el.src = cached; return }
-  const fetchThumb = () => isAttach
-    ? getThumbUrl(key, `${API_BASE}/agent/attachment/${id}/thumb?size=${size}`)
-    : getThumb(id, size)
+  const fetchThumb = () => isSandboxPath
+    ? getThumbUrl(key, pathFilesApi.sandboxContentUrl(id))
+    : isAttach ? getThumbUrl(key, `${API_BASE}/agent/attachment/${id}/thumb?size=${size}`)
+      : getThumb(id, size)
   const obs = new IntersectionObserver(([entry]) => {
     if (!entry.isIntersecting) return
     obs.disconnect(); el._thumbObs = null
@@ -55,8 +58,8 @@ export function bindLazyThumb(el: ThumbEl, id: number | string | undefined | nul
 
 export function makeLazyThumbDirective(size: string, readAttachment?: (id: string) => Promise<Blob>) {
   return {
-    mounted(el: ThumbEl, { value }: { value: number | string | undefined | null }) { bindLazyThumb(el, value, size, readAttachment) },
-    updated(el: ThumbEl, { value, oldValue }: { value: number | string | undefined | null; oldValue: number | string | undefined | null }) {
+    mounted(el: ThumbEl, { value }: { value: string | undefined | null }) { bindLazyThumb(el, value, size, readAttachment) },
+    updated(el: ThumbEl, { value, oldValue }: { value: string | undefined | null; oldValue: string | undefined | null }) {
       if (value !== oldValue) bindLazyThumb(el, value, size, readAttachment)
     },
     unmounted(el: ThumbEl) {

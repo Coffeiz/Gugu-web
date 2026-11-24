@@ -55,14 +55,10 @@ export class SqlProjectRepository implements ProjectRepository {
       'deleted_at',
     )
   }
-  async get(id: number): Promise<ProjectRecord | null> {
-    const row = await this.db
-      .selectFrom('projects')
-      .selectAll()
-      .where('id', '=', id)
-      .where('user_id', '=', this.owner)
-      .where('deleted_at', 'is', null)
-      .executeTakeFirst()
+  async get(id: number, includeDeleted = false): Promise<ProjectRecord | null> {
+    let query = this.db.selectFrom('projects').selectAll().where('id', '=', id).where('user_id', '=', this.owner)
+    if (!includeDeleted) query = query.where('deleted_at', 'is', null)
+    const row = await query.executeTakeFirst()
     return row ? projectRecord(row) : null
   }
   async create(values: Fields): Promise<ProjectRecord> {

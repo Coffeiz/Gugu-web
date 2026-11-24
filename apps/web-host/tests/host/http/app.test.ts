@@ -107,22 +107,28 @@ test('file browsing is mounted behind user auth and receives the owner from Host
         } : null
       },
     },
-    fileBrowser: {
-      async listFiles(ownerId) { calls.push(ownerId); return { items: [] } },
-      async listFolders(ownerId) { calls.push(ownerId); return { items: [] } },
+    fileReads: {
+      async getFile(ownerId) { calls.push(ownerId); return { id: 1 } },
+      async getFileLocation() { return null },
+      async getSummary() { return {} },
+      async getLibraryCounts() { return {} },
+      async getStorage() { return {} },
+      async openContent() { return null },
     },
   })
   const token = createUserToken(userId, 1, secret)
 
-  const denied = await app.inject({ url: '/api/v1/files?space=personal' })
+  const denied = await app.inject({ url: '/api/v1/files/1' })
   const allowed = await app.inject({
-    url: '/api/v1/files?space=personal',
+    url: '/api/v1/files/1',
     headers: { authorization: `Bearer ${token}` },
   })
 
   assert.equal(denied.statusCode, 401)
   assert.equal(allowed.statusCode, 200)
   assert.deepEqual(calls, [userId])
+  const retired = await app.inject({ url: '/api/v1/files?space=personal', headers: { authorization: `Bearer ${token}` } })
+  assert.equal(retired.statusCode, 404)
 })
 
 test('Local 文件上传先经过用户认证，并只把 Host owner 交给存储操作', async () => {
@@ -143,7 +149,7 @@ test('Local 文件上传先经过用户认证，并只把 Host owner 交给存�
       },
     },
     fileUploads: {
-      async getUploadCapacity(ownerId) { calls.push(`capacity:${ownerId}`); return 32 },
+      async validateUploadTarget(ownerId) { calls.push(`validate:${ownerId}`) },
       async store(ownerId, upload) {
         calls.push(`store:${ownerId}:${upload.input.space}:${upload.sizeBytes}`)
         return { id: 7, displayName: upload.originalName }
@@ -167,7 +173,7 @@ test('Local 文件上传先经过用户认证，并只把 Host owner 交给存�
   assert.equal(denied.statusCode, 401)
   assert.equal(allowed.statusCode, 201)
   assert.deepEqual(allowed.json(), { id: 7, displayName: 'memo.txt' })
-  assert.deepEqual(calls, [`capacity:${userId}`, `store:${userId}:personal:4`])
+  assert.deepEqual(calls, [`validate:${userId}`, `store:${userId}:personal:4`])
 })
 
 test('文件删除先认证并只向适配器传递 Host owner', async () => {

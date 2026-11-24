@@ -6,7 +6,6 @@ import { useMindAccess } from '@/services/mindAccess'
  */
 import { useProjectStore } from '@/stores/projects'
 import { useEventModalStore } from '@/stores/eventModal'
-import { useFilesCacheStore } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
 import { hasInjectionContext, inject, type InjectionKey } from 'vue'
@@ -32,7 +31,6 @@ export function useMindRefActions() {
   const mindApi = useMindAccess()
   const projectStore = useProjectStore()
   const eventModalStore = useEventModalStore()
-  const filesCache = useFilesCacheStore()
   const router = useRouter()
   const previewStore = usePreviewStore()
   const fileOpenAccess = useFileOpenAccess()
@@ -60,14 +58,7 @@ export function useMindRefActions() {
       return projectStore.projects.some(project => project.id === numericId) ? 'available' : 'missing'
     }
     if (refType === 'file') return typeof refId === 'string' && /^(path|drop)-/u.test(refId) ? 'unknown' : 'missing'
-    if (refType === 'folder') {
-      if (filesCache.getFolder(numericId)) return 'available'
-      try {
-        return await filesCache.ensureFolder(numericId) ? 'available' : 'missing'
-      } catch {
-        return 'unknown'
-      }
-    }
+    if (refType === 'folder') return decodeMindFileReference(refId) ? 'unknown' : 'missing'
     if (refType === 'event') {
       try {
         await eventsApi.get(numericId)
@@ -87,9 +78,19 @@ export function useMindRefActions() {
     return 'unknown'
   }
 
-  // 文件夹引用：文件库尚不支持定位到具体目录，先打开文件库页（后续可加深链）。
-  async function openFolder(_id: number) {
+  async function openFolder(id: number | string) {
+    const path = decodeMindFileReference(id)
+    if (!path) return false
+    try {
+      const reference = await pathFilesApi.reference(path, 'folder')
+      if (reference.id !== id) return false
+    } catch (error) {
+      if (isNotFound(error)) return false
+      throw error
+    }
+    uiStore.pendingFileTarget = { kind: 'folder', pathFile: { ...path, directoryName: i18n.global.t('sharedUi.workspaces') } }
     await router.push('/files')
+    return true
   }
 
   // 对话引用存的 refId 是消息 id（锚定的是"准确的聊天位置"，不是整个会话），先反查它
@@ -108,7 +109,7 @@ export function useMindRefActions() {
     }
   }
 
-  async function openMindRef(refType: string, refId: number | string) {
+  async function openMindRef(refType: string, refId: number | string, options: { revealUnsupportedFile?: boolean } = {}) {
     if (refType === 'project' && openProjectReference) {
       const id = Number(refId)
       if (!Number.isSafeInteger(id) || id < 1) return false
@@ -132,7 +133,11 @@ export function useMindRefActions() {
       const ext = dot > 0 ? filename.slice(dot + 1) : ''
       const useSystem = fileOpenAccess && shouldOpenFileInSystem(fileOpenAccess.getOpenPreference(), ext)
       if (useSystem && fileOpenAccess.canOpenInSystem(file)) await fileOpenAccess.openInSystem(file)
-      else if (!useSystem && isPreviewable(ext)) previewStore.open({ displayName: dot > 0 ? filename.slice(0, dot) : filename, ext, workspaceFile: file })
+      else if ((!useSystem || options.revealUnsupportedFile) && isPreviewable(ext)) previewStore.open({ displayName: dot > 0 ? filename.slice(0, dot) : filename, ext, workspaceFile: file })
+      else if (options.revealUnsupportedFile) {
+        uiStore.pendingFileTarget = { kind: 'file', pathFile: { ...file, directoryName: '' } }
+        await router.push('/files')
+      }
       else await pathFilesApi.download(file).catch(error => showAppNotice(error instanceof Error ? error.message : i18n.global.t('mindUi.referenceMissing')))
       return true
     }
@@ -161,15 +166,7 @@ export function useMindRefActions() {
       await router.push({ path: '/schedules', query: { task: String(refId) } })
       return true
     }
-    if (refType === 'folder') {
-      const state = await resolveMindRef(refType, refId)
-      if (state === 'missing') {
-        showAppNotice(i18n.global.t('mindUi.referenceMissing'))
-        return false
-      }
-      await openFolder(Number(refId))
-      return true
-    }
+    if (refType === 'folder') return openFolder(refId)
     if (refType === 'conversation') return openConversationMessage(Number(refId))
     const state = await resolveMindRef(refType, refId)
     if (state === 'missing') {

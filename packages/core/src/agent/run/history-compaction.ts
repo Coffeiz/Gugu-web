@@ -1,13 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { isCompactedSummaryMessage, stableJson } from '../context/history/canonical-history.js'
-import { unwrapCompactedSummary, validateCompactSummary } from '../context/compaction.js'
+import { contentText, deterministicSummary, formatCompactedSummary, unwrapCompactedSummary, validateCompactSummary } from '../context/compaction.js'
 import { updateBaselineSnapshot } from '../context/prepare.js'
-import type { CanonicalRunContext, CompactionResult } from '../models.js'
+import { protectedMessageIds } from '../context/history/retention.js'
+import type { CanonicalMessage, CanonicalRunContext, Json } from '../models.js'
+import type { CompactionPort } from '../ports.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 
 export interface HistoryCompactionRow {
   id: string; role: string; content: string; content_json: unknown; effective: string | number
+  runId?: string | null; roundId?: string | null; canonicalBatchId?: string | null
+  coversUntilSeq?: number | string | null
 }
 
 /** 与历史会话基线使用同一 SHA-256 格式。 */
@@ -15,54 +19,101 @@ export function canonicalBaselineHash(rows: readonly Omit<HistoryCompactionRow, 
   return digest(rows.map(row => ({ id: Number(row.id), role: row.role, content: row.content_json ?? row.content ?? '' })))
 }
 
-/**
- * 手动整理只能替换此前读取且仍未变化的完整历史前缀。
- * 调用者在持有会话锁的事务内读取当前历史。
- */
-export function projectManualHistoryCompaction(result: CompactionResult, before: readonly HistoryCompactionRow[],
-  current: readonly HistoryCompactionRow[], previousBaseline: number) {
-  if (!result.changed) return null
-  const ids = result.coversUntilMessageIds
-  const covered = before.filter(row => row.role !== 'summary').slice(0, ids.length)
+/** 按持久顺序整理旧历史，保留最近 Run 的最后十轮和完整锚点分组。 */
+export function selectHistoryCompactionPrefix<Row extends HistoryCompactionRow>(
+  rows: readonly Row[], previousBaseline: number, options?: { anchorSeq?: number; runId?: string },
+) {
+  const summary = rows.filter(row => row.role === 'summary').reduce<Row | undefined>((latest, row) =>
+    !latest || Number(row.effective) >= Number(latest.effective) ? row : latest, undefined)
+  const effectiveBaseline = Math.max(previousBaseline, Number(summary?.coversUntilSeq ?? 0))
+  let anchor = options?.anchorSeq ?? Infinity
+  if (options?.runId) {
+    for (const row of rows) {
+      if (row.role !== 'summary' && row.runId === options.runId) anchor = Math.min(anchor, Number(row.effective))
+    }
+  }
+  const history = rows.filter(row => row.role !== 'summary' && Number(row.effective) > effectiveBaseline && Number(row.effective) < anchor)
+  const protectedIds = protectedMessageIds(history)
+  const split = history.findIndex(row => protectedIds.has(row.id))
+  let end = split < 0 ? history.length : split
+  while (end > 0 && Number(history[end - 1]?.effective) === Number(history[end]?.effective)) end--
+  const covered = history.slice(0, end)
   const baseline = Number(covered.at(-1)?.effective)
-  const summaries = result.messages.filter(isCompactedSummaryMessage)
-  if (!ids.length || result.coversUnpersisted || ids.some((id, index) => covered[index]?.id !== id)
-    || stableJson(current.slice(0, ids.length)) !== stableJson(covered)
-    || !Number.isSafeInteger(baseline) || baseline <= previousBaseline
-    || Number(current[ids.length]?.effective ?? Infinity) <= baseline
-    || summaries.length !== 1 || typeof summaries[0]!.content !== 'string')
-    throw new Error('手动压缩的历史覆盖边界无效')
-  const summary = unwrapCompactedSummary(summaries[0]!.content)
-  if (!validateCompactSummary(summary)) throw new Error('手动压缩摘要无效')
-  return { summary, baseline, hash: canonicalBaselineHash(covered) }
+  if (!Number.isSafeInteger(baseline) || baseline <= effectiveBaseline) return null
+  return { covered, baseline, previous: summary?.content ?? null }
 }
 
-/** 调用者在事务内核对当前快照及基线，并提供按有效序号排列的完整历史前缀。 */
-export function projectDurableHistoryCompaction(context: CanonicalRunContext, rows: readonly HistoryCompactionRow[], anchorSeq: string | number | undefined) {
-  const result = context.compactions.at(-1)!.result
-  const ids = context.compactions.flatMap(item => item.result.coversUntilMessageIds)
-  if (context.compactions.some(item => !item.result.changed)
-    || !ids.length || new Set(ids).size !== ids.length || !context.sourceEffects
-    || ids.some(id => !/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))))
-    throw new Error('Agent 压缩覆盖边界无效')
-  const covered = rows.slice(0, ids.length)
-  // 模型按平台时间恢复消息，压缩水位按数据库序号推进；验证完整前缀成员及锚点。
-  const coveredIds = new Set(ids)
-  if (covered.length !== ids.length || covered.some(row => !coveredIds.has(row.id)))
-    return null
-  const baseline = Number(covered.at(-1)!.effective)
-  if (rows[ids.length] && Number(rows[ids.length]!.effective) <= baseline)
-    return null
-  if (!Number.isSafeInteger(baseline) || baseline <= context.historyBaseline!.baselineSeq)
-    throw new Error('Agent 压缩水位无效')
-  // 复用摘要只能推进到当前用户消息之前，避免把本轮原文从后续上下文移除。
-  if (anchorSeq !== undefined && baseline >= Number(anchorSeq)) return null
-  const candidates = result.messages.filter(isCompactedSummaryMessage)
-  if (candidates.length !== 1 || typeof candidates[0]!.content !== 'string') throw new Error('Agent 压缩摘要无效')
-  const summary = unwrapCompactedSummary(candidates[0]!.content)
-  if (!validateCompactSummary(summary)) throw new Error('Agent 压缩摘要无效')
+/** 只有摘要精确覆盖待提交前缀时才能复用，防止把保留轮次或本轮正文写入历史摘要。 */
+export function reusableHistorySummary(context: CanonicalRunContext, covered: readonly HistoryCompactionRow[]): string {
+  const latest = context.compactions.at(-1)?.result
+  const coveredIds = context.compactions.flatMap(item => item.result.coversUntilMessageIds)
+  if (!latest || context.compactions.some(item => !item.result.changed || item.result.coversUnpersisted !== false)
+    || coveredIds.length !== covered.length || new Set(coveredIds).size !== covered.length) return ''
+  const proof = new Set(coveredIds)
+  if (covered.some(row => !proof.has(row.id))) return ''
+  const summaries = latest.messages.filter(isCompactedSummaryMessage)
+  if (summaries.length !== 1 || typeof summaries[0]!.content !== 'string') return ''
+  const summary = unwrapCompactedSummary(summaries[0]!.content)
+  return validateCompactSummary(summary) ? summary : ''
+}
+
+export function historyCompactionMessages(covered: readonly HistoryCompactionRow[]): CanonicalMessage[] {
+  return covered.flatMap(row => {
+    const content = contentText((row.content_json ?? row.content) as Json).trim()
+    return content ? [{ role: row.role === 'user' ? 'user' : 'assistant', content }] : []
+  })
+}
+
+export function emergencyHistorySummary(messages: readonly CanonicalMessage[], previous: string | null): string {
+  return messages.length ? deterministicSummary(messages.map(message =>
+    `${message.role === 'user' ? '用户' : '咕咕'}：${message.content}`), previous) : ''
+}
+
+export async function summarizeHistoryPrefix<Wire>(
+  plan: NonNullable<ReturnType<typeof selectHistoryCompactionPrefix>>, port: CompactionPort<Wire>, signal: AbortSignal,
+): Promise<string> {
+  const messages = historyCompactionMessages(plan.covered)
+  if (!messages.length) return ''
+  const generated = await port.summarize({
+    history: messages, compressible: messages, requestPrefix: [], projection: null,
+    previousSummary: plan.previous ? formatCompactedSummary(plan.previous) : null, preserveLatestUser: false,
+  }, signal)
+  signal.throwIfAborted()
+  const summary = validateCompactSummary(generated) ? generated : emergencyHistorySummary(messages, plan.previous)
+  return validateCompactSummary(summary) ? summary : ''
+}
+
+/** 手动整理只提交在会话锁下仍与摘要输入一致的历史。 */
+export function projectManualHistoryCompaction(summary: string, before: readonly HistoryCompactionRow[],
+  current: readonly HistoryCompactionRow[], previousBaseline: number) {
+  const plan = selectHistoryCompactionPrefix(before, previousBaseline)
+  if (!plan || !validateCompactSummary(summary) || stableJson(current) !== stableJson(before))
+    throw new Error('手动压缩的历史覆盖边界无效')
+  return { summary, baseline: plan.baseline, hash: canonicalBaselineHash(plan.covered) }
+}
+
+export interface PreparedHistorySummary {
+  prefixHash: string
+  baseline: number
+  previous: string | null
+  summary: string
+}
+
+/** 事务内根据同一范围复核预生成摘要，失配时仅使用可信历史的有界摘要。 */
+export function projectDurableHistoryCompaction(context: CanonicalRunContext, rows: readonly HistoryCompactionRow[], anchorSeq: string | number | undefined, prepared?: PreparedHistorySummary) {
+  const snapshotState = context.sourceEffects?.sessionSnapshot.state
+  const anchor = Number(anchorSeq)
+  if (!context.historyBaseline || !snapshotState || !Number.isSafeInteger(anchor)
+    || (!context.overflowTrimmed && !context.compactions.some(item => item.result.changed))) return null
+  const plan = selectHistoryCompactionPrefix(rows, context.historyBaseline.baselineSeq, { anchorSeq: anchor, runId: context.identity.runId })
+  if (!plan) return null
+  const { covered, baseline, previous } = plan
   const hash = canonicalBaselineHash(covered)
-  const snapshot = updateBaselineSnapshot(context.sourceEffects.sessionSnapshot.state, [{ role: 'summary', content: summary }],
+  const generated = prepared?.prefixHash === hash && prepared.baseline === baseline && prepared.previous === previous ? prepared.summary : ''
+  const summary = reusableHistorySummary(context, covered)
+    || (validateCompactSummary(generated) ? generated : emergencyHistorySummary(historyCompactionMessages(covered), previous))
+  if (!validateCompactSummary(summary)) return null
+  const snapshot = updateBaselineSnapshot(snapshotState, [{ role: 'summary', content: summary }],
     { digest, nextId: randomUUID, now: Date.now }, { baselineMessageSeq: baseline })
   return { summary, baseline, hash, snapshot }
 }

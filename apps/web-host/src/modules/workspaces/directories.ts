@@ -1,4 +1,6 @@
 import { CoreError, normalizeWorkspaceDirectoryName, validateWorkspaceDirectoryName } from '@gugu/core'
+import { createLocalFileTree } from '@gugu/fs/node'
+import { workspaceDirectoryStorageKey } from './roots.js'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { normalizeOwnerId } from '../../shared/owner-context.js'
 import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
@@ -115,44 +117,6 @@ async function ensureWorkspaceBinding(client: SqlExecutor, user: string, row: Di
   )
 }
 
-async function ensureDefaultDirectory(
-  client: SqlExecutor,
-  user: string,
-  runtime: WorkspaceDirectoryRuntime,
-): Promise<DirectoryRow> {
-  let result = await client.query<DirectoryRow>(
-    `SELECT id, user_id::text, name, directory_name, is_default, is_system
-     FROM workspace_directories WHERE user_id = $1 AND directory_name = 'default'
-       AND deleted_at IS NULL FOR UPDATE`,
-    [user],
-  )
-  let row = result.rows[0]
-  if (!row) {
-    result = await client.query<DirectoryRow>(
-      `INSERT INTO workspace_directories
-         (user_id, name, directory_name, is_default, is_system, created_at, updated_at)
-       VALUES ($1, '默认工作区', 'default', TRUE, TRUE, now(), now())
-       ON CONFLICT (user_id, directory_name) WHERE deleted_at IS NULL DO NOTHING
-       RETURNING id, user_id::text, name, directory_name, is_default, is_system`,
-      [user],
-    )
-    row = result.rows[0]
-    if (!row) {
-      result = await client.query<DirectoryRow>(
-        `SELECT id, user_id::text, name, directory_name, is_default, is_system
-         FROM workspace_directories WHERE user_id = $1 AND directory_name = 'default'
-           AND deleted_at IS NULL FOR UPDATE`,
-        [user],
-      )
-      row = result.rows[0]
-    }
-  }
-  if (!row) throw new Error('默认 Workspace 创建后未返回记录')
-  await ensureWorkspaceBinding(client, user, row)
-  await runtime.prepareDirectoryAcl(await workspaceRoot(runtime, user, row.directory_name))
-  return row
-}
-
 async function getDirectory(
   client: SqlExecutor,
   user: string,
@@ -173,23 +137,12 @@ async function countsForDirectories(
   client: SqlExecutor,
   user: string,
   rows: DirectoryRow[],
-  preview: boolean,
+  recursive: boolean,
+  storageRoot: string,
 ): Promise<Map<number, DirectoryCounts>> {
   const counts = new Map<number, DirectoryCounts>()
   if (!rows.length) return counts
   const ids = rows.map((row) => Number(row.id))
-  const files = await client.query<CountRow>(
-    `SELECT workspace_directory_id AS directory_id, COUNT(id)::text AS count FROM files
-     WHERE user_id = $1 AND workspace_directory_id = ANY($2::integer[]) AND deleted_at IS NULL
-     ${preview ? '' : "AND space = 'workspace' AND folder_id IS NULL"}
-     GROUP BY workspace_directory_id`, [user, ids],
-  )
-  const folders = await client.query<CountRow>(
-    `SELECT workspace_directory_id AS directory_id, COUNT(id)::text AS count FROM folders
-     WHERE user_id = $1 AND workspace_directory_id = ANY($2::integer[]) AND deleted_at IS NULL
-     ${preview ? '' : 'AND parent_id IS NULL'}
-     GROUP BY workspace_directory_id`, [user, ids],
-  )
   const sessions = await client.query<CountRow>(
     `SELECT directory.directory_id, COUNT(session.id)::text AS count
      FROM workspaces AS directory
@@ -206,11 +159,23 @@ async function countsForDirectories(
      WHERE directory.user_id = $1 AND directory.directory_id = ANY($2::integer[])
      GROUP BY directory.directory_id`, [user, ids],
   )
-  for (const id of ids) counts.set(id, {
-    file_count: 0, folder_count: 0, bound_session_count: 0, bound_task_count: 0,
-  })
+  for (const row of rows) {
+    const count = { file_count: 0, folder_count: 0, bound_session_count: 0, bound_task_count: 0 }
+    const tree = createLocalFileTree(storageRoot, workspaceDirectoryStorageKey(user, row.directory_name))
+    const pending = ['']
+    while (pending.length) {
+      const entries = await tree.list(pending.pop()!)
+      for (const entry of entries ?? []) {
+        if (entry.kind === 'file') count.file_count++
+        else {
+          count.folder_count++
+          if (recursive) pending.push(entry.relativePath)
+        }
+      }
+    }
+    counts.set(Number(row.id), count)
+  }
   for (const [result, key] of [
-    [files, 'file_count'], [folders, 'folder_count'],
     [sessions, 'bound_session_count'], [tasks, 'bound_task_count'],
   ] as const) {
     for (const row of result.rows) {
@@ -225,9 +190,10 @@ async function cards(
   client: SqlExecutor,
   user: string,
   rows: DirectoryRow[],
+  storageRoot: string,
   preview = false,
 ): Promise<WorkspaceDirectoryCard[]> {
-  const counts = await countsForDirectories(client, user, rows, preview)
+  const counts = await countsForDirectories(client, user, rows, preview, storageRoot)
   return rows.map((row) => {
     const count = counts.get(Number(row.id)) ?? {
       file_count: 0, folder_count: 0, bound_session_count: 0, bound_task_count: 0,
@@ -246,9 +212,9 @@ async function cards(
   })
 }
 
-async function cardById(client: SqlExecutor, user: string, id: number): Promise<WorkspaceDirectoryCard> {
+async function cardById(client: SqlExecutor, user: string, id: number, storageRoot: string): Promise<WorkspaceDirectoryCard> {
   const row = await getDirectory(client, user, id)
-  return (await cards(client, user, [row]))[0]!
+  return (await cards(client, user, [row], storageRoot))[0]!
 }
 
 function conflictOnUnique(error: unknown): boolean {
@@ -275,7 +241,7 @@ export function createPostgresWorkspaceDirectoryOperations(
          FROM workspace_directories WHERE user_id = $1 AND deleted_at IS NULL
          ORDER BY is_default DESC, name`, [user],
       )
-      const resultCards = await cards(pool, user, result.rows)
+      const resultCards = await cards(pool, user, result.rows, runtime.localPath)
       for (const row of result.rows) {
         const path = await workspaceRoot(runtime, user, row.directory_name)
         if (await existingPath(path)) await runtime.prepareDirectoryAcl(path)
@@ -288,7 +254,6 @@ export function createPostgresWorkspaceDirectoryOperations(
       const name = normalizeWorkspaceDirectoryName(rawName)
       return withPostgresTransaction(pool, async (client) => {
         await lockOwner(client, user)
-        await ensureDefaultDirectory(client, user, runtime)
         validateWorkspaceDirectoryName(name)
         const duplicate = await client.query(
           `SELECT id FROM workspace_directories
@@ -322,7 +287,7 @@ export function createPostgresWorkspaceDirectoryOperations(
         const root = await workspaceRoot(runtime, user, segment)
         await runtime.prepareDirectoryAcl(root)
         await ensureWorkspaceBinding(client, user, row)
-        return cardById(client, user, Number(row.id))
+        return cardById(client, user, Number(row.id), runtime.localPath)
       }, mapTransactionError)
     },
 
@@ -351,7 +316,7 @@ export function createPostgresWorkspaceDirectoryOperations(
              WHERE user_id = $1 AND directory_id = $2`, [user, id, name],
           )
         }
-        return cardById(client, user, id)
+        return cardById(client, user, id, runtime.localPath)
       }, mapTransactionError)
     },
 
@@ -361,7 +326,7 @@ export function createPostgresWorkspaceDirectoryOperations(
       const row = await getDirectory(pool, user, id)
       if (row.is_default || row.is_system)
         throw new CoreError('conflict', '默认 Workspace 不可删除')
-      return (await cards(pool, user, [row], true))[0]!
+      return (await cards(pool, user, [row], runtime.localPath, true))[0]!
     },
 
     async delete(rawOwnerId, rawId, expected) {
@@ -374,7 +339,7 @@ export function createPostgresWorkspaceDirectoryOperations(
         if (directory.is_default || directory.is_system)
           throw new CoreError('conflict', '默认 Workspace 不可删除')
         if (expected) {
-          const current = (await cards(client, user, [directory], true))[0]
+          const current = (await cards(client, user, [directory], runtime.localPath, true))[0]
           const identity = (row: WorkspaceDirectoryCard) => [row.id, row.name, row.directory_name, row.is_default, row.is_system,
             row.file_count, row.folder_count, row.bound_session_count, row.bound_task_count]
           if (!current || JSON.stringify(identity(current)) !== JSON.stringify(identity(expected)))
@@ -413,14 +378,6 @@ export function createPostgresWorkspaceDirectoryOperations(
           )
         }
         const now = runtime.now?.() ?? new Date()
-        await client.query(
-          `UPDATE files SET deleted_at = $3, updated_at = $3
-           WHERE user_id = $1 AND workspace_directory_id = $2 AND deleted_at IS NULL`, [user, id, now],
-        )
-        await client.query(
-          `UPDATE folders SET deleted_at = $3, updated_at = $3, version = version + 1
-           WHERE user_id = $1 AND workspace_directory_id = $2 AND deleted_at IS NULL`, [user, id, now],
-        )
         await client.query(
           `UPDATE workspace_directories SET deleted_at = $3, updated_at = $3
            WHERE id = $1 AND user_id = $2`, [id, user, now],

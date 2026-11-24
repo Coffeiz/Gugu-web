@@ -8,6 +8,11 @@ import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 
 export const desktopWorkspaceRelinked = shallowRef<{ id: DesktopFileDirectory }>()
 
+export async function pickDesktopWorkspace() {
+  const { id } = await requestDesktopFile({ action: 'workspace-add' }) as { id: `desktop:${string}` | null }
+  return id
+}
+
 export function useDesktopWorkspaces() {
   const t = i18n.global.t
   const preview = usePreviewStore()
@@ -47,16 +52,16 @@ export function useDesktopWorkspaces() {
 
   function pick(id?: DesktopFileDirectory) {
     return manage(async () => {
-      const result = await requestDesktopFile(id
-        ? { action: 'workspace-relink', directoryId: id }
-        : { action: 'workspace-add' }) as { id: DesktopFileDirectory | null }
-      if (!result.id) return false
+      const picked = id
+        ? (await requestDesktopFile({ action: 'workspace-relink', directoryId: id }) as { id: DesktopFileDirectory | null }).id
+        : await pickDesktopWorkspace()
+      if (!picked) return false
       if (id) {
         closeWorkspacePreviews(id)
         desktopWorkspaceRelinked.value = { id }
       }
       await refresh()
-      return result.id
+      return picked
     })
   }
 

@@ -5,6 +5,7 @@ import { stableJson } from '@gugu/core/agent'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import { EmailAttachmentError, renderSmtpDraftMessage, type SmtpTestDelivery } from '@gugu/core/email/smtp-test'
 import { createDurableAgentEmailDelivery, createSendEmailTool, type AgentEmailAutomationClaim, type AgentEmailPort } from '@gugu/core/tools'
+import { createWorkspaceFileReads } from '../../workspaces/files.js'
 import {
   createPostgresEmailAttachmentResolver, preferences, readEmailProfile, sender, smtpSettings,
   type SmtpFallback,
@@ -36,7 +37,14 @@ export function createWebAgentEmailTool(options: {
   sanitizeHtml?: (value: string) => string
 } & ({ confirmation: Confirmation } | { automation: AgentEmailAutomationClaim })) {
   const confirmation = 'confirmation' in options ? options.confirmation : undefined
-  const attachments = createPostgresEmailAttachmentResolver(options.pool, { storageRoot: options.storageRoot })
+  const pathFiles = createWorkspaceFileReads(options.pool, options.storageRoot)
+  const attachments = createPostgresEmailAttachmentResolver(options.pool, { storageRoot: options.storageRoot,
+    async openPath(owner, path, signal) {
+      signal.throwIfAborted()
+      const opened = await pathFiles.openSandboxPath(owner, path)
+      return { ...opened, ext: '' }
+    },
+  })
   const outbox = createDurableAgentEmailDelivery(options.core, {
     claim: confirmation?.claim,
     async deliver(prepared, signal) {
@@ -71,7 +79,7 @@ export function createWebAgentEmailTool(options: {
       if (draft.format === 'html' && !options.sanitizeHtml) return { error: '当前邮件端口不支持自定义 HTML' }
 
       try {
-        const files = await attachments(operation.identity.ownerId, { fileIds: draft.fileIds, generated: [] })
+        const files = await attachments(operation.identity.ownerId, { filePaths: draft.filePaths, generated: [] })
         signal.throwIfAborted()
         const smtp = smtpSettings(profile, options.globalSmtp, options.secretKey)
         if (!smtp.host) return { error: 'SMTP 服务器未配置' }
@@ -105,7 +113,7 @@ export function createWebAgentEmailTool(options: {
           snapshot: {
             targetRefs,
             displaySummary,
-            targetsDigest: digest({ recipient: draft.recipient, files: draft.fileIds }),
+            targetsDigest: digest({ recipient: draft.recipient, files: draft.filePaths }),
             versionsDigest: createHmac('sha256', options.secretKey).update(stableJson(smtp)).digest('hex'),
           },
         }

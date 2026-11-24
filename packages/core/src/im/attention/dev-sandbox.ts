@@ -1,7 +1,7 @@
 import { getAttentionDefaults, type AttentionDefaults } from './defaults.js'
 import { attentionMessageFromPayload } from './message.js'
 import { decideAttention } from './algorithm.js'
-import type { AttentionMode, AttentionSnapshot, BotReplyFact } from './types.js'
+import { ATTENTION_ALGORITHM_VERSION, type AttentionMode, type AttentionSnapshot, type BotReplyFact } from './types.js'
 
 export interface AttentionSandboxInput {
   text: string
@@ -80,7 +80,7 @@ export function scoreAttentionSandbox(input: AttentionSandboxInput, nowMs = Date
   }
   const decision = decideAttention(current, snapshot, input.mode ?? 'natural', { botAliases: input.aliases ?? ['咕咕'] })
   return {
-    algorithm_version: 'attention-v3.0.7', kind: decision.kind, score: decision.score,
+    algorithm_version: ATTENTION_ALGORITHM_VERSION, kind: decision.kind, score: decision.score,
     threshold: decision.threshold, state: decision.state, scene_type: decision.sceneType,
     scene_score: decision.sceneScore, ask_raw_score: decision.askRawScore,
     ask_position_weight: decision.askPositionWeight, ask_punctuation_weight: decision.askPunctuationWeight,

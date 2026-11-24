@@ -1,3 +1,4 @@
+import { formatShellActivityLabel, toolDisplayIdentity } from '@gugu/core/agent/sessions/tool-labels'
 import { describeShellActivity } from '@gugu/core/agent/shell-activity'
 import type { ChatMessage } from './chatTypes'
 
@@ -34,13 +35,16 @@ export function projectChatRows(messages: readonly ChatMessage[]) {
   const runs = new Map<string, { user?: ChatMessage; last: ChatMessage; lastToolRow?: number }>()
   const shownSubagentOutputs = new Set<string>()
   const subagentNames = new Map<string, string>()
+  const subagentStartedAt = new Map<string, number>()
   for (const msg of messages) {
     if (msg.role !== 'tool' || msg.toolName !== 'agent_message') continue
     const receipt = subagentResult(msg.toolResult)
-    if (receipt?.action !== 'start') continue
+    if (receipt?.action !== 'spawn') continue
     const run = subagentResult(receipt.run)
     if (typeof run?.childId !== 'string' || typeof run.agentId !== 'string' || !run.agentId.trim()) continue
     subagentNames.set(run.childId, subagentDisplayName(run.agentId))
+    const startedAt = Date.parse(typeof run.updatedAt === 'string' ? run.updatedAt : msg.toolStartedAt ?? msg._createdAt ?? '')
+    if (Number.isFinite(startedAt)) subagentStartedAt.set(run.childId, startedAt)
   }
   let openGroupIndex: number | undefined
   for (const [messageIndex, msg] of messages.entries()) {
@@ -66,9 +70,14 @@ export function projectChatRows(messages: readonly ChatMessage[]) {
       if (output && !shownSubagentOutputs.has(output.key)) {
         shownSubagentOutputs.add(output.key)
         if (msg.toolName === 'subagent_result') rowIndexByMessageIndex[messageIndex] = rows.length
+        const startedAt = subagentStartedAt.get(output.childId)
+        const endedAt = Date.parse(msg._updatedAt ?? msg._createdAt ?? '')
+        const subagentElapsedMs = startedAt !== undefined && Number.isFinite(endedAt) && endedAt >= startedAt
+          ? endedAt - startedAt : undefined
         rows.push({
           messageIndex,
-          msg: { id: -msg.id, role: 'member', subagentOutput: true, speakerLabel: subagentNames.get(output.childId), text: output.text, time: msg.time },
+          msg: { id: -msg.id, role: 'member', subagentOutput: true, speakerLabel: subagentNames.get(output.childId),
+            ...(subagentElapsedMs !== undefined ? { subagentElapsedMs } : {}), text: output.text, time: msg.time },
         })
         openGroupIndex = undefined
       }
@@ -113,6 +122,60 @@ function subagentDisplayName(agentId: string) {
   return agentId === 'builtin:searcher' ? 'Searcher' : agentId
 }
 
+const visibleSubagentLimit = 20
+
+export const subagentStatusKeys = {
+  queued: 'toolQueued', running: 'toolRunning', waiting: 'toolWaiting', completed: 'toolDone',
+  partial: 'subagentPartial', failed: 'toolFailed', cancelled: 'toolCancelled',
+} as const
+
+export function projectSubagentStatuses(messages: readonly ChatMessage[]) {
+  const agents = new Map<string, {
+    id: string; name?: string; parentRunId?: string; status: keyof typeof subagentStatusKeys
+    round?: { number: number; messages: string[]; tools: string[] }
+    finalMessage?: string
+  }>()
+  for (const msg of messages) {
+    if (msg.role !== 'tool' || (!isSubagentTool(msg.toolName) && msg.toolName !== 'subagent_result')) continue
+    const result = subagentResult(msg.toolResult)
+    if (!result) continue
+    const runs = Array.isArray(result.runs) ? result.runs : [result.run ?? result]
+    for (const value of runs) {
+      const run = subagentResult(value)
+      const id = run?.childId
+      const status = result.started === true ? 'queued' : run?.status
+      if (typeof id !== 'string' || typeof status !== 'string' || !Object.hasOwn(subagentStatusKeys, status)) continue
+      const agentId = run?.agentId
+      const prior = agents.get(id)
+      const name = typeof agentId === 'string' ? subagentDisplayName(agentId) : prior?.name
+      const latest = subagentResult(Array.isArray(result.rounds) ? result.rounds.at(-1) : result.round)
+      const continuing = result.started === true || result.action === 'spawn' && prior?.status !== status
+      let round = continuing ? undefined : prior?.round
+      if (typeof latest?.number === 'number' && (!round || latest.number >= round.number)) {
+        const messages = Array.isArray(latest.messages) ? latest.messages.filter((text): text is string => typeof text === 'string') : []
+        const tools = Array.isArray(latest.toolCalls) ? latest.toolCalls.flatMap(value => {
+          const tool = subagentResult(value)
+          return typeof tool?.name === 'string' ? [tool.name] : []
+        }) : []
+        round = { number: latest.number, messages, tools }
+      }
+      const finalMessage = typeof result.finalMessage === 'string'
+        ? result.finalMessage.slice(0, 1200)
+        : continuing ? undefined : prior?.finalMessage
+      // Map 按最近一次状态更新排序，而不是按首次派发排序。
+      agents.delete(id)
+      agents.set(id, { id, status: status as keyof typeof subagentStatusKeys, name, parentRunId: msg.runId ?? prior?.parentRunId, round, finalMessage })
+    }
+  }
+  const recent = [...agents.values()].reverse().map(agent => ({
+    ...agent,
+    active: agent.status === 'queued' || agent.status === 'running' || agent.status === 'waiting',
+    labelKey: 'chatUi.' + subagentStatusKeys[agent.status],
+  }))
+  return [...recent.filter(agent => agent.active),
+    ...recent.filter(agent => !agent.active)].slice(0, visibleSubagentLimit)
+}
+
 export function needsSubagentDetails(msg: ChatMessage) {
   if (msg.role === 'tool' && isSubagentTool(msg.toolName) && msg.toolName !== 'agent_wait') return msg.toolResult === undefined
   if (msg.role !== 'tool' || (msg.toolName !== 'agent_wait' && msg.toolName !== 'subagent_result')) return false
@@ -131,13 +194,13 @@ function readSubagentOutput(msg: ChatMessage) {
 
 export function toolActivityLabel(
   msg: Pick<ChatMessage, 'toolName' | 'toolInput' | 'toolResult' | 'shellActivity' | 'toolLabel' | 'toolLabelOverride'>,
-  translate: (key: string, values?: { target: string }) => string,
+  translate: (key: string, values?: Record<string, string>) => string,
   exists: (key: string) => boolean,
   subagentNames?: ReadonlyMap<string, string>,
 ) {
-  const name = msg.toolName || ''
+  const { name, input: toolInput } = toolDisplayIdentity(msg.toolName, msg.toolInput)
   if (isSubagentTool(name)) {
-    const input = subagentResult(msg.toolInput)
+    const input = subagentResult(toolInput)
     const result = subagentResult(msg.toolResult)
     const run = subagentResult(result?.run)
     const agentId = run?.agentId ?? input?.agentId
@@ -153,10 +216,10 @@ export function toolActivityLabel(
     if (agentName) return translate(`toolNames.${name}_target`, { target: agentName })
   }
   if (name === 'read_file') return translate('chatUi.toolCall')
-  const activity = shellActivityForMessage(msg)
-  if (!msg.toolLabelOverride?.trim() && activity) {
-    const key = `toolNames.shell_${activity.action}`
-    return activity.target ? translate(`${key}_target`, { target: activity.target }) : translate(key)
+  const activity = shellActivityForMessage({ ...msg, toolName: name, toolInput })
+  if (!msg.toolLabelOverride?.trim()) {
+    const label = formatShellActivityLabel(activity, (key, values) => translate(`toolNames.${key}`, values), true)
+    if (label) return label
   }
   const key = `toolNames.${name}`
   return msg.toolLabelOverride?.trim() || (name && exists(key) ? translate(key) : msg.toolLabel?.trim() || name || translate('chatUi.toolCall'))

@@ -29,6 +29,7 @@ export async function createConfiguredWebAgentProviderBinding(options: {
   permissionIdentity: string
   contextPolicy(identity: RunIdentity): ContextLoadPolicy
   defaultLimit6h: number | null
+  readWorkspaceBinding?(identity: RunIdentity): Promise<ContextSourceSelection['workspaceBinding']>
 }) {
   if (!options.permissionIdentity.trim() || typeof options.contextPolicy !== 'function') throw new TypeError('Web Agent 权限或上下文策略未配置')
   const credentialsMasterKeys = await readConfiguredByokMasterKeys(options.environment)
@@ -55,6 +56,7 @@ export async function createConfiguredWebAgentProviderBinding(options: {
     pool: options.pool,
     configPath: options.configPath,
     versionSecret: options.versionSecret,
+    defaultLimit6h: options.defaultLimit6h,
     readConfiguration: readConfigOverride,
     resolveEffective(document, _identity: RunIdentity) {
       const settings = resolvePlatformModelSettings(document, options.environment)
@@ -79,7 +81,6 @@ export async function createConfiguredWebAgentProviderBinding(options: {
     defaultBaseUrl(provider, format) {
       return capabilitySnapshot({ provider, api_format: format, model: 'web-agent-default-url', api_key: '', base_url: '' }).default_base_url
     },
-    defaultLimit6h: options.defaultLimit6h,
   })
   return {
     async pin(identity: RunIdentity, credentialId?: number | null) {
@@ -117,12 +118,20 @@ export async function createConfiguredWebAgentProviderBinding(options: {
         policies.delete(runKey(identity)); bound.release()
         throw new TypeError('Web Agent 语言无效')
       }
+      let workspaceBinding: ContextSourceSelection['workspaceBinding'] = null
+      try {
+        workspaceBinding = await options.readWorkspaceBinding?.(identity) ?? null
+      } catch (error) {
+        policies.delete(runKey(identity))
+        bound.release()
+        throw error
+      }
       const selection: ContextSourceSelection = {
         modelIdentity: bound.modelIdentity,
         contextWindow: bound.contextWindow,
         locale: selectedLocale,
         groupChat: false,
-        workspaceBinding: null,
+        workspaceBinding,
         contextPolicy: policy,
         contextScopeKey: bound.contextScopeKey,
       }

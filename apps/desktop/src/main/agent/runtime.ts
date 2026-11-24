@@ -1,175 +1,183 @@
-import { AgentRunError } from '../../../../../packages/core/src/agent/models.js'
-import type { DelegatedAgentLaunch } from '../../../../../packages/core/src/agent/subagent/contracts.js'
-import { createAgentShellTool } from '../../../../../packages/core/src/agent/tools/shell.js'
-import { desktopScheduleImDeliveryTargets, desktopScheduleImPlatforms, desktopScheduleImTarget, ownsDesktopScheduleImTarget, readDesktopScheduleImTargets, type DesktopScheduleImPlatform, type DesktopScheduleImTarget } from '../../../../../packages/core/src/scheduled-tasks/desktop-im.js'
-import { createListScheduledTasksTool } from '../../../../../packages/core/src/agent/tools/scheduled-tasks.js'
-import { appendWorkspaceAgentInstructions } from '../../../../../packages/core/src/agent/context/prompt-format.js'
-import { mcpServiceReminder, type McpToolLookup } from '../../../../../packages/core/src/mcp/tool-directory.js'
-import { createImSendFileTool } from '../../../../../packages/core/src/agent/tools/send-file.js'
-import { cleanupDesktopDownloadStaging, createDesktopWebDownload } from '../../../../../packages/core/src/runtime/desktop-web-download.js'
-import { openStreamedAgentGet } from '../../../../../packages/core/src/agent/tools/streamed-http-get.js'
-import { createHttpGetTool } from '../../../../../packages/core/src/agent/tools/web.js'
-import type { DesktopGroupSender } from '../../../../../packages/core/src/agent/run/sqlite-admission.js'
-import { createDesktopGroupContextSearch } from '../../../../../packages/core/src/im/desktop-group-context.js'
-import { desktopImAttachmentDelivery, desktopImGroupRunEvent } from '../../../../../packages/core/src/im/desktop-inbox.js'
-import { createImMemoryContextSource, type ImMemoryReadAuthorization } from '../../../../../packages/core/src/im/memory-source.js'
-import { imCanUseGroupOwnerMemory } from '../../../../../packages/core/src/im/access.js'
-import { formatGroupMemory, formatPlatformUserMemory } from '../../../../../packages/core/src/im/memory-context.js'
-import type { ImActor } from '../../../../../packages/core/src/im/access.js'
-import { createGroupContextSearchTool } from '../../../../../packages/core/src/agent/tools/group-context.js'
-import { validateMcpEndpoint } from '../../../../../packages/core/src/mcp/server-config.js'
-import { isPublicAddress } from '../../../../../packages/core/src/agent/providers/transport/network.js'
-import { desktopFileReferenceKey, droppedFileReferenceId, readDesktopTurnReferences, workspaceFileReferenceId } from '../../../../../packages/core/src/agent/sessions/desktop-references.js'
-import { openDroppedFile, readDroppedFileExcerpt } from '../../../../../packages/core/src/runtime/desktop-file-excerpt.js'
-import { createAgentToolBrief, projectAgentToolBrief } from '../../../../../packages/core/src/agent/capabilities/brief.js'
-import { createDesktopContinuationStore } from '../../../../../packages/core/src/runtime/desktop-continuation.js'
-import { createFirstTurnTitleWriter } from '../../../../../packages/core/src/agent/sessions/title.js'
+import type { ContextSourcePorts } from '#core-source/agent/ports.js'
+import { sceneAllowsPrompt, sceneAllowsTool, type AgentScene } from '#core-source/agent/scenes/index.js'
+import { createSearchToolsTool, createUseSkillTool } from '#core-source/agent/tools/meta.js'
+import { createSkillRegistry } from '#core-source/agent/skills/registry.js'
+import { imAllowsBuiltinSkill, imCanUseTool, imSkillToolsAvailable, imUnavailableTool } from '#core-source/agent/scenes/im/index.js'
+import type { ToolDefinition } from '#core-source/agent/tools/contracts.js'
+import { AgentRunError } from '#core-source/agent/models.js'
+import type { DelegatedAgentLaunch } from '#core-source/agent/subagent/contracts.js'
+import { createAgentShellTool } from '#core-source/agent/tools/shell.js'
+import { desktopScheduleImConnection, desktopScheduleImDeliveryTargets, desktopScheduleImPlatforms, desktopScheduleImTarget, ownsDesktopScheduleImTarget, readDesktopScheduleImTargets, type DesktopScheduleImPlatform, type DesktopScheduleImTarget } from '#core-source/scheduled-tasks/desktop-im.js'
+import { createListScheduledTasksTool } from '#core-source/agent/tools/scheduled-tasks.js'
+import { appendWorkspaceAgentInstructions } from '#core-source/agent/context/prompt-format.js'
+import { mcpServiceReminder, type McpToolLookup } from '#core-source/mcp/tool-directory.js'
+import { createImSendFileTool } from '#core-source/agent/tools/send-file.js'
+import { cleanupDesktopDownloadStaging, createDesktopWebDownload } from '#core-source/runtime/desktop-web-download.js'
+import { openStreamedAgentGet } from '#core-source/agent/tools/streamed-http-get.js'
+import { createHttpGetTool } from '#core-source/agent/tools/web.js'
+import type { DesktopGroupSender } from '#core-source/agent/run/sqlite-admission.js'
+import { createDesktopGroupContextSearch } from '#core-source/im/desktop-group-context.js'
+import { desktopImAttachmentDelivery, desktopImGroupRunEvent } from '#core-source/im/desktop-inbox.js'
+import { createImMemoryContextSource, type ImMemoryReadAuthorization } from '#core-source/im/memory-source.js'
+import { imCanUseGroupOwnerMemory } from '#core-source/agent/scenes/im/index.js'
+import { formatGroupMemory, formatPlatformUserMemory } from '#core-source/im/memory-context.js'
+import type { ImActor } from '#core-source/im/access.js'
+import { createGroupContextSearchTool } from '#core-source/agent/tools/group-context.js'
+import { validateMcpEndpoint } from '#core-source/mcp/server-config.js'
+import { isPublicAddress } from '#core-source/agent/providers/transport/network.js'
+import { desktopFileReferenceKey, droppedFileReferenceId, readDesktopTurnReferences, workspaceFileReferenceId } from '#core-source/agent/sessions/desktop-references.js'
+import { openDroppedFile, readDroppedFileExcerpt } from '#core-source/runtime/desktop-file-excerpt.js'
+import { createDesktopContinuationStore } from '#core-source/runtime/desktop-continuation.js'
+import { createFirstTurnTitleWriter } from '#core-source/agent/sessions/title.js'
 import { createAgentLog } from '@gugu/log'
-import { createWebLinkButtonDeliveryPort } from '../../../../../packages/core/src/agent/tools/link-buttons.js'
-import { readPreferenceDocument } from '../../../../../packages/core/src/preferences/general.js'
-import { createClientDeletePort } from '../../../../../packages/core/src/agent/tools/clients.js'
-import type { ProjectFileOverview } from '../../../../../packages/core/src/agent/tools/projects.js'
-import { createDesktopShellTool, desktopHostAuthorization } from '../../../../../packages/core/src/runtime/desktop-shell.js'
-import { createSendEmailTool, createDurableAgentEmailDelivery } from '../../../../../packages/core/src/agent/tools/email.js'
-import { createLocalPreferenceTextFiles } from '../../../../../packages/core/src/preferences/text-files.js'
-import { createDesktopAppearanceService } from '../../../../../packages/core/src/preferences/desktop-appearance.js'
-import { normalizeThemePalette } from '../../../../../packages/core/src/preferences/palette.js'
-import { renderSmtpDraftMessage, sanitizeEmailHtml } from '../../../../../packages/core/src/email/smtp-test.js'
-import { createKyselyPreferenceDocumentStore } from '../../../../../packages/core/src/preferences/document-store.js'
-import type { DesktopMemoryFiles } from '../../../../../packages/core/src/agent/memory/desktop-files.js'
-import { readAgentPrompt, readAgentPromptSet } from '../../../../../packages/core/src/agent/context/prompts.js'
+import { createWebLinkButtonDeliveryPort } from '#core-source/agent/tools/link-buttons.js'
+import { readPreferenceDocument } from '#core-source/preferences/general.js'
+import { createClientDeletePort } from '#core-source/agent/tools/clients.js'
+import type { ProjectFileOverview } from '#core-source/agent/tools/projects.js'
+import type { desktopTrashTarget } from '#core-source/runtime/desktop-shell-trash.js'
+import { createDesktopShellTool, desktopHostAuthorization } from '#core-source/runtime/desktop-shell.js'
+import { createSendEmailTool, createDurableAgentEmailDelivery } from '#core-source/agent/tools/email.js'
+import { createLocalPreferenceTextFiles } from '#core-source/preferences/text-files.js'
+import { createDesktopAppearanceService } from '#core-source/preferences/desktop-appearance.js'
+import { normalizeThemePalette } from '#core-source/preferences/palette.js'
+import { renderSmtpDraftMessage, sanitizeEmailHtml } from '#core-source/email/smtp-test.js'
+import { createKyselyPreferenceDocumentStore } from '#core-source/preferences/document-store.js'
+import type { DesktopMemoryFiles } from '#core-source/agent/memory/desktop-files.js'
+import { readAgentPrompt, readAgentPromptSet } from '#core-source/agent/context/prompts.js'
 import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { drainAgentRuns } from '../../../../../packages/core/src/agent/run/shutdown.js'
+import { drainAgentRuns } from '#core-source/agent/run/shutdown.js'
 import { constants as fsConstants } from 'node:fs'
-import { publishDesktopKnowledgeFile } from '../../../../../packages/core/src/runtime/desktop-knowledge-files.js'
+import { publishDesktopKnowledgeFile } from '#core-source/runtime/desktop-knowledge-files.js'
 import { open as openFile, realpath, stat } from 'node:fs/promises'
 import { sql, type Kysely } from 'kysely'
-import type { Database } from '../../../../../packages/core/src/data/schema.js'
-import { desktopScheduledTasks } from '../../../../../packages/core/src/scheduled-tasks/desktop.js'
-import { ScheduledTaskReferenceError } from '../../../../../packages/core/src/scheduled-tasks/task-write.js'
-import { createSqliteToolConfirmation, describeSqliteDelegatedConfirmation } from '../../../../../packages/core/src/agent/interactions/sqlite-confirmation.js'
-import { createScheduledTaskDeleteTool, createScheduledTaskWriteTools } from '../../../../../packages/core/src/agent/tools/scheduled-tasks.js'
-import type { SqlDataRuntime } from '../../../../../packages/core/src/data/runtime.js'
-import { createAgentCalendarReader } from '../../../../../packages/core/src/calendar/application/event-read.js'
-import { createKyselyCalendarAgentReadPort, createKyselyCalendarReadPort } from '../../../../../packages/core/src/calendar/read-store.js'
-import { createAgentPlaceableSearch, createSqlMindCanvasReader } from '../../../../../packages/core/src/mind/canvas-read.js'
-import { createAgentWorkspaceQueries } from '../../../../../packages/core/src/workspaces/workspace-list.js'
+import type { Database } from '#core-source/data/schema.js'
+import { desktopScheduledTasks } from '#core-source/scheduled-tasks/desktop.js'
+import { ScheduledTaskReferenceError } from '#core-source/scheduled-tasks/task-write.js'
+import { createSqliteToolConfirmation, describeSqliteDelegatedConfirmation } from '#core-source/agent/interactions/sqlite-confirmation.js'
+import { createScheduledTaskDeleteTool, createScheduledTaskWriteTools } from '#core-source/agent/tools/scheduled-tasks.js'
+import type { SqlDataRuntime } from '#core-source/data/runtime.js'
+import { createAgentCalendarReader } from '#core-source/calendar/application/event-read.js'
+import { createKyselyCalendarAgentReadPort, createKyselyCalendarReadPort } from '#core-source/calendar/read-store.js'
+import { createAgentPlaceableSearch, createSqlMindCanvasReader } from '#core-source/mind/canvas-read.js'
+import { createAgentWorkspaceQueries } from '#core-source/workspaces/workspace-list.js'
 import { createDesktopWorkspaceReadPort } from './workspace-queries.js'
-import { readAgentSessionContext } from '../../../../../packages/core/src/agent/sessions/list.js'
-import { createAgentMindReader } from '../../../../../packages/core/src/mind/note-read.js'
-import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '../../../../../packages/core/src/scheduled-tasks/task-list.js'
-import { createGlobalSearchOperations } from '../../../../../packages/core/src/search/global-search.js'
-import { createKyselySqliteGlobalSearchSources } from '../../../../../packages/core/src/search/sqlite.js'
-import { CoreError, dataContext, DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '../../../../../packages/core/src/contracts/index.js'
-import { stableJson } from '../../../../../packages/core/src/agent/context/history/canonical-history.js'
-import { applyOwnerReflectionOutput } from '../../../../../packages/core/src/agent/memory/owner-reflection.js'
-import { applyImMaintenanceOutput } from '../../../../../packages/core/src/memory/im-maintenance-apply.js'
-import { applyReflectionFileWrite, IM_REFLECTION_IDLE_SECONDS, PRIVATE_REFLECTION_IDLE_SECONDS, qualifiesReflectionTurn } from '../../../../../packages/core/src/agent/memory/reflection/window.js'
-import { runReflection, runPrivateReflection } from '../../../../../packages/core/src/agent/memory/reflection.js'
-import { dateKeyInTimeZone } from '../../../../../packages/core/src/shared/date-time.js'
-import { formatOwnerReflectionEvidence } from '../../../../../packages/core/src/agent/scenes/reflection/owner.js'
-import { createMainContextBuilder } from '../../../../../packages/core/src/agent/scenes/main/definition.js'
-import { contextAccessScopeHash, createCanonicalSourceLoader, readSessionSnapshot } from '../../../../../packages/core/src/agent/context/prepare.js'
-import type { AgentObservationPort } from '../../../../../packages/core/src/agent/observation.js'
-import { agentContextSnapshotPrefix } from '../../../../../packages/core/src/agent/context/builder.js'
-import { agentPromptPreferenceFields, buildAgentStaticPrompt, formatAgentMemory } from '../../../../../packages/core/src/agent/context/prompt-format.js'
-import { createAgentCompactionPort, createLazyAgentCompactionPort } from '../../../../../packages/core/src/agent/context/compaction-runtime.js'
-import type { AgentProviderAuxiliaryPorts } from '../../../../../packages/core/src/agent/runtime.js'
-import { buildFixedRequestPrefix } from '../../../../../packages/core/src/agent/context/assemble.js'
-import { formatSqliteAgentOverview, readSqliteAgentOverviewData, readSqliteOwnerStylePreferences, readSqliteAgentStylePreferences, type SqliteAgentOverviewData } from '../../../../../packages/core/src/agent/context/sqlite-overview.js'
-import { createSqliteAgentSessionSource } from '../../../../../packages/core/src/agent/context/sqlite-source.js'
-import type { RagQueryEmbeddingSettings } from '../../../../../packages/core/src/agent/rag/query-embedding.js'
-import type { CanonicalRunContext, Json, RunCheckpoint, RunIdentity, InteractionResolution, PreparedToolDefinition } from '../../../../../packages/core/src/agent/models.js'
-import type { DesktopAgentChatReference } from '../../../../../packages/core/src/contracts/desktop.js'
-import type { ProviderConfig, ProviderTransport } from '../../../../../packages/core/src/agent/providers/contracts.js'
-import { ProviderError, providerErrorMessage } from '../../../../../packages/core/src/agent/providers/errors.js'
-import { adapterFor } from '../../../../../packages/core/src/agent/providers/registry.js'
-import { ProviderStreamSanitizer, stripThinking } from '../../../../../packages/core/src/agent/providers/sanitize.js'
-import { createNodeProviderTransport, desktopTransportOptions, createNodeProviderTransportFactory, desktopModelTransportOptions, type NodeProviderTransportOptions, type ProxyEndpoint } from '../../../../../packages/core/src/agent/providers/transport/node.js'
-import { testMcp, type McpConfig } from '../../../../../packages/core/src/mcp/desktop-connection.js'
-import { createMcpManagementTool, createMcpManagementEditOperations, createMcpManagementRemoveOperations, createMcpManagementCreateOperations, describeMcpManagementUpdate } from '../../../../../packages/core/src/agent/tools/mcp-management.js'
-import { createMcpServerConfigLister } from '../../../../../packages/core/src/mcp/server-list.js'
-import { createDesktopMcpAgentRuntime } from '../../../../../packages/core/src/mcp/desktop-agent-runtime.js'
-import { createMcpAgentToolPorts } from '../../../../../packages/core/src/mcp/agent-tools.js'
-import { createDesktopMcpCrypto } from '../../../../../packages/core/src/mcp/desktop-crypto.js'
+import { readAgentSessionContext } from '#core-source/agent/sessions/list.js'
+import { createAgentMindReader } from '#core-source/mind/note-read.js'
+import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '#core-source/scheduled-tasks/task-list.js'
+import { createGlobalSearchOperations } from '#core-source/search/global-search.js'
+import { createDesktopFileSearchSources } from '#core-source/search/desktop-files.js'
+import { createKyselySqliteGlobalSearchSources } from '#core-source/search/sqlite.js'
+import { CoreError, dataContext, DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '#core-source/contracts/index.js'
+import { stableJson } from '#core-source/agent/context/history/canonical-history.js'
+import { applyOwnerReflectionOutput } from '#core-source/agent/memory/owner-reflection.js'
+import { applyImMaintenanceOutput } from '#core-source/memory/im-maintenance-apply.js'
+import { applyReflectionFileWrite, IM_REFLECTION_IDLE_SECONDS, PRIVATE_REFLECTION_IDLE_SECONDS, qualifiesReflectionTurn } from '#core-source/agent/memory/reflection/window.js'
+import { runPrivateReflection } from '#core-source/agent/memory/reflection.js'
+import { dateKeyInTimeZone } from '#core-source/shared/date-time.js'
+import { formatOwnerReflectionEvidence } from '#core-source/agent/scenes/reflection/index.js'
+import { projectToolCatalog } from '#core-source/agent/capabilities/brief.js'
+import { contextAccessScopeHash, createCanonicalSourceLoader, readSessionSnapshot } from '#core-source/agent/context/prepare.js'
+import type { AgentObservationPort } from '#core-source/agent/observation.js'
+import { agentContextSnapshotPrefix } from '#core-source/agent/context/builder.js'
+import { agentPromptPreferenceFields, buildAgentStaticPrompt, formatAgentMemory } from '#core-source/agent/context/prompt-format.js'
+import { createAgentCompactionPort, createLazyAgentCompactionPort } from '#core-source/agent/context/compaction-runtime.js'
+import type { AgentProviderAuxiliaryPorts } from '#core-source/agent/runtime.js'
+import { buildFixedRequestPrefix } from '#core-source/agent/context/assemble.js'
+import { formatSqliteAgentOverview, readSqliteAgentOverviewData, readSqliteOwnerStylePreferences, readSqliteAgentStylePreferences, type SqliteAgentOverviewData } from '#core-source/agent/context/sqlite-overview.js'
+import { createSqliteAgentSessionSource } from '#core-source/agent/context/sqlite-source.js'
+import type { RagQueryEmbeddingSettings } from '#core-source/agent/rag/query-embedding.js'
+import type { CanonicalRunContext, Json, RunCheckpoint, RunIdentity, InteractionResolution, PreparedToolDefinition } from '#core-source/agent/models.js'
+import type { DesktopAgentChatReference } from '#core-source/contracts/desktop.js'
+import type { ProviderConfig, ProviderTransport } from '#core-source/agent/providers/contracts.js'
+import { ProviderError, providerErrorMessage } from '#core-source/agent/providers/errors.js'
+import { adapterFor } from '#core-source/agent/providers/registry.js'
+import { ProviderStreamSanitizer, stripThinking } from '#core-source/agent/providers/sanitize.js'
+import { createNodeProviderTransport, desktopTransportOptions, createNodeProviderTransportFactory, desktopModelTransportOptions, type NodeProviderTransportOptions, type ProxyEndpoint } from '#core-source/agent/providers/transport/node.js'
+import { testMcp, type McpConfig } from '#core-source/mcp/desktop-connection.js'
+import { createMcpManagementTool, createMcpManagementEditOperations, createMcpManagementRemoveOperations, createMcpManagementCreateOperations, describeMcpManagementUpdate } from '#core-source/agent/tools/mcp-management.js'
+import { createMcpServerConfigLister } from '#core-source/mcp/server-list.js'
+import { createDesktopMcpAgentRuntime } from '#core-source/mcp/desktop-agent-runtime.js'
+import { createMcpAgentToolPorts } from '#core-source/mcp/agent-tools.js'
+import { createDesktopMcpCrypto } from '#core-source/mcp/desktop-crypto.js'
 import {
   createSqliteAgentMemoryRagStorage, createSqliteAgentMemoryRagVectors,
   createSqliteMemorySearch, createSqliteRememberMemory, readSqliteAgentMemory, readSqliteAgentMemorySnapshot,
-} from '../../../../../packages/core/src/agent/memory/sqlite.js'
-import { createAgentKnowledgeOverview } from '../../../../../packages/core/src/agent/knowledge/overview.js'
-import { createLocalAgentKnowledgeWritePort, createLocalAgentKnowledgeDeletePort } from '../../../../../packages/core/src/agent/knowledge/local-write.js'
-import { createLocalAgentKnowledgeReadStore } from '../../../../../packages/core/src/agent/knowledge/local-store.js'
-import { createOwnerAgentKnowledgeReadPort } from '../../../../../packages/core/src/agent/knowledge/read-port.js'
-import { createAgentHttpGetPort } from '../../../../../packages/core/src/agent/tools/http-get.js'
-import { createSqlAgentConversationTextReader } from '../../../../../packages/core/src/agent/sessions/data.js'
-import { createCoreAgentConversationSearchPort } from '../../../../../packages/core/src/agent/sessions/tool-search.js'
-import { createBuiltinSkillDefinitions, formatBuiltinSkillIndex, type BuiltinSkillDefinition } from '../../../../../packages/core/src/agent/skills/builtin.js'
+} from '#core-source/agent/memory/sqlite.js'
+import { createAgentKnowledgeOverview } from '#core-source/agent/knowledge/overview.js'
+import { createLocalAgentKnowledgeWritePort, createLocalAgentKnowledgeDeletePort } from '#core-source/agent/knowledge/local-write.js'
+import { createLocalAgentKnowledgeReadStore } from '#core-source/agent/knowledge/local-store.js'
+import { createOwnerAgentKnowledgeReadPort } from '#core-source/agent/knowledge/read-port.js'
+import { createAgentHttpGetPort } from '#core-source/agent/tools/http-get.js'
+import { createSqlAgentConversationTextReader } from '#core-source/agent/sessions/data.js'
+import { createCoreAgentConversationSearchPort } from '#core-source/agent/sessions/tool-search.js'
+import { createBuiltinSkillDefinitions, formatBuiltinSkillIndex, type BuiltinSkillDefinition } from '#core-source/agent/skills/builtin.js'
 import { createBundledSkillDocuments } from '../../../../../packages/core/dist/agent/skills/bundled.js'
-import { createAgentSkillRuntimePorts } from '../../../../../packages/core/src/agent/skills/runtime.js'
-import { createSkillDeleteTool, createSkillManagementWriteTools } from '../../../../../packages/core/src/agent/tools/skill-management.js'
-import { createDesktopSkillManager, desktopMcp, desktopMcpMaxServers } from '../../../../../packages/core/src/runtime/desktop-resources.js'
-import { createSkillMetadataReader } from '../../../../../packages/core/src/agent/skills/user-read.js'
-import { createUserSkillReader } from '../../../../../packages/core/src/agent/skills/user-body.js'
-import { rejectAdapterCall, resolveCallTool } from '../../../../../packages/core/src/agent/tools/call-adapter.js'
-import { createCanvasBatchPort, createCanvasCreationPort, createCanvasDeleteNotePort, createCanvasDeletePort, createCanvasDisconnectPort, createCanvasEditPort } from '../../../../../packages/core/src/agent/tools/canvas.js'
-import { createCalendarDeletePort, createCalendarEventCreatePort, createCalendarEventUpdatePort, type CalendarReminderTargetPort } from '../../../../../packages/core/src/agent/tools/calendar.js'
-import { createUndoLastActionTool } from '../../../../../packages/core/src/agent/tools/undo.js'
-import { createAgentUndoLastActionPort } from '../../../../../packages/core/src/agent/tools/undo-port.js'
-import { createRuntimeUndoTransactionPort, createUndoStateMachine, UndoError } from '../../../../../packages/core/src/undo/state-machine.js'
-import { createCalendarUndoAdapter } from '../../../../../packages/core/src/calendar/undo-adapter.js'
-import { createDesktopProjectUndoAdapter } from '../../../../../packages/core/src/runtime/desktop-project-undo.js'
-import { createNoteLifecyclePort, createNoteWritePort } from '../../../../../packages/core/src/agent/tools/note.js'
-import { createKyselyProjectCreateRuntime } from '../../../../../packages/core/src/projects/create-store.js'
-import { createDurableProjectMutationPort } from '../../../../../packages/core/src/agent/tools/projects/mutation-port.js'
-import { createKnowledgeDeleteTool } from '../../../../../packages/core/src/agent/tools/knowledge.js'
-import { createOwnerToolRegistry } from '../../../../../packages/core/src/agent/tools/owner.js'
-import { createSaveAttachmentTool } from '../../../../../packages/core/src/agent/tools/files.js'
-import { createTimeTool } from '../../../../../packages/core/src/agent/tools/time.js'
-import { createToolRegistry } from '../../../../../packages/core/src/agent/tools/registry.js'
-import { projectRecentAttachments, type RecentAttachmentRow } from '../../../../../packages/core/src/agent/attachments/recent.js'
-import { createDeepResearchTool, createSimilarImageSearchTool, createWebSearchTool } from '../../../../../packages/core/src/agent/tools/search.js'
-import { desktopDeepResearchResult, MAX_DESKTOP_SEARCH_IMAGE_BYTES } from '../../../../../packages/core/src/agent/search-contracts.js'
-import { createSqliteAgentAdmission, listActiveSqliteAgentRuns } from '../../../../../packages/core/src/agent/run/sqlite-admission.js'
-import { createSqlAgentPendingQueue } from '../../../../../packages/core/src/agent/sessions/pending-queue.js'
-import { createSqliteAgentRuntime } from '../../../../../packages/core/src/agent/run/sqlite-runtime.js'
-import { createSqliteInteractionProjection } from '../../../../../packages/core/src/agent/interactions/sqlite-projection.js'
-import { describeSqliteMcpCredential, stageSqliteMcpCredential } from '../../../../../packages/core/src/agent/interactions/sqlite-credential.js'
-import { consumeSqliteInteraction } from '../../../../../packages/core/src/agent/interactions/sqlite-consume.js'
-import { InteractionConsumeError } from '../../../../../packages/core/src/agent/interactions/consume-action.js'
-import { InteractionTextError } from '../../../../../packages/core/src/agent/interactions/consume-text.js'
-import { createSqliteInteractionActivator } from '../../../../../packages/core/src/agent/interactions/sqlite-activate.js'
-import { createAgentInteractionDescription } from '../../../../../packages/core/src/agent/interactions/prompt-description.js'
-import { createAgentInbox } from '../../../../../packages/core/src/agent/subagent/inbox.js'
-import { createSubagentService } from '../../../../../packages/core/src/agent/subagent/service.js'
-import { assembleSubagentCatalog, builtinSubagentCatalog } from '../../../../../packages/core/src/agent/context/modules/subagent-catalog.js'
-import { createSearcherReferenceSearch, createSearcherReferenceShell } from '../../../../../packages/core/src/agent/subagent/searcher/references.js'
-import { createDelegatedAgentHarness, delegatedTerminalOutcome } from '../../../../../packages/core/src/agent/subagent/runner.js'
-import { searcherPreset } from '../../../../../packages/core/src/agent/subagent/searcher/context.js'
-import { createSubagentServiceTools } from '../../../../../packages/core/src/agent/tools/subagent.js'
-import { connectProviderHarness } from '../../../../../packages/core/src/agent/providers/runtime.js'
-import { createSqliteAgentRunLeasePort } from '../../../../../packages/core/src/agent/run/sqlite-store.js'
-import { createSqliteAgentRunCoordination } from '../../../../../packages/core/src/agent/run/sqlite-coordination.js'
-import type { CanonicalContextPorts } from '../../../../../packages/core/src/agent/ports.js'
-import { createSubagentDeliveryStore } from '../../../../../packages/core/src/agent/subagent/delivery-store.js'
-import { createSqliteAgentRunStore } from '../../../../../packages/core/src/agent/run/sqlite-store.js'
-import { cleanupSqliteAgentRunRetention, compactSqliteAgentRunStorage } from '../../../../../packages/core/src/agent/run/sqlite-retention.js'
-import { createAgentRagContextBuilder } from '../../../../../packages/core/src/agent/rag/context-builder.js'
+import { createAgentSkillRuntimePorts } from '#core-source/agent/skills/runtime.js'
+import { createSkillDeleteTool, createSkillManagementWriteTools } from '#core-source/agent/tools/skill-management.js'
+import { createDesktopSkillManager, desktopMcp, desktopMcpMaxServers } from '#core-source/runtime/desktop-resources.js'
+import { createSkillMetadataReader } from '#core-source/agent/skills/user-read.js'
+import { createUserSkillReader } from '#core-source/agent/skills/user-body.js'
+import { createCallToolAdapter, rejectAdapterCall, resolveCallTool } from '#core-source/agent/tools/call-adapter.js'
+import { createCanvasBatchPort, createCanvasCreationPort, createCanvasDeleteNotePort, createCanvasDeletePort, createCanvasDisconnectPort, createCanvasEditPort } from '#core-source/agent/tools/canvas.js'
+import { createCalendarDeletePort, createCalendarEventCreatePort, createCalendarEventUpdatePort, type CalendarReminderTargetPort } from '#core-source/agent/tools/calendar.js'
+import { createUndoLastActionTool } from '#core-source/agent/tools/undo.js'
+import { createAgentUndoLastActionPort } from '#core-source/agent/tools/undo-port.js'
+import { createRuntimeUndoTransactionPort, createUndoStateMachine, UndoError } from '#core-source/undo/state-machine.js'
+import { createCalendarUndoAdapter } from '#core-source/calendar/undo-adapter.js'
+import { createDesktopProjectUndoAdapter } from '#core-source/runtime/desktop-project-undo.js'
+import { createNoteLifecyclePort, createNoteWritePort } from '#core-source/agent/tools/note.js'
+import { createKyselyProjectCreateRuntime } from '#core-source/projects/create-store.js'
+import { createDurableProjectMutationPort } from '#core-source/agent/tools/projects/mutation-port.js'
+import { createKnowledgeDeleteTool } from '#core-source/agent/tools/knowledge.js'
+import { createOwnerToolRegistry } from '#core-source/agent/tools/owner.js'
+import { createSaveAttachmentTool } from '#core-source/agent/tools/files.js'
+import { createTimeTool } from '#core-source/agent/tools/time.js'
+import { createToolRegistry } from '#core-source/agent/tools/registry.js'
+import { projectRecentAttachments, type RecentAttachmentRow } from '#core-source/agent/attachments/recent.js'
+import { createDeepResearchTool, createSimilarImageSearchTool, createWebSearchTool } from '#core-source/agent/tools/search.js'
+import { desktopDeepResearchResult, MAX_DESKTOP_SEARCH_IMAGE_BYTES } from '#core-source/agent/search-contracts.js'
+import { createSqliteAgentAdmission, listActiveSqliteAgentRuns } from '#core-source/agent/run/sqlite-admission.js'
+import { createSqlAgentPendingQueue } from '#core-source/agent/sessions/pending-queue.js'
+import { createSqliteAgentRuntime } from '#core-source/agent/run/sqlite-runtime.js'
+import { createSqliteInteractionProjection } from '#core-source/agent/interactions/sqlite-projection.js'
+import { describeSqliteMcpCredential, stageSqliteMcpCredential } from '#core-source/agent/interactions/sqlite-credential.js'
+import { consumeSqliteInteraction } from '#core-source/agent/interactions/sqlite-consume.js'
+import { InteractionConsumeError } from '#core-source/agent/interactions/consume-action.js'
+import { InteractionTextError } from '#core-source/agent/interactions/consume-text.js'
+import { createSqliteInteractionActivator } from '#core-source/agent/interactions/sqlite-activate.js'
+import { createAgentInteractionDescription } from '#core-source/agent/interactions/prompt-description.js'
+import { createAgentInbox } from '#core-source/agent/subagent/inbox.js'
+import { createSubagentService } from '#core-source/agent/subagent/service.js'
+import { assembleSubagentCatalog, builtinSubagentCatalog } from '#core-source/agent/context/modules/subagent-catalog.js'
+import { createSearcherReferenceSearch, createSearcherReferenceShell } from '#core-source/agent/subagent/searcher/references.js'
+import { createDelegatedAgentHarness, delegatedTerminalOutcome } from '#core-source/agent/subagent/runner.js'
+import { searcherPreset } from '#core-source/agent/subagent/searcher/context.js'
+import { createSubagentServiceTools } from '#core-source/agent/tools/subagent.js'
+import { connectProviderHarness } from '#core-source/agent/providers/runtime.js'
+import { createSqliteAgentRunLeasePort } from '#core-source/agent/run/sqlite-store.js'
+import { createSqliteAgentRunCoordination } from '#core-source/agent/run/sqlite-coordination.js'
+import type { CanonicalContextPorts } from '#core-source/agent/ports.js'
+import { createSubagentDeliveryStore } from '#core-source/agent/subagent/delivery-store.js'
+import { createSqliteAgentRunStore } from '#core-source/agent/run/sqlite-store.js'
+import { cleanupSubagentConversations } from '#core-source/agent/subagent/retention.js'
+import { cleanupSqliteAgentRunRetention, compactSqliteAgentRunStorage } from '#core-source/agent/run/sqlite-retention.js'
+import { createAgentRagContextBuilder } from '#core-source/agent/rag/context-builder.js'
 import {
   createCalendarRagSource, createCanvasRagSource, createConversationRagSource, createMemoryRagSource,
   createKnowledgeRagSource, createNoteRagSource, createProjectRagSource, createScheduledTaskRagSource,
   createSqlMemoryScopeStateReader, createSqlRagRebuildWorker, enqueueMissingAgentRagBaselines,
   enqueueAgentRagRebuildInTransaction,
-} from '../../../../../packages/core/src/agent/rag/index.js'
-import { createSqlMindNoteReader } from '../../../../../packages/core/src/mind/note-read.js'
-import { createKyselyScheduledTaskRagReader } from '../../../../../packages/core/src/scheduled-tasks/task-list.js'
-import { settleCancelledSqliteSubagentWait, settleClosedSqliteInteraction, settleExclusiveSqliteAgentRuns } from '../../../../../packages/core/src/agent/run/sqlite-recovery.js'
-import { loadSqliteAgentRunSecret } from '../../../../../packages/core/src/agent/run/sqlite-secret.js'
+} from '#core-source/agent/rag/index.js'
+import { createSqlMindNoteReader } from '#core-source/mind/note-read.js'
+import { createKyselyScheduledTaskRagReader } from '#core-source/scheduled-tasks/task-list.js'
+import { settleCancelledSqliteSubagentWait, settleClosedSqliteInteraction, settleExclusiveSqliteAgentRuns, settleStoppedSqliteAgentRun } from '#core-source/agent/run/sqlite-recovery.js'
+import { loadSqliteAgentRunSecret } from '#core-source/agent/run/sqlite-secret.js'
 import { openLocalFile } from '@gugu/fs/node'
-import { canonicalAgentToolName, filterConfiguredAgentTools } from '../../../../../packages/core/src/agent/index.js'
-import { createViewImageTool, withViewImageReferences } from '../../../../../packages/core/src/agent/tools/view-image.js'
-import type { DesktopAgentRuntimeModule } from '../../../../../packages/core/src/runtime/desktop-agent-port.js'
+import { canonicalAgentToolName, filterConfiguredAgentTools } from '#core-source/agent/index.js'
+import { createViewImageTool, withViewImageReferences } from '#core-source/agent/tools/view-image.js'
+import type { DesktopAgentRuntimeModule } from '#core-source/runtime/desktop-agent-port.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 const reflectionModelIdentity = (config: ProviderConfig) =>
@@ -237,6 +245,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
   promptDirectory = fileURLToPath(new URL('../agent-prompts/', import.meta.url))) {
   const { db } = core
   const preferenceFiles = createLocalPreferenceTextFiles(dirname(databasePath))
+  const moveShellTargetToTrash = (target: Awaited<ReturnType<typeof desktopTrashTarget>>, cwd: string, workspace: string | undefined, signal: AbortSignal) =>
+    hostRequest('agent.shell.trash', { ...target, cwd, workspace: workspace ?? null }, signal)
   const agentWorkspaces = createAgentWorkspaceQueries(createDesktopWorkspaceReadPort(hostRequest))
   let disabledAgentTools: Promise<ReadonlySet<string>> | undefined
   async function configuredAgentTools(names: readonly string[], signal?: AbortSignal) {
@@ -259,7 +269,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     if (identity.ownerId !== ownerId || !Number.isSafeInteger(session) || session <= 0) return false
     return (await admission.active(ownerId, session))?.identity?.runId === identity.runId
   }
-  async function resolveOwnedAttachment(identity: RunIdentity, attachId: string, signal: AbortSignal) {
+  async function resolveOwnedAttachment(identity: RunIdentity, attachId: string, signal: AbortSignal, scope: 'turn' | 'session' | 'owner' = 'turn') {
     signal.throwIfAborted()
     if (!/^[0-9a-f]{32}$/u.test(attachId) || !await authorizeSearchRecovery(identity)) return null
     const session = Number(identity.sessionId)
@@ -268,9 +278,14 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     const { rows } = await sql<{ attach_id: string; name: string; ext: string; kind: string; size: number; storage_key: string }>`
       SELECT a.attach_id,a.name,a.ext,a.kind,a.size,a.storage_key
       FROM chat_attachments a
-      JOIN agent_run_admissions r ON r.user_id=a.user_id AND r.user_message_id=a.message_id
-        AND r.session_id=${session} AND r.run_id=${identity.runId}
+      JOIN conversation_messages m ON m.id=a.message_id
+      JOIN conversation_sessions s ON s.id=m.session_id AND s.user_id=a.user_id
       WHERE a.user_id=${owner} AND a.attach_id=${attachId} AND a.state='attached'
+        ${scope === 'owner' ? sql`` : sql`AND s.id=${session}`}
+        ${scope !== 'turn' ? sql`` : sql`AND EXISTS (
+          SELECT 1 FROM agent_run_admissions r WHERE r.user_id=a.user_id AND r.user_message_id=a.message_id
+            AND r.session_id=s.id AND r.run_id=${identity.runId}
+        )`}
       LIMIT 1`.execute(db)
     signal.throwIfAborted()
     const attachment = rows[0]
@@ -481,8 +496,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
   async function runRetentionMaintenance(): Promise<void> {
     if (retentionAbort.signal.aborted) return
     try {
+      const removedSubagents = await cleanupSubagentConversations(db, 'sqlite')
       const cleaned = await cleanupSqliteAgentRunRetention(db)
-      if (cleaned.freedBytes > 0) await compactSqliteAgentRunStorage(db)
+      if (removedSubagents || cleaned.freedBytes > 0) await compactSqliteAgentRunStorage(db)
     } catch {
       /* 保留期清理失败只影响磁盘占用，不能影响运行正确性。 */
     }
@@ -503,14 +519,16 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
 
   let subagents: ReturnType<typeof createSubagentService> | undefined
 
-  async function resolveReferencedFile(id: string, signal?: AbortSignal) {
+  async function resolveReferencedFile(id: string, signal?: AbortSignal, includeFolder = false) {
     const method = workspaceFileReferenceId.test(id) ? 'agent.files.resolveWorkspaceReference' : 'agent.files.resolveDroppedReference'
     const result = await hostRequest(method, { id }, signal)
     if (result === null) return null
     if (!result || typeof result !== 'object' || !('path' in result) || typeof result.path !== 'string'
       || !('fileIdentity' in result) || typeof result.fileIdentity !== 'string')
       throw new CoreError('storage_error', '本机文件引用结果无效')
-    return { path: result.path, fileIdentity: result.fileIdentity,
+    const isFolder = 'type' in result && result.type === 'folder'
+    if (isFolder && !includeFolder) return null
+    return { path: result.path, fileIdentity: result.fileIdentity, isFolder,
       relativePath: 'relativePath' in result && typeof result.relativePath === 'string' ? result.relativePath : undefined }
   }
 
@@ -668,7 +686,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         sharedRoot ? async () => {
           const current = await readRoot()
           return current?.identity === sharedRoot.identity && current.path === sharedRoot.path ? current : null
-        } : undefined, parent) : undefined
+        } : undefined, parent, moveShellTargetToTrash) : undefined
     const referenceShell = resourceRefs.length ? createSearcherReferenceShell(async (ref, scope, maxOutputChars) => {
       if (!await authorizedChildShell(db, scope.identity, scope.signal) || !(await readDesktopShellPreferences()).shellEnabled)
         return { kind: "completed", successful: false, executed: false, mutated: false, value: { error: "Shell 权限已失效" } }
@@ -718,7 +736,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     const harness = createDelegatedAgentHarness(searcherPreset, launch, {
       context: connected.context,
       executor: { authorize: unavailable, executor: { execute: unavailable } },
-      runtime: { store, leases, cancellation: {
+        runtime: { store, leases, observation, cancellation: {
           ...cancellation,
           async isRequested(candidate) {
             return await cancellation.isRequested(parent) || await cancellation.isRequested(candidate)
@@ -731,8 +749,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         presentError: error => error instanceof ProviderError ? { code: error.code, text: providerErrorMessage(error) }
           : { code: 'agent_failed', text: '子任务生成失败' },
         presentToolResult: async value => value, async publish(event) {
-          if (event.type === 'interaction_required' || event.type === 'interaction_resolved')
-            notify(Number(parent.sessionId), parent.runId, true)
+          notify(Number(parent.sessionId), parent.runId,
+            event.type === 'interaction_required' || event.type === 'interaction_resolved' ? true : undefined)
         }, diagnose() {} },
     })
     return { harness, async close() { await connected.provider.close() } }
@@ -798,7 +816,12 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           }
         } finally { await runtime.close() }
       } catch (error) {
-        if (error instanceof AgentRunError && ['conflict', 'lease_lost', 'persistence_unknown'].includes(error.code)) return
+        if (error instanceof AgentRunError && ['conflict', 'lease_lost', 'persistence_unknown'].includes(error.code)) {
+          await settleStoppedSqliteAgentRun(db, databasePath, identity, parent)
+          scheduleSubagentWake(parent)
+          notify(Number(parent.sessionId), parent.runId)
+          return
+        }
         const result = await cancellation.isRequested(identity) ? { status: 'cancelled', reasonCode: 'cancelled' } as const
           : { status: 'failed', reasonCode: 'subagent_execution_failed' } as const
         if (await deliveries.complete(parent, identity.runId, result)) scheduleSubagentWake(parent)
@@ -817,13 +840,30 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     void done.catch(() => {})
   }
 
-  async function prepareRunRuntime(sessionId: number | null, config: ProviderConfig | null, embedding?: RagQueryEmbeddingSettings, interactive = false, resumeIdentity?: RunIdentity, modelId?: string, locale = 'zh-CN') {
-    const imSession = sessionId === null ? null : (await sql<{ chat_type: string | null; platform: string }>`
+  function isDesktopChatMessage(clientId: string | null | undefined) {
+    // 桌面消息使用 UUID，IM 网关使用带连接范围的 SHA-256 摘要。
+    return typeof clientId === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(clientId)
+  }
+
+  async function isDesktopChatRun(identity: RunIdentity) {
+    const owner = identity.ownerId.replaceAll('-', '').toLowerCase()
+    const { rows: [message] } = await sql<{ client_message_id: string | null }>`
+      SELECT m.client_message_id FROM agent_run_admissions a
+      JOIN conversation_messages m ON m.id=a.user_message_id AND m.session_id=a.session_id
+      WHERE a.user_id=${owner} AND a.session_id=${identity.sessionId} AND a.run_id=${identity.runId}
+        AND m.role='user' AND m.platform_user_id IS NULL
+    `.execute(db)
+    return isDesktopChatMessage(message?.client_message_id)
+  }
+
+  async function prepareRunRuntime(sessionId: number | null, config: ProviderConfig | null, embedding?: RagQueryEmbeddingSettings, interactive = false, resumeIdentity?: RunIdentity, modelId?: string, locale = 'zh-CN', desktopChat = false) {
+    const imBinding = sessionId === null || desktopChat ? null : (await sql<{ chat_type: string | null; platform: string }>`
       SELECT s.chat_type,im.platform FROM conversation_sessions s JOIN desktop_im_sessions im
         ON im.session_id=s.id AND im.owner_id=s.user_id
       WHERE s.id=${sessionId} AND s.user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')}
     `.execute(db)).rows[0]
-    const imChatType = imSession?.chat_type
+    const imSession = imBinding && resumeIdentity && await isDesktopChatRun(resumeIdentity) ? null : imBinding
+    const imChatType = imSession ? imSession.chat_type ?? 'c2c' : undefined
     const singleChoiceOnly = Boolean(imSession)
     const groupChat = imChatType === 'group'
     if (groupChat) interactive = false
@@ -850,7 +890,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     if (sessionId !== null && !groupChat) {
       const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
       const { rows: [session] } = await sql<{ session_context: string | null }>`SELECT session_context FROM conversation_sessions
-        WHERE user_id=${owner} AND id=${sessionId} AND (source IS NULL OR source='web')`.execute(db)
+        WHERE user_id=${owner} AND id=${sessionId}
+          ${imChatType === 'c2c' ? sql`` : sql`AND (source IS NULL OR source='web')`}`.execute(db)
       const context = readAgentSessionContext(session?.session_context, 'sqlite')
       const stored = context.workspace_binding
       const directoryId = stored && typeof stored === 'object' && !Array.isArray(stored)
@@ -859,14 +900,14 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         const workspace = await agentWorkspaces.get(ownerId, directoryId)
         if (workspace) workspaceBinding = {
           workspace_id: workspace.workspace_id, workspace_name: workspace.name, kind: workspace.kind, space: 'workspace',
-          project_id: null, folder_id: null, directory_id: workspace.directory_id!, directory_name: workspace.directory_name!,
+          project_id: null, directory_id: workspace.directory_id!, directory_name: workspace.directory_name!,
         }
       }
     }
     const selection = {
       modelIdentity: config ? reflectionModelIdentity(config) : '',
       contextWindow: typeof config?.context_tokens === 'number' ? config.context_tokens : DEFAULT_LLM_CONTEXT_TOKENS,
-      locale, groupChat, workspaceBinding,
+      locale, groupChat, workspaceBinding, scene: imSession ? 'im' as const : 'default' as const,
       contextPolicy: { loadOwnerContext: !groupChat, memoryEnabled: !groupChat },
       // 业务内容版本由 currentRevision 返回，访问范围只绑定可信身份和上下文策略。
       contextScopeKey: groupChat ? 'desktop-im-group' : 'desktop-overview',
@@ -877,9 +918,14 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     let timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
     const agentClock = { now: () => new Date(), timezone: async () => timezone }
     const prompts = readAgentPromptSet(promptDirectory)
-    const smartView = imSession ? undefined : readAgentPrompt('smart_view.md', promptDirectory)
-    const buildSystemPrompt = (preferences: Record<string, Json>) => buildAgentStaticPrompt({
-      ...prompts, smartView, skillIndex: formatBuiltinSkillIndex(builtins), imChat: Boolean(imSession),
+    const scene: AgentScene = imSession ? 'im' : 'default'
+    const sceneBuiltins = imSession ? builtins.filter(skill => imAllowsBuiltinSkill(skill.key)) : builtins
+    const smartView = sceneAllowsPrompt(scene, 'smart_view') ? readAgentPrompt('smart_view.md', promptDirectory) : undefined
+    const buildSystemPrompt = (preferences: Record<string, Json>, skillIndex = groupChat ? '' : formatBuiltinSkillIndex(sceneBuiltins)) => buildAgentStaticPrompt({
+      ...prompts, smartView,
+      chatFileWorkspace: imSession ? undefined : workspaceBinding
+        ? { name: String(workspaceBinding.workspace_name), space: 'workspace' } : null,
+      skillIndex, scene,
       locale: selection.locale, timezone, now: new Date(), groupChat,
       ...agentPromptPreferenceFields(preferences),
     })
@@ -946,6 +992,21 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       const active = await admission.active(ownerId, sessionId)
       return active?.identity?.runId === identity.runId
     }
+    async function desktopPrivateImOwner(identity: RunIdentity, signal?: AbortSignal) {
+      const platform = desktopScheduleImPlatforms.find(value => value === imSession?.platform)
+      if (!platform || imChatType !== 'c2c' || !await authorize(identity)) return null
+      const target = await privateScheduleImTarget(platform, identity, signal)
+      if (!target || target.chatType !== 'c2c' || target.platform !== platform || target.recipient !== target.boundUserId) return null
+      const { rows } = await sql`SELECT 1 FROM desktop_im_sessions
+        WHERE owner_id=${dataContext(identity.ownerId).ownerId.replaceAll('-', '')}
+          AND session_id=${Number(identity.sessionId)} AND platform=${target.platform}
+          AND connection_id=${desktopScheduleImConnection(target)}`.execute(db)
+      return rows.length ? { platform, chatType: 'c2c', role: 'owner', verifiedOwner: true, allowedToolNames: null } as const : null
+    }
+    async function attachmentScope(identity: RunIdentity, signal: AbortSignal) {
+      if (groupChat) return 'session'
+      return !imSession || await desktopPrivateImOwner(identity, signal) ? 'owner' : 'session'
+    }
     const undoPort = (identity: RunIdentity) => createAgentUndoLastActionPort({
       core, identity, undoContextId: `agent:${identity.sessionId}:${identity.runId}`.slice(0, 128),
       async active(input, signal) {
@@ -1005,7 +1066,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         return config !== null && (config.capability_overrides?.image ?? config.image ?? adapterFor(config).capabilities(config).image) === true
       },
       async openAttachment(identity, attachId, signal) {
-        const file = await fileSources.resolveOwnedAttachment(identity, attachId, signal)
+        const file = await resolveOwnedAttachment(identity, attachId, signal, await attachmentScope(identity, signal))
         if (file?.kind !== 'image') return null
         const opened = await openLocalFile(file.root, file.relativePath)
         if (!opened || opened.size === file.size_bytes) return opened
@@ -1095,9 +1156,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       diagnostic: line => { void hostRequest('agent.log.append', { line, diagnostic: true }).catch(() => {}) },
       fingerprint: value => createHmac('sha256', secret).update(value).digest('hex'),
     })
-    const skillMetadata = createSkillMetadataReader(db, 'sqlite', builtins)
+    const skillMetadata = createSkillMetadataReader(db, 'sqlite', sceneBuiltins)
     const skills = await createAgentSkillRuntimePorts({
-      ownerId, builtins, listUser: skillMetadata,
+      ownerId, builtins: sceneBuiltins, listUser: skillMetadata,
       readUser: createUserSkillReader(db, 'sqlite'),
       fingerprint: owner => createHmac('sha256', secret).update(owner).digest('hex'),
     })
@@ -1111,12 +1172,22 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       async resolve(identity, reminders, signal) {
         signal.throwIfAborted()
         if (!await authorize(identity)) return { ok: false, error: '日历提醒运行授权已失效' }
-        if (reminders.some(reminder => reminder.delivery_mode === 'current_group'
-          || reminder.channels?.some(channel => channel !== 'web')))
-          return { ok: false, error: '桌面日历提醒仅支持本机通知' }
-        return { ok: true, reminders: reminders.map(reminder => ({
-          channels: ['web'], deliveryTargets: null, enabled: reminder.enabled !== false,
-        })) }
+        try {
+          const resolved = []
+          for (const reminder of reminders) {
+            const delivery = await resolveScheduleDelivery(db, identity, {
+              channels: reminder.channels ?? ['web'], mode: reminder.delivery_mode,
+            }, signal)
+            resolved.push({ channels: delivery.channels ?? ['web'],
+              deliveryTargets: delivery.delivery_targets ?? null, enabled: reminder.enabled !== false })
+          }
+          if (!await authorize(identity)) return { ok: false, error: '日历提醒运行授权已失效' }
+          return { ok: true, reminders: resolved }
+        } catch (error) {
+          signal.throwIfAborted()
+          if (error instanceof ScheduledTaskReferenceError) return { ok: false, error: error.message }
+          throw error
+        }
       },
     }
     async function authorizeWrite(tx: Kysely<Database>, identity: RunIdentity, signal: AbortSignal) {
@@ -1155,7 +1226,43 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       ? createLocalAgentKnowledgeDeletePort(core, dirname(databasePath), knowledgeStore, knowledgeConfirmation, publishDesktopKnowledgeFile)
       : undefined
     const shellConfirmation = createSqliteToolConfirmation(db, authorizeWrite, 'shell')
-    const presentConfirmation = createSqliteToolConfirmation(db, authorizeWrite, 'present_file')
+    const deleteItemConfirmation = createSqliteToolConfirmation(db, authorizeWrite, 'delete_item')
+    function isLibraryItemInput(input: unknown): input is { kind: 'file' | 'folder'; path: string } {
+      if (!input || typeof input !== 'object' || Object.keys(input).length !== 2) return false
+      const { kind, path } = input as Record<string, unknown>
+      return (kind === 'file' || kind === 'folder') && typeof path === 'string'
+        && path.length <= 4096 && isAbsolute(path) && !/[\p{Cc}]/u.test(path)
+    }
+    const deleteItem: ToolDefinition = {
+      definition: { name: 'delete_item', schema: { type: 'function', function: {
+        name: 'delete_item', description: '将文件库中的文件或文件夹移入系统废纸篓，文件夹包含所有子项。使用搜索结果的本机绝对路径，执行前需确认。',
+        parameters: { type: 'object', additionalProperties: false, required: ['kind', 'path'],
+          properties: { kind: { enum: ['file', 'folder'], type: 'string' }, path: { type: 'string' } } },
+      } } },
+      effect: 'write', destructive: true, requiresInteraction: true, confirmationReplay: true,
+      validate(input) { return isLibraryItemInput(input) ? { success: true, data: input } : { success: false } },
+      async execute(input, scope, call) {
+        const fail = (error: string) => ({ kind: 'completed' as const, successful: false, mutated: false, value: { error } })
+        if (!isLibraryItemInput(input) || !await authorizeWrite(db, scope.identity, scope.signal)) return fail('当前会话无权移入废纸篓')
+        const target = await hostRequest('agent.files.deleteItem', input, scope.signal)
+        if (typeof target !== 'string') return fail('找不到类型匹配的文件库目标')
+        const snapshot = { targetsDigest: digest(input), versionsDigest: digest(target), targetIds: {} }
+        const argsDigest = digest(input)
+        if (!scope.resolution) {
+          const prepared = await deleteItemConfirmation.gate.prepare(call, scope, argsDigest, snapshot)
+          return prepared.ok ? { kind: 'waiting', interaction: prepared.value } : fail('无法申请废纸篓操作确认')
+        }
+        const confirmed = await deleteItemConfirmation.gate.verify(call, scope, argsDigest, snapshot)
+        if (!confirmed.ok || !await db.transaction().execute(tx => deleteItemConfirmation.claim(tx, confirmed.value, scope.signal)))
+          return fail('废纸篓确认已失效或目标已变化')
+        scope.signal.throwIfAborted()
+        const moved = await hostRequest('agent.files.deleteItem', { ...input, expected: target }, scope.signal)
+        return moved === true ? { kind: 'completed', successful: true, mutated: true, value: { path: input.path, trashed: true } }
+          : fail('废纸篓目标已移动或替换')
+      },
+    }
+    const presentConfirmation = createSqliteToolConfirmation(db, authorizeWrite, 'open_item')
+    const sendItemConfirmation = createSqliteToolConfirmation(db, authorizeWrite, 'send_item')
     const viewImageConfirmation = createSqliteToolConfirmation(db, authorizeWrite, 'view_image')
     const listMailAccounts = async (signal?: AbortSignal) => desktopMailAccounts(
       await hostRequest('agent.email.accounts', {}, signal))
@@ -1243,7 +1350,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       async prepare(operation, draft, signal) {
         signal.throwIfAborted()
         if (!await authorize(operation.identity)) return { error: '当前运行无权发送邮件' }
-        if (draft.fileIds.length) return { error: '桌面邮件只支持添加当前消息引用的本机文件' }
+        if (draft.filePaths.length) return { error: '桌面邮件只支持添加当前消息引用的本机文件' }
         const account = (await listMailAccounts(signal))[0]
         if (!account) return { error: '请先在桌面邮件页面连接邮箱账户' }
         let attachmentManifest: Awaited<ReturnType<typeof resolveMailReferences>>
@@ -1291,7 +1398,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       supportedFormats: ['plain', 'template', 'html'],
       supportedAttachmentInputs: ['file_refs'],
     }) : undefined
-    const readHostAccess = async (scope: import('../../../../../packages/core/src/agent/tools/contracts.js').ToolScope) => {
+    const readHostAccess = async (scope: import('#core-source/agent/tools/contracts.js').ToolScope) => {
       if (!interactive || !await authorizeWrite(db, scope.identity, scope.signal)) return null
       return readDesktopShellPreferences()
     }
@@ -1299,11 +1406,11 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       return isAbsolute(path) && !/^\/(personal|project|workspace)\//u.test(path)
     }
     async function authorizeHostFile(path: string, selector: unknown,
-      scope: import('../../../../../packages/core/src/agent/tools/contracts.js').ToolScope,
-      call: import('../../../../../packages/core/src/agent/models.js').ToolCall,
+      scope: import('#core-source/agent/tools/contracts.js').ToolScope,
+      call: import('#core-source/agent/models.js').ToolCall,
       confirmation: typeof presentConfirmation): Promise<
       { target: { path: string; identity: string } } | { error: string }
-      | Extract<import('../../../../../packages/core/src/agent/models.js').ToolResult, { kind: 'waiting' }>
+      | Extract<import('#core-source/agent/models.js').ToolResult, { kind: 'waiting' }>
     > {
       const { identity, signal } = scope
       const access = await readHostAccess(scope)
@@ -1329,7 +1436,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       } else if (!grant.permits()) return { error: '宿主机文件授权已过期' } as const
       return { target } as const
     }
-    const shell = interactive ? await createDesktopShellTool(db, shellConfirmation, digest, readHostAccess) : undefined
+    const shell = interactive ? await createDesktopShellTool(db, shellConfirmation, digest, readHostAccess, undefined, undefined, moveShellTargetToTrash) : undefined
     const mcpCrypto = createDesktopMcpCrypto(databasePath)
     const validateMcpToolEndpoint = (endpoint: string) => validateMcpEndpoint(endpoint, isPublicAddress)
     const mcpAddConfirmation = createSqliteToolConfirmation(db, authorizeWrite, 'add_mcp_server',
@@ -1353,7 +1460,6 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       crypto: mcpCrypto, maxTools: 64,
     }, { confirmation: mcpRemoveConfirmation, async invalidate() {} }) : undefined
     const sendFile = imChatType === 'c2c' || groupChat ? createImSendFileTool({
-      allowFileId: false,
       allowFilePath: imChatType === 'c2c',
       async send({ identity, attachId, filePath, signal }) {
         const source = attachId ?? filePath
@@ -1385,22 +1491,22 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           && typeof selection.workspaceBinding.directory_id === 'string' ? selection.workspaceBinding.directory_id : undefined
         if (input.space === 'workspace' && !workspaceDirectoryId)
           return { kind: 'failed', error: '当前会话没有绑定可写入的工作区，请先绑定工作区或保存到个人/项目文件' }
-        if (input.folder_id !== undefined && input.folder_path === undefined)
-          return { kind: 'failed', error: '桌面文件夹使用相对路径；请提供 folder_path' }
         const ids = input.source === 'latest'
           ? (await sql<{ attach_id: string }>`SELECT a.attach_id FROM chat_attachments a
-              JOIN agent_run_admissions r ON r.user_id=a.user_id AND r.user_message_id=a.message_id
-              WHERE r.user_id=${dataContext(identity.ownerId).ownerId.replaceAll('-', '')}
-                AND r.session_id=${Number(identity.sessionId)} AND r.run_id=${identity.runId} AND a.state='attached'
-              ORDER BY a.attached_at DESC,a.created_at DESC LIMIT 1`.execute(db)).rows.map(row => row.attach_id)
+              JOIN conversation_messages m ON m.id=a.message_id
+              JOIN conversation_sessions s ON s.id=m.session_id AND s.user_id=a.user_id
+              WHERE a.user_id=${dataContext(identity.ownerId).ownerId.replaceAll('-', '')}
+                AND s.id=${Number(identity.sessionId)} AND a.state='attached'
+              ORDER BY a.created_at DESC,a.attach_id DESC LIMIT 1`.execute(db)).rows.map(row => row.attach_id)
           : input.source === 'attach_ids' ? [...(input.attach_ids ?? [])] : [input.attach_id ?? '']
         if (input.source === 'latest' && ids.length === 0)
           return { kind: 'failed', error: '当前对话中没有可保存的近期附件' }
         const saved: Array<Record<string, unknown>> = []
         const failed: Array<{ attach_id: string; error: string }> = []
+        const sourceScope = input.source === 'latest' ? 'session' : await attachmentScope(identity, signal)
         for (const attachId of ids) {
           signal.throwIfAborted()
-          const attachment = await resolveOwnedAttachment(identity, attachId, signal)
+          const attachment = await resolveOwnedAttachment(identity, attachId, signal, sourceScope)
           if (!attachment) {
             failed.push({ attach_id: attachId, error: '附件不存在或已过期' })
             continue
@@ -1486,12 +1592,36 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       const targets = readDesktopScheduleImTargets(delivery_targets, Array.isArray(fields.channels) ? fields.channels : [])
       return { fields, targets }
     }
+    async function resolveScheduleDelivery(database: Kysely<Database>, identity: RunIdentity,
+      intent: { channels?: readonly string[]; mode?: 'owner_private' | 'current_group' }, signal: AbortSignal) {
+      const channelList = intent.channels
+      const selected = channelList?.filter((channel): channel is DesktopScheduleImPlatform =>
+        channel === 'qq' || channel === 'feishu' || channel === 'telegram' || channel === 'wechat') ?? []
+      const bound = imSession && (groupChat || !selected.length) ? await scheduleImTarget(identity, signal, database) : null
+      if ((groupChat || intent.mode === 'current_group') && bound?.chatType !== 'group')
+        throw new ScheduledTaskReferenceError('当前 IM 对话没有可用的群任务投递授权')
+      if (groupChat && intent.mode === 'owner_private')
+        throw new ScheduledTaskReferenceError('群聊不能指定私聊投递目标')
+      if (intent.mode === 'owner_private' && !bound && !selected.length)
+        throw new ScheduledTaskReferenceError('请指定可用的私聊投递渠道')
+      const channels = [...new Set([...selected, ...(bound ? [bound.platform] : [])])]
+      if (!channels.length) return {}
+      const targets: DesktopScheduleImTarget[] = []
+      for (const platform of channels) {
+        const target = bound?.platform === platform ? bound : await privateScheduleImTarget(platform, identity, signal, database)
+        if (!target || !await currentScheduledIm(target, signal, database))
+          throw new ScheduledTaskReferenceError('当前 IM 投递目标已失效')
+        targets.push(target)
+      }
+      return { channels: [...channels, ...(channelList?.includes('web') ? ['web'] : [])],
+        delivery_targets: desktopScheduleImDeliveryTargets(targets) }
+    }
     const scheduleWrites = core.receipts ? createScheduledTaskWriteTools(core, {
       reminderOnly: !imSession,
       supportedChannels: ['web', ...desktopScheduleImPlatforms],
       capabilities: { workspaceSupported: false, filesystemAuthorizationEnabled: false },
       async authorize(tx, identity, input, signal) {
-        if (input.workspace_id !== undefined || input.email_attachment_file_ids !== undefined || input.authorized_tools !== undefined
+        if (input.workspace_id !== undefined || input.email_attachment_file_paths !== undefined || input.authorized_tools !== undefined
           || input.filesystem_authorized !== undefined || input.channels?.some(channel => channel !== 'web' && channel !== 'qq' && channel !== 'feishu' && channel !== 'telegram' && channel !== 'wechat'))
           return false
         if (!await authorizeWrite(tx, identity, signal)) return false
@@ -1506,26 +1636,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         return true
       },
       async delivery(tx, identity, intent, signal) {
-        const channelList = intent.channels
-        const selected = channelList?.filter(channel => channel === 'qq' || channel === 'feishu' || channel === 'telegram' || channel === 'wechat') ?? []
-        const bound = imSession && (groupChat || !selected.length) ? await scheduleImTarget(identity, signal, tx) : null
-        if ((groupChat || intent.mode === 'current_group') && bound?.chatType !== 'group')
-          throw new ScheduledTaskReferenceError('当前 IM 对话没有可用的群任务投递授权')
-        if (intent.mode === 'owner_private' && !bound && !selected.length)
-          throw new ScheduledTaskReferenceError('请指定可用的私聊投递渠道')
-        const channels = [...new Set([...selected, ...(bound ? [bound.platform] : [])])]
-        if (!channels.length) return {}
-        const targets: DesktopScheduleImTarget[] = []
-        for (const platform of channels) {
-          const target = bound?.platform === platform ? bound : await privateScheduleImTarget(platform, identity, signal, tx)
-          if (!target || !await currentScheduledIm(target, signal, tx))
-            throw new ScheduledTaskReferenceError('当前 IM 投递目标已失效')
-          targets.push(target)
-        }
-        return {
-          channels: [...channels, ...(channelList?.includes('web') ? ['web'] : [])],
-          delivery_targets: desktopScheduleImDeliveryTargets(targets),
-        }
+        return resolveScheduleDelivery(tx, identity, intent, signal)
       },
       async create(tx, owner, input) {
         const { fields, targets } = writeScheduleTarget(input)
@@ -1553,6 +1664,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       ...(sendEmail ? { sendEmail } : {}),
       ...(saveAttachment ? { saveAttachment } : {}),
       sendFile,
+      sendItemCards: interactive && sceneAllowsTool(scene, 'send_item', 'app_card'),
       mcpManagement: createMcpManagementTool({
         list: createMcpServerConfigLister(db, 'sqlite'), decrypt: mcpCrypto.decrypt, enabled: () => true,
         async testConnection(owner, id, signal) {
@@ -1577,11 +1689,12 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         },
       }) : undefined, mcpAdd),
       ...(shell ? { shell } : {}),
+      ...(interactive ? { diskTrashTools: [deleteItem] } : {}),
       linkButtons: createWebLinkButtonDeliveryPort(authorize),
       core, authorize, webSearch,
       webDownload: createDesktopWebDownload({
         dataRoot: dirname(databasePath), authorized: authorize,
-        readTarget: signal => hostRequest('agent.files.downloadTarget', {}, signal),
+        readTarget: (signal, folderPath) => hostRequest('agent.files.downloadTarget', folderPath === undefined ? {} : { folderPath }, signal),
         commit: (input, signal) => hostRequest('agent.files.commitDownload', input, signal),
         open: (url, signal) => openStreamedAgentGet(createNodeProviderTransport({
           ...desktopTransportOptions(false, resolveProxy), connectTimeoutMs: 10_000, writeTimeoutMs: 10_000,
@@ -1594,10 +1707,16 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       knowledgeWrites: createLocalAgentKnowledgeWritePort(core, dirname(databasePath), knowledgeStore, publishDesktopKnowledgeFile),
       presentFile: {
         requiresHostConfirmation: true,
-        async resolve(identity, selector, signal, { scope, call }) {
+        async resolve(identity, selector, signal, { scope, call, batch }) {
           signal.throwIfAborted()
           if (!await authorize(identity)) return { error: '当前文件预览授权已失效' }
-          const path = selector.file
+          const path = selector.item
+          if (selector.kind === 'folder') {
+            const value = await hostRequest('agent.files.openFolder', { path, referenceOnly: selector.reference_only === true }, signal)
+            signal.throwIfAborted()
+            if (!await authorize(identity)) return { error: '当前文件夹打开授权已失效' }
+            return value as { file: { name: string; ext: string; referenceId: string; location: { kind: 'host_absolute'; value: string } } } | { error: string }
+          }
           let referenceId: string | undefined
           const hostPath = isHostFilePath(path)
           if (hostPath) {
@@ -1610,8 +1729,14 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             }
           }
           let external: { path: string; identity: string } | undefined
+          if (batch && hostPath && !referenceId) {
+            const result = await hostRequest('agent.files.libraryFileReference', { path }, signal)
+            if (typeof result === 'string' && workspaceFileReferenceId.test(result)) referenceId = result
+            if (!await authorize(identity)) return { error: '当前文件访问授权已失效' }
+          }
           if (hostPath && !referenceId) {
-            const result = await authorizeHostFile(path, selector, scope, call, presentConfirmation)
+            if (batch) return { error: '批量发送只能使用已授权的文件库对象，请单独发送需要额外授权的文件' }
+            const result = await authorizeHostFile(path, selector, scope, call, call.name === 'send_item' ? sendItemConfirmation : presentConfirmation)
             if (!('target' in result)) return result
             external = result.target
           } else if (scope.resolution) return { error: '文件目标或授权已变化，请重新发起操作' }
@@ -1629,7 +1754,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             return { error: '文件不存在或无法预览' }
           return { file: { name: file.name, ext: file.ext,
             ...(typeof file.referenceId === 'string' ? { referenceId: file.referenceId } : {}),
-            ...(typeof file.path === 'string' ? { path: file.path } : {}),
+            ...(typeof file.path === 'string' ? { location: { kind: 'host_absolute' as const, value: file.path } } : {}),
             surface: file.system === true ? 'system' : 'desktop' } }
         },
       },
@@ -1643,11 +1768,11 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       async fileOverview(identity, projectId, signal) {
         signal.throwIfAborted()
         if (!await authorize(identity)) throw new CoreError('conflict', '当前运行无权读取项目文件')
-        const counts = await hostRequest('agent.files.projectOverview', { projectId }, signal)
+        const counts = await hostRequest('agent.files.projectOverview', { projectId }, signal) as ProjectFileOverview
         signal.throwIfAborted()
         if (!await authorize(identity)) throw new CoreError('conflict', '当前运行无权读取项目文件')
         // get_project 使用共享文件统计 Schema 校验宿主回复。
-        return counts as ProjectFileOverview
+        return counts
       },
       projects: createKyselyProjectCreateRuntime({ db, backend: 'sqlite', async publishProjectCreated() {} }),
       ...(core.receipts ? { projectMutations: createDurableProjectMutationPort({
@@ -1703,6 +1828,16 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       ...(scheduleWrites.length ? { scheduledTaskWrites: scheduleWrites } : {}),
       notes: createAgentMindReader(db, 'sqlite', resolveDesktopFileReference),
       workspaces: agentWorkspaces,
+      ...(interactive ? { projectWorkspaceBinding: async (identity, input, signal) => {
+        signal.throwIfAborted()
+        if (!await authorize(identity)) throw new CoreError('conflict', '工作区操作授权已失效')
+        const result = await hostRequest('agent.files.projectWorkspaceBinding', {
+          projectId: input.project_id, directoryId: input.workspace_id, bound: input.bound,
+        }, signal)
+        if (!result || typeof result !== 'object' || !('changed' in result) || typeof result.changed !== 'boolean')
+          throw new CoreError('storage_error', '工作区关联结果无效')
+        return result.changed
+      } } : {}),
       ...(core.receipts ? { noteLifecycle: createNoteLifecyclePort(core, async () => {}) } : {}),
       ...(core.receipts ? { noteWrites: createNoteWritePort(core, { timezone,
         async validateFileReference(_owner, id, signal) { return Boolean(await resolveReferencedFile(id, signal)) },
@@ -1722,9 +1857,14 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         const files = await hostRequest('agent.files.searchReferences', { query }, signal)
         if (!Array.isArray(files)) throw new CoreError('storage_error', '本机文件引用搜索结果无效')
         return files.filter((file): file is { id: string; label: string } =>
-          file && typeof file.id === 'string' && workspaceFileReferenceId.test(file.id) && typeof file.label === 'string').slice(0, limit)
+          file && file.type === 'file' && typeof file.id === 'string' && workspaceFileReferenceId.test(file.id) && typeof file.label === 'string').slice(0, limit)
       }),
-      search: createGlobalSearchOperations(createKyselySqliteGlobalSearchSources(db)),
+      search: createGlobalSearchOperations([
+        ...createKyselySqliteGlobalSearchSources(db),
+        ...createDesktopFileSearchSources((params, signal) =>
+          hostRequest('agent.files.globalSearch', params, signal)),
+      ]),
+      searchAvailableSources: true,
     })
     if (config === null || sessionId === null) return { kind: 'catalog' as const, catalog: registry.catalog() }
     // 可用性只决定是否开放新调用。已有调用的收据查询保留原工具的参数校验与运行授权。
@@ -1753,11 +1893,23 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     async function authorizeGroupTool(identity: RunIdentity, name: string) {
       if (!await authorize(identity)) return false
       const receipt = await desktopImGroupRunEvent(db, identity)
-      return !!receipt && await hostRequest('agent.im.authorizeGroupTool', { ...receipt, name }) === true
+      return receipt !== null && await hostRequest('agent.im.authorizeGroupTool', { ...receipt, name }) === true
     }
+    const groupSkillRegistry = createSkillRegistry({
+      skills: sceneBuiltins,
+      async authorize(identity, id) {
+        const skill = sceneBuiltins.find(candidate => candidate.id === id)
+        if (!skill || !await authorizeGroupTool(identity, 'use_skill')) return false
+        const available = new Set((await configuredTools(identity)).map(tool => tool.name))
+        return available.has('use_skill') && imSkillToolsAvailable(skill, available)
+      },
+    })
     const groupTools = groupChat ? createToolRegistry({
+      unavailableTool: imUnavailableTool,
       tools: [
-        createTimeTool(agentClock), groupScheduleList, ...scheduleWrites,
+        createTimeTool(agentClock), createCallToolAdapter(), createSearchToolsTool(identity => configuredTools(identity)),
+        createUseSkillTool({ skills: groupSkillRegistry, async origin() { return { source: 'builtin' } } }),
+        groupScheduleList, ...scheduleWrites,
         createGroupContextSearchTool(createDesktopGroupContextSearch(db, identity => authorizeGroupTool(identity, 'group_context_search'))),
         ...(webSearch ? [webSearch] : []),
         ...(imageSearchAvailable === true ? [similarImageSearch] : []),
@@ -1765,28 +1917,34 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         ...(sendFile ? [sendFile] : []),
       ],
       async authorize(identity, name) {
-        if (name === 'get_current_time') return authorize(identity)
+        if (!(await configuredAgentTools([name])).length || !await authorizeGroupTool(identity, name)) return false
         if (['list_scheduled_tasks', 'create_scheduled_task', 'update_scheduled_task'].includes(name))
-          return await authorize(identity) && (await configuredAgentTools([name])).length === 1
-            && Boolean(await scheduleImTarget(identity))
-        return authorizeGroupTool(identity, name)
+          return Boolean(await scheduleImTarget(identity))
+        return true
       },
     }) : undefined
     const delegation = (imSession ? (imChatType ?? 'c2c') === 'c2c' : interactive) ? createToolRegistry({
       tools: createSubagentServiceTools(desktopSubagents(secret)), authorize,
     }) : undefined
     const delegationNames = new Set(delegation?.catalog().map(tool => tool.name))
-    const configuredTools = async (identity: RunIdentity, lookup?: McpToolLookup): Promise<PreparedToolDefinition[]> => {
+    async function configuredTools(identity: RunIdentity, lookup?: McpToolLookup): Promise<PreparedToolDefinition[]> {
       if (groupTools) return groupTools.capabilities(identity)
+      const actor = imSession ? await desktopPrivateImOwner(identity) : null
+      if (imSession && !actor) return []
       const definitions = [...await mcpTools.capabilities(identity, lookup),
         ...(lookup || !delegation ? [] : await delegation.capabilities(identity))]
-      const allowed = new Set(await configuredAgentTools(definitions.map(tool => tool.name)))
+      const allowed = new Set(await configuredAgentTools(definitions.map(tool => tool.name).filter(name => !actor || imCanUseTool(actor, name))))
       return definitions.filter(tool => allowed.has(tool.name))
     }
     const sessionSource = createSqliteAgentSessionSource(db, {
+      async readProjectPath(id, signal) {
+        const path = await hostRequest('agent.files.projectPath', { projectId: id }, signal)
+        return typeof path === 'string' ? path : null
+      },
       async readReferencedFile(id, signal) {
-        const file = await resolveReferencedFile(id, signal)
+        const file = await resolveReferencedFile(id, signal, true)
         if (!file) return null
+        if (file.isFolder) return { name: basename(file.path), path: file.path, relativePath: file.relativePath, text: null, isFolder: true }
         const excerpt = await readDroppedFileExcerpt(file.path, file.fileIdentity, signal)
         return excerpt ? { ...excerpt, path: file.path, relativePath: file.relativePath } : null
       },
@@ -1813,7 +1971,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       signal?.throwIfAborted()
       return allowed.has('call_tool') && allowed.has(canonicalAgentToolName(name))
     }
-    const contextBuilder = createMainContextBuilder({
+    const contextBuilder: ContextSourcePorts['builder'] = {
       buildSnapshot: data => {
         const preferences = data.stylePreferences && typeof data.stylePreferences === 'object' && !Array.isArray(data.stylePreferences)
           ? data.stylePreferences as Record<string, Json> : {}
@@ -1837,7 +1995,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           ? info.stylePreferences as Record<string, Json> : {}
         return request(snapshot.snapshotContext, buildSystemPrompt(preferences))
       },
-    })
+    }
     const source = createCanonicalSourceLoader({
       ...sessionSource, digest, nextId: randomUUID, now: Date.now,
       select: async () => selection,
@@ -2153,11 +2311,11 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             rawFiles = plan.rawFiles
           } else {
             if (Buffer.byteLength(delta) > 1_048_576) throw new Error('reflection_source_unavailable')
-            const reflection = await runReflection({ ...identity, stableSystem: prompt.trim(), delta, scope: runAccessScope(identity) },
+            const reflection = await runPrivateReflection({ ...identity, stableSystem: prompt.trim(), delta, scope: runAccessScope(identity) },
             { outputMode: 'json', maxRetries: 1, maxOutputTokens: 1600 }, {
               provider: provider.reflectionProvider(job.model_identity), digest, nextId: randomUUID,
               async pauseBeforeRetry() {}, diagnostic: () => {},
-            }, signalWithTimeout)
+            }, signalWithTimeout, observation, { trigger: 'idle', scope: 'group' })
             signal.throwIfAborted()
             if (!reflection.ok || reflection.output === null) throw new Error(`reflection_${reflection.reason}`)
             if (scope.type === 'owner') changes = applyOwnerReflectionOutput({ current, output: reflection.output,
@@ -2379,7 +2537,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         if (Object.hasOwn(canvasConfirmations, name))
           return canvasConfirmations[name as keyof typeof canvasConfirmations].describe(tx, identity, request)
         const handler = request.toolCall.name === 'shell' ? shellConfirmation
-          : request.toolCall.name === 'present_file' ? presentConfirmation
+          : request.toolCall.name === 'delete_item' ? deleteItemConfirmation
+          : request.toolCall.name === 'send_item' ? sendItemConfirmation
+          : request.toolCall.name === 'open_item' ? presentConfirmation
           : request.toolCall.name === 'view_image' ? viewImageConfirmation
           : request.toolCall.name === 'delete_event' ? calendarConfirmation
           : request.toolCall.name === 'manage_mcp_servers'
@@ -2393,6 +2553,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     }, { singleChoiceOnly }))
     const agent = createSqliteAgentRuntime({
       observation,
+      settleStoppedRun: identity => settleStoppedSqliteAgentRun(db, databasePath, identity),
       db, secret, history: { persistPrivateContext: continuation.persist, onSubagentDeliveryCommitted: scheduleSubagentWake }, admission: {
         onCommitted: identity => notify(Number(identity.sessionId), identity.runId),
         async bindRun(tx, identity, input) {
@@ -2408,6 +2569,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         digest, nextId: randomUUID,
         async load(identity, signal) {
           boundIdentity = identity
+          if (imChatType === 'c2c' && !await desktopPrivateImOwner(identity, signal))
+            throw new CoreError('conflict', 'IM 私聊绑定已变更')
           if (groupTools) {
             stylePreferences = await readSqliteAgentStylePreferences(db, identity, signal, preferenceFiles, true)
             if (stylePreferences.group_personality_preference_enabled) {
@@ -2417,9 +2580,11 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             }
             const loaded = await source.load(identity, signal)
             const tools = await configuredTools(identity)
+            const visibleSkills = new Set((await groupSkillRegistry.catalog(identity)).map(skill => skill.id))
+            systemPrompt = buildSystemPrompt(stylePreferences, formatBuiltinSkillIndex(sceneBuiltins.filter(skill => visibleSkills.has(skill.id)), false))
             const memberReminder = await readMemberReminder(identity, signal)
             return { ...loaded, capabilities: { toolNames: tools.map(tool => tool.name), tools },
-              input: { ...loaded.input, fixedPrefix: [...loaded.input.fixedPrefix, ...memberReminder] } }
+              input: { ...loaded.input, systemPrompt, fixedPrefix: [...loaded.input.fixedPrefix, ...memberReminder] } }
           }
           const turn = await sessionSource.currentTurn(identity, signal)
           const { memory, revision } = await readSqliteAgentMemory(db, ownerId, turn.currentUser?.rawText ?? '', signal, embedding, memoryFiles, resolveProxy)
@@ -2457,14 +2622,11 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           if (delegation && toolNames.includes('agent_message')) {
             loaded.input.systemPrompt = assembleSubagentCatalog(loaded.input.systemPrompt, builtinSubagentCatalog)
           }
-          const catalog = createAgentToolBrief(preferences, tools)
           const mcpReminder = ['search_tools', 'call_tool'].every(name => toolNames.includes(name))
             ? mcpServiceReminder(await mcpRuntime.services(identity.ownerId)) : ''
-          const brief = projectAgentToolBrief({ ...catalog, mcpReminder }, toolNames)
-          const { providerToolNames } = brief
-          const visible = providerToolNames ? tools.filter(tool => providerToolNames.includes(tool.name)) : tools
-          return { ...loaded, capabilities: { toolNames, tools, ...brief }, input: {
-            ...loaded.input, ...(brief.toolReminder ? { toolReminder: brief.toolReminder } : {}),
+          const { capabilities, visible } = projectToolCatalog(preferences, tools, mcpReminder)
+          return { ...loaded, capabilities, input: {
+            ...loaded.input, ...(capabilities.toolReminder ? { toolReminder: capabilities.toolReminder } : {}),
             latestToolSchemas: visible.map(tool => ({
               type: 'tool-schema' as const, tool_name: tool.name, schema_digest: digest(tool.schema), schema: tool.schema,
             })),
@@ -2519,14 +2681,25 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         clock: { now: () => new Date().toISOString() },
         tools: {
           ...(groupTools?.tools ?? mcpTools.tools),
+          ...(imSession ? { unavailableTool: imUnavailableTool } : {}),
           async resolveCall(call, identity, signal) {
             const target = resolveCallTool(call)
             if ('error' in target) return target
-            if (!await mayForward(target.call.name, identity, signal)) return { error: '工具不存在或未开放' }
+            if (!await mayForward(target.call.name, identity, signal))
+              return imSession ? imUnavailableTool(target.call.name) : { error: '工具不存在或未开放' }
             return { call: { ...target.call, adapter: 'call_tool' } }
           },
           async dispatch(call, scope) {
-            if (groupTools) return groupTools.tools.dispatch(call, scope)
+            if (imSession && !groupTools) {
+              const actor = await desktopPrivateImOwner(scope.identity, scope.signal)
+              if (!actor || !imCanUseTool(actor, call.name)) {
+                const rejection = imUnavailableTool(call.name)
+                return rejectAdapterCall(rejection.error, rejection.error_code)
+              }
+            }
+            if (groupTools) return groupTools.tools.dispatch(call, {
+              ...scope, discoverRelatedTools: () => configuredTools(scope.identity),
+            })
             if (delegation && delegationNames.has(call.name)) {
               if (!(await configuredAgentTools([call.name], scope.signal)).length) return rejectAdapterCall('工具不存在或未开放')
               return delegation.tools.dispatch(call, scope)
@@ -2538,6 +2711,10 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
             })
           },
           async reconcile(call, identity) {
+            if (imSession && !groupTools) {
+              const actor = await desktopPrivateImOwner(identity)
+              if (!actor || !imCanUseTool(actor, call.name)) return { kind: 'unknown' }
+            }
             if (groupTools) return groupTools.tools.reconcile(call, identity)
             if (delegation && delegationNames.has(call.name)) return delegation.tools.reconcile(call, identity)
             if (unavailableSearch.has(call.name)) {
@@ -2557,8 +2734,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       },
       provider: {
         continuationStore: continuation.store,
-        resolve: async identity => {
+        resolve: async (identity, _modelIdentity, signal) => {
           if (identity.ownerId !== ownerId || identity.sessionId !== String(sessionId)) throw new ProviderError('input_rejected')
+          if (imChatType === 'c2c' && !await desktopPrivateImOwner(identity, signal)) throw new ProviderError('cancelled')
           return { modelIdentity: selection.modelIdentity, accessScopeHash: runAccessScope(identity), config, systemPrompt }
         },
         transportFactory: createNodeProviderTransportFactory(desktopModelTransportOptions(config, resolveProxy)),
@@ -2571,7 +2749,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
   }
 
   async function createRunRuntime(...args: [sessionId: number, config: ProviderConfig, embedding?: RagQueryEmbeddingSettings,
-    interactive?: boolean, resumeIdentity?: RunIdentity, modelId?: string, locale?: string]) {
+    interactive?: boolean, resumeIdentity?: RunIdentity, modelId?: string, locale?: string, desktopChat?: boolean]) {
     const prepared = await prepareRunRuntime(...args)
     if (prepared.kind !== 'run') throw new CoreError('invalid_request', 'Agent 运行配置无效')
     return prepared
@@ -2615,6 +2793,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       try {
         for await (const _event of iterator) { /* 驱动运行继续提交事件。 */ }
         await drainReflections()
+      } catch (error) {
+        await settleStoppedSqliteAgentRun(db, databasePath, identity)
+        throw error
       } finally {
         try { await agent.close() }
         finally {
@@ -2659,11 +2840,11 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       // 会话被用户的新一轮消息占用：退避重试，等会话收尾后再结算。
       throw new AgentRunError('conflict', '会话正在执行')
     }
-    if (checkpoint.agentInboxWaiting && checkpoint.phase === 'decision' && await store.hasPendingSubagents?.(recipient)) return
     const ready = checkpoint.subagentWaitChildId
       ? !await store.isSubagentPending(recipient, checkpoint.subagentWaitChildId)
-      : checkpoint.agentInboxWaiting && Boolean((await store.readAgentInbox?.(recipient))?.length
-        || (await store.readSubagentFinals?.(recipient))?.length)
+      : checkpoint.agentInboxWaiting && (checkpoint.phase === 'decision'
+        ? !await store.hasPendingSubagents?.(recipient)
+        : Boolean((await store.readAgentInbox?.(recipient))?.length || (await store.readSubagentFinals?.(recipient))?.length))
     if (!ready) return
     await resumeCheckpoint(checkpoint, AbortSignal.any([subagentWakeAbort.signal, AbortSignal.timeout(SUBAGENT_WAKE_RESUME_TIMEOUT_MS)]))
   }
@@ -2854,6 +3035,11 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
   }
 
   return {
+    async subagentSnapshot(sessionId: number, runId: string, childId: string) {
+      const secret = await loadSqliteAgentRunSecret(db, databasePath)
+      const result = await desktopSubagents(secret).inspect({ ownerId, sessionId: String(sessionId), runId }, childId, undefined, 1, true)
+      return result.view === 'run' ? { run: result.run, rounds: result.rounds, task: result.task, finalMessage: result.finalMessage } : null
+    },
     async runScheduledInstruction(...args: Parameters<typeof scheduledAgent>) {
       const result = scheduledAgent(...args)
       const done = result.then(() => {}, () => {})
@@ -2903,15 +3089,16 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     },
     async start(sessionId: number, text: string, clientId: string, config: ProviderConfig, embedding?: RagQueryEmbeddingSettings, interactive = false, modelId?: string,
       attachments: string[] = [], references: DesktopAgentChatReference[] = [], queueClaim?: { key: number; token: string }, locale?: string,
-      groupSender?: DesktopGroupSender, resumePassiveMessage = false) {
+      groupSender?: DesktopGroupSender, resumePassiveMessage = false, quotedText?: string) {
       if (responding.has(sessionId)) throw new CoreError('busy', '会话已有运行中的任务')
       const active = await admission.active(ownerId, sessionId)
       if (active?.identity && running.has(sessionId)) throw new CoreError('busy', '会话已有运行中的任务')
       if (active?.identity) await settleClosedSqliteInteraction(db, databasePath, active.identity)
-      const { agent, drainReflections } = await createRunRuntime(sessionId, config, embedding, interactive, undefined, modelId, locale)
+      const { agent, drainReflections } = await createRunRuntime(sessionId, config, embedding, interactive, undefined, modelId, locale,
+        !groupSender && isDesktopChatMessage(clientId))
       try {
         const stream = await agent.service.start(ownerId, { session_id: sessionId, message: text,
-          client_message_id: clientId, attachments, references, queueClaim, groupSender, resumePassiveMessage }, undefined)
+          client_message_id: clientId, attachments, references, queueClaim, groupSender, resumePassiveMessage, quotedText }, undefined)
         const iterator = stream[Symbol.asyncIterator]()
         const first = await iterator.next()
         if (first.done || typeof first.value.run_id !== 'string') throw new Error('运行确认缺失')
@@ -2999,6 +3186,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
               for await (const _event of iterator) { /* 驱动运行继续提交事件。 */ }
               try { await drainReflections() }
               catch { /* 反思失败不能改变已经完成的主回答。 */ }
+            } catch (error) {
+              await settleStoppedSqliteAgentRun(db, databasePath, identity)
+              throw error
             } finally {
               try { await agent.close() }
               finally {

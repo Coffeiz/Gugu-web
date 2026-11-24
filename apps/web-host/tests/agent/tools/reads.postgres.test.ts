@@ -216,9 +216,8 @@ test('六个工具经Host runtime、真实共享服务和隔离PG续轮，项目
     for (const table of [ddl.projects,ddl.clients,ddl.calendarEvents,ddl.scheduledTasks,ddl.receipts,ddl.undo]) await pool.query(table)
     await pool.query(`CREATE TABLE files(id integer PRIMARY KEY,user_id uuid,project_id integer,storage_key text,deleted_at timestamptz);
       CREATE VIEW project_file_counts AS SELECT project_id,count(*)::bigint AS file_count FROM files WHERE deleted_at IS NULL GROUP BY project_id;
-      CREATE TABLE folders(id integer PRIMARY KEY,user_id uuid,name text);
       CREATE TABLE workspace_directories(id integer PRIMARY KEY,user_id uuid,name text);
-      CREATE TABLE workspaces(id integer PRIMARY KEY,user_id uuid,name text,kind text,enabled boolean,is_default boolean,project_id integer,folder_id integer,directory_id integer,updated_at timestamptz);
+      CREATE TABLE workspaces(id integer PRIMARY KEY,user_id uuid,name text,kind text,enabled boolean,is_default boolean,project_id integer,directory_id integer,updated_at timestamptz);
       CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid,workspace_id integer)`)
     await scheduledTaskMode.apply(pool)
     const projects = await core.transaction(dataContext(owner), async data => [await data.projects.create({name:'待改名😀',start_date:'2026-11-01'}),await data.projects.create({name:'待换色'}),await data.projects.create({name:'待归档'})])
@@ -234,7 +233,7 @@ test('六个工具经Host runtime、真实共享服务和隔离PG续轮，项目
       VALUES(1,$1,1,'提醒','不应进入模型的正文','@once:synthetic','once','2026-11-15 00:59:29.999999+00','qq',false,'{"qq":{"chat_type":"group"}}',now(),now())`,[owner])
     const runtime = createPostgresProjectUpdateRuntime(pool,async(_owner,from,to,_before,onMoved)=>{
       await mkdir(dirname(join(root,to)),{recursive:true});await rename(join(root,from),join(root,to));moves++;onMoved?.()
-    },async()=>{published++})
+    },async()=>{published++},async()=>1)
     const mutations = createDurableProjectMutationPort({core,runtime,metadata:()=>({undoContextId:'agent-session-1'})})
     const options = {core,authorize:async(identity: {ownerId:string},name:string)=>allowed && identity.ownerId===owner && names.includes(name),
       time:{now:()=>new Date('2026-11-15T00:00:00Z'),timezone:async()=> 'Asia/Shanghai'},
@@ -301,7 +300,7 @@ test('新增八工具经Host runtime和隔离PG续轮：阶段顺序修改、笔
     "(3,$2,'note','他人私有笔记','不应泄漏','重构','user',1,'2026-11-15+00',now(),now())",[owner,other,markdown])
   await pool.query("INSERT INTO mind_relations(user_id,src_node_id,dst_node_id,rel_type,edge_key,origin,status,created_at,updated_at) "+
     "VALUES($1,1,2,'related','','user','confirmed',now(),now()),($1,1,3,'related','','user','confirmed',now(),now())",[owner])
-  const runtime=createPostgresProjectUpdateRuntime(pool,async()=>{throw new Error('阶段工具不应移动物理目录')},async()=>{published++})
+  const runtime=createPostgresProjectUpdateRuntime(pool,async()=>{throw new Error('阶段工具不应移动物理目录')},async()=>{published++},async()=>1)
   const mutationOptions={core,runtime,metadata:()=>({undoContextId:'stage-session'})}
   const options={core,notes:createAgentMindReader(core.db,'postgres',async (candidate,id)=>candidate===owner&&id==='path-owned'?{label:'当前文件名'}:null),projectMutations:createDurableProjectMutationPort(mutationOptions),
     authorize:async(identity:{ownerId:string},name:string)=>allowed&&identity.ownerId===owner&&names.includes(name)}
@@ -377,9 +376,8 @@ test('工作区更新和画布列表经真实Host续轮与隔离PG，目录显�
  try{
   const ddl=tablesSql('postgres')
   for(const table of [ddl.projects,ddl.clients,ddl.receipts,ddl.mindNodes,ddl.mindMaps,ddl.mindItems,ddl.mindRelations])await pool.query(table)
-  await pool.query('CREATE TABLE folders(id integer PRIMARY KEY,user_id uuid,name text,deleted_at timestamptz)')
   await pool.query('CREATE TABLE workspace_directories(id integer PRIMARY KEY,user_id uuid,name text,directory_name text,is_system boolean,is_default boolean,deleted_at timestamptz,created_at timestamptz,updated_at timestamptz)')
-  await pool.query('CREATE TABLE workspaces(id integer PRIMARY KEY,user_id uuid,name text,kind text,folder_id integer,project_id integer,directory_id integer,enabled boolean,is_default boolean,created_at timestamptz,updated_at timestamptz)')
+  await pool.query('CREATE TABLE workspaces(id integer PRIMARY KEY,user_id uuid,name text,kind text,project_id integer,directory_id integer,enabled boolean,is_default boolean,created_at timestamptz,updated_at timestamptz)')
   await pool.query('CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid,workspace_id integer)')
   await pool.query("INSERT INTO workspace_directories VALUES(7,$1,'目录','frozen-segment',false,false,NULL,now(),now())",[owner])
   await pool.query("INSERT INTO workspaces VALUES(1,$1,'目录','directory',NULL,NULL,7,true,false,now(),now()),(2,$1,'同目录绑定','directory',NULL,NULL,7,true,false,now(),now()),(3,$2,'他人目录','directory',NULL,NULL,7,true,false,now(),now())",[owner,other])
@@ -395,7 +393,7 @@ test('工作区更新和画布列表经真实Host续轮与隔离PG，目录显�
     {id:'snapshot',name:'canvas_get',input:{canvas_id:1,limit:1}},
     {id:'search-canvas',name:'canvas_search',input:{canvas_id:1,query:'检索',limit:1}},
     {id:'focus-canvas',name:'canvas_focus_node',input:{canvas_id:1,item_id:2}}]})
-  assert.deepEqual(result.wireResults.get('workspace'),{success:true,workspace:{workspace_id:1,name:'新显示名',kind:'directory',enabled:false,is_default:false,bound_session_count:1,project_id:null,folder_id:null,directory_id:7,directory_name:'新显示名'}})
+  assert.deepEqual(result.wireResults.get('workspace'),{success:true,workspace:{workspace_id:1,name:'新显示名',kind:'directory',enabled:false,is_default:false,bound_session_count:1,project_id:null,directory_id:7,directory_name:'新显示名'}})
   const canvases=result.wireResults.get('canvases') as {total:number;canvases:Array<{canvas_id:number;updated_at:string;view:unknown}>}
   const snapshot=result.wireResults.get('snapshot') as {pagination:{total:number};relation_audit:Array<{status:string}>}
   assert.equal(snapshot.pagination.total,2);assert.equal(snapshot.relation_audit[0]!.status,'incomplete')

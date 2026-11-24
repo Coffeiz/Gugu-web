@@ -2,9 +2,9 @@ import { strip } from '../shared/values.js'
 import { CoreError, dataContext } from '../contracts/index.js'
 import type { Fields } from '../contracts/index.js'
 
-export type WorkspaceKind = 'folder' | 'project' | 'directory'
+export type WorkspaceKind = 'project' | 'directory'
 export interface WorkspaceDeclaration {
-  id: number; name: string; kind: WorkspaceKind; folderId: number | null
+  id: number; name: string; kind: WorkspaceKind
   projectId: number | null; directoryId: number | null; enabled: boolean
   isDefault: boolean; boundSessionCount: number
 }
@@ -41,16 +41,16 @@ export function createWorkspaceDeclarationCreator(runtime: WorkspaceDeclarationR
   return async (rawOwner: string, rawInput: Fields): Promise<WorkspaceDeclaration> => {
     const owner = dataContext(rawOwner).ownerId, input = inputObject(rawInput)
     const name = nameValue(input.name).trim()
-    const kind = input.kind === undefined ? 'folder' : input.kind
-    if (kind !== 'folder' && kind !== 'project' && kind !== 'directory') return invalid('工作区类型无效')
+    const kind = input.kind
+    if (kind !== 'project' && kind !== 'directory') return invalid('工作区类型无效')
     if (input.enabled !== undefined && typeof input.enabled !== 'boolean') return invalid('enabled 必须是布尔值')
-    const folderId = optionalId(input.folderId, 'folderId'), projectId = optionalId(input.projectId, 'projectId')
+    const projectId = optionalId(input.projectId, 'projectId')
     const directoryId = optionalId(input.directoryId, 'directoryId')
-    const id = kind === 'folder' ? folderId : kind === 'project' ? projectId : directoryId
+    const id = kind === 'project' ? projectId : directoryId
     return runtime.transaction(async tx => {
       if (id === null || !(await tx.relationExists(owner, kind, id)))
-        throw new CoreError('conflict', kind === 'folder' ? '文件夹不存在' : kind === 'project' ? '项目不存在' : 'Workspace 目录不存在')
-      return tx.insert(owner, { name, kind, folderId: kind === 'folder' ? folderId : null,
+        throw new CoreError('conflict', kind === 'project' ? '项目不存在' : 'Workspace 目录不存在')
+      return tx.insert(owner, { name, kind,
         projectId: kind === 'project' ? projectId : null, directoryId: kind === 'directory' ? directoryId : null,
         enabled: input.enabled === undefined ? true : input.enabled as boolean })
     })

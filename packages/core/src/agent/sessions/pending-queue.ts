@@ -11,7 +11,7 @@ type Item = Record<string, unknown>
 type Row = { sessionId: number | null; items: unknown }
 type Db = Kysely<any>
 export const pendingQueueAttachmentSchema = z.object({
-  file_id: z.number().int().optional(), attach_id: z.string().max(128).optional(),
+  file_path: z.string().max(4096).regex(/^\/(personal|project|workspace)\/[^\\\p{Cc}]+$/u).optional(), attach_id: z.string().max(128).optional(),
   name: z.string().max(512).optional(), ext: z.string().max(32).optional(),
   size: z.number().int().nonnegative().optional(), size_bytes: z.number().int().nonnegative().optional(),
   kind: z.string().max(32).optional(), mime: z.string().max(128).nullish(),
@@ -20,15 +20,12 @@ export const pendingQueueAttachmentSchema = z.object({
   img_width: z.number().int().nonnegative().nullish(), img_height: z.number().int().nonnegative().nullish(),
   transcript: z.string().max(8000).optional(),
 })
-export const pendingQueueReferenceSchema = z.object({ type: z.enum(['project', 'file', 'folder', 'event', 'conversation', 'canvas_note', 'skill', 'mcp', 'scheduled_task']), id: z.union([z.number().int().positive(), z.string().uuid()]), label: z.string().max(512) }).strict()
+export const pendingQueueReferenceSchema = z.union([z.object({ type: z.enum(['project', 'event', 'conversation', 'canvas_note', 'skill', 'mcp', 'scheduled_task']), id: z.union([z.number().int().positive(), z.string().uuid()]), label: z.string().max(512) }).strict(), z.object({
+  type: z.enum(['file', 'folder']), id: z.string().regex(/^path-[A-Za-z0-9_-]{1,24000}$/u), label: z.string().max(512),
+}).strict()])
 export const pendingQueueItemSchema = z.object({ key: z.number().int().positive(), text: z.string().max(200_000), attachments: z.array(pendingQueueAttachmentSchema).max(32).default([]), references: z.array(pendingQueueReferenceSchema).max(50).default([]) }).strict()
 const desktopPendingQueueItemSchema = pendingQueueItemSchema.extend({
   modelId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/u).optional(),
-  references: z.array(z.union([
-    pendingQueueReferenceSchema,
-    z.object({ type: z.literal('file'), id: z.string().regex(/^path-[A-Za-z0-9_-]{1,23995}$/u),
-      label: z.string().max(512) }).strict(),
-  ])).max(50).default([]),
 })
 
 

@@ -432,7 +432,8 @@ describe('Harness Run生命周期与持久化边界', () => {
     })
     const result = await collect(f.harness.start(identity))
     expect(result.state.status).toBe('completed')
-    expect(f.ports.diagnose).toHaveBeenCalledWith('finalization_hook_failed')
+    expect(f.ports.diagnose).toHaveBeenCalledWith('finalization_hook_failed',
+      expect.objectContaining({ identity, error: expect.any(Error) }))
     expect(JSON.stringify(result)).not.toContain('合成私有反思异常')
     await collect(createAgentRunner(f.ports).resume(identity))
     expect(f.ports.context.afterFinal).toHaveBeenCalledTimes(1)

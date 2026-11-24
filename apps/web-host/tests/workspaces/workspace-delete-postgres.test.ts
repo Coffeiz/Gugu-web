@@ -31,7 +31,6 @@ async function withWorkspaceFixture(mode: Mode, work: (context: {
         user_id uuid NOT NULL,
         name varchar(200) NOT NULL,
         kind varchar(20) NOT NULL,
-        folder_id integer,
         project_id integer,
         directory_id integer,
         enabled boolean NOT NULL DEFAULT true,

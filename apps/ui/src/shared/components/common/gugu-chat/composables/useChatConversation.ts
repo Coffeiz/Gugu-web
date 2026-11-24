@@ -66,7 +66,7 @@ export function useChatConversation(options: {
   trackMessageSent?: (turn: number) => void
   onAutomaticModeCommand?: () => Promise<void>
   onSyncSmallH: () => void            // 按内容真实高度重新计算窗口高
-  onPresentFile?: (file: { file_id: number; name?: string; ext?: string }) => void
+  onOpenItem?: (item: { kind: 'file' | 'folder'; id: string }) => void
 }) {
   const platformAccess = options.sessionAccess?.run ? options.sessionAccess : undefined
   const readRunState = options.sessionAccess?.readRunState ?? (id => agentApi.getSessionState(String(id)))
@@ -451,7 +451,7 @@ export function useChatConversation(options: {
 
   // 虚拟列表在切换会话后会先用估算高度绘制，再在可见行挂载后逐帧修正高度。
   // 先在隐藏状态恢复阅读锚点或底部，等测量完成再展示。
-  async function restoreScrollPosition(anchor: SessionScrollAnchor | null) {
+  async function restoreScrollPosition(anchor: SessionScrollAnchor | null, waitForLayout = true) {
     const generation = getViewGeneration()
     await nextTick()
     if (generation !== getViewGeneration()) return
@@ -465,7 +465,7 @@ export function useChatConversation(options: {
       await scrollBottom(true)
     }
     if (generation !== getViewGeneration()) return
-    await waitForStableScrollLayout(anchor, anchorIndex)
+    if (waitForLayout) await waitForStableScrollLayout(anchor, anchorIndex)
   }
 
   async function alignNewWindowToBottom() {
@@ -549,7 +549,7 @@ export function useChatConversation(options: {
     onQueueDispatchError: options.onQueueDispatchError,
     trackMessageSent: options.trackMessageSent,
     onAutomaticModeCommand: options.onAutomaticModeCommand,
-    onPresentFile: options.onPresentFile,
+    onOpenItem: options.onOpenItem,
   })
   const {
     streaming, abortCtrl, pendingQueue, removeQueued, resetSessionTurn, clearPendingQueue,
@@ -658,7 +658,11 @@ export function useChatConversation(options: {
     if (event.status === 'completed' || event.status === 'failed') {
       if (sessionId.value !== event.session_id) return
       if (sessionSettling.value || streaming.value) deferredSessionRefresh.add(event.session_id)
-      else void refreshSessionMessages(event.session_id)
+      else {
+        void refreshSessionMessages(event.session_id)
+        // 终态也可能来自后台运行。即使页面没有订阅该流，也要校准队列并继续发送。
+        void refreshSessionPendingQueue()
+      }
       return
     }
     if (event.status !== 'running') return
@@ -690,7 +694,10 @@ export function useChatConversation(options: {
       platformChanges.add(id)
       schedulePlatformRefresh()
     }
-    if (deferredSessionRefresh.delete(id)) void refreshSessionMessages(id)
+    if (deferredSessionRefresh.delete(id)) {
+      void refreshSessionMessages(id)
+      void refreshSessionPendingQueue()
+    }
   })
 
   // 平台事件只提示数据变化，由持久会话状态决定是否续接。
@@ -716,7 +723,7 @@ export function useChatConversation(options: {
         if (!isCurrent()) return
         if (sessionSettling.value || streaming.value) deferredPlatformRefresh = { id, generation }
         else if (state.active) void resumeStream(id, state.runId)
-        else await refreshSessionMessages(id)
+        else await Promise.all([refreshSessionMessages(id), refreshSessionPendingQueue()])
       } catch {
         // 会话切换或下一条状态事件重新读取。
       } finally {

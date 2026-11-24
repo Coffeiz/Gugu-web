@@ -641,17 +641,16 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       VALUES($1,'合成可编辑目录','directory',$2,true,false,now(),now()) RETURNING id`, [owner, mutableDirectory.rows[0]!.id])
     mutableWorkspaceId = mutableWorkspace.rows[0]!.id
     const seed = await pool.query(`SELECT counts.file_count::integer AS project_files,
-        onboarding.state->'seed'->>'seeded' AS seeded, ledger.used_bytes,
+        onboarding.state->'seed'->>'seeded' AS seeded,
         (SELECT sum(size_bytes) FROM files WHERE user_id=$1) AS file_bytes,
         (SELECT count(*)::integer FROM calendar_events WHERE user_id=$1) AS events
       FROM onboarding_state onboarding
       JOIN project_file_counts counts ON counts.project_id=(onboarding.state->'seed'->>'project_id')::integer
-      JOIN storage_quota_ledgers ledger ON ledger.user_id=onboarding.user_id AND ledger.category='file_library'
       WHERE onboarding.user_id=$1`, [owner])
     assert.equal(seed.rows[0]?.seeded, 'true', '首个账号应完成引导播种')
     assert.equal(seed.rows[0]?.project_files, 2)
     assert.equal(seed.rows[0]?.events, 1)
-    assert.equal(seed.rows[0]?.used_bytes, seed.rows[0]?.file_bytes)
+    assert.ok(Number(seed.rows[0]?.file_bytes) > 0)
     assert.deepEqual((await pool.query(
       'SELECT source_type,status FROM rag_index_jobs WHERE user_id=$1 ORDER BY source_type', [owner],
     )).rows, [{ source_type: 'calendar', status: 'queued' }, { source_type: 'project', status: 'queued' }])

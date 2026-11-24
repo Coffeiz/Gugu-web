@@ -2,10 +2,17 @@ import { link, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it, skipIf } from 'vitest'
-import { finishStagedLocalFile, importLocalFile, openLocalFile, removeLocalTree, stageLocalFile, UnsafeLocalPathError, writeLocalFile, writeLocalFileStream } from '../src/node.js'
+import { createLocalFileTree, finishStagedLocalFile, importLocalFile, openLocalFile, removeLocalTree, stageLocalFile, UnsafeLocalPathError, writeLocalFile, writeLocalFileStream } from '../src/node.js'
 
 const root = await mkdtemp(path.join(tmpdir(), 'gugu-fs-'))
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
+it('本地文件树只用路径解析根内位置，不暴露 storage key 别名', () => {
+  const tree = createLocalFileTree(root, 'owner')
+  expect(tree.path('docs/notes.txt')).toBe('owner/docs/notes.txt')
+  expect(() => tree.path('../outside.txt')).toThrow(UnsafeLocalPathError)
+  expect(tree).not.toHaveProperty('storageKey')
+})
+
 it('只读取授权根内的普通文件，拒绝穿越和符号链接', async () => {
   await mkdir(path.join(root, 'owner'))
   await writeFile(path.join(root, 'owner', 'a'), '内容')

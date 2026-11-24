@@ -11,7 +11,6 @@ import { registerAgentStateLabelRoutes } from './llm-strategy.js'
 import { createProviderCapabilityPreview } from '@gugu/core/byok/capabilities-preview'
 import { registerServiceStatusRoute } from './runtime.js'
 import { registerServiceRestartRoute } from './runtime.js'
-import { registerStorageQuotaStatusRoute } from './storage.js'
 import { registerNotificationBroadcastRoute, registerNotificationAdminHistoryRoutes } from '../notifications/admin.js'
 import { registerEmailRecipientCountRoute } from './email.js'
 import { registerAdminEmbeddingRebuildRoutes } from './embedding.js'
@@ -147,7 +146,6 @@ export function registerAdminRoutes(app: FastifyInstance, options: WebUiOptions)
     })
   }
   if (options.adminAuth && options.emailRecipientCount) registerEmailRecipientCountRoute(app, { ...options.emailRecipientCount, requireAdmin: options.adminAuth.requireAdmin })
-  if (options.adminAuth && options.storageQuotaStatus) registerStorageQuotaStatusRoute(app, { ...options.storageQuotaStatus, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.serviceStatus) registerServiceStatusRoute(app, { ...options.serviceStatus, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.serviceRestart) registerServiceRestartRoute(app, { ...options.serviceRestart, requireAdmin: options.adminAuth.requireAdmin })
   if (options.adminAuth && options.adminMaintenanceStatus) registerAdminMaintenanceStatusRoutes(app, {

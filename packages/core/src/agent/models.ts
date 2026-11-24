@@ -136,6 +136,7 @@ export interface PersistedHistoryRow extends HistoryIdentity {
   files?: Json[]
   senderId?: string | null
   senderName?: string | null
+  ownerSpeaker?: boolean
   source?: string | null
   chatType?: string | null
   /** 只读入本Run内存的首发完整图片投影，不属于持久Canonical正文。 */
@@ -193,6 +194,7 @@ export interface RagContext {
 }
 
 export interface CurrentUser {
+  groupSpeaker?: { id?: string | null; name?: string | null; owner?: boolean }
   message: CanonicalMessage
   persistedMessageId?: string | null
   /** 真实请求原文；优先用于RAG，不把图文投影中的引用/附件/系统补充当作查询。 */
@@ -200,7 +202,7 @@ export interface CurrentUser {
   /** 由注入的时区格式化器生成；不是当前墙钟时间。 */
   messageTime?: string | null
   /** 入库的用户消息时间，由请求组装按会话时区格式化。 */
-  messageTimestamp?: string
+  messageTimestamp?: string | number
 }
 
 export interface HistoryBaselineIdentity {
@@ -333,6 +335,7 @@ export interface ContextLoadPolicy {
 }
 
 export interface ContextSourceSelection {
+  scene?: import('./scenes/index.js').AgentScene
   modelIdentity: string
   contextWindow: number
   locale: string
@@ -805,7 +808,7 @@ export interface RunEvent {
   readonly identity: RunIdentity
   readonly sequence: number
   readonly round: number
-  readonly type: 'run_started' | 'round_start' | 'token' | 'round_end' | 'tool_call' | 'tool_done' | 'interaction_required' | 'interaction_resolved' | 'compaction' | 'provider_diagnostic' | 'retry' | 'run_waiting' | 'run_resumed' | 'final'
+  readonly type: 'run_started' | 'round_start' | 'token' | 'text_end' | 'round_end' | 'tool_call' | 'tool_done' | 'interaction_required' | 'interaction_resolved' | 'compaction' | 'provider_diagnostic' | 'retry' | 'run_waiting' | 'run_resumed' | 'final'
   readonly payload: Readonly<Record<string, unknown>>
 }
 

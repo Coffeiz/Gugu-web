@@ -8,7 +8,7 @@ interface HistoryRow {
   run_id: string | null; round_id: string | null; canonical_batch_id: string | null
   im_platform_sent_ms: string | null; im_event_received_ms: string | null
   created_at: string | null; sent_at: string | null; quoted_text: string | null; files: Json[] | null
-  platform_user_id: string | null; platform_user_name: string | null; source: string | null; chat_type: string | null
+  platform_user_id: string | null; platform_user_name: string | null; owner_platform_user_id: string | null; source: string | null; chat_type: string | null
 }
 
 function number(value: string | null): number | null {
@@ -31,7 +31,8 @@ export function createPostgresCanonicalHistoryReader(pool: Pick<Pool, 'query' | 
                 m.history_anchor_seq::text, m.role, m.content, m.content_json, m.covers_until_seq::text,
                 m.run_id, m.round_id, m.canonical_batch_id::text, m.im_platform_sent_ms::text,
                 m.im_event_received_ms::text, m.created_at::text, m.sent_at::text, m.quoted_text,
-                m.files, m.platform_user_id, m.platform_user_name, s.source, m.chat_type
+                m.files, m.platform_user_id, m.platform_user_name, s.source, m.chat_type,
+                (SELECT b.owner_platform_user_id FROM user_bots b WHERE b.user_id=s.user_id AND b.platform=s.source AND b.id::text=s.bot_id) AS owner_platform_user_id
            FROM conversation_sessions s LEFT JOIN conversation_messages m ON m.session_id = s.id
           WHERE s.user_id = $1 AND s.id = $2`, [identity.ownerId, identity.sessionId])
       signal?.throwIfAborted()
@@ -43,7 +44,7 @@ export function createPostgresCanonicalHistoryReader(pool: Pick<Pool, 'query' | 
         canonicalBatchId: row.canonical_batch_id, platformSentMs: number(row.im_platform_sent_ms),
         eventReceivedMs: number(row.im_event_received_ms), createdAt: row.created_at, sentAt: row.sent_at,
         quote: row.quoted_text, files: row.files ?? undefined, senderId: row.platform_user_id,
-        senderName: row.platform_user_name, source: row.source, chatType: row.chat_type,
+        senderName: row.platform_user_name, ownerSpeaker: !!row.platform_user_id && row.platform_user_id === row.owner_platform_user_id, source: row.source, chatType: row.chat_type,
       }))
       return { baselineSeq: number(result.rows[0]!.baseline)!, baselineIdentity: { baselineSeq: number(result.rows[0]!.baseline)!, baselineHash: result.rows[0]!.baseline_hash, snapshotHash: result.rows[0]!.snapshot_hash }, rows }
     },

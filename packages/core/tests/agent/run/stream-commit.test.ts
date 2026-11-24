@@ -1,9 +1,40 @@
 import { expect, it } from 'vitest'
 import type { ProviderEvent } from '../../../src/agent/models.js'
-import { collect, fixture, identity, usage } from './fixtures.js'
+import { collect, deferred, fixture, identity, toolCall, usage } from './fixtures.js'
 
 const tokenEvents = (text: string): ProviderEvent[] =>
   Array.from({ length: text.length }, (_, index) => ({ type: 'token', text: text[index]! }))
+
+it('工具解析尚未返回时仍提交并结束这一轮的可见正文', async () => {
+  const text = '合成正文。'
+  const { harness, ports } = fixture([[{ type: 'token', text },
+    { type: 'complete', text, calls: [{ ...toolCall, name: 'call_tool' }] }],
+  [{ type: 'complete', text: '合成结果。', calls: [] }]])
+  const resolveCall = deferred<{ call: typeof toolCall }>()
+  const committed = deferred<string>()
+  ports.tools.resolveCall = () => resolveCall.promise
+  ports.publish = async event => { if (event.type === 'text_end') committed.resolve(String(event.payload.text)) }
+  const run = collect(harness.start(identity))
+  try { expect(await committed.promise).toBe(text) }
+  finally { resolveCall.resolve({ call: toolCall }) }
+  expect((await run).events.filter(event => event.type === 'text_end')).toHaveLength(1)
+})
+
+it('上游停顿时提交短文本，不等下一条 Provider 事件', { timeout: 1500 }, async () => {
+  const { harness, ports } = fixture()
+  const resume = deferred<void>()
+  const committed = deferred<void>()
+  ports.provider = { async *stream() {
+    yield { type: 'token', text: '合成半句话' }
+    await resume.promise
+    yield { type: 'complete', text: '合成半句话', calls: [] }
+  } }
+  ports.publish = async event => { if (event.type === 'token') committed.resolve() }
+  const run = collect(harness.start(identity))
+  await committed.promise
+  resume.resolve()
+  expect((await run).state.status).toBe('completed')
+})
 
 it('模型增量按块提交：正文不丢字、增量载荷可拼接、事件数量远小于增量数', async () => {
   const text = '合成流式正文'.repeat(100)

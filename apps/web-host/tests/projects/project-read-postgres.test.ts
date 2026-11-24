@@ -1,3 +1,6 @@
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
@@ -28,12 +31,13 @@ const foreign = { ...base, id: 6, name: '他人项目', createdAt: '2026-01-06',
 async function withProjects(mode: 'host' | 'core', work: (context: {
   app: ReturnType<typeof createApp>; pool: Pool; core: CoreRuntime
   getter: ReturnType<typeof createProjectGetter>
-  recent: ReturnType<typeof recentProject>
+  recent: ReturnType<typeof recentProject>; storageRoot: string
 }) => Promise<void>) {
   const schema = `gugu_project_read_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema} -c timezone=Asia/Shanghai`, max: 3 })
+  const storageRoot = await mkdtemp(join(tmpdir(), 'gugu-project-read-path-'))
   let core: CoreRuntime | undefined, app: ReturnType<typeof createApp> | undefined
   try {
     await pool.query(`CREATE TABLE projects (
@@ -45,7 +49,7 @@ async function withProjects(mode: 'host' | 'core', work: (context: {
       idempotency_key varchar(64), idempotency_fingerprint varchar(64),
       CONSTRAINT uq_projects_user_idempotency_key UNIQUE(user_id,idempotency_key)
     )`)
-    await pool.query('CREATE TABLE project_file_counts (project_id integer PRIMARY KEY, file_count bigint NOT NULL)')
+    if (mode === 'core') await pool.query('CREATE TABLE project_file_counts (project_id integer PRIMARY KEY, file_count bigint NOT NULL)')
     const now = Math.floor(Date.now() / 1000) * 1000
     const recentDate = new Date(now - 29 * 86_400_000).toISOString(), oldDate = new Date(now - 31 * 86_400_000).toISOString()
     const recent = recentProject(recentDate)
@@ -58,21 +62,27 @@ async function withProjects(mode: 'host' | 'core', work: (context: {
              (5,$1,'31天回收项目',NULL,NULL,'active',NULL,NULL,'synthetic-color',0,'[]',NULL,NULL,1,false,NULL,'2026-01-05T00:00:00Z','2026-02-01T00:00:00Z',$5),
              (6,$2,'他人项目',NULL,NULL,'active',NULL,NULL,'synthetic-color',0,'[]',NULL,NULL,1,false,NULL,'2026-01-06T00:00:00Z','2026-02-01T00:00:00Z',NULL)`,
       [owner, other, JSON.stringify([validStage]), recentDate, oldDate])
-    await pool.query('INSERT INTO project_file_counts VALUES (1,9),(3,7),(4,2),(5,4),(6,100),(999,999)')
+    if (mode === 'core') await pool.query('INSERT INTO project_file_counts VALUES (1,9),(3,7),(4,2),(5,4),(6,100),(999,999)')
+    else for (const [user, id, name, count] of [[owner, 1, '活跃项目', 9], [owner, 3, '归档项目', 7], [owner, 4, '29天回收项目', 2], [owner, 5, '31天回收项目', 4], [other, 6, '他人项目', 100]] as const) {
+      const folder = join(storageRoot, user, '项目文件', '2026', '01', name + ' #' + id)
+      await mkdir(folder, { recursive: true })
+      await Promise.all(Array.from({ length: count }, (_, index) => writeFile(join(folder, index + '.txt'), '合成文件')))
+    }
     assert.equal((await pool.query("SELECT to_regclass('files') AS table_name")).rows[0].table_name, null)
     core = await createPostgresRuntime({ url: databaseUrl!, schema, maxConnections: 1 })
     const countPort = createKyselyProjectFileCountReader(core.db as unknown as Parameters<typeof createKyselyProjectFileCountReader>[0], 'postgres')
-    const getter = mode === 'core' ? createProjectGetter(core, countPort) : hostGetter(core, pool)
+    const getter = mode === 'core' ? createProjectGetter(core, countPort) : hostGetter(core, pool, storageRoot)
     app = createApp({ appName: 'Gugu', isReady: async () => true,
-      listProjects: mode === 'core' ? createProjectListing(core, countPort) : hostListing(core, pool),
-      getProject: getter, listProjectFileCounts: mode === 'core' ? createProjectFileCountListing(countPort) : hostCounts(pool),
+      listProjects: mode === 'core' ? createProjectListing(core, countPort) : hostListing(core, pool, storageRoot),
+      getProject: getter, listProjectFileCounts: mode === 'core' ? createProjectFileCountListing(countPort) : hostCounts(pool, storageRoot),
       userAuth: { secret, lookupUser: async id => [owner, other].includes(id) ? {
         id, username: 'synthetic-user', displayName: null, email: 'synthetic@example.test', isActive: true,
         accountStatus: 'active', securityVersion: 1, avatarUrl: null, createdAt: null, timezone: null, emailSubscribed: false, imChannels: [],
       } : null },
     })
-    await work({ app, pool, core, getter, recent })
+    await work({ app, pool, core, getter, recent, storageRoot })
   } finally {
+    await rm(storageRoot, { recursive: true, force: true })
     try { await app?.close() } finally {
       try { await core?.close() } finally {
         try { await pool.end() } finally {
@@ -90,8 +100,8 @@ function recentProject(date: string) {
 }
 
 for (const mode of ['host', 'core'] as const) {
-  test(`项目查询经真实Fastify和PG保留投影计数、回收期限与阶段解析契约（${mode}）`, options, async () => {
-    await withProjects(mode, async ({ app, pool, recent }) => {
+  test(`项目查询经真实Fastify和PG保留投影计数、回收期限与阶段解析契约（${mode}）`, { ...options, skip: options.skip || (mode === 'host' && process.platform !== 'linux') }, async () => {
+    await withProjects(mode, async ({ app, pool, recent, storageRoot }) => {
       const get = (url: string, user = owner) => app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${signedUserToken(secret, user)}` } })
       for (const [url, expected] of [
         ['/api/v1/projects', [broken, first]], ['/api/v1/projects?archived=true', [archived]],
@@ -121,8 +131,13 @@ for (const mode of ['host', 'core'] as const) {
       }
       await pool.query("UPDATE projects SET stages_json='{broken' WHERE id=2")
       assert.equal((await pool.query('SELECT stages_json FROM projects WHERE id=1')).rows[0].stages_json, JSON.stringify([validStage]))
-      // 故障来自真实投影SQL；不能把缺表当作缺少某个项目的计数并回退为0。
-      await pool.query('ALTER TABLE project_file_counts RENAME TO unavailable_project_file_counts')
+      // 真实读取失败应报错，防止无权限的路径被当成空目录。
+      if (mode === 'core') await pool.query('ALTER TABLE project_file_counts RENAME TO unavailable_project_file_counts')
+      else {
+        const project = join(storageRoot, owner, '项目文件', '2026', '01', '活跃项目 #1')
+        await rm(project, { recursive: true })
+        await symlink(storageRoot, project)
+      }
       for (const url of ['/api/v1/projects', '/api/v1/projects/1', '/api/v1/projects/file-counts']) {
         const response = await get(url)
         assert.equal(response.statusCode, 500)

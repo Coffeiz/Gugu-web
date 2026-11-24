@@ -6,9 +6,12 @@
     @secret-cancel="selectedMsg => $emit('secretCancel', selectedMsg)" />
   <div v-if="isGroupSession && msg.role === 'ai'" class="msg-speaker">{{ t('chatUi.gugu') }}</div>
   <button v-if="msg.subagentOutput" type="button" class="msg-speaker msg-speaker-subagent"
-    :aria-expanded="subagentExpanded === true" @click="$emit('toggleSubagent')">
+    :aria-expanded="subagentExpanded === true"
+    :aria-label="msg.subagentElapsedMs === undefined ? undefined : t('chatUi.subagentDuration', { agent: memberSpeaker, duration: formatToolDuration(msg.subagentElapsedMs) })"
+    @click="$emit('toggleSubagent')">
     <span class="msg-speaker-bird" aria-hidden="true"></span>
     <span>{{ memberSpeaker }}</span>
+    <span v-if="msg.subagentElapsedMs !== undefined" class="msg-speaker-subagent-duration" aria-hidden="true">{{ formatToolDuration(msg.subagentElapsedMs) }}</span>
     <FlipChevron :open="subagentExpanded" aria-hidden="true" />
   </button>
   <div v-else-if="memberSpeaker" class="msg-speaker">{{ memberSpeaker }}</div>
@@ -16,10 +19,10 @@
        （可能带 markdown 表格等）直接摊平混进正文气泡（devlog 2026-07-10）。 -->
   <div v-if="msg.role !== 'ai' && (msg.quotedText || msg.files?.some(f => f.quoted))" class="msg-quoted" :title="msg.quotedText || t('chat.quotedMessage')">
     <span v-if="msg.quotedText">{{ displayQQFaces(msg.quotedText) }}</span>
-    <template v-for="f in (msg.files || []).filter(f => f.quoted)" :key="`quoted:${f.file_id || f.attach_id}`">
-      <img v-if="f.qq_face || isAnimatedImageFile(f)" class="msg-quoted-thumb msg-face-gif" v-lazy-face="f.file_id || f.attach_id" draggable="false" :alt="t('chat.quotedImage')" @click.stop="$emit('openFile', f)" />
+    <template v-for="f in (msg.files || []).filter(f => f.quoted)" :key="`quoted:${f.file_path || f.attach_id}`">
+      <img v-if="f.qq_face || isAnimatedImageFile(f)" class="msg-quoted-thumb msg-face-gif" v-lazy-face="f.file_path || f.attach_id" draggable="false" :alt="t('chat.quotedImage')" @click.stop="$emit('openFile', f)" />
       <img v-else-if="f._thumbUrl" class="msg-quoted-thumb" :src="f._thumbUrl" draggable="false" :alt="t('chat.quotedImage')" @click.stop="$emit('openFile', f)" />
-      <img v-else-if="isImageFile(f)" class="msg-quoted-thumb" v-lazy-thumb="f.file_id || f.attach_id" draggable="false" :alt="t('chat.quotedImage')" @click.stop="$emit('openFile', f)" />
+      <img v-else-if="isImageFile(f)" class="msg-quoted-thumb" v-lazy-thumb="f.file_path || f.attach_id" draggable="false" :alt="t('chat.quotedImage')" @click.stop="$emit('openFile', f)" />
       <!-- 非图片引用文件（文档/压缩包等）：小 chip 展示文件名，可点开预览。
            之前两头都不渲染（msg-files 又排除 quoted），引用条看起来是空的。 -->
       <span v-else class="msg-quoted-file" @click.stop="$emit('openFile', f)">{{ f.name }}{{ f.ext ? `.${f.ext}` : '' }}</span>
@@ -52,7 +55,7 @@
     </div>
   </div>
   <div v-if="msg.files && msg.files.length" class="msg-files">
-    <template v-for="f in msg.files.filter(f => !f.quoted)" :key="f.file_id || f.attach_id">
+    <template v-for="f in msg.files.filter(f => !f.quoted)" :key="f.file_path || f.attach_id || f.name">
     <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->
     <template v-if="f.kind === 'voice'">
     <div class="msg-voice-wrap">
@@ -77,23 +80,38 @@
     <div v-else-if="f.transcript_status === 'empty' && isTranscriptOpen(f)" class="msg-voice-transcript">{{ t('chat.transcriptionEmpty') }}</div>
     </template>
     <div v-else-if="f.qq_face" class="msg-face-image-wrap" @click="$emit('openFile', f)" :title="t('chat.viewEmoji')">
-      <img class="msg-face-image" v-lazy-face="f.file_id || f.attach_id" draggable="false" :alt="t('chat.viewEmoji')" />
+      <img class="msg-face-image" v-lazy-face="f.file_path || f.attach_id" draggable="false" :alt="t('chat.viewEmoji')" />
     </div>
-    <div v-else class="msg-file press-fx" @click="$emit('openFile', f)" :title="canPreview(f) ? t('chat.preview') : t('chat.download')">
-      <span class="msg-file-ext">
-        <template v-if="!f.qq_face">{{ (f.ext || 'file').toUpperCase().slice(0, 4) }}</template>
-        <template v-if="isImageFile(f)">
-          <img v-if="f._thumbUrl" class="msg-file-thumb" :src="f._thumbUrl"
-            draggable="false" alt="" @error="($event.target as HTMLElement).remove()" />
-          <img v-else class="msg-file-thumb" v-lazy-thumb="f.file_id || f.attach_id"
-            decoding="async" draggable="false" alt="" @error="($event.target as HTMLElement).remove()" />
-        </template>
-      </span>
-      <span class="msg-file-info">
-        <span v-if="!f.qq_face" class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
-        <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · {{ canPreview(f) ? t('chat.preview') : t('chat.download') }}</span>
-      </span>
-      <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" :title="t('chat.download')" @click.stop="$emit('download', f)"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
+    <div v-else class="chat-file-card-actions chat-attachment-card">
+      <button type="button" class="chat-object-card" data-object-type="file"
+              :title="canPreview(f) ? t('chat.preview') : t('chat.download')"
+              @click="$emit('openFile', f)">
+        <span v-if="isImageFile(f)" class="chat-attachment-preview" aria-hidden="true">
+          <component :is="fileListIcon(f.ext)" :size="24" />
+          <img v-if="f._thumbUrl" :src="f._thumbUrl" draggable="false" alt=""
+               @load="($event.target as HTMLImageElement).classList.add('is-loaded')"
+               @error="($event.target as HTMLImageElement).classList.remove('is-loaded')" />
+          <img v-else v-lazy-thumb="f.file_path || f.attach_id" decoding="async" draggable="false" alt=""
+               @load="($event.target as HTMLImageElement).classList.add('is-loaded')"
+               @error="($event.target as HTMLImageElement).classList.remove('is-loaded')" />
+        </span>
+        <span class="chat-object-file-identity">
+          <span v-if="!isImageFile(f)" class="chat-object-file-icon" :style="{ '--chat-file-icon-color': fileIconColor(f.ext) }" aria-hidden="true">
+            <component :is="fileListIcon(f.ext)" :size="20" />
+          </span>
+          <span class="chat-object-card-title">{{ attachmentName(f) }}</span>
+        </span>
+        <span class="chat-object-card-details">
+          <span class="chat-object-card-fact">
+            <span class="chat-object-card-fact-label">{{ t('files.size') }}</span>
+            <span class="chat-object-card-fact-value">{{ fmtSize(f.size_bytes ?? f.size) }}</span>
+          </span>
+        </span>
+      </button>
+      <button type="button" class="chat-file-card-download" :title="t('chat.download')"
+              :aria-label="t('chat.download')" @click="$emit('download', f)">
+        <Icon name="action.down" :size="16" />
+      </button>
     </div>
     </template>
   </div>
@@ -132,6 +150,8 @@ import {
 } from './messageDisplay'
 import { chatAttachmentImageKey } from './chatPresentationAccess'
 import { makeLazyThumbDirective } from './lazyThumbDirective'
+import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
+import { formatToolDuration } from './toolActivity'
 const props = defineProps<{
   msg: ChatMessage
   timestamp?: string
@@ -178,8 +198,13 @@ const memberSpeaker = computed(() => props.msg.subagentOutput ? props.msg.speake
   : props.isGroupSession && props.msg.role === 'member' ? props.msg.speakerLabel : undefined)
 const openTranscripts = ref(new Set<string>())
 const dismissedTranscripts = ref(new Set<string>())
+function attachmentName(file: ChatFile) {
+  const name = file.name || t('mindUi.unnamedFile')
+  const ext = file.ext ? `.${file.ext}` : ''
+  return ext && !name.toLowerCase().endsWith(ext.toLowerCase()) ? name + ext : name
+}
 function transcriptKey(file: ChatFile) {
-  return String(file.attach_id || file.file_id || file.name || 'voice')
+  return String(file.attach_id || file.file_path || file.name || 'voice')
 }
 function isTranscriptOpen(file: ChatFile) {
   const key = transcriptKey(file)

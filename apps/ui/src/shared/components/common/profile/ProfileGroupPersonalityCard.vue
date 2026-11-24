@@ -57,7 +57,7 @@ function openEditor(enableOnSave = false) {
   status.value = ''
   error.value = ''
   previewStore.openVirtual(
-    { id: -3, displayName: 'group-persona', ext: 'MD', size: `${characterCount.value} 字符` },
+    { virtualKey: 'group-persona', displayName: 'group-persona', ext: 'MD', size: `${characterCount.value} 字符` },
     prefsStore.groupPersonalityPreference,
     content => saveDocument(content, enableOnSave),
   )

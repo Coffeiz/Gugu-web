@@ -217,7 +217,7 @@ test('周期结果和停用通知共用冻结收件人，Bot 归属变化时不�
   })
   const send = await deliver.bindRecipients({
     id: '1', ownerId, name: '周期任务', payload: '', channels: ['email', 'feishu'],
-    deliveryTargets: {}, emailAttachmentFileIds: [], authorizedTools: [], workspaceId: null, filesystemGrantId: null,
+    deliveryTargets: {}, emailAttachmentFilePaths: [], authorizedTools: [], workspaceId: null, filesystemGrantId: null,
   })
   email = 'new@example.test'
   assert.deepEqual(await send({ text: '任务结果', status: 'success', files: [] }), { 邮件: '已发送', 飞书: '已发送' })
@@ -245,7 +245,7 @@ test('邮件投递后租约被接管时不再写网页通知', async () => {
   })
   await assert.rejects(deliver({
     id: '1', ownerId: randomUUID(), name: '周期任务', payload: '', channels: ['email', 'web'],
-    deliveryTargets: {}, emailAttachmentFileIds: [], authorizedTools: [], workspaceId: null,
+    deliveryTargets: {}, emailAttachmentFilePaths: [], authorizedTools: [], workspaceId: null,
     filesystemGrantId: null,
   }, { text: '测试', status: 'success', files: [] }, async () => {
     if (!held) throw new Error('任务执行租约已失效')
@@ -284,7 +284,7 @@ test('实际定时正文使用保存的飞书 Bot 和群，并如实报告附件
   })
   const task = { id: '3', ownerId, name: '汇报', payload: '', channels: ['web', 'feishu', 'email'],
     deliveryTargets: { feishu: { platform: 'feishu', chat_type: 'group', chat_id: 'oc_saved', channel_id: '8' } },
-    authorizedTools: [], emailAttachmentFileIds: [], workspaceId: null, filesystemGrantId: null }
+    authorizedTools: [], emailAttachmentFilePaths: [], workspaceId: null, filesystemGrantId: null }
   assert.deepEqual(await deliver(task, { status: 'failed', text: '执行结果', files: [{ id: 7 }] }), {
     邮件: '附件不可用（本轮生成的附件已过期，无法添加到邮件）',
     'web 通知': '已发送（网页通知不支持附件，图片未随通知显示）',

@@ -10,7 +10,7 @@ import { dirname, join, resolve } from 'node:path'
 import { createChatAttachmentDraftClearer } from '../agent/attachments/clear-drafts.js'
 import { clearSqliteAgentMemory, forgetSqliteAgentMemory, readSqliteAgentMemory } from '../agent/memory/sqlite.js'
 import { loadSqliteAgentRunSecret } from '../agent/run/sqlite-secret.js'
-import { readDesktopImAttachmentReference, nextDesktopQqSequence, recordDesktopImGroupMessage, readDesktopImGroupAttentionHistory, resumeDesktopImPendingAsk, readPendingDesktopImConnection, desktopImProjection, rejectDesktopImEvent, desktopImPrompt, admitDesktopImEvent, prepareDesktopImEvent, updateDesktopImDelivery } from '../im/desktop-inbox.js'
+import { readDesktopImAttachmentReference, nextDesktopQqSequence, recordDesktopImGroupMessage, readDesktopImGroupAttentionHistory, resumeDesktopImPendingAsk, readPendingDesktopImConnection, desktopImProjection, rejectDesktopImEvent, desktopImPrompt, admitDesktopImEvent, prepareDesktopImEvent, readDesktopImCancellationTarget, readDesktopImSessionId, updateDesktopImDelivery } from '../im/desktop-inbox.js'
 import { DESKTOP_CALENDAR_UNDO_CONTEXT, MAX_AGENT_RESPONSE } from '../contracts/desktop.js'
 import { createDesktopMemoryFiles } from '../agent/memory/desktop-files.js'
 import { settleClosedSqliteInteraction } from '../agent/run/sqlite-recovery.js'
@@ -25,14 +25,15 @@ import { createSqliteAgentAdmission } from '../agent/run/sqlite-admission.js'
 import { createSqlAgentPendingQueue } from '../agent/sessions/pending-queue.js'
 import { createDesktopAgentEventReader } from './desktop-agent-events.js'
 import { AgentToolEventDetailsNotFoundError, AgentToolEventSessionNotFoundError, createSqlAgentToolEventDetails } from '../agent/sessions/tool-event-details.js'
-import { appendDesktopAgentTurn, createDesktopAgentSession, deleteDesktopAgentSession, renameDesktopAgentSession, listDesktopAgentSessions, manageDesktopSessionGoal, manageDesktopSessionWorkspace, readDesktopAgentHistoryPage, readDesktopAgentMessages } from '../agent/sessions/desktop.js'
+import { resetAgentSessionContext } from '../agent/sessions/delete-data.js'
+import { appendDesktopAgentTurn, clearDesktopWorkspaceBindings, createDesktopAgentSession, deleteDesktopAgentSession, renameDesktopAgentSession, listDesktopAgentSessions, manageDesktopSessionGoal, manageDesktopSessionWorkspace, readDesktopAgentHistoryPage, readDesktopAgentMessages } from '../agent/sessions/desktop.js'
 import { createAgentSessionApplication } from '../agent/sessions/application.js'
 import { createSqlAgentSessionRepository } from '../agent/sessions/data.js'
 import { object, safeInteger } from '../shared/values.js'
 import { parentPort, workerData } from 'node:worker_threads'
 import { dataContext, CoreError } from '../contracts/index.js'
 import type { ErrorCode, Fields } from '../contracts/index.js'
-import type { Kysely, Transaction } from 'kysely'
+import { sql, type Kysely, type Transaction } from 'kysely'
 import type { Database } from '../data/schema.js'
 import { initializeSqlite, openSqliteRuntime } from '../data/sqlite.js'
 import { execute, isMutation, validateCommandParams } from './commands.js'
@@ -86,6 +87,7 @@ import { buildDesktopGreetingPrompt } from './desktop-greeting.js'
 import { readDesktopAgentUsage } from './desktop-agent-usage.js'
 import { desktopAgentPreference } from '../preferences/desktop-agent.js'
 import { createDesktopAppearanceService } from '../preferences/desktop-appearance.js'
+import { normalizeImChartAppearance } from '../preferences/palette.js'
 import { purgeDesktopProject, setDesktopProjectDeleted } from '../projects/desktop-board.js'
 import { projectResponse } from '../projects/project-projection.js'
 import { projectRecord } from '../data/codec.js'
@@ -132,9 +134,10 @@ try {
       return Promise.reject(new CoreError('invalid_request', '桌面 Agent 宿主能力未开放'))
     signal?.throwIfAborted()
     const requestId = ++hostRequestSequence
-    const timeoutMs = method === 'agent.search.deep_research' || method === 'agent.search.similar_image_search'
-      ? 120_000
-      : 15_000
+    let timeoutMs = 15_000
+    if (method === 'agent.search.deep_research' || method === 'agent.search.similar_image_search') timeoutMs = 120_000
+    // 为 QQ 分块上传和随后提交文件消息预留时间。
+    if (method === 'agent.im.sendAttachment') timeoutMs = 330_000
     return new Promise((resolve, reject) => {
       const finish = () => {
         pendingHostRequests.delete(requestId)
@@ -164,7 +167,8 @@ try {
   const memoryRoot = config.exclusive ? process.env.GUGU_DESKTOP_MEMORY_ROOT : undefined
   const memoryFiles = memoryRoot ? createDesktopMemoryFiles(runtime.db, memoryRoot, ownerId) : undefined
   await memoryFiles?.initialize()
-  const notifyAgentRunChanged = (sessionId: number, runId: string, interactionChanged?: true) => {
+  await memoryFiles?.flushImportedIm()
+  const notifyAgentRunChanged = (sessionId: number, runId?: string, interactionChanged?: true) => {
     port.postMessage({ event: 'agent_run_changed', sessionId, runId, interactionChanged })
   }
   const loopScope = config.exclusive ? createDesktopLoopScope(process.env, runtime.db, ownerId) : undefined
@@ -208,7 +212,7 @@ try {
   const pendingQueue = createSqlAgentPendingQueue(runtime.db, 'sqlite', {
     async isSessionActive(sessionId, tx) {
       const active = await createSqliteAgentAdmission(tx as unknown as Transaction<Database>).active(ownerId, sessionId)
-      return Boolean(active?.identity) || active?.executionState === 'baseline_updating'
+      return active?.executionState === 'running' || active?.executionState === 'baseline_updating'
     },
   })
   const agentSessions = createAgentSessionApplication(createSqlAgentSessionRepository(runtime.db, 'sqlite'))
@@ -284,6 +288,9 @@ try {
           return
         }
         const flag = new Int32Array(job.cancel)
+        // 与宿主的队列超时原子竞争；已撤销的请求绝不能开始执行。
+        if (Atomics.compareExchange(flag, 1, 0, 1) !== 0)
+          throw new CoreError('cancelled', '操作已取消')
         const cancellation = new AbortController()
         const abortIfCancelled = () => {
           if (!cancellation.signal.aborted && (Atomics.load(flag, 0) !== 0 || Date.now() >= job.deadline))
@@ -300,12 +307,34 @@ try {
         if (job.method === 'im.inbox.admit') {
           validateCommandParams(job.method, job.params)
           result = await admitDesktopImEvent(runtime.db, ownerId, job.params)
+        } else if (job.method === 'im.inbox.status') {
+          validateCommandParams(job.method, job.params)
+          const sessionId = await readDesktopImSessionId(runtime.db, ownerId, job.params)
+          const page = sessionId === null ? null : readCompactionEvents(sessionId, undefined, 0, true)
+            ?? await readAgentEvents(sessionId, undefined, 0, true)
+          result = { status: page?.executionState === 'baseline_updating' ? 'compacting' : page?.status ?? 'idle' }
+        } else if (job.method === 'im.inbox.cancelRun') {
+          validateCommandParams(job.method, job.params)
+          const stop = async (tx: Kysely<Database>) => {
+            const target = await readDesktopImCancellationTarget(tx, ownerId, job.params)
+            if (!target) return { outcome: 'idle' as const }
+            if (!target.initiator) return { outcome: 'not_owner' as const }
+            const cancelled = await createSqliteAgentAdmission(tx).requestCancel(ownerId, target.sessionId, target.runId)
+            return { outcome: cancelled.outcome, sessionId: target.sessionId, runId: target.runId }
+          }
+          const stopped = job.operationId
+            ? (await runtime.operationWithTransaction(context, job.operationId, job.method, job.params, stop, { signal })).result
+            : await runtime.db.transaction().execute(stop)
+          if (stopped.outcome === 'requested' && 'sessionId' in stopped)
+            await agentRuns?.notifyCancel(stopped.sessionId!, stopped.runId!)
+          result = { outcome: stopped.outcome }
         } else if (job.method === 'im.inbox.attachmentReference') {
           validateCommandParams(job.method, job.params)
           result = await readDesktopImAttachmentReference(runtime.db, ownerId, job.params)
         } else if (job.method === 'im.inbox.recordGroup') {
           validateCommandParams(job.method, job.params)
-          result = await recordDesktopImGroupMessage(runtime.db, ownerId, job.params, () => agentRuns?.resumeReflections())
+          result = await recordDesktopImGroupMessage(runtime.db, ownerId, job.params,
+            () => agentRuns?.resumeReflections(), notifyAgentRunChanged)
         } else if (job.method === 'im.inbox.groupAttentionHistory') {
           validateCommandParams(job.method, job.params)
           result = await readDesktopImGroupAttentionHistory(runtime.db, ownerId, job.params)
@@ -330,7 +359,10 @@ try {
           if ((type !== 'mermaid' && type !== 'math') || typeof source !== 'string' || !source || source.length > 20_000)
             throw new CoreError('invalid_request', '图表渲染参数无效')
           const { renderCharts } = await import('@gugu/charts/render')
-          const [png] = await renderCharts({ charts: [{ type, source }] },
+          const preferences = await createDesktopAppearanceService(
+            createKyselyPreferenceDocumentStore(runtime.db, runtime.backend),
+          ).get(ownerId)
+          const [png] = await renderCharts({ charts: [{ type, source }], theme: normalizeImChartAppearance(preferences) },
             { signal: AbortSignal.timeout(Math.max(1, Math.min(9_000, job.deadline - Date.now() - 500))) })
           result = png && png.byteLength <= Math.floor((MAX_AGENT_RESPONSE - 512) * 3 / 4)
             ? png.toString('base64') : null
@@ -353,7 +385,7 @@ try {
         } else if (job.method === 'agent.memory.read') {
           validateCommandParams(job.method, job.params)
           const { memory } = await readSqliteAgentMemory(runtime.db, ownerId, '', AbortSignal.timeout(5000), undefined, memoryFiles)
-          result = { text: [memory.profile, memory.pattern, memory.memory].filter(Boolean).join('\n\n').trim().slice(0, 6000) }
+          result = { text: [memory.summary, memory.profile, memory.pattern, memory.memory].filter(Boolean).join('\n\n').trim().slice(0, 6000) }
         } else if (job.method === 'agent.memory.clear') {
           validateCommandParams(job.method, job.params)
           await clearSqliteAgentMemory(runtime.db, ownerId, memoryFiles)
@@ -424,6 +456,9 @@ try {
               const done = compactDesktopConversation(runtime.db, ownerId, id, job.params.model as ProviderConfig, {
                 text: job.params.text as string, clientId: job.params.clientId as string,
                 queueClaim: job.params.queueClaim as { key: number; token: string } | undefined,
+                im: job.params.imPlatform === undefined ? undefined
+                  : { platform: String(job.params.imPlatform), connectionId: String(job.params.imConnectionId),
+                      groupSenderId: job.params.imGroupSenderId as string | undefined },
               }, operationId, controller.signal, resolveProxy)
                 .catch((error: unknown) => controller.signal.aborted ? new CoreError('cancelled', '操作已取消')
                   : error instanceof CoreError ? error : new CoreError('storage_error', '这次压缩没有完成，请稍后再试。'))
@@ -438,10 +473,36 @@ try {
               result = { operation: operationId }
               break
             }
+            case 'agent.sessions.resetImContext': {
+              const id = safeInteger(job.params.id)
+              const owner = ownerId.replaceAll('-', '')
+              const { imPlatform, imConnectionId, imGroupSenderId } = job.params as Record<string, string | undefined>
+              const keys = await runtime.db.transaction().execute(async tx => {
+                const scope = imGroupSenderId
+                  ? sql`s.chat_type='group' AND s.platform_user_id=${imGroupSenderId}`
+                  : sql`COALESCE(s.chat_type,'c2c')='c2c'`
+                const match = await sql`SELECT 1 FROM desktop_im_sessions im
+                  JOIN conversation_sessions s ON s.id=im.session_id AND s.user_id=im.owner_id
+                  WHERE im.owner_id=${owner} AND s.id=${id} AND im.platform=${imPlatform}
+                    AND im.connection_id=${imConnectionId} AND ${scope}`.execute(tx)
+                if (!match.rows.length) throw new CoreError('not_found', '会话不存在')
+                return resetAgentSessionContext(tx, 'sqlite', ownerId, id)
+              })
+              result = { reset: keys !== null }
+              if (keys) for (const key of keys) {
+                if (/^agent-attachments\/[a-f0-9]{32}$/u.test(key))
+                  await rm(join(dirname(config.database), key), { force: true }).catch(() => undefined)
+              }
+              break
+            }
             case 'agent.sessions.goal': {
               const id = safeInteger(job.params.id)
               const { text, interruptRunId } = await manageDesktopSessionGoal(runtime.db, ownerId, id,
-                job.params.action as 'status' | 'pause' | 'cancel' | 'resume')
+                job.params.action as 'status' | 'pause' | 'cancel' | 'resume',
+                job.params.imPlatform === undefined ? undefined : {
+                  platform: String(job.params.imPlatform), connectionId: String(job.params.imConnectionId),
+                  groupSenderId: job.params.imGroupSenderId as string | undefined,
+                })
               if (interruptRunId) await agentRuns!.notifyCancel(id, interruptRunId)
               result = { text }
               break
@@ -452,14 +513,25 @@ try {
             case 'agent.sessions.workspace':
               result = await manageDesktopSessionWorkspace(runtime.db, ownerId, safeInteger(job.params.id),
                 job.params.action as 'list' | 'show', undefined,
-                () => hostRequest('agent.files.workspaceList', {}))
+                () => hostRequest('agent.files.workspaceList', {}), job.params.imPlatform === undefined ? undefined
+                  : { platform: String(job.params.imPlatform), connectionId: String(job.params.imConnectionId) })
               break
+            case 'agent.sessions.clearWorkspaceBindings': {
+              const directoryId = job.params.directoryId as string
+              const directories = await hostRequest('agent.files.workspaceList', {})
+              if (!Array.isArray(directories) || directories.some(item => item?.id === directoryId))
+                throw new CoreError('conflict', '工作区登记仍然存在')
+              await clearDesktopWorkspaceBindings(runtime.db, ownerId, directoryId)
+              result = { ok: true }
+              break
+            }
             case 'agent.sessions.setWorkspace':
               if (!job.operationId) throw new CoreError('invalid_request', '工作区绑定缺少操作标识')
               result = (await runtime.operationWithTransaction(context, job.operationId, job.method, job.params,
                 tx => manageDesktopSessionWorkspace(tx, ownerId, safeInteger(job.params.id),
                   job.params.action as 'bind' | 'unlink', job.params.directoryId,
-                  () => hostRequest('agent.files.workspaceList', {})), { signal })).result
+                  () => hostRequest('agent.files.workspaceList', {}), job.params.imPlatform === undefined ? undefined
+                  : { platform: String(job.params.imPlatform), connectionId: String(job.params.imConnectionId) }), { signal })).result
               break
             case 'agent.sessions.queue': {
               const action = job.params.action
@@ -506,6 +578,13 @@ try {
                 throw error
               }
               break
+            case 'agent.sessions.subagentSnapshot': {
+              const id = safeInteger(job.params.id)
+              if (typeof job.params.runId !== 'string' || !/^[A-Za-z0-9:_-]{1,128}$/u.test(job.params.runId) || typeof job.params.childId !== 'string'
+                || !/^[a-f0-9]{8}$/u.test(job.params.childId)) throw new CoreError('invalid_request', '子运行标识无效')
+              result = await agentRuns!.subagentSnapshot(id, job.params.runId, job.params.childId)
+              break
+            }
             case 'agent.sessions.startRun':
               result = await agentRuns!.start(safeInteger(job.params.id), job.params.text as string,
                 job.params.clientId as string, job.params.model as ProviderConfig, job.params.embedding as RagQueryEmbeddingSettings | undefined,
@@ -513,7 +592,7 @@ try {
                 job.params.attachments as string[] | undefined, job.params.references as import('../contracts/desktop.js').DesktopAgentChatReference[] | undefined,
                 job.params.queueClaim as { key: number; token: string } | undefined, job.params.locale as string | undefined,
                 job.params.groupSender as import('../agent/run/sqlite-admission.js').DesktopGroupSender | undefined,
-                job.params.resumePassiveMessage === true)
+                job.params.resumePassiveMessage === true, job.params.quotedText as string | undefined)
               break
             case 'agent.sessions.runModel':
               result = await agentRuns!.runModel(safeInteger(job.params.id), job.params.runId as string)
@@ -549,7 +628,7 @@ try {
             case 'agent.sessions.append': {
               if (!job.operationId) throw new CoreError('invalid_request', '保存对话缺少操作标识')
               const outcome = await runtime.operationWithTransaction(context, job.operationId, job.method, job.params,
-                tx => appendDesktopAgentTurn(tx, ownerId, safeInteger(job.params.id), job.params.text, job.params.reply, job.operationId), { signal })
+                tx => appendDesktopAgentTurn(tx, ownerId, safeInteger(job.params.id), job.params.text, job.params.reply, typeof job.params.clientId === 'string' ? job.params.clientId : job.operationId), { signal })
               result = outcome.result
               break
             }
@@ -692,7 +771,7 @@ try {
                   ...(group ? { groupScope: {
                     ownerId, platform: group.platform, botId: group.botId, scopeType: 'group', scopeId: group.recipient,
                   } } : {}),
-                  authorizedTools: [], emailAttachmentFileIds: [],
+                  authorizedTools: [], emailAttachmentFilePaths: [],
                   workspaceId: null, filesystemGrantId: null,
                 }, fireAt === undefined, assertLease)
                 run.result = { ...outcome, text: outcome.text.slice(0, 4000) }
@@ -716,7 +795,15 @@ try {
             const id = desktopScheduledTaskId(job.params.id)
             const fireAt = job.params.fireAt as number | undefined
             const tasks = desktopScheduledTasks(runtime.db, ownerId)
-            const task = await tasks.get(id)
+            const task = await tasks.get(id, 'all')
+            const assertEventActive = async () => {
+              if (task.event_id == null) return
+              const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+              const { rows } = await sql`SELECT 1 FROM calendar_events WHERE id=${task.event_id}
+                AND user_id=${owner} AND deleted_at IS NULL`.execute(runtime.db)
+              if (!rows.length) throw new CoreError('conflict', '活动已删除或不可用')
+            }
+            await assertEventActive()
             const targets = readDesktopScheduleImTargets(task.delivery_targets, task.channels)
             if (task.execution_mode !== 'reminder' || !targets.length
               || !(await Promise.all(targets.map(ownsScheduledTarget))).every(Boolean)
@@ -730,8 +817,9 @@ try {
               scheduledImReminderClaims.delete(id)
             }
             for (const target of targets) {
-              const latest = await tasks.get(id)
+              const latest = await tasks.get(id, 'all')
               if (JSON.stringify(latest) !== JSON.stringify(task)) throw new CoreError('conflict', '定时任务已变更')
+              await assertEventActive()
               if (!await ownsScheduledTarget(target))
                 throw new CoreError('conflict', '定时任务的 IM 会话已不可用')
               await hostRequest('agent.schedules.im.deliver', { target, text: task.payload }, AbortSignal.timeout(15_000))
@@ -748,8 +836,8 @@ try {
                 const delivery = rawDelivery as Fields | undefined
                 const id = job.method === 'schedules.update' ? desktopScheduledTaskId(job.params.id) : null
                 const targets: DesktopScheduleImTarget[] = []
-                if (eventId === null && Array.isArray(fields.channels)) {
-                  const current = id === null ? null : await tasks.get(id)
+                if (Array.isArray(fields.channels)) {
+                  const current = id === null ? null : await tasks.get(id, eventId)
                   const saved = current ? readDesktopScheduleImTargets(current.delivery_targets, current.channels) : []
                   for (const platform of desktopScheduleImPlatforms) {
                     if (!fields.channels.includes(platform)) continue
@@ -788,20 +876,22 @@ try {
         } else if (job.method === 'preferences.preflightBusinessArchive') {
           validateCommandParams(job.method, job.params)
           if (typeof job.params.path !== 'string') throw new CoreError('invalid_request', '归档路径无效')
-          result = await importDesktopBusinessArchive(runtime.db, ownerId, job.params.path, undefined, signal)
+          result = await importDesktopBusinessArchive(runtime.db, ownerId, job.params.path, undefined, signal, memoryFiles)
         } else if (job.method === 'preferences.applyBusinessArchive') {
           validateCommandParams(job.method, job.params)
           const { path, digest } = job.params
           if (typeof path !== 'string' || typeof digest !== 'string' || !/^[a-f0-9]{64}$/u.test(digest))
             throw new CoreError('invalid_request', '归档参数无效')
-          result = await importDesktopBusinessArchive(runtime.db, ownerId, path, digest, signal)
+          result = await importDesktopBusinessArchive(runtime.db, ownerId, path, digest, signal, memoryFiles)
+          await memoryFiles?.flush()
+          await memoryFiles?.flushImportedIm()
         } else if (job.method === 'preferences.exportBusinessArchive') {
           validateCommandParams(job.method, job.params)
           if (typeof job.params.path !== 'string') throw new CoreError('invalid_request', '归档路径无效')
           await exportDesktopBusinessArchive(runtime.db, ownerId, job.params.path, signal)
           result = null
         } else if (job.method === 'preferences.dataInventory') {
-          result = await readDesktopDataInventory(runtime.db, ownerId)
+          result = await readDesktopDataInventory(runtime.db, ownerId, memoryFiles)
         } else if (job.method === 'preferences.agentUsage') {
           validateCommandParams(job.method, job.params)
           result = await readDesktopAgentUsage(runtime.db, config.database, ownerId)

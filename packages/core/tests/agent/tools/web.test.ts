@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { cleanupDesktopDownloadStaging, createDesktopWebDownload } from '../../../src/runtime/desktop-web-download.js'
 import { expect, it, vi } from 'vitest'
 import { createHttpGetTool, createWebDownloadTool, type HttpGetPort } from '../../../src/agent/tools/web.js'
+import { saveAgentDownloadTo } from '../../../src/agent/tools/download-to-disk.js'
 import { openStreamedAgentGet } from '../../../src/agent/tools/streamed-http-get.js'
 import { createDeepResearchTool, createSimilarImageSearchTool, createWebSearchTool } from '../../../src/agent/tools/search.js'
 import { fakeDependencies, fakeResponse } from '../providers/fixtures.js'
@@ -312,6 +313,17 @@ it('下载流消费或取消后，只释放一次响应和出站连接', async (
   }
 })
 
+it('路径下载在流结束前复验授权，撤权时不提交文件', async () => {
+  const { scope } = mount({ async get() { return httpResponse('') } })
+  let checks = 0, committed = false
+  const data = (async function* () { yield new TextEncoder().encode('合成内容') })()
+  const call = { id: 'download', name: 'web_download', input: { url: 'https://example.invalid/file' } }
+  await expect(saveAgentDownloadTo('文件.txt', data, scope(), call, async () => ++checks === 1,
+    async (_name, stream) => { for await (const _chunk of stream) {} committed = true })).rejects.toThrow('文件保存授权已失效')
+  expect(checks).toBe(2)
+  expect(committed).toBe(false)
+})
+
 it('web_download 可信目标预检优先于网络，推导文件名并流式限制容量', async () => {
   const { scope } = mount({ async get() { return httpResponse('') } })
   const encoder = new TextEncoder()
@@ -330,7 +342,7 @@ it('web_download 可信目标预检优先于网络，推导文件名并流式限
     return { kind: 'completed' as const, successful: true, mutated: true, value: { file_id: 7 } }
   })
   const prepare = vi.fn(async (location, context) => {
-    expect(location).toEqual({ space: null, projectId: null, folderId: null })
+    expect(location).toEqual({ space: null, projectId: null })
     expect(context.identity).toEqual(scope().identity)
     return { capacity, store }
   })
@@ -346,7 +358,7 @@ it('web_download 可信目标预检优先于网络，推导文件名并流式限
   capacity = 5
   const overflow = fakeResponse(null, { chunks: [encoder.encode('123'), encoder.encode('456')] })
   open.mockResolvedValueOnce(overflow)
-  await expect(dispatch({ url: 'example.test/file' })).resolves.toMatchObject({ successful: false, mutated: false, value: { error: '下载内容超过当前用户可用存储空间' } })
+  await expect(dispatch({ url: 'example.test/file' })).resolves.toMatchObject({ successful: false, mutated: false, value: { error: '下载文件超过大小限制' } })
   expect(overflow.closed).toBe(true)
 })
 
@@ -364,11 +376,19 @@ it('桌面下载完整落盘暂存后才通知宿主，完成后移除暂存', a
   try {
     await expect(registry.tools.dispatch({ id: 'download', name: 'web_download',
       input: { url: 'https://example.test/sample' } }, scope())).resolves.toMatchObject({
-      successful: true, value: { path: expect.stringMatching(/^\/personal\/下载\/sample-[0-9a-f]+\.txt$/u) },
+      successful: true, value: { path: expect.stringMatching(/^\/personal\/download\/sample-[0-9a-f]+\.txt$/u) },
     })
     expect(commit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       target: 'synthetic-target', stage: expect.stringMatching(/^\.gugu-download-[A-Za-z0-9]{6}$/u),
     }), expect.any(AbortSignal))
+    await expect(registry.tools.dispatch({ id: 'custom-download', name: 'web_download',
+      input: { url: 'https://example.test/sample', folder_path: '素材/参考图' } }, scope())).resolves.toMatchObject({
+      successful: true, value: { path: expect.stringContaining('/personal/素材/参考图/sample-') },
+    })
+    expect(commit).toHaveBeenLastCalledWith(expect.objectContaining({ folderPath: '素材/参考图' }), expect.any(AbortSignal))
+    await expect(registry.tools.dispatch({ id: 'invalid-download', name: 'web_download',
+      input: { url: 'https://example.test/sample', folder_path: '../外部' } }, scope())).resolves.toMatchObject({ successful: false })
+    expect(commit).toHaveBeenCalledTimes(2)
     expect(await readdir(dataRoot)).toEqual([])
   } finally { await rm(dataRoot, { recursive: true, force: true }) }
 })

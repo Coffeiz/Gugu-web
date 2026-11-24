@@ -96,7 +96,7 @@ export function createCanvasPlaceableSearchTool(search: ReturnType<typeof import
     types: z.array(z.enum(['project','file','event'])).optional(), canvas_id: z.number().int().safe().optional(),
     mode: z.enum(['OR','AND']).optional(), limit: z.number().int().min(1).max(20).optional(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 21).optional() }).passthrough()
   return { definition: { name: 'canvas_search_placeable', schema: { type: 'function', function: { name: 'canvas_search_placeable',
-    description: '搜索当前用户可放入画布的项目、文件和日历活动，不自动创建引用节点。', parameters: z.toJSONSchema(schema) as Record<string,import('../models.js').Json> } } },
+    description: '搜索当前用户可放入画布的项目、文件和日历活动。提供 query 或 queries，可同时用 types 筛选，types 只接受 project、file、event。', parameters: z.toJSONSchema(schema) as Record<string,import('../models.js').Json> } } },
     effect: 'read', validate: input => schema.safeParse(input),
     async execute(input, scope) {
       const value = await search(scope.identity.ownerId, input as z.infer<typeof schema>, scope.signal)
@@ -512,11 +512,11 @@ export function createCanvasBatchPort(core:import('../../data/runtime.js').SqlDa
 
 /** 完整批处理工具只有在Host提供持久确认 gate 和事务内claim时才注册。 */
 export function createCanvasBatchTool(port:CanvasBatchPort):ToolDefinition{
-  const id=z.number().int().safe(),finite=z.number().finite()
+  const id=z.number().int().safe(),finite=z.number().finite().meta({'x-coerce-number':true})
   const position=z.object({x:finite.optional(),y:finite.optional(),anchor:z.enum(['auto','viewport_center','viewport_top_left','viewport_top_right','viewport_bottom_left','viewport_bottom_right','near_node']).optional(),near_node_id:id.optional(),offset_x:finite.optional(),offset_y:finite.optional()}).passthrough().optional()
-  const operation=z.object({kind:z.enum(['create_note','add_node','update_item','remove_item','delete_note','connect']),ref_type:z.enum(['project','file','event']).optional(),ref_id:z.union([id,z.string().regex(/^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u)]).optional(),node_id:id.optional(),item_id:id.optional(),source_node_id:id.optional(),target_node_id:id.optional(),source_side:z.enum(['left','right']).optional(),target_side:z.enum(['left','right']).optional(),title:z.string().optional(),content:z.string().optional(),color:z.enum(['amber','coral','blue','teal']).optional(),x:finite.optional(),y:finite.optional(),width:finite.optional(),height:finite.optional(),z:id.optional(),collapsed:z.boolean().optional(),position}).passthrough()
+  const operation=z.object({kind:z.enum(['create_note','add_node','update_item','remove_item','delete_note','connect']),ref_type:z.enum(['project','file','event']).optional(),ref_id:z.union([id,z.string().regex(/^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u)]).meta({'x-coerce-ref-id':true}).optional(),node_id:id.optional(),item_id:id.optional(),source_node_id:id.optional(),target_node_id:id.optional(),source_side:z.enum(['left','right']).optional(),target_side:z.enum(['left','right']).optional(),title:z.string().optional(),content:z.string().optional(),color:z.enum(['amber','coral','blue','teal']).optional(),x:finite.optional(),y:finite.optional(),width:finite.optional(),height:finite.optional(),z:id.optional(),collapsed:z.boolean().optional(),position}).passthrough()
   const schema=z.object({canvas_id:id,request_id:z.string().refine(value=>[...value].length<=120),operations:z.array(operation).min(1).max(20)}).passthrough()
-  return {definition:{name:'canvas_batch',schema:{type:'function',function:{name:'canvas_batch',description:'在一个事务中按顺序批量编排画布节点、便签和连接，最多 20 项；任一操作失败则整批回滚，request_id 用于安全重放。删除便签须经过可信目标确认。',parameters:z.toJSONSchema(schema) as Record<string,import('../models.js').Json>}}},effect:'write',requiresInteraction:true,confirmationReplay:true,validate:input=>schema.safeParse(input),
+  return {definition:{name:'canvas_batch',schema:{type:'function',function:{name:'canvas_batch',description:'在一个事务中按顺序批量编排画布节点、便签和连接，最多 20 项；任一操作失败则整批回滚，request_id 用于安全重放。update_item 可用 x/y 或 position 锚点移动；删除便签须经过可信目标确认。',parameters:z.toJSONSchema(schema) as Record<string,import('../models.js').Json>}}},effect:'write',requiresInteraction:true,confirmationReplay:true,validate:input=>schema.safeParse(input),
     execute:(input,scope,call)=>port.apply({identity:scope.identity,roundId:scope.roundId,toolCallId:call.id,args:input as CanvasBatchIntent,signal:scope.signal,call,scope}),
     reconcile:(input,identity,call)=>port.reconcile({identity,roundId:identity.roundId,toolCallId:call.id,args:input as CanvasBatchIntent}),
   }
@@ -560,7 +560,7 @@ export function createCanvasEditPort(core: import('../../data/runtime.js').SqlDa
 }
 
 export function createCanvasEditTools(port:CanvasEditPort):ToolDefinition[]{
-  const id=z.number().int().safe(),number=z.number().finite()
+  const id=z.number().int().safe(),number=z.number().finite().meta({'x-coerce-number':true})
   const layout={item_id:id,x:number.optional(),y:number.optional(),z:id.optional(),collapsed:z.boolean().optional(),width:number.min(180).max(520).optional(),height:number.min(100).max(420).optional()}
   const note={node_id:id,title:z.string().refine(value=>[...value].length<=300).meta({maxLength:300}).optional(),content:z.string().optional(),color:z.enum(['amber','coral','blue','teal']).optional()}
   const layoutKeys=['x','y','z','collapsed','width','height'],noteKeys=['title','content','color']
@@ -596,11 +596,11 @@ export function createCanvasEditTools(port:CanvasEditPort):ToolDefinition[]{
 
 /** 放置能力独立注入，缺文件/引用后端时不因能编辑布局而自动开放。 */
 export function createCanvasPlacementTools(port:CanvasEditPort):ToolDefinition[]{
-  const id=z.number().int().safe(),finite=z.number().finite()
+  const id=z.number().int().safe(),finite=z.number().finite().meta({'x-coerce-number':true})
   const position=z.object({x:finite.optional(),y:finite.optional(),anchor:z.enum(['auto','viewport_center','viewport_top_left','viewport_top_right','viewport_bottom_left','viewport_bottom_right','near_node']).optional(),near_node_id:id.optional(),offset_x:finite.optional(),offset_y:finite.optional()}).strict()
     .refine(value=>(value.x===undefined)===(value.y===undefined)&&(value.anchor!=='near_node'||value.near_node_id!==undefined))
   const noteFields={title:z.string().refine(value=>[...value].length<=300).meta({maxLength:300}).optional(),content:z.string().optional(),color:z.enum(['amber','coral','blue','teal']).optional(),position:position.optional(),width:finite.min(180).max(520).optional(),height:finite.min(100).max(420).optional()}
-  const refFields={node_id:id.optional(),ref_type:z.enum(['project','file','event']).optional(),ref_id:z.union([id,z.string().regex(/^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u)]).optional(),position:position.optional()}
+  const refFields={node_id:id.optional(),ref_type:z.enum(['project','file','event']).optional(),ref_id:z.union([id,z.string().regex(/^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u)]).meta({'x-coerce-ref-id':true}).optional(),position:position.optional()}
   const reference=(value:{node_id?:number;ref_type?:string;ref_id?:number|string})=>value.node_id!==undefined?value.ref_type===undefined&&value.ref_id===undefined:value.ref_type!==undefined&&(value.ref_type==='file'?typeof value.ref_id==='string':typeof value.ref_id==='number')
   const noteEntry=z.object(noteFields).strict(),refEntry=z.object(refFields).strict().refine(reference)
   const notes=z.object({canvas_id:id,...noteFields,notes:z.array(noteEntry).min(1).max(20).optional()}).passthrough().refine(value=>value.notes===undefined||Object.keys(noteFields).every(key=>value[key]===undefined))
@@ -621,7 +621,7 @@ export function createCanvasPlacementTools(port:CanvasEditPort):ToolDefinition[]
     const entry=properties[plural]!.items as Record<string,import('../models.js').Json>,entryProperties=entry.properties as Record<string,Record<string,import('../models.js').Json>>
     entryProperties.position!.allOf=conditions
     if(name==='canvas_add_node')entry.oneOf=[{required:['node_id'],not:{anyOf:['ref_type','ref_id'].map(field=>({required:[field]}))}},{required:['ref_type','ref_id'],not:{required:['node_id']}}]
-    return {definition:{name,schema:{type:'function',function:{name,description:name==='canvas_create_note'?'在指定画布创建专属便签，支持单项/批量及世界坐标或视口、相邻节点定位。':'放置已有业务引用或项目/文件/活动资源，不创建普通时间流笔记；文件 ref_id 使用工具返回的路径引用，已放置目标保留原布局。',parameters}}},effect:'write',
+    return {definition:{name,schema:{type:'function',function:{name,description:name==='canvas_create_note'?'在指定画布创建专属便签，支持单项/批量及世界坐标或视口、相邻节点定位。':'放置已有业务引用或项目/文件/活动资源，不创建普通时间流笔记；项目和日历活动的 ref_id 使用搜索结果中的整数 ID，文件使用返回的 path-/drop- 引用；移动已放置条目使用 item_id，新增调用会保留现有布局。',parameters}}},effect:'write',
       validate:input=>schemas[name].safeParse(input),
       execute:(input,scope,call)=>port.apply({identity:scope.identity,roundId:scope.roundId,toolCallId:call.id,intent:intent(name,input),signal:scope.signal}),
       reconcile:(input,identity,call)=>port.reconcile({identity,roundId:identity.roundId,toolCallId:call.id,intent:intent(name,input)})}

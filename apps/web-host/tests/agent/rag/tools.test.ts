@@ -8,7 +8,7 @@ import { sql } from 'kysely'
 import { dataContext } from '@gugu/core'
 import { createKyselyProjectCreateRuntime } from '@gugu/core/project-create-data'
 import { databaseTime, initializeSqlite, openSqliteRuntime, projectRecord } from '@gugu/core/data'
-import { createConfirmationGate, createProjectDeleteTool, createPermanentDeleteTool, type ConfirmationIntent, type ProjectDeleteRuntime } from '@gugu/core/tools'
+import { createConfirmationGate, createProjectDeleteTool, type ConfirmationIntent, type ProjectDeleteRuntime } from '@gugu/core/tools'
 import type { InteractionResolution } from '@gugu/core/agent'
 import { createAgentMindReader, createAgentPlaceableSearch, createSqlMindCanvasReader } from '@gugu/core/mind'
 import { createCanvasCreationPort, createClientDeletePort, createDurableProjectMutationPort, createWebLinkButtonDeliveryPort, createWorkspaceMutationPort } from '@gugu/core/tools'
@@ -486,7 +486,7 @@ test('Web Agent 按 Host 显式启用知识/日历/画布工具，并对其每�
     return { rowCount: isActive ? 1 : 0, rows: [] }
   } } as never, lease, { enabledCalendarCanvasTools: ['create_event', 'canvas_batch'], enabledCalendarRead: true, enabledUpcoming: true,
     enabledKnowledgeRead: true, enabledKnowledgeWrites: true, enabledProjectOverview: true, enabledProjectCreation: true, enabledProjectMutations: true, enabledScheduledTasks: true, enabledTrashRestore: true,
-    enabledWorkspaces: true, enabledWorkspaceMutations: true, enabledWorkspaceCreation: true, enabledWorkspaceUnlink: true, enabledWorkspaceDirectoryDelete: true, enabledUndoLastAction: true, enabledCanvasReads: true, enabledCanvasPlaceableSearch: true, enabledCanvasCreate: true, enabledCanvasMutations: true, enabledNoteReads: true, enabledNoteLifecycle: true })
+    enabledWorkspaces: true, enabledWorkspaceMutations: true, enabledWorkspaceCreation: true, enabledProjectWorkspaceBinding: true, enabledUndoLastAction: true, enabledCanvasReads: true, enabledCanvasPlaceableSearch: true, enabledCanvasCreate: true, enabledCanvasMutations: true, enabledNoteReads: true, enabledNoteLifecycle: true })
   const withoutMindReads = createWebAgentRagRunAuthorization({ async query() { return { rowCount: 1, rows: [] } } } as never, lease)
   assert.equal((await withoutMindReads.configuration(identity, signal)).toolNames.includes('canvas_list'), false)
   assert.equal((await withoutMindReads.configuration(identity, signal)).toolNames.includes('canvas_focus_node'), false)
@@ -500,7 +500,7 @@ test('Web Agent 按 Host 显式启用知识/日历/画布工具，并对其每�
   assert.equal((await withoutMindReads.configuration(identity, signal)).toolNames.includes('update_workspace'), false)
   assert.equal(await withoutMindReads.authorize(identity, 'note_get', signal), false)
   assert.deepEqual((await authorization.configuration(identity, signal)).toolNames,
-    ['search_conversations', 'search_memory', 'use_skill', 'list_skills', 'list_contacts', 'list_projects', 'search_tools', 'read_knowledge', 'save_knowledge', 'update_knowledge', 'list_events', 'get_upcoming', 'get_project', 'create_project', 'update_project', 'set_color', 'archive_project', 'add_stage', 'remove_stage', 'rename_stage', 'set_stages', 'update_stage', 'list_scheduled_tasks', 'list_workspaces', 'get_workspace', 'update_workspace', 'create_workspace', 'unlink_workspace', 'delete_workspace_directory', 'undo_last_action', 'restore_file', 'restore_folder', 'canvas_list', 'canvas_get', 'canvas_search', 'canvas_focus_node', 'canvas_search_placeable', 'canvas_create', 'canvas_create_note', 'canvas_add_node', 'canvas_update_node', 'canvas_remove_node', 'canvas_update_note', 'canvas_update_anchor', 'canvas_connect', 'note_search', 'note_get', 'note_delete', 'note_restore', 'note_undo', 'create_event', 'canvas_batch'])
+    ['search_conversations', 'search_memory', 'use_skill', 'list_skills', 'list_contacts', 'list_projects', 'search_tools', 'read_knowledge', 'save_knowledge', 'update_knowledge', 'list_events', 'get_upcoming', 'get_project', 'create_project', 'update_project', 'set_color', 'archive_project', 'add_stage', 'remove_stage', 'rename_stage', 'set_stages', 'update_stage', 'list_scheduled_tasks', 'list_workspaces', 'get_workspace', 'update_workspace', 'create_workspace', 'set_project_workspace', 'undo_last_action', 'restore_file', 'restore_folder', 'canvas_list', 'canvas_get', 'canvas_search', 'canvas_focus_node', 'canvas_search_placeable', 'canvas_create', 'canvas_create_note', 'canvas_add_node', 'canvas_update_node', 'canvas_remove_node', 'canvas_update_note', 'canvas_update_anchor', 'canvas_connect', 'note_search', 'note_get', 'note_delete', 'note_restore', 'note_undo', 'create_event', 'canvas_batch'])
   assert.equal(await authorization.authorize(identity, 'read_knowledge', signal), true)
   assert.equal(await authorization.authorize(identity, 'save_knowledge', signal), true)
   assert.equal(await authorization.authorize(identity, 'update_knowledge', signal), true)
@@ -508,8 +508,9 @@ test('Web Agent 按 Host 显式启用知识/日历/画布工具，并对其每�
   assert.equal(await authorization.authorize(identity, 'list_contacts', signal), true)
   assert.equal(await authorization.authorize(identity, 'list_projects', signal), true)
   assert.equal(await authorization.authorize(identity, 'get_project', signal), true)
-  assert.equal(await authorization.authorize(identity, 'unlink_workspace', signal), true)
-  assert.equal(await authorization.authorize(identity, 'delete_workspace_directory', signal), true)
+  assert.equal(await authorization.authorize(identity, 'unlink_workspace', signal), false)
+  assert.equal(await authorization.authorize(identity, 'set_project_workspace', signal), true)
+  assert.equal(await authorization.authorize(identity, 'delete_workspace_directory', signal), false)
   assert.equal(await authorization.authorize(identity, 'undo_last_action', signal), true)
   assert.equal(await withoutMindReads.authorize(identity, 'unlink_workspace', signal), false)
   for (const name of ['search_tools', 'create_project', 'update_project', 'set_color', 'archive_project', 'add_stage', 'remove_stage', 'rename_stage', 'set_stages', 'update_stage']) assert.equal(await authorization.authorize(identity, name, signal), true)
@@ -560,17 +561,14 @@ test('Web Agent 按 Host 显式启用知识/日历/画布工具，并对其每�
     lease, { enabledCalendarCanvasTools: ['create_project' as WebCalendarCanvasToolName] }), /授权配置无效/u)
 })
 
-test('delete_folder 仅在 Host 注入软删除能力后加入 Web 工具授权', async () => {
+test('Web 工具授权拒绝已移除的数字文件夹删除', async () => {
   const identity = { ownerId: 'owner-folder-delete', sessionId: '52', runId: 'folder-delete-run' }
   const lease = { identity, token: 'folder-delete-token', fence: 1, input: { v: 2, source: 'web' }, mode: 'start', cancelRequested: false } as const
   const pool = { async query() { return { rowCount: 1, rows: [] } } } as never
   const disabled = createWebAgentRagRunAuthorization(pool, lease)
-  const enabled = createWebAgentRagRunAuthorization(pool, lease, { enabledFileFolderDelete: true })
   const signal = new AbortController().signal
   assert.equal((await disabled.configuration(identity, signal)).toolNames.includes('delete_folder'), false)
   assert.equal(await disabled.authorize(identity, 'delete_folder', signal), false)
-  assert.equal((await enabled.configuration(identity, signal)).toolNames.includes('delete_folder'), true)
-  assert.equal(await enabled.authorize(identity, 'delete_folder', signal), true)
 })
 
 test('delete_file 仅在 Host 注入文件删除事务后加入 Web 工具授权', async () => {
@@ -660,15 +658,14 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
     await sql`INSERT INTO files VALUES (1,${identity.ownerId.replaceAll('-', '')},NULL),
       (2,${identity.ownerId.replaceAll('-', '')},'2026-01-01'),(3,${otherOwner.replaceAll('-', '')},NULL)`.execute(runtime.db)
     await sql`CREATE TABLE workspaces(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,kind TEXT,enabled INTEGER,is_default INTEGER,
-      project_id INTEGER,folder_id INTEGER,directory_id INTEGER,updated_at TEXT)`.execute(runtime.db)
-    await sql`CREATE TABLE folders(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT)`.execute(runtime.db)
+      project_id INTEGER,directory_id INTEGER,updated_at TEXT)`.execute(runtime.db)
     await sql`CREATE TABLE workspace_directories(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT)`.execute(runtime.db)
     await sql`INSERT INTO workspaces VALUES
-      (1,${identity.ownerId.replaceAll('-', '')},'合成工作区','project',0,0,${ownProject.id},NULL,NULL,'2026-01-02'),
-      (2,${otherOwner.replaceAll('-', '')},'他人工作区','directory',1,0,NULL,NULL,90,'2026-01-02')`.execute(runtime.db)
+      (1,${identity.ownerId.replaceAll('-', '')},'合成工作区','project',0,0,${ownProject.id},NULL,'2026-01-02'),
+      (2,${otherOwner.replaceAll('-', '')},'他人工作区','directory',1,0,NULL,90,'2026-01-02')`.execute(runtime.db)
     await runtime.db.insertInto('calendar_events').values({ id: 8001, user_id: opened.ownerId.replaceAll('-', ''), title: '合成日程', date: '2026-01-04', type: 'event', version: 1,
       created_at: '2026-01-01 00:00:00', deleted_at: null }).execute()
-    await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,name,payload,cron,schedule_kind,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,created_at,updated_at)
+    await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,name,payload,cron,schedule_kind,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_paths,created_at,updated_at)
       VALUES(9001,${identity.ownerId.replaceAll('-', '')},NULL,'自有任务','私有指令','0 9 * * *','cron','web',1,'{}','[]','[]','2026-01-01 00:00:00','2026-01-01 00:00:00'),
         (9002,${identity.ownerId.replaceAll('-', '')},8001,'日历提醒','提醒内容','0 9 * * *','cron','web',1,'{}','[]','[]','2026-01-01 00:00:00','2026-01-01 00:00:00'),
         (9003,${otherOwner.replaceAll('-', '')},NULL,'他人任务','他人指令','0 9 * * *','cron','web',1,'{}','[]','[]','2026-01-01 00:00:00','2026-01-01 00:00:00')`.execute(runtime.db)
@@ -695,11 +692,13 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
       enabledTrashList: true,
       enabledTrashRestore: true,
       enabledTrashPurge: true,
-      trashPurge: createPermanentDeleteTool({
-        async preview() { return { file_count: 0, folder_count: 0, digest: 'empty' } },
-        async reconcile() { return { kind: 'unknown' } },
-        async apply() { return { kind: 'unknown' } },
-      }, { gate: {} as never, async claim() { return true } }),
+      diskTrashTools: ['list_trash', 'restore_file', 'restore_folder', 'permanent_delete'].map(name => ({
+        definition: { name, schema: { type: 'function' as const, function: { name, description: '路径回收站', parameters: { type: 'object', properties: {} } } } },
+        effect: name === 'list_trash' ? 'read' as const : 'write' as const,
+        ...(name !== 'list_trash' ? { destructive: true, requiresInteraction: true, confirmationReplay: true } : {}),
+        validate: (data: unknown) => ({ success: true as const, data }),
+        async execute() { return { kind: 'completed' as const, successful: true, mutated: false, value: [] } },
+      })),
       conversations: { async read(candidate, sessionId) {
         assert.equal(candidate.ownerId, identity.ownerId)
         assert.equal(sessionId, 71)
@@ -713,32 +712,13 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
       events: createKyselyCalendarReadPort(runtime.db, 'sqlite'),
       workspaces: createAgentWorkspaceQueries(createKyselyAgentWorkspaceReader(runtime.db, 'sqlite')),
       workspaceMutations: createWorkspaceMutationPort(runtime),
-      trash: { async list(candidate, limit, signal) {
-        assert.equal(candidate.ownerId, identity.ownerId)
-        assert.equal(limit, 1)
-        signal.throwIfAborted()
-        return {
-          files: [{ id: 41, file_id: 41, kind: 'file', name: '自有文件.txt', space: 'personal', deleted_at: '2026-01-01T00:00:00.000002Z' }],
-          folders: [{ id: 42, folder_id: 42, kind: 'folder', name: '自有目录', space: 'personal', deleted_at: '2026-01-02T00:00:00.000003Z' }],
-        }
-      } },
-      trashRestore: {
-        async apply(input) {
-          input.signal.throwIfAborted()
-          assert.deepEqual(input.identity, identity)
-          assert.equal(input.roundId, '1')
-          return { kind: 'completed', successful: true, mutated: true,
-            value: input.kind === 'file' ? { success: true, file_id: input.id } : { success: true, folder_id: input.id, name: '合成目录' } }
-        },
-        async reconcile() { return { kind: 'unknown' } },
-      },
       linkButtons: createWebLinkButtonDeliveryPort(candidate => candidate.ownerId === identity.ownerId
         && candidate.sessionId === identity.sessionId && candidate.runId === identity.runId),
       fileOverview: async (candidate, projectId, signal) => {
         signal.throwIfAborted()
         assert.equal(candidate.ownerId, identity.ownerId)
         assert.equal(projectId, ownProject.id)
-        return { total_file_count: 3, root_file_count: 1, total_folder_count: 2, sandbox_path: `/project/合成项目 #${projectId}` }
+        return { total_file_count: 3, root_file_count: 1, total_folder_count: 2, location: { kind: 'sandbox' as const, value: `/project/合成项目 #${projectId}` } }
       },
       scheduledTasks: { list: (candidate, signal) => createScheduledTaskQueries(
         createKyselyScheduledTaskReader(runtime!.db, 'sqlite'),
@@ -825,35 +805,13 @@ test('生产 RAG 组合仅在 Host 提供可信端口时发现并分派历史、
     assert.equal(upcoming.kind === 'completed' && upcoming.successful, true)
     if (upcoming.kind !== 'completed') throw new Error('近期安排读取未完成')
     assert.deepEqual((upcoming.value as { from: string; to: string; items: { title: string }[] }).items.map(item => item.title), ['合成日程'])
-    const trash = await withHistory.toolRegistry.tools.dispatch({ id: 'trash', name: 'list_trash', input: { limit: '１', owner_id: otherOwner } }, {
-      identity, roundId: '1', signal: new AbortController().signal, resolution: null,
-      execute: async () => { throw new Error('回收站只读工具不能调用执行后端') },
-    })
-    assert.equal(trash.kind === 'completed' && trash.successful, true, JSON.stringify(trash))
-    assert.equal(trash.kind === 'completed' && trash.mutated, false)
-    assert.equal(trash.kind === 'completed' && (trash.value as { items: { id: number }[] }).items[0]?.id, 42)
-    assert.equal(trash.kind === 'completed' && (trash.value as { items: { deleted_at: string }[] }).items[0]?.deleted_at, '2026-01-02T00:00:00.000003Z')
-    assert.deepEqual(trash.kind === 'completed' && (trash.value as { ignored_fields: string[] }).ignored_fields, ['[未声明字段]', 'owner_id'])
-    assert.match(JSON.stringify(trash), /仅列出最近 1 个/u)
-    assert.doesNotMatch(JSON.stringify(trash), /他人/u)
-    const restored = await withHistory.toolRegistry.tools.dispatch({ id: 'restore-file', name: 'restore_file', input: { file_id: 41 } }, {
-      identity, roundId: '1', signal: new AbortController().signal, resolution: null,
-      execute: async () => { throw new Error('恢复工具必须经可信文件恢复端口') },
-    })
-    assert.deepEqual(restored, { kind: 'completed', successful: true, mutated: true, value: { success: true, file_id: 41 } })
-    const restoredFolder = await withHistory.toolRegistry.tools.dispatch({ id: 'restore-folder', name: 'restore_folder', input: { folder_id: 42 } }, {
-      identity, roundId: '1', signal: new AbortController().signal, resolution: null,
-      execute: async () => { throw new Error('恢复工具必须经可信文件恢复端口') },
-    })
-    assert.deepEqual(restoredFolder, { kind: 'completed', successful: true, mutated: true,
-      value: { success: true, folder_id: 42, name: '合成目录' } })
     const project = await withHistory.toolRegistry.tools.dispatch({ id: 'project', name: 'get_project', input: { project_id: ownProject.id } }, {
       identity, roundId: '1', signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('项目详情只读工具不能调用执行后端') },
     })
     assert.equal(project.kind === 'completed' && project.successful, true, JSON.stringify(project))
     assert.equal(project.kind === 'completed' && (project.value as { files: { total_file_count: number } }).files.total_file_count, 3)
-    assert.equal(project.kind === 'completed' && (project.value as { sandbox_path: string }).sandbox_path, `/project/合成项目 #${ownProject.id}`)
+    assert.equal(project.kind === 'completed' && (project.value as { location: { value: string } }).location.value, `/project/合成项目 #${ownProject.id}`)
     const tasks = await withHistory.toolRegistry.tools.dispatch({ id: 'tasks', name: 'list_scheduled_tasks', input: { owner_id: otherOwner } }, {
       identity, roundId: '1', signal: new AbortController().signal, resolution: null,
       execute: async () => { throw new Error('定时任务只读工具不能调用执行后端') },
@@ -1546,7 +1504,7 @@ test('Web Run 仅公布已装配的新工具并在配置与执行授权中复验
     selection: { modelIdentity: 'synthetic', contextScopeKey: lease.input.accessVersion, contextPolicy: { loadOwnerContext: true, memoryEnabled: false } },
     enabled: () => false,
   }
-  const selected = ['call_tool', 'create_skill', 'update_skill', 'delete_skill', 'note_create', 'note_update', 'present_file',
+  const selected = ['call_tool', 'create_skill', 'update_skill', 'delete_skill', 'note_create', 'note_update', 'open_item',
     'delete_scheduled_task', 'manage_mcp_servers', 'web_search', 'similar_image_search', 'deep_research']
   const onlySelected = (names: readonly string[]) => selected.filter(name => names.includes(name))
   const signal = new AbortController().signal
@@ -1570,9 +1528,9 @@ test('Web Run 仅公布已装配的新工具并在配置与执行授权中复验
   const scope = { identity, roundId: '1', signal, resolution: null, async execute(): Promise<never> { throw new Error('不执行进程') } }
   const call = { id: 'manage-mcp', name: 'manage_mcp_servers', input: { action: 'list' } }
   assert.equal((await equipped.toolRegistry.tools.dispatch(call, scope)).kind, 'completed')
-  const presented = await equipped.toolRegistry.tools.dispatch({ id: 'present', name: 'present_file', input: { file: '/personal/preview.pdf' } }, scope)
+  const presented = await equipped.toolRegistry.tools.dispatch({ id: 'present', name: 'open_item', input: { kind: 'file', item: '/personal/preview.pdf' } }, scope)
   assert.deepEqual(presented.kind === 'completed' ? presented.value : null, {
-    ok: true, message: '点击链接打开《preview.pdf》。', link: 'gugu://open-object/file/path-preview', name: 'preview', ext: 'pdf',
+    ok: true, open_in_browser: true, message: '点击链接打开《preview.pdf》。', link: 'gugu://open-object/file/path-preview', name: 'preview', ext: 'pdf',
   })
   active = false
   const denied = await equipped.toolRegistry.tools.dispatch(call, scope)

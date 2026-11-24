@@ -70,6 +70,26 @@ export declare class ImPreflightError extends Error {
     constructor();
 }
 /** 只生成判定文本，不修改入库原文；只在明确 @ 当前 Bot 时移除一个 mention。 */
+export declare function readImAddressedCommand(input: {
+    text: string;
+    scope: {
+        chatType: 'c2c' | 'group';
+    };
+    botMentioned: boolean;
+    qqAtEventOnly?: boolean;
+}): {
+    semantic: string;
+    command: {
+        name: string;
+        argument: string;
+        recognized: boolean;
+    } | null;
+    unaddressed: {
+        name: string;
+        argument: string;
+        recognized: boolean;
+    } | null;
+};
 export declare function imSemanticText(text: string, botMentioned: boolean): string;
 export interface ImTextChoicePrompt {
     readonly kind: string;

@@ -16,6 +16,8 @@ export const CHUNKED_AGENT_METHODS = ['agent.sessions.events', 'agent.sessions.h
 export const DESKTOP_METHODS = [
   'core.info',
   'im.inbox.admit',
+  'im.inbox.status',
+  'im.inbox.cancelRun',
   'im.inbox.attachmentReference',
   'im.inbox.prepare',
   'im.inbox.pendingConnection',
@@ -31,16 +33,19 @@ export const DESKTOP_METHODS = [
   'agent.sessions.list',
   'agent.sessions.workspace',
   'agent.sessions.setWorkspace',
+  'agent.sessions.clearWorkspaceBindings',
   'agent.sessions.goal',
   'agent.sessions.compact',
   'agent.sessions.recoverStartup',
   'agent.sessions.create',
   'agent.sessions.rename',
   'agent.sessions.delete',
+  'agent.sessions.resetImContext',
   'agent.sessions.messages',
   'agent.sessions.history',
   'agent.sessions.messageLocation',
   'agent.sessions.toolDetails',
+  'agent.sessions.subagentSnapshot',
   'agent.sessions.events',
   'agent.sessions.cancelRun',
   'agent.sessions.startRun',
@@ -131,13 +136,16 @@ export const DESKTOP_METHODS = [
   'desktop.terminal',
 ] as const
 export const DESKTOP_MUTATIONS: readonly string[] = [
+  'im.inbox.cancelRun',
   'im.inbox.resumePendingAsk',
   'agent.attachments.stage',
   'agent.attachments.deleteDraft',
   'agent.sessions.create',
   'agent.sessions.rename',
   'agent.sessions.setWorkspace',
+  'agent.sessions.clearWorkspaceBindings',
   'agent.sessions.delete',
+  'agent.sessions.resetImContext',
   'agent.sessions.append',
   'agent.sessions.queue',
   'skills.create',
@@ -202,6 +210,7 @@ export const DESKTOP_CHANNELS = {
   calendar: 'gugu:calendar:list',
   search: 'gugu:search:query',
   files: 'gugu:files:request',
+  droppedFileProgress: 'gugu:files:drop-progress',
   startFileDrag: 'gugu:files:start-drag',
   nativeFileDragSource: 'gugu:files:drag-source',
   createDroppedFileReference: 'gugu:files:dropped-reference',
@@ -353,6 +362,7 @@ export interface DesktopAgentMessage {
   id: number
   role: 'user' | 'assistant'
   text: string
+  quotedText?: string
   createdAt: string
   files?: DesktopAgentMessageAttachment[]
   references?: DesktopAgentChatReference[]
@@ -429,6 +439,7 @@ export type DesktopAgentSessionCommand =
   | { action: 'messageLocation'; messageId: number }
   | { action: 'history'; id: number; before?: number }
   | { action: 'toolDetails'; id: number; messageId: number; index: number }
+  | { action: 'subagentSnapshot'; id: number; runId: string; childId: string }
   | { action: 'resume'; id: number; runId: string; operationId: string }
   | { action: 'disconnect'; operationId: string }
   | { action: 'cancelRun'; id: number; runId: string }
@@ -544,7 +555,7 @@ export interface DesktopSearchResult {
       subtitle?: string
       date?: string
       canvas_id?: number
-      path_file?: { directoryId: DesktopFileDirectory; directoryName: string; relativePath: string; sandboxPath?: string }
+      path_file?: { directoryId: DesktopFileDirectory; directoryName: string; relativePath: string; location?: import('../agent/sessions/reference-context.js').ResolvedObjectPath }
     }>
   }>
 }
@@ -567,6 +578,11 @@ export interface DesktopBridge {
   remoteAccount(): Promise<DesktopReply<RemoteAccountState>>
   remoteLogin(input: RemoteLoginInput): Promise<DesktopReply<RemoteAccountState>>
   remoteLogout(): Promise<DesktopReply<RemoteAccountState>>
+  moveDroppedFiles?(
+    directoryId: DesktopFileDirectory, path: string,
+    decide: (filename: string, canOverwrite: boolean) => Promise<'skip' | 'keep_both' | 'overwrite'>,
+    progress: (percent: number) => void,
+  ): Promise<DesktopReply<{ retained: number }>>
   files(command: DesktopFileCommand): Promise<DesktopReply<unknown>>
   startFileDrag?(directoryId: DesktopFileDirectory, path: string, preview?: string): Promise<DesktopReply<null>>
   personalSmtp(action: 'get' | 'save' | 'test', input?: Record<string, unknown>): Promise<DesktopReply<import('../preferences/smtp.js').SmtpSettings & { configured: true } | { ok: boolean; message: string } | null>>
@@ -701,13 +717,18 @@ export type DesktopFileWorkspace = { id: DesktopFileDirectory; name: string }
 
 export type DesktopFileCommand =
   | ({ directoryId?: DesktopFileDirectory } & (
-      | { action: 'list' | 'reference' | 'mkdir' | 'trash' | 'reveal'; path: string }
+      | { action: 'list' | 'mkdir' | 'reveal'; path: string }
+      | { action: 'trash'; path: string; undoable?: boolean }
+      | { action: 'undo-trash' | 'redo-trash' }
+      | { action: 'reference'; path: string; kind?: 'file' | 'folder'; identity?: string }
       | { action: 'copy' | 'move'; path: string; destination: string }
       | { action: 'upload'; path: string; data: Uint8Array; overwrite: boolean; identity?: string }
       | { action: 'download' | 'open'; path: string; identity?: string }
       | { action: 'search'; query: string }
     ))
   | { action: 'workspace-list' | 'workspace-add' }
+  | { action: 'project-workspaces'; projectId: number }
+  | { action: 'project-workspace-binding'; projectId: number; directoryId: DesktopFileDirectory; bound: boolean }
   | { action: 'workspace-relink' | 'workspace-remove'; directoryId: DesktopFileDirectory }
   | { action: 'workspace-rename'; directoryId: DesktopFileDirectory; name: string }
 

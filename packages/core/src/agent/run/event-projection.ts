@@ -14,6 +14,8 @@ export async function projectAgentRunEvent(event: RunEvent, ports: AgentRunEvent
     return [{ type: 'error', message: payload.reconstructionStatus === 'reconstruction_unavailable' ? '运行所需服务暂不可用，请稍后恢复。' : '运行配置已变化，无法安全恢复，请检查配置后重试。', recoverable: true }, { type: 'done', run_id: event.identity.runId, interrupted: true }]
   if (event.type === 'round_start')
     events.push({ type: 'round_start', run_id: event.identity.runId, round_id: `${event.identity.runId}:${event.round}` })
+  if (event.type === 'run_waiting')
+    events.push({ type: 'run_waiting', run_id: event.identity.runId })
   if (event.type === 'round_start' && Array.isArray(payload.subagentDisplays)) {
     for (const item of payload.subagentDisplays) events.push({ type: 'display_event', item })
   }

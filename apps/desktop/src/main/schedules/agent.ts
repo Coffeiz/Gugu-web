@@ -94,7 +94,7 @@ export function createDesktopScheduledAgent(options: {
                   now: Date.now,
                   staticPrompt: (selection, _identity, style) => ({
                     ...readAgentPromptSet(options.promptDirectory), timezone, skillIndex: '', now: clock.now(),
-                    locale: selection.locale, groupChat: selection.groupChat, imChat: targets.length > 0,
+                    locale: selection.locale, groupChat: selection.groupChat, scene: targets.length > 0 ? 'im' : 'default',
                     ...agentPromptPreferenceFields(style),
                   }),
                   sessionInfo: () => ({}),

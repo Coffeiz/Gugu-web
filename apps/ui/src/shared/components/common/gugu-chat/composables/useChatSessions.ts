@@ -80,7 +80,7 @@ export function useChatSessions(options: {
   contextCompactingItem: () => { kind: 'text' | 'dots' | 'hide'; label?: string }
   scrollBottom: (force?: boolean) => Promise<void>
   captureScrollAnchor: () => SessionScrollAnchor | null | undefined
-  restoreScrollPosition: (anchor: SessionScrollAnchor | null) => Promise<void>
+  restoreScrollPosition: (anchor: SessionScrollAnchor | null, waitForLayout?: boolean) => Promise<void>
   waitForSessionSettlement: (id: number) => Promise<void>
   shouldFollowBottom: () => boolean
   onHistoryReset?: () => void
@@ -237,9 +237,12 @@ export function useChatSessions(options: {
   const currentSessionTitle = computed(() =>
     !sessionId.value ? i18n.global.t('chatUi.newConversation') : (sessions.value.find(s => s.id === sessionId.value)?.title ?? i18n.global.t('chatUi.conversation'))
   )
-  const currentSessionWorkspaceName = computed(() =>
-    !sessionId.value ? null : (sessions.value.find(s => s.id === sessionId.value)?.workspaceName ?? null)
-  )
+  const currentSessionWorkspaceName = computed(() => {
+    const session = sessions.value.find(s => s.id === sessionId.value)
+    if (session?.source && session.source !== 'web') return null
+    if (sessionId.value && !session) return null
+    return session?.workspaceName ?? i18n.global.t('filesUi.personalFiles')
+  })
   const currentSessionGoalActive = computed(() =>
     !sessionId.value ? false : Boolean(sessions.value.find(s => s.id === sessionId.value)?.goalActive)
   )
@@ -281,10 +284,22 @@ export function useChatSessions(options: {
     options.abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
     options.streaming.value = false
     // 待发消息按 session_id 归属；切换只更改展示状态，恢复和排水时按目标会话筛选。
-    // 请求期间清掉旧会话的 DOM，避免新会话挂载前沿用旧 scrollTop；请求失败再恢复。
-    messages.value = []
+    // 先展示目标会话的稳定历史，运行和队列状态仍以本次读取结果为准。
     options.clearStatus()
+    messages.value = cachedSnapshot ? [...cachedSnapshot.messages] : []
+    if (cachedSnapshot) {
+      sessionId.value = id
+      options.ownerPlatformUserId.value = cachedSnapshot.ownerPlatformUserId
+      options.isGroupSession.value = cachedSnapshot.isGroupSession
+      options.onHistoryLoaded?.(cachedSnapshot.pagination)
+    }
     try {
+      if (cachedSnapshot) {
+        await nextTick()
+        if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
+        await options.restoreScrollPosition(cachedSnapshot.scrollAnchor, false)
+        if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
+      }
       const platformHistory = options.historyAccess && !options.historyAccess.readFirstPage
         ? await readPlatformHistory(options.historyAccess, id, cachedSnapshot?.messages ?? [],
           () => viewGeneration === options.getViewGeneration() && accountEpoch === getAccountBoundaryEpoch())
@@ -331,13 +346,17 @@ export function useChatSessions(options: {
       // 从会话行状态恢复「正在整理上下文」提示，否则用户看到的就是静默卡死。
       const compacting = !shouldResume && data.executionState === 'baseline_updating'
       if (compacting) options.setStatus(options.contextCompactingItem())
-      // 让历史合并和虚拟列表的位置校准在消息区隐藏时完成。
-      await options.restoreScrollPosition(cachedSnapshot?.scrollAnchor ?? null)
+      // 补读会重新投影虚拟行。缓存首屏恢复过的阅读锚点，需要用合并后的行再校准一次。
+      if (cachedSnapshot?.scrollAnchor) await options.restoreScrollPosition(cachedSnapshot.scrollAnchor)
+      else if (!cachedSnapshot) await options.restoreScrollPosition(null, !shouldResume)
       if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
       options.setSessionSettling(false)
       options.restorePendingQueue(id, Array.isArray(data.pendingQueue) ? data.pendingQueue : [])
       if (shouldResume) {
-        await options.resumeStream(id)
+        void options.resumeStream(id).then(async () => {
+          if (viewGeneration === options.getViewGeneration() && accountEpoch === getAccountBoundaryEpoch()
+            && options.shouldFollowBottom()) await options.scrollBottom()
+        }).catch(() => {})
       } else if (compacting) {
         pollBaselineDone(id, viewGeneration)
       } else {
@@ -346,8 +365,6 @@ export function useChatSessions(options: {
         void options.drainPendingQueue().catch(() => {})
       }
       if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
-      // 恢复收尾时如果用户已跳到历史消息或主动上滚，不再强制把视图拉回底部。
-      if (shouldResume && options.shouldFollowBottom()) await options.scrollBottom()
       return viewGeneration === options.getViewGeneration() ? 'loaded' : 'superseded'
     } catch (error) {
       if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'

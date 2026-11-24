@@ -274,8 +274,7 @@ html[data-theme='dark'][data-family] .chat-window .chat-att-chip.att-up {
 }
 html[data-theme='dark'][data-family] .chat-window .send-btn,
 html[data-theme='dark'][data-family] .chat-window .exp-send-btn,
-html[data-theme='dark'][data-family] .chat-window .mv-btn,
-html[data-theme='dark'][data-family] .chat-window .msg-file-ext {
+html[data-theme='dark'][data-family] .chat-window .mv-btn {
   color: var(--content-on-accent);
   /* 暗色下用专门 token，不用 brand-gradient——后者在暗色面板里太亮
      且色相跟周边窗体撞色。 */
@@ -299,16 +298,12 @@ html[data-theme='dark'][data-family] .chat-window .msg-quoted {
   background: var(--surface-soft);
   border-color: var(--border-subtle);
 }
-html[data-theme='dark'][data-family] .chat-window .msg-file-name,
-html[data-theme='dark'][data-family] .chat-window .msg-file-meta,
 html[data-theme='dark'][data-family] .chat-window .mv-dur {
   color: var(--content-primary);
 }
-html[data-theme='dark'][data-family] .chat-window .msg-file-meta,
 html[data-theme='dark'][data-family] .chat-window .mv-dur { color: var(--content-tertiary); }
 html[data-theme='dark'][data-family] .chat-window .mv-wave i { background: var(--content-tertiary); }
 html[data-theme='dark'][data-family] .chat-window .msg-copy-btn:hover,
-html[data-theme='dark'][data-family] .chat-window .msg-file-dl:hover,
 html[data-theme='dark'][data-family] .chat-window .msg-voice:hover {
   background: var(--surface-soft-hover);
   color: var(--content-primary);
@@ -341,7 +336,6 @@ html[data-theme='dark'][data-family] .cb-cancel { color: var(--content-secondary
 html[data-theme='dark'][data-family] .cb-cancel:hover { background: var(--surface-soft-hover); }
 html[data-theme='dark'][data-family] .chat-window .rec-dot { background: var(--status-danger); }
 html[data-theme='dark'][data-family] .chat-window .rec-time { color: var(--status-danger); }
-html[data-theme='dark'][data-family] .chat-window .msg-file-dl { color: var(--action-primary); }
 html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a[href^='gugu://']:not(.chat-object-card, .chat-smart-row, .chat-smart-button) {
   color: var(--content-on-accent);
   background: var(--gugu-chat-send-bg);

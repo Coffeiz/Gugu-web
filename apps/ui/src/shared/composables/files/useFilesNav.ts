@@ -88,31 +88,20 @@ export function useFilesNav(deps: FilesNavDeps) {
     try {
       const saved = sessionStorage.getItem(NAV_KEY)
       if (!saved) return
-      navPath.value = JSON.parse(saved)
+      const path: unknown = JSON.parse(saved)
+      if (!Array.isArray(path) || path.some(segment => !segment || typeof segment !== 'object'
+        || typeof (segment as { type?: unknown }).type !== 'string'
+        || (segment as { type: string }).type === 'folder')) throw new TypeError('文件库导航记录无效')
+      navPath.value = path as NavSeg[]
+      saveNav()
     } catch {
       navPath.value = []
     }
   }
 
-  function pruneHistoryForFolders(folderIds: Array<number | string>) {
-    const idSet = new Set(folderIds)
-    const hasDeleted = (snap: NavSeg[]) => snap.some(seg => seg.type === 'folder' && idSet.has(seg.folderId as number))
-    const curIdx = navHistoryCursor.value
-    let newCursor = 0
-    const kept: NavSeg[][] = []
-    navHistoryStack.value.forEach((snap, i) => {
-      if (!hasDeleted(snap)) {
-        if (i <= curIdx) newCursor = kept.length
-        kept.push(snap)
-      }
-    })
-    navHistoryStack.value = kept
-    navHistoryCursor.value = Math.min(newCursor, Math.max(0, kept.length - 1))
-  }
-
   return {
     navPath, canGoBack, canGoForward, goBack, goForward,
     currentType, currentSeg, projectSeg, canUpload,
-    saveNav, enterFolder, navigateTo, restoreNav, pruneHistoryForFolders,
+    saveNav, enterFolder, navigateTo, restoreNav,
   }
 }

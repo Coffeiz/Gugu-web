@@ -10,7 +10,7 @@ export interface ScheduledTaskListRow {
   id: number; name: string; payload: string; cron: string; schedule_kind: string; interval_minutes: number | null
   start_at: string | null; end_at: string | null; channels: string; enabled: boolean; event_id: number | null
   workspace_id: number | null; filesystem_authorization_grant_id: number | null; last_run_at: string | null
-  last_run_failed: boolean; delivery_targets: unknown; authorized_tools: unknown; email_attachment_file_ids: unknown
+  last_run_failed: boolean; delivery_targets: unknown; authorized_tools: unknown; email_attachment_file_paths: unknown
 }
 const stamp = (value: unknown): string | null => value == null ? null : utc(value).replace(' ', 'T')
 const json = (value: unknown, backend: Backend) => backend === 'sqlite' && typeof value === 'string' ? JSON.parse(value) : value
@@ -32,7 +32,7 @@ export function createKyselyScheduledTaskReader<DB>(db: Kysely<DB>, backend: Bac
       const result = await sql<Record<string, unknown>>`SELECT id,name,payload,cron,schedule_kind,interval_minutes,
         ${backend === 'postgres' || sqliteMode ? sql`execution_mode` : sql`'instruction' AS execution_mode`},
         ${time('start_at')} AS start_at,${time('end_at')} AS end_at,channels,enabled,event_id,workspace_id,filesystem_authorization_grant_id,
-        ${time('last_run_at')} AS last_run_at,last_run_failed,delivery_targets,authorized_tools,email_attachment_file_ids
+        ${time('last_run_at')} AS last_run_at,last_run_failed,delivery_targets,authorized_tools,email_attachment_file_paths
         FROM scheduled_tasks WHERE user_id=${ownerKey} AND ${event} ${filter} ${before} ORDER BY id DESC ${limit}`.execute(db)
       return result.rows.map(row => ({
         id: integer(row.id), ...(row.execution_mode === 'reminder' || row.execution_mode === 'instruction' ? { execution_mode: row.execution_mode } : {}), name: String(row.name), payload: String(row.payload), cron: String(row.cron), schedule_kind: String(row.schedule_kind),
@@ -40,7 +40,7 @@ export function createKyselyScheduledTaskReader<DB>(db: Kysely<DB>, backend: Bac
         channels: String(row.channels ?? ''), enabled: Boolean(row.enabled), event_id: row.event_id == null ? null : integer(row.event_id),
         workspace_id: row.workspace_id == null ? null : integer(row.workspace_id), filesystem_authorization_grant_id: row.filesystem_authorization_grant_id == null ? null : integer(row.filesystem_authorization_grant_id),
         last_run_at: stamp(row.last_run_at), last_run_failed: Boolean(row.last_run_failed), delivery_targets: json(row.delivery_targets, backend),
-        authorized_tools: json(row.authorized_tools, backend), email_attachment_file_ids: json(row.email_attachment_file_ids, backend),
+        authorized_tools: json(row.authorized_tools, backend), email_attachment_file_paths: json(row.email_attachment_file_paths, backend),
       }))
     } finally { signal?.throwIfAborted() }
   }
@@ -87,7 +87,7 @@ export function projectScheduledTaskForAgent(row: ScheduledTaskListRow, capabili
   return { id: row.id, name: row.name, when: when(row), schedule_kind: row.schedule_kind, cron: row.cron,
     interval_minutes: row.interval_minutes, start_at: zulu(row.start_at), end_at: zulu(row.end_at), schedule_status: status(row, clock()),
     instruction: row.payload, execution_mode: row.execution_mode ?? 'instruction', channels: row.channels.split(',').filter(Boolean), enabled: row.enabled, last_run_at: row.last_run_at,
-    delivery_targets: row.delivery_targets, authorized_tools: row.authorized_tools || [], email_attachment_file_ids: row.email_attachment_file_ids || [],
+    delivery_targets: row.delivery_targets, authorized_tools: row.authorized_tools || [], email_attachment_file_paths: row.email_attachment_file_paths || [],
     workspace_id: capabilities.workspaceSupported ? row.workspace_id : null,
     filesystem_authorized: capabilities.filesystemAuthorizationEnabled && row.filesystem_authorization_grant_id !== null }
 }
@@ -97,7 +97,7 @@ export function projectScheduledTaskForWeb(row: ScheduledTaskListRow, filesystem
     channels: row.channels.split(',').filter(Boolean), enabled: row.enabled, event_id: row.event_id, workspace_id: row.workspace_id,
     filesystem_authorized: filesystemAuthorizationEnabled && row.filesystem_authorization_grant_id !== null,
     last_run_at: zulu(row.last_run_at), last_run_failed: row.last_run_failed, delivery_targets: row.delivery_targets,
-    authorized_tools: row.authorized_tools || [], email_attachment_file_ids: row.email_attachment_file_ids || [] }
+    authorized_tools: row.authorized_tools || [], email_attachment_file_paths: row.email_attachment_file_paths || [] }
 }
 
 /** 能力由宿主装配，调用方只能提供 owner 与事件范围。 */

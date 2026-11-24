@@ -50,6 +50,7 @@ export const BUILTIN_AGENT_TOOL_STATE_LABELS: Readonly<Record<string, string>> =
   list_skills: '列出咕咕技能',
   list_trash: '查看回收站',
   list_workspaces: '查询工作区',
+  set_project_workspace: '设置项目工作区关联',
   manage_mcp_servers: '管理 MCP 服务',
   note_create: '记录思维笔记',
   note_delete: '删除思维笔记',

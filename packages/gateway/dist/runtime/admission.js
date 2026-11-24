@@ -1,3 +1,4 @@
+import { classifyImGroupInbound } from '@gugu/core/im/access';
 export class ImGatewayAdmissionError extends Error {
     code;
     constructor(code) {
@@ -22,4 +23,12 @@ export function imAdmissionKeys(scope, digest) {
     const scopeHash = digest([scope.ownerId, scope.platform, scope.botId, scope.chatType, conversation]);
     const eventHash = digest([scopeHash, sender, requireImAdmissionId(scope.eventId)]);
     return { scopeHash, eventHash };
+}
+/** 宿主提供已核验的群配置和消息事实，Gateway 决定是否回复或只记录。 */
+export function classifyGatewayGroupMessage(facts, mode, controlCanReply = false) {
+    const disposition = classifyImGroupInbound(facts, {
+        requiresAt: mode === 'reply_mentions',
+        readOnly: mode === 'record_only',
+    });
+    return disposition && controlCanReply && mode !== 'record_only' ? 'reply' : disposition;
 }

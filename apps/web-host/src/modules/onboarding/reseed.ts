@@ -7,8 +7,7 @@ import { removeLocalFile } from '../files/storage/removal.js'
 
 interface SeedStateRow extends QueryResultRow { state: unknown }
 interface SeedFileRow extends QueryResultRow {
-  id: number | string
-  storage_key: string
+  path: string
   size_bytes: number | string
   deleted_at: Date | string | null
 }
@@ -25,20 +24,17 @@ async function lockedState(client: PoolClient, ownerId: string): Promise<Record<
   return normalizeOnboardingState(jsonValue(result.rows[0]?.state))
 }
 
-/** PostgreSQL 事务只删除 owner 的播种项目/文件并更新配额；物理清理由 Core 用例按返回键逐个完成。 */
+/** PostgreSQL 事务只删除 owner 的播种项目/文件；物理清理由 Core 用例按返回键逐个完成。 */
 export function createPostgresOnboardingReseedOperations(pool: Pick<Pool, 'connect' | 'query'>, storageRoot: string) {
   return {
     async removeSeedProject(rawOwnerId: string, projectId: number): Promise<readonly string[]> {
       const ownerId = normalizeFileOwnerId(rawOwnerId)
       if (!Number.isSafeInteger(projectId) || projectId < 1) throw new TypeError('引导项目标识无效')
       return withPostgresTransaction(pool, async client => {
-        const ledger = await client.query<{ used_bytes: number | string }>(`SELECT used_bytes FROM storage_quota_ledgers
-          WHERE user_id=$1 AND category='file_library' AND status='active' FOR UPDATE`, [ownerId])
-        let usedBytes = Math.max(0, Number(ledger.rows[0]?.used_bytes ?? 0))
-        const files = await client.query<SeedFileRow>(`SELECT id,storage_key,size_bytes,deleted_at FROM files
+        const files = await client.query<SeedFileRow>(`SELECT path,size_bytes,deleted_at FROM files
           WHERE user_id=$1 AND project_id=$2 FOR UPDATE`, [ownerId, projectId])
         for (const file of files.rows) {
-          if (!isOwnedFileStorageKey(ownerId, file.storage_key)) throw new Error('引导文件存储归属无效')
+          if (!isOwnedFileStorageKey(ownerId, file.path)) throw new Error('引导文件存储归属无效')
         }
         await client.query('DELETE FROM files WHERE user_id=$1 AND project_id=$2', [ownerId, projectId])
         const deleted = await client.query('DELETE FROM projects WHERE id=$1 AND user_id=$2', [projectId, ownerId])
@@ -47,21 +43,7 @@ export function createPostgresOnboardingReseedOperations(pool: Pick<Pool, 'conne
           await enqueuePostgresAgentRagRebuild(client, ownerId, 'project')
         }
 
-        if (ledger.rows[0]) {
-          for (const file of files.rows) {
-            const size = Math.max(0, Number(file.size_bytes) || 0)
-            const released = Math.min(size, usedBytes)
-            if (released <= 0) continue
-            await client.query(`INSERT INTO storage_quota_events
-              (user_id,category,operation,delta_bytes,resource_type,resource_id,idempotency_key,metadata_json,created_at)
-              VALUES ($1,'file_library','onboarding_reseed',$2,'file',$3,$4,NULL,CURRENT_TIMESTAMP)
-              ON CONFLICT (user_id,idempotency_key) DO NOTHING`, [ownerId, -released, String(file.id), `onboarding-reseed:${projectId}:${file.id}`])
-            usedBytes -= released
-          }
-          await client.query(`UPDATE storage_quota_ledgers SET used_bytes=$2,updated_at=CURRENT_TIMESTAMP
-            WHERE user_id=$1 AND category='file_library' AND status='active'`, [ownerId, usedBytes])
-        }
-        return files.rows.map(file => file.storage_key)
+        return files.rows.map(file => file.path)
       })
     },
     async removeStorage(ownerId: string, storageKey: string): Promise<void> {

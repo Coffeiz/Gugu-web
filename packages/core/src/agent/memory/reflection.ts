@@ -1,4 +1,4 @@
-import { assembleOwnerReflectionInput } from '../scenes/reflection/owner.js'
+import { assembleOwnerReflectionInput } from '../scenes/reflection/index.js'
 import type { BranchInput,BranchPolicy,BranchResult,Json,RunIdentity } from '../models.js'
 import type { MessageArea } from '../context/history/canonical-history.js'
 import { blocks,copy } from '../context/history/canonical-history.js'
@@ -32,14 +32,14 @@ export function buildOwnerReflectionInput(input: {
 /** 网页和桌面普通对话共用反思调用与观测归属。 */
 export async function runPrivateReflection<Wire>(
   input: Pick<BranchInput<Wire>, 'stableSystem' | 'delta' | 'scope'> & RunIdentity,
-  policy: Pick<BranchPolicy, 'outputMode' | 'maxOutputTokens'>,
+  policy: Pick<BranchPolicy, 'outputMode' | 'maxOutputTokens' | 'maxRetries'>,
   ports: BranchPorts<Wire>,
   signal: AbortSignal,
   observation?: AgentObservationPort,
-  trace?: { identity?: RunIdentity; trigger?: 'idle' },
+  trace?: { identity?: RunIdentity; trigger?: 'idle'; scope?: 'private' | 'group' },
 ): Promise<BranchResult> {
   const identity = trace?.identity ?? { ownerId: input.ownerId, sessionId: input.sessionId, runId: `reflection-${ports.nextId()}` }
-  const attributes = { scenario: 'reflection', reflection_scope: 'private', trigger_source: trace?.trigger ?? 'unknown', origin_run_id: input.runId }
+  const attributes = { scenario: 'reflection', reflection_scope: trace?.scope ?? 'private', trigger_source: trace?.trigger ?? 'unknown', origin_run_id: input.runId }
   recordAgentObservation(observation, { identity, kind: 'run', name: 'started', at: Date.now(), spanId: identity.runId, status: 'running', attributes })
   let result: BranchResult | undefined
   try {

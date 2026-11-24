@@ -1,3 +1,4 @@
+import { parseImControlCommand } from '@gugu/core/im/shortcut';
 import { handleQqBinding } from '../platforms/qq/binding.js';
 import { handleTelegramBinding } from '../platforms/telegram/binding.js';
 import { casefoldSearchText } from '@gugu/core/search/unicode';
@@ -6,8 +7,20 @@ export class ImPreflightError extends Error {
     constructor() { super('IM 入站控制消息暂时无法处理'); this.name = 'ImPreflightError'; }
 }
 /** 只生成判定文本，不修改入库原文；只在明确 @ 当前 Bot 时移除一个 mention。 */
+export function readImAddressedCommand(input) {
+    const mentioned = input.botMentioned || input.qqAtEventOnly === true;
+    const semantic = imSemanticText(input.text, mentioned);
+    const parsed = parseImControlCommand(semantic);
+    const unaddressed = input.scope.chatType === 'group' && !mentioned ? parsed : null;
+    return { semantic, command: unaddressed ? null : parsed, unaddressed };
+}
 export function imSemanticText(text, botMentioned) {
     const value = text.trim();
+    if (botMentioned) {
+        const command = value.replace(/^[@＠][^@＠/／\r\n]+(?=[/／])/u, '').trim();
+        if (command !== value && parseImControlCommand(command))
+            return command;
+    }
     return botMentioned ? value.replace(/^\s*(?:<@!?[^>\s]+>|[@＠][^\s/／]+)\s*/u, '').trim() : value;
 }
 export function selectImTextChoice(prompt, text) {
@@ -111,11 +124,13 @@ export function createImInboundPreflight(ports) {
                 if (await handleQqBinding(text, code => ports.consumeBinding(scope, code, signal), reply))
                     return 'consumed';
             }
-            if (input.hasPendingMedia || !text)
+            if (!text)
                 return 'enqueue';
             signal.throwIfAborted();
-            const semantic = imSemanticText(text, input.botMentioned);
-            const choice = semantic ? await ports.consumeTextChoice(scope, semantic, signal) : null;
+            const { semantic, command, unaddressed } = readImAddressedCommand({ ...input, scope, text });
+            if (input.hasPendingMedia && !command && !unaddressed)
+                return 'enqueue';
+            const choice = semantic && !input.hasPendingMedia ? await ports.consumeTextChoice(scope, semantic, signal) : null;
             if (choice) {
                 if (choice.status === 'replay')
                     return 'consumed';
@@ -124,6 +139,8 @@ export function createImInboundPreflight(ports) {
                         : `已选择：${choice.text || '已选择'}，继续处理。`);
                 return 'consumed';
             }
+            if (unaddressed)
+                return 'enqueue';
             const decision = await ports.decideShortcut(scope, semantic, signal);
             if (decision.action === 'run')
                 return 'enqueue';

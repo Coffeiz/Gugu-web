@@ -41,6 +41,7 @@ end
 local ttl = tonumber(record.ttl_minutes) or 5
 if ttl < 1 or ttl ~= math.floor(ttl) then return '' end
 local identity = type(record.i) == 'string' and record.i or ''
+if ARGV[2] and (record.s ~= ARGV[2] or identity ~= ARGV[3]) then return '' end
 local key = 'agent:confirm-grant:' .. ARGV[1] .. ':' .. record.s .. ':' .. identity
 redis.call('SET', key, '1', 'EX', tostring(math.floor(ttl * 60)))
 redis.call('DEL', KEYS[1])
@@ -93,7 +94,7 @@ export function createFilesystemAuthorizationConfirmationStore(
       }
     },
 
-    async redeem(ownerId, code) {
+    async redeem(ownerId, code, expected) {
       if (!code.trim()) return false
       try {
         const result = await redis.eval(
@@ -101,6 +102,7 @@ export function createFilesystemAuthorizationConfirmationStore(
           1,
           `${CODE_PREFIX}:${ownerId}:${code}`,
           ownerId,
+          ...(expected ? [digest(expected.summary), digest(expected.identity)] : []),
         )
         return result === '1'
       } catch {

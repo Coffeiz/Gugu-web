@@ -353,7 +353,7 @@ it('桌面斜杠命令读取本机配置和当前运行，停止时使用明确�
   const mode = { read: vi.fn(async () => false), write: vi.fn(async (enabled: boolean) => enabled) }
   const command = createDesktopChatCommandAccess(mode)
   try {
-    expect((await listDesktopChatCommands()).map(item => item.command)).toEqual(['/stop', '/status', '/compact', '/goal', '/new', '/memory', '/forget', '/auto', '/help'])
+    expect((await listDesktopChatCommands()).map(item => item.command)).toEqual(['/stop', '/status', '/compact', '/goal', '/new', '/memory', '/forget', '/workspace', '/auto', '/help'])
     await expect(command('/help', null)!()).resolves.toMatchObject({ text: expect.stringContaining('/memory') })
     await expect(command('/mem help', null)!()).resolves.toMatchObject({ text: expect.stringContaining('长期记忆') })
     await expect(command('/help /compact', null)!()).resolves.toMatchObject({ text: expect.stringContaining('整理当前会话上下文') })

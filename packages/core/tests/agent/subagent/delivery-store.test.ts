@@ -5,6 +5,7 @@ import { expect, it } from 'vitest'
 import { sql } from 'kysely'
 import { createSubagentDeliveryStore } from '../../../src/agent/subagent/delivery-store.js'
 import { createAgentInbox } from '../../../src/agent/subagent/inbox.js'
+import { createSubagentServiceTools } from '../../../src/agent/tools/subagent.js'
 import { createSubagentService } from '../../../src/agent/subagent/service.js'
 import { createSqliteAgentRunCoordination } from '../../../src/agent/run/sqlite-coordination.js'
 import { createSqliteAgentRunLeasePort, createSqliteAgentRunStore } from '../../../src/agent/run/sqlite-store.js'
@@ -64,6 +65,8 @@ it('迁移旧派单后从同一父会话的新 Run 恢复子 Agent 身份并投�
         .toMatchObject({ finalMessage: '原坐标加密结果' })
       const service = createSubagentService({ ...communicationPorts(reopened.runtime.db, secret), deliveries: store })
       expect(await service.inspect(nextParent, child.childId)).toMatchObject({ run: { childId: child.childId, status: 'completed' } })
+      expect(await service.inspect(nextParent, child.childId, undefined, 1, true))
+        .toMatchObject({ task: '合成任务', finalMessage: '原坐标加密结果' })
       expect(await service.inspect(nextParent)).toMatchObject({ runs: [{ childId: child.childId, status: 'completed' }] })
       expect(await service.cancel(nextParent, child.childId)).toEqual({ childId: child.childId, status: 'completed' })
       await expect(service.inspect(stranger, child.childId)).rejects.toMatchObject({ code: 'RUN_NOT_FOUND' })
@@ -120,9 +123,16 @@ it('SQLite 重开后 wait 返回同一 final，父回执提交前保持可领取
     const parent = { ownerId: first.ownerId, sessionId: String(session.id), runId: '合成父运行' }
     const deliveries = createSubagentDeliveryStore(first.runtime.db, secret, undefined, 'sqlite')
     const service = createSubagentService({ ...communicationPorts(first.runtime.db, secret), deliveries })
+    const messageTool = createSubagentServiceTools(service).find(tool => tool.definition.name === 'agent_message')!
+    const input = { agentId: 'searcher', task: '合成任务' }
+    expect(messageTool.validate({ ...input, action: 'spawn' }).success).toBe(true)
+    expect(messageTool.validate({ ...input, action: 'start' }).success).toBe(false)
     let childId: string
     try {
-      const start = await service.start(parent, '派单', 'builtin:searcher', { task: '合成任务' }, signal)
+      await expect(service.spawn(parent, '未知派单', 'synthetic-unknown', { task: '合成任务' }, signal))
+        .rejects.toMatchObject({ code: 'AGENT_NOT_FOUND' })
+      const start = await service.spawn(parent, '派单', 'searcher', { task: '合成任务' }, signal)
+      expect(start.run.agentId).toBe('builtin:searcher')
       childId = start.run.childId
       const result = await deliveries.read(parent, childId)
       expect(await deliveries.complete(parent, result!.runId, { status: 'completed', finalMessage })).toBe(true)
@@ -137,7 +147,7 @@ it('SQLite 重开后 wait 返回同一 final，父回执提交前保持可领取
     const restarted = createSubagentService({ ...communicationPorts(reopened.runtime.db, secret), deliveries: restored,
       async schedule() { scheduled++ } })
     try {
-      const start = await restarted.start(parent, '派单', 'builtin:searcher', { task: '合成任务' }, signal)
+      const start = await restarted.spawn(parent, '派单', 'builtin:searcher', { task: '合成任务' }, signal)
       expect(start.run.childId).toBe(childId)
       expect(scheduled).toBe(0)
       expect(await restarted.wait(parent, childId, signal)).toEqual({ childId, status: 'completed', finalMessage })
@@ -167,7 +177,7 @@ it('SQLite 重开后 wait 返回同一 final，父回执提交前保持可领取
       expect(await details(parent.ownerId, session.id, 100, 1)).toEqual({ toolInput: { childId } })
       expect(await reopened.runtime.db.transaction().execute(tx => restored.pruneConsumed(tx, parent, 2))).toBe(0)
       expect(await reopened.runtime.db.transaction().execute(tx => restored.pruneConsumed(tx, parent, 3))).toBe(1)
-      const background = await restarted.start(parent, '后台派单', 'builtin:searcher',
+      const background = await restarted.spawn(parent, '后台派单', 'builtin:searcher',
         { task: '后台任务', allowBackgroundReport: true }, signal)
       const backgroundId = background.run.childId
       const backgroundRun = await restored.read(parent, backgroundId)

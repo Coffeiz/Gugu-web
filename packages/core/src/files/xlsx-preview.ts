@@ -302,8 +302,8 @@ export function createXlsxPreviewReader(load: (storageKey: string) => Promise<Xl
   const cache = new Map<string, XlsxPreviewEntry>()
   const inflight = new Map<string, Promise<XlsxPreviewEntry>>()
   let cachedBytes = 0
-  async function read(storageKey: string, fileId: number, version: number): Promise<XlsxPreviewEntry> {
-    const key = `${fileId}:${version}`
+  async function read(storageKey: string, version: number): Promise<XlsxPreviewEntry> {
+    const key = `${storageKey}:${version}`
     const existing = cache.get(key)
     if (existing) { cache.delete(key); cache.set(key, existing); return existing }
     let task = inflight.get(key)
@@ -326,12 +326,12 @@ export function createXlsxPreviewReader(load: (storageKey: string) => Promise<Xl
     try { return await task } finally { if (inflight.get(key) === task) inflight.delete(key) }
   }
   return {
-    async preview(storageKey: string, fileId: number, version: number) {
-      const entry = await read(storageKey, fileId, version)
+    async preview(storageKey: string, version: number) {
+      const entry = await read(storageKey, version)
       return { version, sheets: entry.sheets }
     },
-    async image(storageKey: string, fileId: number, version: number, imageId: number) {
-      const entry = await read(storageKey, fileId, version), target = entry.imageTargets.get(imageId)
+    async image(storageKey: string, version: number, imageId: number) {
+      const entry = await read(storageKey, version), target = entry.imageTargets.get(imageId)
       if (!target) throw new XlsxPreviewError(404, '图片不存在')
       const content = await entry.archive.read(target.path)
       if (!content) throw new XlsxPreviewError(404, '图片不存在')

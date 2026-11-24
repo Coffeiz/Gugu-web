@@ -33,7 +33,8 @@ const browserToolbar = load('../../components/common/file-browser/FileBrowserToo
 const renameInput = load('../../components/common/file-browser/RenameInput.vue')
 const filesGridView = load('../../views/Files/components/FilesGridView.vue')
 const filesView = load('../../views/Files/index.vue')
-const projectFilesPanel = load('../../views/Projects/components/ProjectFilesPanel.vue')
+const projectDiskFiles = load('../../views/Projects/components/ProjectDiskFiles.vue')
+const pathFiles = load('../../views/Files/components/PathFiles.vue')
 const filesCss = load('./components/files.css')
 const sharedForms = load('./components/forms.css')
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
@@ -133,11 +134,10 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(filesCss).toContain('box-shadow var(--motion-hover-control) var(--motion-ease-standard);')
   })
 
-  it('项目文件夹网格和列表重命名都复用自动聚焦并全选的输入组件', () => {
-    const folderRenameInput = '<RenameInput v-if="renamingFolderId === folder.id" v-model="folderRenameText"'
-    expect(projectFilesPanel.split(folderRenameInput)).toHaveLength(3)
-    expect(projectFilesPanel).toContain('@commit="commitFolderRename" @cancel="cancelFolderRename" />')
-    expect(projectFilesPanel).not.toContain('<input class="rename-input-inline" v-model="folderRenameText"')
+  it('项目磁盘目录复用路径文件浏览器的目录重命名输入', () => {
+    expect(projectDiskFiles).toContain('<PathFiles ref="files"')
+    expect(pathFiles).toContain('v-if="renamingPath === entry.relativePath"')
+    expect(pathFiles).toContain('@commit="commitRename(entry)" @cancel="cancelRename"')
   })
 
   it('文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
@@ -193,12 +193,10 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(folderPresentation).toContain("if (folder.type === 'status') return STATUS_COLOR")
   })
 
-  it('项目文件区复用文件库的文件夹图标与强调色映射', () => {
-    expect(projectFilesPanel).toContain("useFileLibraryFolderPresentation")
-    expect(projectFilesPanel).toContain("folderListIcon({ type: 'folder' })")
-    expect(projectFilesPanel).toContain("folderAccentColor({ type: 'folder' })")
-    expect(projectFilesPanel).not.toContain(':style="{ color: accentColor }"')
-    expect(projectFilesPanel).not.toContain('<svg class="fd-big-icon"')
+  it('项目文件区复用路径文件浏览器和共享目录卡片', () => {
+    expect(projectDiskFiles).toContain('<PathFiles ref="files"')
+    expect(pathFiles).toContain('<RuntimeFolderCard v-if="entry.kind === \'directory\'"')
+    expect(pathFiles).toContain('FolderMaterialPreview')
   })
 
   it('文件卡 hover/图片预框选不会覆盖 selected，亮色 full-card preview 由 FileCard 自己统一拥有', () => {
@@ -226,7 +224,7 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(fileCard).toContain('border-color: var(--file-card-border-selected);')
     expect(fileCard.match(/\.fc-card\.selected \{([^}]*)\}/)?.[1]).not.toContain('box-shadow:')
     expect(filesGridView).not.toContain('class="hover-card-fx"')
-    expect(projectFilesPanel).not.toContain('class="hover-card-fx"')
+    expect(projectDiskFiles).not.toContain('class="hover-card-fx"')
 
     const genericShadowSelector = productCss
       .match(/([^{}]+)\{\s*box-shadow:\s*var\(--elevation-card-hover\);/)?.[1]
@@ -246,9 +244,9 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
   })
 
   it('框选 preview 与已选集合视觉互斥，同时保留完整 mouseup 命中集合', () => {
-    expect(boxSelection).toContain('_latestPreview = { fileIds, folderIds }')
-    expect(boxSelection).toContain('!selectedFileIds.value.has(id)')
-    expect(boxSelection).toContain('!selectedFolderIds.value.has(id)')
+    expect(boxSelection).toContain('_latestPreview = { filePaths, directoryPaths }')
+    expect(boxSelection).toContain('!selectedFilePaths.value.has(id)')
+    expect(boxSelection).toContain('!selectedDirectoryPaths.value.has(id)')
     expect(filesListRows).toContain(':hover:not(.selected):not(.pre-selected)')
     expect(filesListRows).toContain(':hover:not(.selected):not(.pre-selected) { background: var(--action-soft); }')
     expect(filesListRows).not.toContain('background: rgba(180,148,80,0.06);')
@@ -257,8 +255,8 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(filesListRows).toContain('.pre-selected:not(.selected)')
   })
 
-  it('框选矩形使用主题操作色，文件库与项目文件面板保持一致', () => {
-    for (const [source, selector] of [[filesView, '.selection-rect {'], [projectFilesPanel, '.pm-selection-rect {']] as const) {
+  it('框选矩形使用主题操作色，文件库与项目路径浏览器保持一致', () => {
+    for (const [source, selector] of [[filesView, '.selection-rect {'], [projectDiskFiles, '.project-path-selection {']] as const) {
       const rectangle = cssBlock(source, selector)
       expect(rectangle).toContain('border: 1.5px solid var(--action-outline);')
       expect(rectangle).toContain('background: var(--action-soft);')

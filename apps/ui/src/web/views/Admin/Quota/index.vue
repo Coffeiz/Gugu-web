@@ -49,21 +49,6 @@
           </div>
 
           <div class="quota-field">
-            <label class="qf-label">{{ t('adminQuota.storage') }}</label>
-            <div class="qf-input-row">
-              <input v-model.number="globalDraft.storageGB" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.unlimited')" />
-              <span class="qf-unit">GB</span>
-            </div>
-            <div class="qf-presets">
-              <button class="preset-chip" @click="globalDraft.storageGB = null">{{ t('adminQuota.unlimited') }}</button>
-              <button class="preset-chip" @click="globalDraft.storageGB = 5">5 GB</button>
-              <button class="preset-chip" @click="globalDraft.storageGB = 20">20 GB</button>
-              <button class="preset-chip" @click="globalDraft.storageGB = 50">50 GB</button>
-              <button class="preset-chip" @click="globalDraft.storageGB = 100">100 GB</button>
-            </div>
-          </div>
-
-          <div class="quota-field">
             <label class="qf-label">{{ t('adminQuota.searchDaily') }}</label>
             <div class="qf-input-row">
               <input v-model.number="globalDraft.searchDaily" class="qf-input" type="number" min="0" :placeholder="t('adminQuota.unlimited')" />
@@ -92,13 +77,6 @@
       </div>
     </div>
 
-    <div class="section-wrap">
-      <div class="section-head">
-        <span class="section-label">{{ t('adminQuota.maintenance') }}</span>
-      </div>
-      <FullReconcilePanel />
-    </div>
-
     <!-- 用户配额覆盖 -->
     <div class="section-wrap">
       <div class="section-head">
@@ -116,7 +94,6 @@
           <div class="ut-head">
             <span class="col-user">{{ t('adminQuota.user') }}</span>
             <span class="col-token">{{ t('adminQuota.weekUsage') }}</span>
-            <span class="col-storage">{{ t('adminQuota.storageUsage') }}</span>
             <span class="col-action"></span>
           </div>
           <div v-for="u in overrideUsers" :key="u.id" class="ut-row">
@@ -134,16 +111,6 @@
                 <span class="quota-limit">{{ u.token_limit_weekly === -1 ? t('adminQuota.unlimited') : (fmtTokens(u.token_limit_weekly) || '—') }}</span>
                 <span class="usage-bar-bg" v-if="u.token_limit_weekly > 0">
                   <span class="usage-bar-fill token-fill" :style="tokenBarStyle(u)"></span>
-                </span>
-              </span>
-            </span>
-            <span class="col-storage">
-              <span class="quota-cell">
-                <span class="quota-used">{{ fmtBytes(u.storage_used) }}</span>
-                <span class="quota-sep">/</span>
-                <span class="quota-limit">{{ u.storage_limit_bytes === -1 ? t('adminQuota.unlimited') : fmtBytes(u.storage_limit_bytes) }}</span>
-                <span class="usage-bar-bg" v-if="u.storage_limit_bytes > 0">
-                  <span class="usage-bar-fill storage-fill" :style="storageBarStyle(u)"></span>
                 </span>
               </span>
             </span>
@@ -168,7 +135,6 @@
           <div class="ut-head">
             <span class="col-user">{{ t('adminQuota.user') }}</span>
             <span class="col-token">{{ t('adminQuota.monthUsage') }}</span>
-            <span class="col-storage">{{ t('adminQuota.storageUsage') }}</span>
             <span class="col-status">{{ t('adminQuota.status') }}</span>
             <span class="col-action"></span>
           </div>
@@ -183,12 +149,9 @@
             <span class="col-token">
               <span class="usage-text">{{ fmtTokens(u.tokens_month) }}</span>
             </span>
-            <span class="col-storage">
-              <span class="usage-text">{{ fmtBytes(u.storage_used) }}</span>
-            </span>
             <span class="col-status">
-              <span class="quota-badge" :class="(u.token_limit_6h != null || u.token_limit_weekly != null || u.storage_limit_bytes != null || u.search_limit_daily != null) ? 'custom' : 'default'">
-                {{ (u.token_limit_6h != null || u.token_limit_weekly != null || u.storage_limit_bytes != null || u.search_limit_daily != null) ? t('adminQuota.custom') : t('adminQuota.globalDefault') }}
+              <span class="quota-badge" :class="(u.token_limit_6h != null || u.token_limit_weekly != null || u.search_limit_daily != null) ? 'custom' : 'default'">
+                {{ (u.token_limit_6h != null || u.token_limit_weekly != null || u.search_limit_daily != null) ? t('adminQuota.custom') : t('adminQuota.globalDefault') }}
               </span>
             </span>
             <span class="col-action">
@@ -215,13 +178,12 @@ import { useConfigStore } from '@/stores/config'
 import { useQuotaAdmin } from './useQuotaAdmin'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import UserQuotaEditDialog from './components/UserQuotaEditDialog.vue'
-import FullReconcilePanel from './components/FullReconcilePanel.vue'
 
 const adminStore  = useAdminStore()
 const { t } = useI18n()
 const configStore = useConfigStore()
 const quotaAdmin = useQuotaAdmin(adminStore, configStore)
-const { globalDraft, globalSaving, globalSaved, saveGlobal, loading, refreshing, search, onSearch, overrideUsers, allUsers, loadUsers, editTarget, editSaving, openEdit, saveEdit, clearQuota, avatarChar, avatarStyle, fmtTokens, fmtBytes, tokenBarStyle, storageBarStyle } = quotaAdmin
+const { globalDraft, globalSaving, globalSaved, saveGlobal, loading, refreshing, search, onSearch, overrideUsers, allUsers, loadUsers, editTarget, editSaving, openEdit, saveEdit, clearQuota, avatarChar, avatarStyle, fmtTokens, tokenBarStyle } = quotaAdmin
 
 </script>
 
@@ -311,7 +273,7 @@ const { globalDraft, globalSaving, globalSaved, saveGlobal, loading, refreshing,
 }
 .ut-head {
   display: grid;
-  grid-template-columns: 200px 1fr 1fr 80px 120px;
+  grid-template-columns: 200px 1fr 80px 120px;
   padding: 9px 16px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: rgba(255,255,255,0.25);
@@ -319,14 +281,14 @@ const { globalDraft, globalSaving, globalSaved, saveGlobal, loading, refreshing,
 }
 .ut-row {
   display: grid;
-  grid-template-columns: 200px 1fr 1fr 80px 120px;
+  grid-template-columns: 200px 1fr 80px 120px;
   padding: 10px 16px; align-items: center;
   border-bottom: 1px solid var(--panel-divider);
   font-size: 13px; transition: background 0.12s;
 }
 .ut-row:last-child { border-bottom: none; }
 .ut-row:hover { background: rgba(255,255,255,0.03); }
-.override-card .ut-head, .override-card .ut-row { grid-template-columns: 200px 1fr 1fr 120px; }
+.override-card .ut-head, .override-card .ut-row { grid-template-columns: 200px 1fr 120px; }
 
 .col-user { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .avatar-circle {

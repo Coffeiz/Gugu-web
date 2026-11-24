@@ -10,7 +10,7 @@
  * messagesEl（消息容器 ref，由 useChatConversation 通过 messageListRef.el 提供）。
  */
 import { ref, computed, watch, onMounted, onUnmounted, type ComputedRef, type Ref } from 'vue'
-import { useAudioStore } from '@/stores/audio'
+import { audioTrackKey, useAudioStore } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
 import { nextZ, raisePopoversAbove } from '@/composables/core/windowz'
 import { playGuguSfx } from '@/services/sfx'
@@ -40,8 +40,8 @@ export function useChatWindow(options: UseChatWindowOptions) {
 
   // 每首新打开或刷新后恢复的音频都默认固定播放器，避免播放器被悬浮球遮住。
   // 用户手动取消固定后，在同一首音频生命周期内仍保持取消状态。
-  watch(() => audioStore.file?.id, (id, previousId) => {
-    if (id != null && id !== previousId) miniPinned.value = true
+  watch(() => audioTrackKey(audioStore.file), (key, previousKey) => {
+    if (key != null && key !== previousKey) miniPinned.value = true
   })
 
   // ── 大/小窗位形过渡生命周期 ────────────────────────────

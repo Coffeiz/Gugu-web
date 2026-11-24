@@ -76,6 +76,8 @@ describe('真实文字分类与语言策略', () => {
   it('引用历史中的操作词不等于本轮操作请求，澄清或讨论仍正常回答', () => {
     const request = '[当前群聊发言人]\n群昵称=小北\n💬 用户引用/回复了一条历史消息（原文：「要不要把登录页换成另一个服务？」），针对这条消息说：\n\n登录页是不是自家前端渲染？'
     expect(isDecisionDodge(request, '登录页是自家前端渲染的，不需要走另一个服务。')).toBe(false)
+    expect(isDecisionDodge('这个顺序怎么样\n\n[引用消息]\n帮我把这些任务重新排序一下\n[/引用消息END]',
+      '这个不需要重新排序，已经挺合理的了。')).toBe(false)
     expect(isDecisionDodge('帮我把这些任务重新排序一下', '这个不需要重新排序。要不要我先给你几个排序方案？')).toBe(false)
     expect(isDecisionDodge('登录页不需要走统一认证吗？', '不需要走统一认证，登录页可以由应用前端自己渲染。')).toBe(false)
     expect(isDecisionDodge('帮我把这些任务重新排序一下', '这个不需要重新排序，已经挺合理的了。')).toBe(true)

@@ -19,13 +19,12 @@ const otherOwnerId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'
 function workspaceResponse(
   id: number,
   enabled = true,
-  kind: WorkspaceCreateResponse['kind'] = 'folder',
+  kind: WorkspaceCreateResponse['kind'] = 'project',
 ): WorkspaceCreateResponse {
   return {
     id,
     name: `Workspace ${id}`,
     kind,
-    folderId: null,
     projectId: null,
     directoryId: null,
     enabled,
@@ -130,7 +129,6 @@ test('PostgreSQL bind/unbind/current session operations preserve owner and enabl
         user_id uuid NOT NULL,
         name varchar(200) NOT NULL,
         kind varchar(20) NOT NULL,
-        folder_id integer,
         project_id integer,
         directory_id integer,
         enabled boolean NOT NULL,
@@ -146,7 +144,7 @@ test('PostgreSQL bind/unbind/current session operations preserve owner and enabl
     `)
     await pool.query(
       `INSERT INTO workspaces (id, user_id, name, kind, enabled, is_default)
-       VALUES (1, $1, 'Active', 'folder', true, false),
+       VALUES (1, $1, 'Active', 'project', true, false),
               (2, $1, 'Disabled', 'directory', false, false),
               (3, $2, 'Other owner', 'project', true, false)`,
       [ownerId, otherOwnerId],

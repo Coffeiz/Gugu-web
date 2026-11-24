@@ -2,7 +2,7 @@ import { CompiledQuery, Kysely, SqliteDialect } from 'kysely'
 import type { Driver } from 'kysely'
 import { resolve } from 'node:path'
 import { DatabaseError } from '@gugu/database/error'
-import { initializeSqlite as initialize, migrateSqlite as migrate, initializeDesktopSkills, initializeDesktopScheduleMode, initializeDesktopAgentRuns, initializeDesktopAgentRunRetention, initializeDesktopAgentMemory, initializeDesktopAgentInteractions, initializeDesktopAgentConfirmations, initializeDesktopChatAttachments, initializeDesktopImInbox, initializeDesktopAgentContinuations, initializeDesktopImProjection, initializeDesktopAgentCredentials, initializeDesktopImReflection, initializeDesktopImAcceptedFacts, initializeDesktopSubagentDeliveries, initializeDesktopSubagentSessions, initializeDesktopSubagentLaunches, initializeDesktopSubagentWaits, initializeDesktopAgentInbox, initializeDesktopSubagentConversations, initializeDesktopSubagentContinuations, initializeDesktopSubagentExecutions, initializeDesktopSubagentAdmissions, initializeDesktopSubagentSessionInbox } from '@gugu/database/sqlite'
+import { initializeDesktopScheduledTaskFilePaths, initializeSqlite as initialize, migrateSqlite as migrate, initializeDesktopSkills, initializeDesktopScheduleMode, initializeDesktopAgentRuns, initializeDesktopAgentRunRetention, initializeDesktopAgentMemory, initializeDesktopImportedMemory, initializeDesktopAgentInteractions, initializeDesktopAgentConfirmations, initializeDesktopChatAttachments, initializeDesktopImInbox, initializeDesktopAgentContinuations, initializeDesktopImProjection, initializeDesktopAgentCredentials, initializeDesktopImReflection, initializeDesktopImAcceptedFacts, initializeDesktopSubagentDeliveries, initializeDesktopSubagentSessions, initializeDesktopSubagentLaunches, initializeDesktopSubagentWaits, initializeDesktopAgentInbox, initializeDesktopSubagentConversations, initializeDesktopSubagentContinuations, initializeDesktopSubagentExecutions, initializeDesktopSubagentAdmissions, initializeDesktopSubagentSessionInbox } from '@gugu/database/sqlite'
 import { configureSqlite, loadSqliteDriver } from '@gugu/database/sqlite/driver'
 import { validateSqliteBaseline } from '@gugu/database/sqlite/validate'
 import { CoreError } from '../contracts/index.js'
@@ -54,6 +54,7 @@ export async function openSqliteRuntime(
         throw new CoreError('database_in_use', '数据库正由其他运行时使用，请先关闭其他实例')
       }
     }
+    initializeDesktopScheduledTaskFilePaths(db, () => validateSqliteBaseline(db))
     const info = validateSqliteBaseline(db)
     initializeDesktopScheduleMode(db)
     db.exec(`UPDATE scheduled_tasks AS task
@@ -65,6 +66,7 @@ export async function openSqliteRuntime(
     initializeDesktopAgentRuns(db)
     initializeDesktopAgentRunRetention(db)
     initializeDesktopAgentMemory(db)
+    initializeDesktopImportedMemory(db)
     initializeDesktopAgentInteractions(db)
     initializeDesktopAgentConfirmations(db)
     initializeDesktopChatAttachments(db)

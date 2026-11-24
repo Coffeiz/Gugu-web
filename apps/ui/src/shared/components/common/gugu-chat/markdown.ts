@@ -4,7 +4,7 @@ import hljs from 'highlight.js'
 import { i18n } from '@/i18n'
 import { MIND_REF_TYPE_ICON_PATH } from '@/composables/mind/useMindEditor'
 import type { ChatReference } from './chatTypes'
-import { renderObjectCardParagraph } from './chatObjectCards'
+import { renderObjectCardParagraph, renderObjectLinkIcon } from './chatObjectCards'
 import { renderSmartView } from './chatSmartViews'
 import { renderSmartStream } from './chatSmartStream'
 import { renderSmartDsl } from './chatSmartDsl'
@@ -15,6 +15,12 @@ marked.use({
   breaks: true, gfm: true,
   renderer: (() => {
     const r = new marked.Renderer()
+    const renderLink = r.link
+    r.link = function (token: Tokens.Link) {
+      const html = renderLink.call(this, token)
+      const icon = renderObjectLinkIcon(token.href)
+      return icon ? html.replace(/^<a[^>]*>/, tag => tag + icon) : html
+    }
     const renderParagraph = r.paragraph
     r.paragraph = function (token: Tokens.Paragraph) {
       return renderObjectCardParagraph(token.tokens, tokens => this.parser.parseInline(tokens))

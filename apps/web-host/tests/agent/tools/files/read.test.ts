@@ -60,14 +60,14 @@ test('Web 拒绝退役工具并保留受控正文读取', async () => {
         return { rowCount: 1, rows: [{ attach_id: 'historical-text', user_id: ownerId, storage_key: attachmentPath,
           name: '历史备注.txt', ext: 'txt', kind: 'text', size: Buffer.byteLength('历史附件第一行\n历史附件第二行') }] }
       }
-      assert.match(sql, /FROM files\s+WHERE id=\$1 AND user_id=\$2 AND deleted_at IS NULL/u)
+      assert.match(sql, /FROM files\s+WHERE path=\$1 AND user_id=\$2 AND deleted_at IS NULL/u)
       assert.equal(values[1], ownerId)
       fileQueries++
-      if (values[0] !== 7 && values[0] !== 8) return { rowCount: 0, rows: [] }
-      const office = values[0] === 8
-      return { rowCount: 1, rows: [{ id: values[0], user_id: ownerId, storage_key: office ? officePath : relativePath,
+      if (values[0] !== relativePath && values[0] !== officePath) return { rowCount: 0, rows: [] }
+      const office = values[0] === officePath
+      return { rowCount: 1, rows: [{ user_id: ownerId, path: office ? officePath : relativePath,
         display_name: office ? 'report' : 'notes', ext: office ? 'pdf' : 'txt', mime_type: office ? 'application/pdf' : 'text/plain', version: 1,
-        space: 'personal', project_id: null, workspace_directory_id: null, folder_id: null }] }
+        space: 'personal', project_id: null, workspace_directory_id: null }] }
     } }
     const ports = createAuthorizedWebAgentProductionRagRunPorts({
       core: core!, pool: pool as never, storageRoot: root, lease,
@@ -78,7 +78,10 @@ test('Web 拒绝退役工具并保留受控正文读取', async () => {
       async list(current, signal) {
         signal.throwIfAborted()
         assert.deepEqual(current, identity)
-        return [{ file_id: 7, name: 'notes.txt', path: '/personal/notes.txt' }]
+        return [
+          { storageKey: relativePath, name: 'notes.txt', path: '/personal/notes.txt' },
+          { storageKey: officePath, name: 'report.pdf', path: '/personal/report.pdf' },
+        ]
       },
     }))
     const retired = ['read_file', 'list_dir', 'grep', 'edit_file', 'rename_file', 'copy_file', 'create_file',
@@ -91,17 +94,17 @@ test('Web 拒绝退役工具并保留受控正文读取', async () => {
       const result = await ports.toolRegistry.tools.dispatch({ id: `retired-${name}`, name, input: {} }, scope)
       assert.equal(result.kind === 'completed' && !result.successful && result.executed === false, true, name)
     }
-    const result = await read({ file_id: 7, target_lines: '2-3' }, scope)
+    const result = await read({ file: '/personal/notes.txt', target_lines: '2-3' }, scope)
     assert.deepEqual(result.kind === 'completed' ? result.value : null, {
-      file_id: 7, name: 'notes.txt', content: '第二行\n第三行', numbered_content: '2: 第二行\n3: 第三行',
+      file: '/personal/notes.txt', name: 'notes.txt', content: '第二行\n第三行', numbered_content: '2: 第二行\n3: 第三行',
       line_range: { start: 2, end: 3 }, _source_size_bytes: Buffer.byteLength('第一行\r\n第二行\n第三行'),
     })
     const pathRead = await read({ file: '/personal/notes.txt', target_lines: '1' }, scope)
     assert.deepEqual(pathRead.kind === 'completed' ? pathRead.value : null, {
-      file_id: 7, name: 'notes.txt', content: '第一行\r\n', numbered_content: '1: 第一行',
+      file: '/personal/notes.txt', name: 'notes.txt', content: '第一行\r\n', numbered_content: '1: 第一行',
       line_range: { start: 1, end: 1 }, _source_size_bytes: Buffer.byteLength('第一行\r\n第二行\n第三行'),
     })
-    const officeRead = await read({ file_id: 8 }, scope)
+    const officeRead = await read({ file: '/personal/report.pdf' }, scope)
     assert.equal(officeRead.successful, true)
     assert.match(JSON.stringify(officeRead.value), /Synthetic report text/u)
     assert.equal(officeRead.value && typeof officeRead.value === 'object' && 'name' in officeRead.value ? officeRead.value.name : null, 'report.pdf')
@@ -130,23 +133,23 @@ test('Web 拒绝退役工具并保留受控正文读取', async () => {
     assert.equal((await read({ file: '/personal/../private.txt' }, scope)).successful, false)
     assert.equal((await read({ file: 'file:///private/private.txt' }, scope)).successful, false)
     const batch = await read({ items: [
-      { file_id: 7, target_lines: '1', title: '已有文件' }, { file_id: 9, result_id: '异主或不存在' },
+      { file: '/personal/notes.txt', target_lines: '1', title: '已有文件' }, { file: '/personal/missing.txt', result_id: '异主或不存在' },
     ] }, scope)
     assert.deepEqual(batch.kind === 'completed' ? batch.value : null, {
       results: [
         { index: 1, label: '已有文件', successful: true, value: {
-          file_id: 7, name: 'notes.txt', content: '第一行\r\n', numbered_content: '1: 第一行',
+          file: '/personal/notes.txt', name: 'notes.txt', content: '第一行\r\n', numbered_content: '1: 第一行',
           line_range: { start: 1, end: 1 },
         } },
         { index: 2, label: '异主或不存在', successful: false, value: { error: '文件不存在或无权访问' } },
       ],
       successful_count: 1, failed_count: 1, total_source_size_bytes: Buffer.byteLength('第一行\r\n第二行\n第三行'),
     })
-    const missing = await read({ file_id: 9 }, scope)
+    const missing = await read({ file: '/personal/missing.txt' }, scope)
     assert.equal(missing.kind === 'completed' && JSON.stringify(missing.value).includes('文件不存在或无权访问'), true)
     const beforeRevocation = fileQueries
     active = false
-    const revoked = await ports.toolRegistry.tools.dispatch({ id: 'after-revoke', name: 'read_file', input: { file_id: 7 } }, scope)
+    const revoked = await ports.toolRegistry.tools.dispatch({ id: 'after-revoke', name: 'read_file', input: { file: '/personal/notes.txt' } }, scope)
     assert.equal(revoked.kind === 'completed' && revoked.executed, false)
     assert.equal(fileQueries, beforeRevocation, 'lease 撤销后不得查询或打开文件')
   } finally {

@@ -30,9 +30,10 @@ export function createQqInboundPreparation(options) {
                     p.reply_target_is_bot = typeof entry.sender_is_bot === 'boolean' ? entry.sender_is_bot : null;
                     if (parsed.quoteRequest.contentRequired) {
                         const quoted = Array.isArray(entry.attachments) ? entry.attachments.filter(object) : [];
-                        p.quoted_text = normalizeQqFaces(normalizeQqAttachmentPlaceholders(String(entry.content || ''), quoted)) || null;
-                        if (quoted.length && p.quoted_text === '[QQ表情]')
-                            p.quoted_text = null;
+                        if (!p.quoted_text) {
+                            const text = normalizeQqFaces(normalizeQqAttachmentPlaceholders(String(entry.content || ''), quoted));
+                            p.quoted_text = quoted.length && text === '[QQ表情]' ? null : text || null;
+                        }
                         parsed.mediaItems.push(...quoted.map((item, index) => ({ source: 'quote', attachmentIndex: index,
                             sourcePlatformMessageId: parsed.quoteRequest.referenceIndex, item: { ...item, quoted: true, source_platform_message_id: parsed.quoteRequest.referenceIndex, source_attachment_index: index } })));
                     }

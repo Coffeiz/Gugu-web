@@ -39,22 +39,21 @@ test('生产 Host 安全事件 API 经 Core 查询正式迁移的 PostgreSQL，�
       id uuid PRIMARY KEY, username text, email text, display_name text, is_active boolean,
       account_status text, suspended_until timestamptz, suspended_reason text, security_version integer,
       is_developer boolean, created_at timestamptz, updated_at timestamptz,
-      token_limit_6h bigint, token_limit_weekly bigint, storage_limit_bytes bigint, search_limit_daily integer
+      token_limit_6h bigint, token_limit_weekly bigint, search_limit_daily integer
     );
     CREATE TABLE agent_usage(user_id uuid, tokens_in bigint, tokens_out bigint, created_at timestamptz, is_byok boolean);
     CREATE TABLE files(user_id uuid, size_bytes bigint);
-    CREATE TABLE storage_quota_ledgers(user_id uuid, category text, used_bytes bigint);`)
+    `)
     await applySecurityEventsMigration(pool)
     await pool.query(`INSERT INTO users(
       id,username,email,display_name,is_active,account_status,security_version,is_developer,created_at,updated_at,
-      token_limit_6h,token_limit_weekly,storage_limit_bytes,search_limit_daily
+      token_limit_6h,token_limit_weekly,search_limit_daily
     ) VALUES
-      ($1,'synthetic-owner','owner@example.test','合成属主',true,'active',2,false,now()-interval '1 day',now(),100,700,4096,20),
-      ($2,'synthetic-other','other@example.test',NULL,true,'active',1,false,now()-interval '2 days',now()-interval '2 days',NULL,NULL,NULL,NULL)`, [owner, other])
+      ($1,'synthetic-owner','owner@example.test','合成属主',true,'active',2,false,now()-interval '1 day',now(),100,700,20),
+      ($2,'synthetic-other','other@example.test',NULL,true,'active',1,false,now()-interval '2 days',now()-interval '2 days',NULL,NULL,NULL)`, [owner, other])
     await pool.query(`INSERT INTO agent_usage VALUES
       ($1,3,4,now()-interval '1 minute',false),($1,100,100,now()-interval '1 minute',true)`, [owner])
     await pool.query('INSERT INTO files(user_id,size_bytes) VALUES($1,40)', [owner])
-    await pool.query("INSERT INTO storage_quota_ledgers(user_id,category,used_bytes) VALUES($1,'file_library',55)", [owner])
     await pool.query(`INSERT INTO security_events (
       user_id,event_type,resource_type,resource_fingerprint,owner_fingerprint,client_fingerprint,
       ip_fingerprint,user_agent_fingerprint,action,reason_code,metadata_json,occurred_at,expires_at
@@ -80,8 +79,7 @@ test('生产 Host 安全事件 API 经 Core 查询正式迁移的 PostgreSQL，�
     const headers = { authorization: `Bearer ${login.json().access_token}` }
     const users = await host.app.inject({ url: '/api/v1/admin/users?q=SYNTHETIC-OWNER', headers })
     assert.equal(users.statusCode, 200, users.body)
-    assert.deepEqual([users.json().total, users.json().items[0]?.tokens_week, users.json().items[0]?.tokens_6h,
-      users.json().items[0]?.storage_used], [1, 7, 7, 55])
+    assert.deepEqual([users.json().total, users.json().items[0]?.tokens_week, users.json().items[0]?.tokens_6h], [1, 7, 7])
     const risk = await host.app.inject({ url: '/api/v1/admin/users/risk?window_minutes=60', headers })
     assert.equal(risk.statusCode, 200, risk.body)
     assert.deepEqual(risk.json().items.map((item: { id: string }) => item.id), [owner])

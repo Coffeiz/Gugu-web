@@ -3,18 +3,15 @@ import { test, expect, type Page } from '@playwright/test'
 test.describe.configure({ mode: 'serial' })
 
 const fixtureFiles = new Set<string>()
-const fixtureFolders = new Set<string>()
 const fixtureProjects = new Set<number>()
 
 async function cleanupFixtures(page: Page) {
   const names = [...fixtureFiles]
-  const folderNames = [...fixtureFolders]
   const projectIds = [...fixtureProjects]
   fixtureFiles.clear()
-  fixtureFolders.clear()
   fixtureProjects.clear()
-  if (!names.length && !folderNames.length && !projectIds.length) return
-  await page.evaluate(async ({ names, folderNames, projectIds }) => {
+  if (!names.length && !projectIds.length) return
+  await page.evaluate(async ({ names, projectIds }) => {
     const csrfToken = decodeURIComponent(document.cookie.split('; ').find(item => item.startsWith('gugu_user_csrf_token='))?.split('=').slice(1).join('=') ?? '')
     const headers = { 'X-CSRF-Token': csrfToken }
     if (names.length) {
@@ -23,16 +20,10 @@ async function cleanupFixtures(page: Page) {
         await fetch(`/api/v1/files/${file.id}`, { method: 'DELETE', headers })
       }
     }
-    if (folderNames.length) {
-      const folders = await fetch('/api/v1/folders/all', { headers }).then(response => response.ok ? response.json() : [])
-      for (const folder of folders.filter((item: { name?: string }) => folderNames.includes(item.name))) {
-        await fetch(`/api/v1/folders/${folder.id}`, { method: 'DELETE', headers })
-      }
-    }
     for (const id of projectIds) {
       await fetch(`/api/v1/projects/${id}`, { method: 'DELETE', headers })
     }
-  }, { names, folderNames, projectIds })
+  }, { names, projectIds })
 }
 
 test.afterEach(async ({ page }) => cleanupFixtures(page))
@@ -53,26 +44,6 @@ async function openPersonalDirectory(page: Page) {
   const gridButton = page.getByTitle('网格视图')
   if (await gridButton.count() > 0) await gridButton.click()
   await expect(page.locator('.file-browser-grid')).toBeVisible()
-}
-
-async function openFixtureDirectory(page: Page) {
-  await openPersonalDirectory(page)
-  const name = `e2e-phase-folder-${Date.now()}-${Math.random().toString(16).slice(2)}`
-  const root = page.locator('.files-page')
-  const createResponse = page.waitForResponse(response =>
-    response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/folders',
-  )
-  await root.locator('button', { hasText: '新建文件夹' }).click()
-  await root.locator('.new-folder-input').fill(name)
-  await root.getByRole('button', { name: '确定' }).click()
-  const response = await createResponse
-  expect(response.status()).toBe(201)
-  fixtureFolders.add(name)
-  const folder = root.locator('.folder-card', { hasText: name })
-  await expect(folder).toBeVisible()
-  await folder.click()
-  await expect(root.locator('.bc-item.active, .bc-cur', { hasText: name })).toBeVisible()
-  return name
 }
 
 async function uploadFixtureFile(page: Page) {
@@ -114,7 +85,7 @@ async function createProjectFixture(page: Page, populated = false) {
 
 test.describe('文件浏览阶段 2–4 冒烟', () => {
   test('阶段 2：目录进入后可以开启统一选择模式并退出', async ({ page }) => {
-    await openFixtureDirectory(page)
+    await openPersonalDirectory(page)
     const name = await uploadFixtureFile(page)
     await page.locator('.select-mode-btn').click()
     await expect(page.locator('.select-mode-btn.on')).toBeVisible()
@@ -126,7 +97,7 @@ test.describe('文件浏览阶段 2–4 冒烟', () => {
   })
 
   test('阶段 2：连续 Shift 选择保持第一次点击的范围锚点', async ({ page }) => {
-    await openFixtureDirectory(page)
+    await openPersonalDirectory(page)
     const names: string[] = []
     for (let index = 0; index < 8; index += 1) names.push(await uploadFixtureFile(page))
     const files = page.locator('.fc-card')
@@ -138,7 +109,7 @@ test.describe('文件浏览阶段 2–4 冒烟', () => {
   })
 
   test('阶段 2：批量选择工具栏统一暴露下载、剪切、复制和删除', async ({ page }) => {
-    await openFixtureDirectory(page)
+    await openPersonalDirectory(page)
     const name = await uploadFixtureFile(page)
     await page.locator('.select-mode-btn').click()
     await page.locator('.fc-card', { hasText: name }).click()
@@ -153,7 +124,7 @@ test.describe('文件浏览阶段 2–4 冒烟', () => {
   })
 
   test('阶段 3：文件操作边界通过右键复制入口可达', async ({ page }) => {
-    await openFixtureDirectory(page)
+    await openPersonalDirectory(page)
     const name = await uploadFixtureFile(page)
     await page.locator('.fc-card', { hasText: name }).click({ button: 'right' })
     const copy = page.locator('.popup-menu-item').filter({ hasText: '复制' }).first()
@@ -199,8 +170,8 @@ test.describe('文件浏览阶段 2–4 冒烟', () => {
       if (response.ok() && url.pathname.endsWith('/api/v1/files') && url.searchParams.get('space') === 'project') {
         loadedDirectories.add('files')
       }
-      if (response.ok() && url.pathname.endsWith('/api/v1/folders') && url.searchParams.has('project_id')) {
-        loadedDirectories.add('folders')
+      if (response.ok() && url.pathname.endsWith('/entries') && url.pathname.includes('/files/projects/')) {
+        loadedDirectories.add('directories')
       }
     })
 
@@ -212,7 +183,7 @@ test.describe('文件浏览阶段 2–4 冒烟', () => {
     await expect(projectModal.locator('.file-browser-grid')).toBeVisible()
     await expect(projectModal.locator('.fub.grid')).toBeVisible()
     await expect(projectModal).toContainText('E2E 阶段任务')
-    await expect.poll(() => loadedDirectories.size).toBe(2)
+    await expect.poll(() => loadedDirectories.size).toBe(1)
 
     const nameInput = projectModal.locator('.header-name-input')
     await expect(nameInput).toBeVisible()

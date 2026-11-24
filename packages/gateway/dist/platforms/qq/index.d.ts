@@ -11,3 +11,4 @@ export * from './charts.js';
 export * from './media-download.js';
 export * from './faces.js';
 export * from './prepare.js';
+export * from './notice-policy.js';

@@ -3,7 +3,7 @@
        内的消息 DOM，其余用下面这段按测量/估算高度撑出来的占位空间代替，滚动条始终代表
        整个会话的真实长度。messagesEl 是真实可滚动容器，虚拟列表只管它内部挂多少 DOM。 -->
   <div class="chat-message-viewport" data-markdown-table-overlay-host>
-  <div class="chat-messages" :class="{ 'is-session-settling': sessionSettling }" ref="messagesEl" @scroll.passive="updateScrollPosition" @pointerdown.capture="onSelectionPointerDown">
+  <div class="chat-messages" :class="{ 'is-session-settling': sessionSettling, 'is-switch-buffered': switchBuffered }" :inert="switchBuffered" ref="messagesEl" @scroll.passive="updateScrollPosition" @pointerdown.capture="onSelectionPointerDown">
     <div v-if="historyState?.hasMore && nearHistoryTop && !sessionSettling" class="chat-history-status">
       <button type="button" :disabled="historyState.loading" @click="onLoadHistory?.()">
         {{ t(historyState.loading ? 'chatUi.loadingEarlier' : historyState.error ? 'chatUi.loadEarlierFailed' : 'chatUi.loadEarlier') }}
@@ -26,7 +26,7 @@
           />
         </div>
         <div v-else :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-           v-memo="[timestamp, msg.role, msg.subagentOutput, msg.subagentOutput && expandedActivityIds.has(msg.id), msg.speakerLabel, msg.text, msg.html, msg.streaming, messageIndex < messages.length - 1, msg.references, msg.roundId, msg.runOutcome, msg.linkButtons, sourceByMessage.get(msg.id), msg.interaction?.resolved, msg.interaction?.expired, msg.interaction?.selectedOptionId, msg.interaction?.selectedOptionIds, msg.interaction?.customAnswer, msg.interaction?.selectionMode, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}:${f.transcript ?? ''}:${f.transcript_status ?? ''}:${f.transcript_origin ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId), voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId) ? voiceBars.join(',') : '']">
+           v-memo="[timestamp, msg.role, msg.subagentOutput, msg.subagentElapsedMs, msg.subagentOutput && expandedActivityIds.has(msg.id), msg.speakerLabel, msg.text, msg.html, msg.streaming, messageIndex < messages.length - 1, msg.references, msg.roundId, msg.runOutcome, msg.linkButtons, sourceByMessage.get(msg.id), msg.interaction?.resolved, msg.interaction?.expired, msg.interaction?.selectedOptionId, msg.interaction?.selectedOptionIds, msg.interaction?.customAnswer, msg.interaction?.selectionMode, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_path ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}:${f.transcript ?? ''}:${f.transcript_status ?? ''}:${f.transcript_origin ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId), voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId) ? voiceBars.join(',') : '']">
           <GuguChatMessageRow
             :subagent-expanded="msg.subagentOutput && expandedActivityIds.has(msg.id)" @toggle-subagent="toggleActivity(msg.id)"
             :msg="msg" :timestamp="timestamp" :sources="sourceByMessage.get(msg.id)" :has-following-message="messageIndex < messages.length - 1" :session-id="sessionId" :is-group-session="isGroupSession" :interaction-answer-mode="interactionAnswerMode"
@@ -47,9 +47,10 @@
         :indicator="statusKind === 'dots' ? 'dots' : 'running'" />
     </div>
   </div>
+    <div v-if="showSwitchLoading" class="chat-switch-loading" role="status">{{ t('viewerUi.loading') }}</div>
     <Transition name="chat-scroll-to-bottom-fade">
       <button
-        v-if="showScrollToBottom"
+        v-if="showScrollToBottom && !switchBuffered"
         class="chat-scroll-to-bottom"
         type="button"
         :aria-label="t('chatUi.scrollToLatest')"
@@ -73,6 +74,7 @@
  * virtualizer 的 scrollToIndex（流式跟随滚动、切会话定位、搜索跳转高亮），
  * 通过 defineExpose 暴露 el 和 scrollToIndex，不把这些操作重新实现一遍。
  */
+import { useDelayedSkeleton } from '@/composables/core/useDelayedSkeleton'
 import type { ChatHistoryState } from './composables/useChatHistoryPagination'
 import type { SessionScrollAnchor } from './composables/sessionScrollLayout'
 import { ref, computed, inject, watch, watchEffect, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
@@ -123,6 +125,8 @@ defineEmits<{
 
 const { t } = useI18n()
 const messagesEl = ref<HTMLElement | null>(null)
+const switchBuffered = ref(false)
+const showSwitchLoading = useDelayedSkeleton(() => switchBuffered.value)
 const showScrollToBottom = ref(false)
 const SCROLL_TO_BOTTOM_THRESHOLD = 240
 const expandedToolMessageIds = ref(new Set<string>())
@@ -290,16 +294,52 @@ const sourceByMessage = computed<Map<number, ChatSource[] | undefined>>(previous
       ? existing : sources] as const
   })))
 
-watch(() => props.sessionId, async () => {
-  // 切换会话时清掉旧行的测量结果，等新会话行重新挂载后再测量。
+watch(() => props.sessionId, (sessionId, _previous, onCleanup) => {
   expandedToolMessageIds.value = new Set()
   expandedActivityIds.value = new Set()
   selectionActive.value = false
   pinnedSelectionIds.value = null
-  await nextTick()
-  virtualizer.value.measure()
-  updateScrollPosition()
-}, { flush: 'post' })
+  switchBuffered.value = sessionId != null
+
+  let frame = 0
+  let deadline: ReturnType<typeof setTimeout> | undefined
+  let cancelled = false
+  let previousSize: number | undefined
+  const reveal = () => {
+    cancelAnimationFrame(frame)
+    clearTimeout(deadline)
+    switchBuffered.value = false
+  }
+  onCleanup(() => {
+    cancelled = true
+    cancelAnimationFrame(frame)
+    clearTimeout(deadline)
+  })
+
+  void nextTick(() => {
+    if (cancelled) return
+    virtualizer.value.measure()
+    updateScrollPosition()
+    if (sessionId == null) return
+
+    // 首屏先在原位挂载，等卡片补齐和行高稳定后再展示。
+    // 慢请求由上限放行，避免单张卡片挡住整个会话。
+    deadline = setTimeout(reveal, 480)
+    const check = () => {
+      const pendingCard = messagesEl.value?.querySelector(
+        '.chat-object-card-loading:not(.is-streaming, .is-image-only), .chat-object-image-preview:not(.is-loaded, .is-failed)',
+      )
+      const size = virtualTotalSize.value
+      if (!props.sessionSettling && !pendingCard && size === previousSize) {
+        reveal()
+        return
+      }
+      previousSize = props.sessionSettling || pendingCard ? undefined : size
+      frame = requestAnimationFrame(check)
+    }
+    frame = requestAnimationFrame(check)
+  })
+}, { flush: 'pre' })
 function measureRow(el: Element | ComponentPublicInstance | null) { if (el) virtualizer.value.measureElement(el as Element) }
 
 onMounted(() => {
@@ -378,6 +418,8 @@ defineExpose({
 /* 高度修正仅由虚拟列表负责，避免浏览器自动锚定再次补偿同一变化。 */
 .chat-message-viewport { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; }
 .chat-messages { overflow-anchor: none; }
+.chat-messages.is-switch-buffered { visibility: hidden; }
+.chat-switch-loading { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: var(--content-secondary); font-size: var(--font-size-sm); }
 .chat-history-status { position: sticky; top: 0; height: 0; z-index: 1; text-align: center; }
 .chat-history-status button { position: relative; margin-top: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--surface-base); color: var(--text-secondary); font: inherit; cursor: pointer; }
 .chat-scroll-to-bottom {

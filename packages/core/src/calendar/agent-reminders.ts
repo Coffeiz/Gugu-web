@@ -13,7 +13,7 @@ export interface ResolvedCalendarReminder {
   enabled: boolean
 }
 
-const channels = new Set(['web', 'feishu', 'qq', 'wechat'])
+const channels = new Set(['web', 'feishu', 'qq', 'wechat', 'telegram'])
 
 /** 时区规则与 Python SCHEDULE_TZ 一致：事件日期/时间按 Asia/Shanghai 墙上时间计算。 */
 export function prepareCalendarEventReminder(

@@ -116,7 +116,7 @@ export function createWebAgentRagResources(options: {
   rag: Omit<Parameters<typeof createAuthorizedWebAgentProductionRagRunPorts>[0], 'lease' | 'selection'> & {
     /** 每个可信 lease 单独创建写端口；只有实际提供的端口才进入授权配置。 */
     toolPorts?(lease: AgentDispatchLease, binding: WebAgentBinding, context: Pick<ContextDataPorts, 'loadTimezone'>): Promise<Partial<Pick<AgentToolRegistryOptions,
-      'conversations' | 'time' | 'knowledge' | 'remember' | 'knowledgeWrites' | 'knowledgeDelete' | 'search' | 'events' | 'calendar' | 'fileOverview' | 'workspaces' | 'workspaceMutations' | 'workspaceCreation' | 'scheduledTasks' | 'scheduledTaskWrites' | 'scheduledTaskDelete' | 'diskTrashTools' | 'trash' | 'trashRestore' | 'trashPurge' | 'canvases' | 'canvasPlaceableSearch' | 'canvasCreation' | 'canvasEdits' | 'canvasPlacements' | 'canvasRelations' | 'noteLifecycle' | 'noteWrites' | 'notes' | 'projects' | 'projectMutations' | 'projectDelete' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'clientDelete' | 'skills' | 'skillMetadata' | 'skillManagement' | 'skillDelete' | 'callTool' | 'mcpManagement' | 'httpGet' | 'webSearch' | 'webDownload' | 'similarImageSearch' | 'deepResearch' | 'askUser' | 'shell' | 'viewImage' | 'presentFile' | 'fileFolderDelete' | 'fileDelete' | 'saveAttachment' | 'recentAttachments' | 'sendFile' | 'linkButtons' | 'sendEmail'>>>
+      'conversations' | 'time' | 'knowledge' | 'remember' | 'knowledgeWrites' | 'knowledgeDelete' | 'search' | 'events' | 'calendar' | 'fileOverview' | 'workspaces' | 'workspaceMutations' | 'workspaceCreation' | 'scheduledTasks' | 'scheduledTaskWrites' | 'scheduledTaskDelete' | 'diskTrashTools' | 'canvases' | 'canvasPlaceableSearch' | 'canvasCreation' | 'canvasEdits' | 'canvasPlacements' | 'canvasRelations' | 'noteLifecycle' | 'noteWrites' | 'notes' | 'projects' | 'projectMutations' | 'projectDelete' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'clientDelete' | 'skills' | 'skillMetadata' | 'skillManagement' | 'skillDelete' | 'callTool' | 'mcpManagement' | 'httpGet' | 'webSearch' | 'webDownload' | 'similarImageSearch' | 'deepResearch' | 'askUser' | 'shell' | 'viewImage' | 'presentFile' | 'fileDelete' | 'saveAttachment' | 'recentAttachments' | 'sendFile' | 'linkButtons' | 'sendEmail'>>>
   }
   compactionInstruction?: string
   /** Web 私聊反思与 Host Node 消费者共享签名模型范围。 */
@@ -177,7 +177,6 @@ export function createWebAgentRagResources(options: {
       enabledFilePresent: Boolean(toolPorts.presentFile),
 
 
-      enabledFileFolderDelete: Boolean(toolPorts.fileFolderDelete),
 
       enabledFileDelete: Boolean(toolPorts.diskTrashTools),
 

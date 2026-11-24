@@ -100,6 +100,23 @@ export function createDesktopMemoryFiles(db: Kysely<Database>, root: string, own
     })
   }
 
+  async function flushImportedIm() {
+    await db.transaction().execute(async tx => {
+      const queued = await sql<Omit<ImMemoryScopeFile, 'owner_user_id'> & { filename: string; body: string }>`
+        SELECT platform,bot_id,scope_type,scope_id,filename,body FROM desktop_imported_im_memory WHERE owner_id=${owner}
+      `.execute(tx)
+      for (const { filename, body, ...identity } of queued.rows) {
+        const scope = { owner_user_id: ownerId, ...identity }
+        const { platform, bot_id, scope_type, scope_id } = identity
+        const deleted = await sql`SELECT 1 FROM desktop_im_memory_tombstones WHERE owner_id=${owner}
+          AND platform=${platform} AND bot_id=${bot_id} AND scope_type=${scope_type} AND scope_id=${scope_id}`.execute(tx)
+        if (!deleted.rows.length && await readImScope(scope, filename) === null) await publishImScope(scope, filename, body)
+        await sql`DELETE FROM desktop_imported_im_memory WHERE owner_id=${owner} AND platform=${platform}
+          AND bot_id=${bot_id} AND scope_type=${scope_type} AND scope_id=${scope_id} AND filename=${filename}`.execute(tx)
+      }
+    })
+  }
+
   async function initialize() {
     for (const path of [join(root, '.agent'), directory]) {
       await mkdir(path, { recursive: true, mode: 0o700 })
@@ -126,6 +143,15 @@ export function createDesktopMemoryFiles(db: Kysely<Database>, root: string, own
     if (!info) return
     if (!info.isFile()) throw new UnsafeLocalPathError()
     await publish(name, empty)
+  }
+
+  async function readImScope(scope: ImMemoryScopeFile, filename: string) {
+    const file = await openLocalFile(root, imMemoryScopeFileKey(scope, filename))
+    if (!file) return null
+    try {
+      if (file.size > 2_000_000) throw new Error('IM 记忆文件超过读取上限')
+      return await file.handle.readFile({ encoding: 'utf8' })
+    } finally { await file.handle.close() }
   }
 
   return {
@@ -171,14 +197,7 @@ export function createDesktopMemoryFiles(db: Kysely<Database>, root: string, own
       const name = filename(target)
       return name ? read(name) : undefined
     },
-    async readImScope(scope: ImMemoryScopeFile, filename: string) {
-      const file = await openLocalFile(root, imMemoryScopeFileKey(scope, filename))
-      if (!file) return null
-      try {
-        if (file.size > 2_000_000) throw new Error('IM 记忆文件超过读取上限')
-        return await file.handle.readFile({ encoding: 'utf8' })
-      } finally { await file.handle.close() }
-    },
+    readImScope, flushImportedIm,
     writeImScope: publishImScope,
   }
 }

@@ -99,12 +99,12 @@ describe('一次运行任务的 Core owner 读取合同', () => {
     const feishu = { chat_type: 'group', chat_id: 'synthetic-feishu', channel_id: '2' }
     await runtime.db.updateTable('scheduled_tasks').set({
       channels: 'qq,email', delivery_targets: JSON.stringify({ qq, feishu }),
-      authorized_tools: JSON.stringify(['send_email']), email_attachment_file_ids: JSON.stringify([17]),
+      authorized_tools: JSON.stringify(['send_email']), email_attachment_file_paths: JSON.stringify([17]),
     }).where('id', '=', 43).execute()
     const read = createKyselyScheduledTaskExecutionReader(runtime.db, 'sqlite')
     expect(await read(owner, '43')).toMatchObject({ plan: {
       ownerId: owner, id: '43', payload: '做一件事', channels: ['qq', 'email'], deliveryTargets: { qq },
-      authorizedTools: ['send_email'], emailAttachmentFileIds: [17], workspaceId: null, filesystemGrantId: null,
+      authorizedTools: ['send_email'], emailAttachmentFilePaths: [17], workspaceId: null, filesystemGrantId: null,
     } })
     const current = await read(owner, '43')
     expect('plan' in current && Object.keys(current.plan.deliveryTargets)).toEqual(['qq'])

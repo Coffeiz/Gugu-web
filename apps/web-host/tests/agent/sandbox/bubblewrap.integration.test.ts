@@ -53,7 +53,7 @@ test('Web Agent 通过持久确认在真实 Bubblewrap 中写入一次，异主�
       CREATE TABLE users(id uuid PRIMARY KEY,security_version integer,is_active boolean,account_status text);
       CREATE TABLE user_preferences(user_id uuid,data_json jsonb);
       CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid,active_run_id text,workspace_id integer);
-      CREATE TABLE workspaces(id integer PRIMARY KEY,user_id uuid,name text,kind text,folder_id integer,project_id integer,directory_id integer,enabled boolean);
+      CREATE TABLE workspaces(id integer PRIMARY KEY,user_id uuid,name text,kind text,project_id integer,directory_id integer,enabled boolean);
       CREATE TABLE workspace_directories(id integer PRIMARY KEY,user_id uuid,directory_name text,is_default boolean,deleted_at timestamptz);
       CREATE TABLE filesystem_authorization_grants(id integer,user_id uuid,subject_type text,subject_id text,scope text,permission text,revoked_at timestamptz,expires_at timestamptz);
       CREATE TABLE agent_run_dispatch(user_id uuid,session_id integer,run_id text,state text,token text,fence bigint,lease_expires_at timestamptz);

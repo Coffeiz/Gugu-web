@@ -1,9 +1,7 @@
 import { nextTick, onUnmounted, type Ref } from 'vue'
 import type { Project } from '@/types/project'
-import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import type { FileLibraryNavigationTarget, NavSeg } from '@/utils/filesNav'
 import { doneYear, doneMonth } from '@/utils/fileParse'
-import { filesApi, foldersApi } from '@/services/api'
 
 type NavigationTarget = FileLibraryNavigationTarget | null
 
@@ -11,10 +9,6 @@ interface NavigationOptions {
   projectStore: {
     projects: Project[]
     kanbanColumns: Array<{ key: string; label: string }>
-  }
-  cacheStore: {
-    getFolder: (id: number) => FolderMeta | null | undefined
-    getFile: (id: number) => FileMeta | null | undefined
   }
   uiStore: { pendingFileTarget: NavigationTarget }
   navPath: Ref<NavSeg[]>
@@ -25,16 +19,13 @@ interface NavigationOptions {
 }
 
 interface TargetPathDependencies {
-  cacheStore: NavigationOptions['cacheStore']
-  folderChain: (folderId: number) => FolderMeta[]
   basePath: (projectId: number | null) => NavSeg[]
-  folderSegment: (folder: FolderMeta) => NavSeg
 }
 
 async function resolveTargetPath(target: FileLibraryNavigationTarget, deps: TargetPathDependencies): Promise<{ path: NavSeg[]; relativePath?: string }> {
   if (target.pathFile) {
     const { directoryId, directoryName, relativePath } = target.pathFile
-    const suffix = relativePath.split('/')
+    const suffix = relativePath ? relativePath.split('/') : []
     if (target.kind === 'file') suffix.pop()
     const type = typeof directoryId === 'number' ? 'disk-workspace' : directoryId === 'personal' ? 'disk-personal' : 'disk-project'
     const workspaceDirectoryId = typeof directoryId === 'number' ? directoryId : undefined
@@ -46,44 +37,11 @@ async function resolveTargetPath(target: FileLibraryNavigationTarget, deps: Targ
     }))]
     return { path, relativePath }
   }
-  if (target.kind === 'folder') {
-    const { folder: rawFolder, ancestors } = await foldersApi.location(target.id)
-    const folder = rawFolder as FolderMeta
-    const workspaceId = folder.workspaceDirectoryId ?? target.workspaceDirectoryId
-    const chain = ancestors as FolderMeta[]
-    if (workspaceId != null) return { path: [
-      { type: 'workspace', name: target.workspaceDirectoryName || '工作区', color: null, space: 'workspace', workspaceDirectoryId: workspaceId },
-      ...chain.map(item => ({ type: 'folder', folderId: item.id, name: item.name, color: null, space: 'workspace', workspaceDirectoryId: workspaceId })),
-    ] }
-    return { path: [...deps.basePath(folder.projectId), ...chain.map(deps.folderSegment)] }
-  }
-
-  const { file: rawFile, folderPath, pathFile } = await filesApi.location(target.id)
-  if (pathFile) return resolveTargetPath({ ...target, pathFile: { ...pathFile, directoryName: '' } }, deps)
-  const file = rawFile as FileMeta
-  const workspaceId = file.workspaceDirectoryId ?? target.workspaceDirectoryId
-  const chain = folderPath as FolderMeta[]
-  if (workspaceId != null) return { path: [
-    { type: 'workspace', name: target.workspaceDirectoryName || '工作区', color: null, space: 'workspace', workspaceDirectoryId: workspaceId },
-    ...chain.map(item => ({ type: 'folder', folderId: item.id, name: item.name, color: null, space: 'workspace', workspaceDirectoryId: workspaceId })),
-  ] }
-  return { path: [...deps.basePath(file.projectId), ...chain.map(deps.folderSegment)] }
+  throw new Error('文件目标缺少路径')
 }
 
 export function useFileLibraryNavigation(options: NavigationOptions) {
-  const { projectStore, cacheStore, uiStore, navPath, saveNav, loadContents, clearSelection, mainRef } = options
-
-  function folderChain(folderId: number): FolderMeta[] {
-    const chain: FolderMeta[] = []
-    const seen = new Set<number>()
-    let current = cacheStore.getFolder(folderId)
-    while (current && !seen.has(current.id)) {
-      seen.add(current.id)
-      chain.unshift(current)
-      current = current.parentId != null ? cacheStore.getFolder(current.parentId) : undefined
-    }
-    return chain
-  }
+  const { projectStore, uiStore, navPath, saveNav, loadContents, clearSelection, mainRef } = options
 
   function basePath(projectId: number | null): NavSeg[] {
     if (projectId == null) return [{ type: 'personal', name: '个人文件', color: null }]
@@ -104,16 +62,6 @@ export function useFileLibraryNavigation(options: NavigationOptions) {
     return base
   }
 
-  function folderSegment(folder: FolderMeta): NavSeg {
-    return {
-      type: 'folder',
-      folderId: folder.id,
-      name: folder.name,
-      projectId: folder.projectId ?? null,
-      color: null,
-    }
-  }
-
   let flashRequest = 0
   let flashTimer: ReturnType<typeof setTimeout> | null = null
   let activeFlashElement: HTMLElement | null = null
@@ -125,17 +73,14 @@ export function useFileLibraryNavigation(options: NavigationOptions) {
     activeFlashElement = null
   }
 
-  function flashItem(kind: 'file' | 'folder', id: number, relativePath?: string) {
+  function flashFile(relativePath: string) {
     const request = ++flashRequest
     clearFlash()
     let attempts = 0
     const findElement = () => {
       if (request !== flashRequest) return
-      const attribute = kind === 'file' ? 'data-file-id' : 'data-folder-id'
-      const element = relativePath === undefined
-        ? mainRef.value?.querySelector<HTMLElement>(`[${attribute}="${id}"]`)
-        : Array.from(mainRef.value?.querySelectorAll<HTMLElement>('[data-path-file]') ?? [])
-          .find(card => card.dataset.pathFile === relativePath)
+      const element = Array.from(mainRef.value?.querySelectorAll<HTMLElement>('[data-path-file]') ?? [])
+        .find(card => card.dataset.pathFile === relativePath)
       if (!element) {
         if (attempts++ >= 30) return
         flashTimer = setTimeout(findElement, 50)
@@ -160,10 +105,10 @@ export function useFileLibraryNavigation(options: NavigationOptions) {
   })
 
   async function jumpToTarget(target: NavigationTarget) {
-    if (!target) return
+    if (!target || (target.kind === 'folder' && !target.pathFile)) return
     let resolved: Awaited<ReturnType<typeof resolveTargetPath>>
     try {
-      resolved = await resolveTargetPath(target, { cacheStore, folderChain, basePath, folderSegment })
+      resolved = await resolveTargetPath(target, { basePath })
     } catch {
       return
     }
@@ -171,9 +116,9 @@ export function useFileLibraryNavigation(options: NavigationOptions) {
     navPath.value = resolved.path
     saveNav()
     loadContents()
-    if (!target.pathFile || target.kind === 'file') {
+    if (target.kind === 'file' && resolved.relativePath) {
       await nextTick()
-      flashItem(target.kind, target.id, resolved.relativePath)
+      flashFile(resolved.relativePath)
     }
   }
 

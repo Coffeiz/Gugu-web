@@ -58,10 +58,16 @@ it('Searcher 可以在第九轮后正常交付结果', async () => {
     capabilities: { toolNames: ['web_search'], tools: [{ name: 'web_search', schema: {} }] },
   }))
   const child = { ...identity, sessionId: '2', runId: '多轮子运行' }
+  const traces: unknown[] = []
+  options.runtime.observation = { record(event) { traces.push(event.attributes?.subagent_trace) } }
   const harness = createDelegatedAgentHarness(searcherPreset,
-    { parent: identity, identity: child, modelIdentity: '合成模型', input: { task: '执行十轮合成检查' } }, options)
+    { parent: identity, identity: child, childId: 'aabbccdd', modelIdentity: '合成模型', input: { task: '执行十轮合成检查' } }, options)
   expect((await collect(harness.start(child))).state).toMatchObject({ status: 'completed', text: '已核对全部合成资料' })
   expect(rounds).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+  expect(traces).toContainEqual({
+    agent_id: 'builtin:searcher', child_id: 'aabbccdd',
+    parent_session_id: identity.sessionId, parent_run_id: identity.runId,
+  })
 })
 
 it('显式委派的 Shell 只处理单个文件引用', async () => {
@@ -152,7 +158,7 @@ it('父 Run 未调用 wait，子 Agent 的 final 仍在下一次模型调用前�
   const registry = createToolRegistry({ tools: [{
     ...tool,
     async execute() {
-      return { kind: 'completed', successful: true, mutated: false, value: { action: 'start', run: { childId, status: 'queued' } } }
+      return { kind: 'completed', successful: true, mutated: false, value: { action: 'spawn', run: { childId, status: 'queued' } } }
     },
   }], authorize: async () => true })
   const texts: string[] = []
@@ -160,7 +166,7 @@ it('父 Run 未调用 wait，子 Agent 的 final 仍在下一次模型调用前�
     async *stream({ round, context }) {
       texts.push(JSON.stringify(context.prepared.area.entries))
       if (round === 1) yield* events('', [{ id: 'start', name: 'agent_message',
-        input: { action: 'start', agentId: 'builtin:searcher', task: '合成研究' } }])
+        input: { action: 'spawn', agentId: 'builtin:searcher', task: '合成研究' } }])
       else if (round === 2) {
         ready = true
         yield* events('等待子任务的初步回答。')
@@ -227,13 +233,13 @@ it.each(['指定子终态', '空参数收件箱'] as const)('父 Run 等待 %s �
       if (tool.definition.name === 'agent_wait') waitCalls++
       return { kind: 'completed', successful: true, mutated: false,
         value: tool.definition.name === 'agent_wait' ? (any ? { finals: [{ childId, status: 'completed' }] } : { childId, status: 'completed', finalMessage }) :
-          { action: 'start', run: { childId, status: 'queued' } } }
+          { action: 'spawn', run: { childId, status: 'queued' } } }
     },
   })), authorize: async () => true })
   const options = runtime(registry.tools, {
     async *stream({ round, context }) {
       if (round === 1) yield* events('', [{ id: 'start', name: 'agent_message',
-        input: { action: 'start', agentId: 'builtin:searcher', task: '合成研究' } }])
+        input: { action: 'spawn', agentId: 'builtin:searcher', task: '合成研究' } }])
       else if (round === 2) yield* events('', [{ id: 'wait', name: 'agent_wait', input: any ? {} : { childId } }])
       else {
         expect(JSON.stringify(context.prepared.area.entries).split(finalMessage)).toHaveLength(2)

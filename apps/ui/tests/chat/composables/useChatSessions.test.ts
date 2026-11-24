@@ -206,7 +206,7 @@ describe('会话加载代次', () => {
     vi.mocked(agentApi.getMessages).mockImplementation(async (id) => response(Number(id), '缓存消息'))
     try {
       await sessions.loadSession(101)
-      expect(restoreScrollPosition).toHaveBeenLastCalledWith(null)
+      expect(restoreScrollPosition).toHaveBeenLastCalledWith(null, true)
       const anchor = { messageKey: 'message:101', offset: 128 }
       captureScrollAnchor.mockReturnValueOnce(anchor)
       await sessions.loadSession(202)
@@ -214,17 +214,17 @@ describe('会话加载代次', () => {
       const layout = deferred<void>()
       vi.mocked(agentApi.getMessages).mockReturnValueOnce(history.promise)
       restoreScrollPosition.mockClear()
-      restoreScrollPosition.mockReturnValueOnce(layout.promise)
+      restoreScrollPosition.mockResolvedValueOnce(undefined).mockReturnValueOnce(layout.promise)
       const loading = sessions.loadSession(101)
       try {
         expect(sessionSettling.value).toBe(true)
-        expect(messages.value).toEqual([])
-        expect(restoreScrollPosition).not.toHaveBeenCalled()
+        expect(messages.value.map(message => message.text)).toEqual(['缓存消息'])
+        await vi.waitFor(() => expect(restoreScrollPosition).toHaveBeenCalledWith(anchor, false))
 
         history.resolve(response(103, '新消息'))
-        await vi.waitFor(() => expect(restoreScrollPosition).toHaveBeenCalledOnce())
+        await vi.waitFor(() => expect(restoreScrollPosition).toHaveBeenCalledTimes(2))
         expect(sessionSettling.value).toBe(true)
-        expect(restoreScrollPosition).toHaveBeenCalledWith(anchor)
+        expect(restoreScrollPosition).toHaveBeenLastCalledWith(anchor)
         expect(messages.value.map((message) => message.text)).toEqual(['缓存消息', '新消息'])
       } finally {
         history.resolve(response(103, '新消息'))
@@ -236,7 +236,7 @@ describe('会话加载代次', () => {
       captureScrollAnchor.mockReturnValueOnce(null)
       await sessions.loadSession(202)
       await sessions.loadSession(101)
-      expect(restoreScrollPosition).toHaveBeenLastCalledWith(null)
+      expect(restoreScrollPosition).toHaveBeenLastCalledWith(null, false)
     } finally {
       scope.stop()
     }

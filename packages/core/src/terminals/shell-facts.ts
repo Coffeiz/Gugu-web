@@ -15,7 +15,9 @@ export function createTerminalShellFactsReader<DB>(db: Kysely<DB>, dialect: 'pos
     const workspaceId = session?.workspace_id ?? terminal.workspace_id
     // 未绑定 Workspace 仍会使用用户默认目录执行命令；把真实目标放入快照，
     // 以便确认等待期间默认目录变化时拒绝使用旧确认执行新目录。
-    const target = workspaceId === null ? await readDefaultTarget(rawOwner) : await readTarget(rawOwner, workspaceId)
+    const target = workspaceId === null
+      ? dialect === 'postgres' ? { kind: 'personal' as const } : await readDefaultTarget(rawOwner)
+      : await readTarget(rawOwner, workspaceId)
     const preference = (await sql<{ data_json: unknown }>`SELECT data_json FROM user_preferences WHERE user_id=${owner}`.execute(db)).rows[0]?.data_json
     let parsed: unknown = preference
     if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed) } catch { parsed = {} } }

@@ -32,7 +32,7 @@ export async function insertCalendarEventReminder<DB>(
   const targets = backend === 'postgres' ? sql`${targetJson}::json` : sql`${targetJson}`
   const result = await sql<Record<string, unknown>>`INSERT INTO scheduled_tasks(
     user_id,event_id,reminder_lead_minutes,workspace_id,filesystem_authorization_grant_id,name,payload,cron,schedule_kind,
-    interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,last_run_at,last_run_failed,created_at,updated_at,execution_mode
+    interval_minutes,start_at,end_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_paths,last_run_at,last_run_failed,created_at,updated_at,execution_mode
   ) VALUES(${ownerId},${eventId},${reminder.leadMinutes},NULL,NULL,${reminder.name},${reminder.payload},${reminder.cron},'once',NULL,${start},NULL,${reminder.channels},${enabled},${targets},'[]','[]',NULL,NULL,${timestamp},${timestamp},'reminder')
     RETURNING id,enabled,name,payload,cron,execution_mode,schedule_kind,start_at,reminder_lead_minutes,channels,delivery_targets`.execute(tx)
   const row = result.rows[0]

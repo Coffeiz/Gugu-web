@@ -11,7 +11,7 @@ export interface WebAgentWorkspaceCreateOptions {
   core: SqlDataRuntime
   pool: Pick<Pool, 'query'>
   lease: AgentDispatchLease
-  createDeclaration(ownerId: string, input: { name: string; kind: 'project' | 'folder'; projectId?: number; folderId?: number; enabled: boolean }): Promise<{ id: number }>
+  createDeclaration(ownerId: string, input: { name: string; kind: 'project'; projectId?: number; enabled: boolean }): Promise<{ id: number }>
   createDirectory(ownerId: string, name: string): Promise<{ id: number }>
   readWorkspace(ownerId: string, workspaceId: number, signal: AbortSignal): Promise<Record<string, unknown> | null>
   listWorkspaces(ownerId: string, signal: AbortSignal): Promise<readonly Record<string, unknown>[]>
@@ -118,7 +118,7 @@ export function createWebAgentWorkspaceCreatePort(options: WebAgentWorkspaceCrea
       let value: Record<string, unknown>
       let phase = 'create_declaration'
       try {
-        const { workspace_name: name, kind, enabled = true, project_id, folder_id } = input.args
+        const { workspace_name: name, kind, enabled = true, project_id } = input.args
         if (kind === 'directory') {
           phase = 'create_directory'
           const directory = await options.createDirectory(expected.ownerId, name)
@@ -132,7 +132,6 @@ export function createWebAgentWorkspaceCreatePort(options: WebAgentWorkspaceCrea
           const created = await options.createDeclaration(expected.ownerId, {
             name, kind, enabled,
             ...(kind === 'project' && project_id !== undefined ? { projectId: project_id } : {}),
-            ...(kind === 'folder' && folder_id !== undefined ? { folderId: folder_id } : {}),
           })
           input.signal.throwIfAborted()
           phase = 'read_declaration'

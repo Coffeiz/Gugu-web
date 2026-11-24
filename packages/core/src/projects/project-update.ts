@@ -27,7 +27,6 @@ export interface ProjectUpdatedEvent {
 export interface ProjectUpdateTransaction {
   getOwned(ownerId: string, projectId: number): Promise<ProjectRecord | null>
   updateIfVersion(ownerId: string, projectId: number, version: number, fields: Fields): Promise<ProjectRecord | null>
-  updateFileStoragePrefixes(ownerId: string, projectId: number, oldPrefix: string, newPrefix: string): Promise<void>
   recordUndo(record: ProjectUpdateUndoRecord): Promise<void>
 }
 
@@ -348,7 +347,6 @@ async function updateProjectInTransaction(
   if (typeof newName === 'string' && newName !== current.name) {
     const oldPrefix = prefix(current, current.name)
     const newPrefix = prefix(current, newName)
-    await tx.updateFileStoragePrefixes(ownerId, projectId, oldPrefix, newPrefix)
     await runtime.renameProjectDirectory(ownerId, oldPrefix, newPrefix, () => onDirectoryRename(oldPrefix, newPrefix))
   }
 

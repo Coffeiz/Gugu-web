@@ -30,7 +30,7 @@ test('Core PG 引擎与显式目录端口协调改名、锁和未知提交 journ
       ADD COLUMN done_at timestamptz, ADD COLUMN deleted_at timestamptz,
       ADD COLUMN updated_at timestamptz DEFAULT '2026-01-01T00:30:00.123456+08:00'`)
 
-    await pool.query(`CREATE TABLE files (id integer PRIMARY KEY,user_id text,project_id integer,storage_key text)`)
+    await pool.query(`CREATE TABLE files (id integer PRIMARY KEY,user_id text,project_id integer,path text)`)
     await pool.query(`CREATE TABLE undo_operations (id text PRIMARY KEY,user_id text,undo_context_id text,group_id text,resource text,action text,target_refs json,before_state json,after_state json,actor_type text,status varchar(16),created_at timestamptz,expires_at timestamptz,undone_at timestamptz,failure_code text)`)
     await pool.query(`CREATE TABLE project_undo_journals (id uuid PRIMARY KEY,user_id text,operation_id text,before_status text,after_status text,moves json,created_at timestamptz)`)
     const oldKey = '11111111-1111-4111-8111-111111111111/项目文件/2026/01/旧 #1', newKey = '11111111-1111-4111-8111-111111111111/项目文件/2026/01/新 #1'
@@ -83,7 +83,7 @@ test('Core PG 引擎与显式目录端口协调改名、锁和未知提交 journ
     assert.equal(afterUndo.doneAt, null)
     assert.equal(afterUndo.deletedAt, null)
     assert.equal(directories.contents(oldKey), '内容')
-    assert.equal((await pool.query('SELECT storage_key FROM files')).rows[0].storage_key, `${oldKey}/a.txt`)
+    assert.equal((await pool.query('SELECT path FROM files')).rows[0].path, `${oldKey}/a.txt`)
     const redone = await service.apply('11111111-1111-4111-8111-111111111111', 'ctx', 'op', 'redo') as { events: Record<string, unknown>[] }
     assert.deepEqual(redone.events, [{ resource: 'projects', operation: 'update', entity_ids: [1], origin: 'undo:op' }])
     assert.deepEqual(notifications, [...undone.events, ...redone.events])
@@ -123,7 +123,7 @@ test('Core PG 引擎与显式目录端口协调改名、锁和未知提交 journ
     await pool.query(`INSERT INTO undo_operations VALUES ('fail','11111111-1111-4111-8111-111111111111','ctx','g','projects','update','[]',$1::json,$2::json,'web','active',now(),now()+interval '1 day',NULL,NULL)`, [JSON.stringify({ items: { 'project:1': { name: '失败', stages: [] } } }), JSON.stringify({ items: { 'project:1': { name: '新', stages: [], version: 6 } } })])
     await assert.rejects(() => service.apply('11111111-1111-4111-8111-111111111111', 'ctx', 'fail', 'undo'))
     assert.equal(directories.contents(newKey), '内容')
-    assert.equal((await pool.query('SELECT storage_key FROM files')).rows[0].storage_key, `${newKey}/a.txt`)
+    assert.equal((await pool.query('SELECT path FROM files')).rows[0].path, `${newKey}/a.txt`)
   } finally {
     await runtime.close()
     await pool.end()

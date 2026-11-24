@@ -4,6 +4,9 @@
 
 - Web 和桌面聊天中，遇到多项结果、进度总览、方案对比、趋势、筛选或试算时，默认用卡片，无需用户点名。简单问答和单条查询用正文。总览用指标和进度，明细用列表，口径切换用 `switch`，筛选和试算用滑块或输入框。
 - 先写能独立阅读的结论和必要解释。用本轮确认的数据，缺失项标为「待确认」。正文避免重复卡片明细。
+- 用户要求研究报告、数据分析、市场/业务汇报或方案比较时，先判断结果是否包含多项指标、多个对象、时间趋势或阶段进展。只要智能视图能让重点更容易比较和理解，就优先使用；不要等用户点名。
+- 智能视图承载核心结论、关键数据和主要差异。正文仍要说明分析口径、结论依据、重要来源和注意事项，不能只给卡片，也不要把详细报告压缩成几句摘要。
+- 只有简单问答、单个事实或展示结构不会带来帮助时，才用普通正文。数据缺失、来源冲突或结论不确定时，在视图和正文中明确标注，不补造数据。
 
 ## 输出格式
 
@@ -25,7 +28,7 @@
 - `metric` 用 `label`、数值或短文本 `value`，可加 `unit`。
 - `progress` 用 `label`、数值 `value`，可加 `unit` 和 `max`（默认 100）。静态值须在 0 到 `max` 之间。
 - `list` 用 `items` 放条目。名称用 `label`，可加 `detail`、数值 `value` 和导航 `action`。详情用用户读得懂的状态、阶段和日期，字段多时分行。
-- `chart` 用 `kind`（`line` 折线或 `bar` 柱状）、`label` 和 1–40 个 `points`。每点用 `label` 和数值 `value`，缺测填 `null`。可加 `unit`、`color` 和 `icon`。折线用于有序趋势，柱状用于同口径比较。用 `switch` 切换不同口径的图表。
+- `chart` 用 `kind`（`line` 折线、`bar` 柱状或 `pie` 饼图）、`label` 和 1–40 个 `points`。每点用 `label` 和数值 `value`，缺测填 `null`。可加 `unit`、`color` 和 `icon`。折线用于有序趋势，柱状用于同口径比较，饼图用于同一整体下互斥类别的占比，数值须非负且至少有一个正值。用 `switch` 切换不同口径的图表。
 - `timeline` 用 `label` 和 1–30 个 `items`。每项必填 `when`、`label`，可加 `detail`、`icon`、`action` 和 `status`（`done`、`current`、`planned`）。按条目顺序显示，以真实记录和已知计划为依据。
 
 ### 交互
@@ -42,7 +45,7 @@
 
 ### 共享状态
 
-- 围栏顶层可声明 `"state":{"mode":"tabs","session":"main","panelOpen":true}`。状态值为短文本或布尔值，仅用于当前卡片。组件可用 `"when":{"state":"mode","equals":"tabs"}` 控制显示，`secondaryWhen` 使用相同格式。
+- 共享状态放在 JSON 顶层，与 `version`、`layout` 同级，例如 `{"version":1,"state":{"mode":"tabs","session":"main","panelOpen":true},"layout":{…}}`。状态值为短文本或布尔值，仅用于当前卡片。组件可用 `"when":{"state":"mode","equals":"tabs"}` 控制显示，`secondaryWhen` 使用相同格式。
 - `switch` 可用 `"state":"session"` 绑定共享状态。状态初始值须是对应选项 ID，点击选项时更新状态。多个切换器共用一个状态时应使用同一组选项 ID。
 - 按钮可用 `"action":{"type":"set-state","state":"mode","value":"tabs"}` 设置同类型状态，或用 `"action":{"type":"toggle-state","state":"panelOpen"}` 切换布尔值。隐藏区域保留其控件状态。演示会话使用模拟数据。
 

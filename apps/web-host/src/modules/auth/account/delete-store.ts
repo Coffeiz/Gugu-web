@@ -8,7 +8,6 @@ import {removeLocalTree} from '@gugu/fs/node'
 import {withPostgresTransaction} from '../../../adapters/database/postgres-transaction.js'
 import {deleteOwnerThumbnailCache} from '../../files/content.js'
 
-type OwnerFiles={id:number}
 type Attachment={storage_key:string}
 
 export function createPostgresAccountPasswordVerifier(pool:Pick<Pool,'query'>){
@@ -27,13 +26,11 @@ export function createPostgresAccountDeleter(
 ) {
   const root=path.resolve(storageRoot)
   return createAccountDeleter({
-    async readOwnedFileIds(ownerId){
+    async accountExists(ownerId){
       const user=await pool.query('SELECT id FROM users WHERE id=$1',[ownerId])
-      if(!user.rows.length)return null
-      const files=await pool.query<OwnerFiles>('SELECT id FROM files WHERE user_id=$1',[ownerId])
-      return files.rows.map(row=>row.id)
+      return user.rows.length > 0
     },
-    async removeThumbnails(ownerId,fileIds){deleteOwnerThumbnailCache(ownerId,fileIds)},
+    async removeThumbnails(ownerId){deleteOwnerThumbnailCache(ownerId)},
     async removeStoragePrefixes(ownerId){
       const normal=await removeLocalTree(root,ownerId)
       const legacy=await removeLocalTree(root,`u/${ownerId}`)

@@ -2,7 +2,7 @@ import { CoreError } from '@gugu/core'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { WriteRequestMetadata } from '../../app.js'
 import { writeRequestMetadata } from '../../http/request.js'
-import { parseFileId, isOwnedFileStorageKey, normalizeFileOwnerId } from './store.js'
+import { isOwnedFileStorageKey, normalizeFileOwnerId } from './store.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -20,7 +20,7 @@ import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
 import JSZip from 'jszip'
 
 export interface FileContentOperations {
-  update(ownerId: string, fileId: number, content: string, version: number, metadata: WriteRequestMetadata): Promise<unknown>
+  update(ownerId: string, storageKey: string, content: string, version: number, metadata: WriteRequestMetadata): Promise<unknown>
 }
 
 export interface FileContentRouteOptions {
@@ -30,16 +30,24 @@ export interface FileContentRouteOptions {
 }
 
 export function registerFileContentRoutes(app: FastifyInstance, options: FileContentRouteOptions): void {
-  app.put<{ Params: { fid: string }; Body: { content?: unknown; version?: unknown } }>(
-    '/api/v1/files/:fid/content', { preHandler: options.requireUser, bodyLimit: 8 * 1024 * 1024 }, async (request) => {
+  app.put<{ Body: { content?: unknown; version?: unknown } }>(
+    '/api/v1/files/by-path/content', { preHandler: options.requireUser, bodyLimit: 8 * 1024 * 1024 }, async (request) => {
       const { content, version } = request.body ?? {}
       if (typeof content !== 'string' || !Number.isSafeInteger(version) || Number(version) < 1)
         throw new CoreError('invalid_request', '文件内容或版本无效')
       return options.operations.update(
-        options.ownerIdFromRequest(request), parseFileId(request.params.fid), content, Number(version), writeRequestMetadata(request, { limitHeaders: true }),
+        options.ownerIdFromRequest(request), fileStorageKey(request), content, Number(version), writeRequestMetadata(request, { limitHeaders: true }),
       )
     },
   )
+}
+
+function fileStorageKey(request: FastifyRequest): string {
+  const value = (request.query as Record<string, unknown>).path
+  if (typeof value !== 'string' || !value || value.length > 4096 || value.startsWith('/')
+    || value.split('/').some(part => !part || part === '.' || part === '..' || part.includes('\\') || part.includes('\0')))
+    throw new CoreError('invalid_request', '文件路径无效')
+  return value
 }
 
 const FILE_LIBRARY = 'file_library'
@@ -51,12 +59,12 @@ const TEXT_EXTS = new Set([
 ])
 
 interface FileRow extends QueryResultRow {
-  id: number | string; user_id: string; display_name: string; ext: string; space: string
-  project_id: number | string | null; folder_id: number | string | null
+  user_id: string; display_name: string; ext: string; space: string
+  project_id: number | string | null
   workspace_directory_id: number | string | null; stage_name: string; mind_map_id: number | string | null
-  storage_key: string; version: number | string; size: string; size_bytes: number | string
+  path: string; version: number | string; size: string; size_bytes: number | string
   mime_type: string | null; img_width: number | string | null; img_height: number | string | null
-  created_at: Date | string; project_name?: string | null; project_color?: string | null; folder_name?: string | null
+  created_at: Date | string; project_name?: string | null; project_color?: string | null
 }
 
 async function storagePath(rootPath: string, key: string): Promise<string> {
@@ -79,12 +87,11 @@ async function storagePath(rootPath: string, key: string): Promise<string> {
 
 function snapshot(row: FileRow) {
   return {
-    id: Number(row.id), display_name: row.display_name, ext: row.ext, space: row.space,
+    display_name: row.display_name, ext: row.ext, space: row.space,
     project_id: row.project_id === null ? null : Number(row.project_id),
-    folder_id: row.folder_id === null ? null : Number(row.folder_id),
     workspace_directory_id: row.workspace_directory_id === null ? null : Number(row.workspace_directory_id),
     stage_name: row.stage_name, mind_map_id: row.mind_map_id === null ? null : Number(row.mind_map_id),
-    storage_key: row.storage_key, version: Number(row.version), size: row.size, size_bytes: Number(row.size_bytes),
+    path: row.path, version: Number(row.version), size: row.size, size_bytes: Number(row.size_bytes),
     mime_type: row.mime_type, img_width: row.img_width === null ? null : Number(row.img_width),
     img_height: row.img_height === null ? null : Number(row.img_height), deleted_at: null,
   }
@@ -96,7 +103,7 @@ async function recordUndo(
 ): Promise<void> {
   const context = contextId?.trim().slice(0, 128)
   if (!context) return
-  const ref = `file:${after.id}`
+  const ref = `file:${before.path}`
   await client.query(
     `UPDATE undo_operations SET status='expired',failure_code='redo_cleared_by_new_operation'
      WHERE user_id=$1 AND undo_context_id=$2 AND actor_type='web' AND status='undone'`, [ownerId, context],
@@ -107,7 +114,7 @@ async function recordUndo(
      VALUES ($1,$2,$3,$4,'files','update',$5::json,$6::json,$7::json,$8::json,$9::json,
        'web','active',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '30 days',NULL,NULL)`,
     [id, ownerId, context, `group-${randomUUID().replaceAll('-', '')}`,
-      JSON.stringify([{ kind: 'file', id: Number(after.id) }]),
+      JSON.stringify([{ kind: 'file', path: before.path }]),
       JSON.stringify({ items: { [ref]: snapshot(before) } }), JSON.stringify({ items: { [ref]: snapshot(after) } }),
       JSON.stringify({ [ref]: { version: Number(before.version) } }),
       JSON.stringify({ [ref]: { before_key: beforeKey, after_key: afterKey } })],
@@ -117,12 +124,11 @@ async function recordUndo(
 function response(row: FileRow) {
   const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : `${row.created_at.replace(/Z?$/, 'Z')}`
   return {
-    id: Number(row.id), displayName: row.display_name, ext: row.ext, space: row.space,
+    filePath: row.path, displayName: row.display_name, ext: row.ext, space: row.space,
     workspaceDirectoryId: row.workspace_directory_id === null ? null : Number(row.workspace_directory_id),
     projectId: row.project_id === null ? null : Number(row.project_id), projectName: row.project_name ?? null,
     projectColor: row.project_color?.match(/#[0-9a-fA-F]{3,6}/)?.[0] ?? row.project_color ?? null,
-    stageName: row.stage_name, folderId: row.folder_id === null ? null : Number(row.folder_id),
-    folderName: row.folder_name ?? null, mindMapId: row.mind_map_id === null ? null : Number(row.mind_map_id),
+    stageName: row.stage_name, mindMapId: row.mind_map_id === null ? null : Number(row.mind_map_id),
     size: row.size, sizeBytes: Number(row.size_bytes), mimeType: row.mime_type, createdAt, deletedAt: null,
     imgWidth: row.img_width === null ? null : Number(row.img_width),
     imgHeight: row.img_height === null ? null : Number(row.img_height), version: Number(row.version),
@@ -137,11 +143,11 @@ export function createPostgresFileContentOperations(
     removeCommittedBackup?: (backupPath: string) => Promise<void>
     restoreBackup?: typeof rename
     recordFileChange?: typeof recordCanonicalFileChange
-    publishChanged(event: { ownerId: string; entityId: number; payload: Record<string, unknown>; origin: string | null }): Promise<void>
+    publishChanged(event: { ownerId: string; entityId: string; payload: Record<string, unknown>; origin: string | null }): Promise<void>
   },
 ): FileContentOperations {
   return {
-    async update(rawOwnerId, fileId, content, version, metadata: WriteRequestMetadata) {
+    async update(rawOwnerId, storageKey, content, version, metadata: WriteRequestMetadata) {
       const ownerId = normalizeFileOwnerId(rawOwnerId)
       const data = Buffer.from(content, 'utf8')
       if (data.byteLength > 1024 * 1024) throw Object.assign(new Error('内容过大（上限 1MB）'), { statusCode: 400 })
@@ -156,19 +162,19 @@ export function createPostgresFileContentOperations(
       try {
         await client.query('BEGIN')
         const found = await client.query<FileRow>(
-          'SELECT * FROM files WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE', [fileId, ownerId],
+          'SELECT * FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE', [storageKey, ownerId],
         )
         const before = found.rows[0]
         if (!before) throw new CoreError('not_found', '文件不存在')
-        if (!isOwnedFileStorageKey(ownerId, before.storage_key)) throw new CoreError('not_found', '文件不存在')
-        await lockFileSyncPath(client, ownerId, before.storage_key)
+        if (!isOwnedFileStorageKey(ownerId, before.path)) throw new CoreError('not_found', '文件不存在')
+        await lockFileSyncPath(client, ownerId, before.path)
         const mime = (before.mime_type ?? '').toLowerCase()
         if (!TEXT_EXTS.has(before.ext.toLowerCase()) && !mime.startsWith('text/')
           && !['application/json', 'application/xml', 'application/javascript', 'application/typescript', 'application/sql', 'application/x-sh'].includes(mime)
           && !mime.endsWith('+json') && !mime.endsWith('+xml'))
           throw Object.assign(new Error('仅文本类文件可改内容'), { statusCode: 400 })
         if (Number(before.version) !== version) throw new CoreError('conflict', '文件已被其他端修改，请刷新后重试')
-        destination = await storagePath(options.storageRoot, before.storage_key)
+        destination = await storagePath(options.storageRoot, before.path)
         const beforeData = await readFile(destination).catch((error: NodeJS.ErrnoException) => {
           if (error.code === 'ENOENT') throw new CoreError('not_found', '文件不存在于存储')
           throw error
@@ -178,8 +184,8 @@ export function createPostgresFileContentOperations(
         await writeFile(stagedPath, data, { flag: 'wx', mode: 0o600 })
         const next = await client.query<FileRow>(
           `UPDATE files SET version=version+1,size=$4,size_bytes=$5,updated_at=CURRENT_TIMESTAMP
-           WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL AND version=$3 RETURNING *`,
-          [fileId, ownerId, version, formatFileSize(data.byteLength), data.byteLength],
+           WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL AND version=$3 RETURNING *`,
+          [storageKey, ownerId, version, formatFileSize(data.byteLength), data.byteLength],
         )
         const after = next.rows[0]
         if (!after) throw new CoreError('conflict', '文件已被其他端修改，请刷新后重试')
@@ -188,7 +194,8 @@ export function createPostgresFileContentOperations(
         let afterKey = ''
         if (undoContext) {
           const operationId = `op-${randomUUID().replaceAll('-', '')}`
-          const prefix = `${ownerId}/.undo/${operationId}/file-${fileId}`
+          const fileKey = createHash('sha256').update(String(before.path)).digest('hex').slice(0, 24)
+          const prefix = `${ownerId}/.undo/${operationId}/file-${fileKey}`
           beforeKey = `${prefix}/before`
           afterKey = `${prefix}/after`
           const beforePath = await storagePath(options.storageRoot, beforeKey)
@@ -205,7 +212,7 @@ export function createPostgresFileContentOperations(
         await (options.recordFileChange ?? recordCanonicalFileChange)(client, {
           ownerId,
           storageRoot: options.storageRoot,
-          storageKey: before.storage_key,
+          storageKey: before.path,
           observedFingerprint: createHash('sha256').update(data).digest('hex'),
           enabled: options.fileSyncEnabled ?? true,
         })
@@ -216,13 +223,12 @@ export function createPostgresFileContentOperations(
           console.error('文件正文备份清理失败，将尝试清理暂存目录')
         })
         const full = await client.query<FileRow>(
-          `SELECT file.*,project.name AS project_name,project.color AS project_color,folder.name AS folder_name
+          `SELECT file.*,project.name AS project_name,project.color AS project_color
            FROM files file LEFT JOIN projects project ON project.id=file.project_id AND project.user_id=file.user_id
-           LEFT JOIN folders folder ON folder.id=file.folder_id AND folder.user_id=file.user_id
-           WHERE file.id=$1 AND file.user_id=$2`, [fileId, ownerId],
+           WHERE file.path=$1 AND file.user_id=$2`, [storageKey, ownerId],
         )
         const result = full.rows[0] ? response(full.rows[0]) : response(after)
-        await options.publishChanged({ ownerId, entityId: fileId, payload: result, origin: metadata.clientId }).catch(() => undefined)
+        await options.publishChanged({ ownerId, entityId: storageKey, payload: result, origin: metadata.clientId }).catch(() => undefined)
         return result
       } catch (error) {
         if (!committed) {
@@ -264,14 +270,6 @@ const THUMBNAIL_CACHE_MAX_ENTRIES = 128
 const thumbnailCache = new Map<string, RenderedThumbnail>()
 
 let thumbnailCacheBytes = 0
-
-function parseXlsxFileId(value: string): number {
-  const normalized = value.trim()
-  if (!/^[+-]?\d+$/.test(normalized)) throw new CoreError('invalid_request', '文件 ID 无效')
-  const parsed = Number(normalized)
-  if (!Number.isSafeInteger(parsed)) throw new CoreError('invalid_request', '文件 ID 无效')
-  return parsed
-}
 
 function fileMetadata(file: unknown): ThumbnailMetadata {
   if (!file || typeof file !== 'object' || Array.isArray(file)) return { mimeType: null, version: 1 }
@@ -323,13 +321,12 @@ function cacheThumbnail(key: string, result: RenderedThumbnail): void {
   thumbnailCacheBytes += result.bytes.byteLength
 }
 
-/** Remove shared-cache entries belonging to the deleted owner's database file IDs. */
-export function deleteOwnerThumbnailCache(ownerId: string, fileIds: readonly number[]): void {
-  const ownedIds = new Set(fileIds)
+/** 按缓存键中的属主清理该账号的所有缩略图。 */
+export function deleteOwnerThumbnailCache(ownerId: string): void {
   for (const [key, value] of thumbnailCache) {
     let identity: unknown
     try { identity = JSON.parse(key) } catch { continue }
-    if (!Array.isArray(identity) || identity[0] !== ownerId || !ownedIds.has(identity[1])) continue
+    if (!Array.isArray(identity) || identity[0] !== ownerId) continue
     thumbnailCache.delete(key)
     thumbnailCacheBytes -= value.bytes.byteLength
   }
@@ -367,19 +364,19 @@ export async function renderPathFileThumbnail(source: FileContentSource): Promis
 }
 
 export function registerFileThumbnailRoute(app: FastifyInstance, options: FileThumbnailOptions): void {
-  app.get<{ Params: { fid: string } }>('/api/v1/files/:fid/thumb', {
+  app.get('/api/v1/files/by-path/thumb', {
     preHandler: options.requireUser,
   }, async (request, reply) => {
     const ownerId = options.ownerIdFromRequest(request)
-    const fileId = parseXlsxFileId(request.params.fid)
-    const file = await options.operations.getFile(ownerId, fileId)
+    const key = fileStorageKey(request)
+    const file = await options.operations.getFile(ownerId, key)
     if (file === null) throw new CoreError('not_found', '文件不存在')
     const metadata = fileMetadata(file)
     const declaredMime = (metadata.mimeType ?? '').toLowerCase().trim()
     if (!['', 'application/octet-stream', 'binary/octet-stream'].includes(declaredMime)
       && !planFileThumbnail(declaredMime, null, 'full'))
       throw Object.assign(new Error('不是图片文件'), { statusCode: 415 })
-    const source = await options.operations.openContent(ownerId, fileId)
+    const source = await options.operations.openContent(ownerId, key)
     if (!source) throw new CoreError('not_found', '物理文件丢失')
     let raw: Buffer
     try { raw = await source.handle.readFile() }
@@ -387,10 +384,10 @@ export function registerFileThumbnailRoute(app: FastifyInstance, options: FileTh
 
     const querySize = (request.query as Record<string, unknown>).size
     const size = typeof querySize === 'string' ? querySize : 'full'
-    const key = JSON.stringify([ownerId, fileId, metadata.version, size])
-    const cached = size === 'full' ? undefined : thumbnailCache.get(key)
+    const cacheKey = JSON.stringify([ownerId, key, metadata.version, size])
+    const cached = size === 'full' ? undefined : thumbnailCache.get(cacheKey)
     const rendered = cached ?? await createThumbnail(raw, metadata.mimeType ?? source.mimeType, size)
-    if (!cached && size !== 'full' && rendered.bytes !== raw) cacheThumbnail(key, rendered)
+    if (!cached && size !== 'full' && rendered.bytes !== raw) cacheThumbnail(cacheKey, rendered)
     return reply
       .type(rendered.mimeType)
       .header('Cache-Control', 'private, max-age=86400')
@@ -399,8 +396,8 @@ export function registerFileThumbnailRoute(app: FastifyInstance, options: FileTh
 }
 
 export interface XlsxPreviewOperations {
-  preview(ownerId: string, fileId: number): Promise<{ version: number; sheets: unknown[] }>
-  image(ownerId: string, fileId: number, imageId: number): Promise<{ content: Uint8Array; mime: string }>
+  preview(ownerId: string, storageKey: string): Promise<{ version: number; sheets: unknown[] }>
+  image(ownerId: string, storageKey: string, imageId: number): Promise<{ content: Uint8Array; mime: string }>
 }
 
 export interface XlsxPreviewRouteOptions {
@@ -424,17 +421,17 @@ function sendPreviewError(error: unknown, reply: { code(statusCode: number): { s
 }
 
 export function registerXlsxPreviewRoutes(app: FastifyInstance, options: XlsxPreviewRouteOptions): void {
-  app.get<{ Params: { fid: string } }>('/api/v1/files/:fid/xlsx-preview', { preHandler: options.requireUser }, async (request, reply) => {
+  app.get('/api/v1/files/by-path/xlsx-preview', { preHandler: options.requireUser }, async (request, reply) => {
     try {
-      return await options.operations.preview(options.ownerIdFromRequest(request), pathInteger(request.params.fid, '文件 ID'))
+      return await options.operations.preview(options.ownerIdFromRequest(request), fileStorageKey(request))
     } catch (error) { return sendPreviewError(error, reply) }
   })
 
-  app.get<{ Params: { fid: string; image_id: string } }>('/api/v1/files/:fid/xlsx-preview-image/:image_id', { preHandler: options.requireUser }, async (request, reply) => {
+  app.get<{ Params: { image_id: string } }>('/api/v1/files/by-path/xlsx-preview-image/:image_id', { preHandler: options.requireUser }, async (request, reply) => {
     try {
       const result = await options.operations.image(
         options.ownerIdFromRequest(request),
-        pathInteger(request.params.fid, '文件 ID'),
+        fileStorageKey(request),
         pathInteger(request.params.image_id, '图片 ID'),
       )
       return reply.type(result.mime).header('Cache-Control', 'private, max-age=86400').send(Buffer.from(result.content))
@@ -541,7 +538,7 @@ async function loadArchive(raw: Buffer): Promise<XlsxPreviewArchive> {
   }
 }
 
-type PreviewFileRow = QueryResultRow & { id: number | string; storage_key: string; ext: string; version: number | string | null }
+type PreviewFileRow = QueryResultRow & { path: string; ext: string; version: number | string | null }
 
 export function createPostgresXlsxPreviewOperations(pool: Pick<Pool, 'query'>, storageRoot: string) {
   const reader = createXlsxPreviewReader(async storageKey => {
@@ -553,26 +550,26 @@ export function createPostgresXlsxPreviewOperations(pool: Pick<Pool, 'query'>, s
     } finally { await opened.handle.close() }
   })
 
-  async function ownedXlsx(ownerId: string, fileId: number): Promise<PreviewFileRow> {
-    if (!Number.isSafeInteger(fileId)) throw new CoreError('invalid_request', '文件 ID 无效')
+  async function ownedXlsx(ownerId: string, storageKey: string): Promise<PreviewFileRow> {
+    if (!isOwnedFileStorageKey(ownerId, storageKey)) throw new CoreError('not_found', '文件不存在')
     const result = await pool.query<PreviewFileRow>(
-      'SELECT id,storage_key,ext,version FROM files WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL',
-      [fileId, ownerId],
+      'SELECT path,ext,version FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL',
+      [storageKey, ownerId],
     )
     const file = result.rows[0]
-    if (!file || !isOwnedFileStorageKey(ownerId, file.storage_key)) throw new CoreError('not_found', '文件不存在')
+    if (!file || !isOwnedFileStorageKey(ownerId, file.path)) throw new CoreError('not_found', '文件不存在')
     if ((file.ext || '').toLowerCase() !== 'xlsx') throw new XlsxPreviewError(415, '仅支持 XLSX 文件')
     return file
   }
 
   return {
-    async xlsxPreview(ownerId: string, fileId: number) {
-      const file = await ownedXlsx(ownerId, fileId)
-      return reader.preview(file.storage_key, Number(file.id), Number(file.version ?? 1))
+    async xlsxPreview(ownerId: string, storageKey: string) {
+      const file = await ownedXlsx(ownerId, storageKey)
+      return reader.preview(file.path, Number(file.version ?? 1))
     },
-    async xlsxPreviewImage(ownerId: string, fileId: number, imageId: number) {
-      const file = await ownedXlsx(ownerId, fileId)
-      return reader.image(file.storage_key, Number(file.id), Number(file.version ?? 1), imageId)
+    async xlsxPreviewImage(ownerId: string, storageKey: string, imageId: number) {
+      const file = await ownedXlsx(ownerId, storageKey)
+      return reader.image(file.path, Number(file.version ?? 1), imageId)
     },
   }
 }

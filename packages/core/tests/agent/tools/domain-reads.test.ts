@@ -31,9 +31,8 @@ beforeEach(async () => {
   // 工作区暂未纳入正式SQLite schema；用显式合同表验证真实查询，不假称已安装升级器。
   workspaceDb = new Kysely({ dialect: new SqliteDialect({ database: new Database(':memory:') }) })
   await sql`CREATE TABLE projects(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT)`.execute(workspaceDb)
-  await sql`CREATE TABLE folders(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT)`.execute(workspaceDb)
   await sql`CREATE TABLE workspace_directories(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT)`.execute(workspaceDb)
-  await sql`CREATE TABLE workspaces(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,kind TEXT,enabled INTEGER,is_default INTEGER,project_id INTEGER,folder_id INTEGER,directory_id INTEGER,updated_at TEXT)`.execute(workspaceDb)
+  await sql`CREATE TABLE workspaces(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,kind TEXT,enabled INTEGER,is_default INTEGER,project_id INTEGER,directory_id INTEGER,updated_at TEXT)`.execute(workspaceDb)
   await sql`CREATE TABLE conversation_sessions(id INTEGER PRIMARY KEY,user_id TEXT,workspace_id INTEGER)`.execute(workspaceDb)
   const own = owner.replaceAll('-', ''), foreign = other.replaceAll('-', '')
   await core.transaction(dataContext(owner), async data => {
@@ -42,13 +41,12 @@ beforeEach(async () => {
   })
   await core.transaction(dataContext(other), data => data.projects.create({ name: '他人项目' }))
   await sql`INSERT INTO projects VALUES(1,${own},'项目甲'),(4,${foreign},'他人项目')`.execute(workspaceDb)
-  await sql`INSERT INTO folders VALUES(1,${own},'自有文件夹'),(2,${foreign},'他人文件夹')`.execute(workspaceDb)
   await sql`INSERT INTO workspace_directories VALUES(7,${own},'自有顶层目录')`.execute(workspaceDb)
   await sql`INSERT INTO workspaces VALUES
-    (1,${own},'停用项目绑定','project',0,0,1,NULL,NULL,'2026-11-01'),
-    (2,${own},'顶层目录绑定','directory',1,1,NULL,NULL,7,'2026-11-01'),
-    (3,${own},'错误关联','folder',1,0,NULL,2,NULL,'2026-10-01'),
-    (4,${foreign},'他人声明','folder',1,0,NULL,2,NULL,'2026-11-01')`.execute(workspaceDb)
+    (1,${own},'停用项目绑定','project',0,0,1,NULL,'2026-11-01'),
+    (2,${own},'顶层目录绑定','directory',1,1,NULL,7,'2026-11-01'),
+    (3,${own},'错误关联','folder',1,0,NULL,NULL,'2026-10-01'),
+    (4,${foreign},'他人声明','folder',1,0,NULL,NULL,'2026-11-01')`.execute(workspaceDb)
   await sql`INSERT INTO conversation_sessions VALUES(1,${own},2),(2,${own},2),(3,${foreign},2)`.execute(workspaceDb)
   for (const [id, user, date, type, deleted] of [[1,own,'2026-11-15','event',null],[2,own,'2026-11-16','deadline',null],
     [3,foreign,'2026-11-15','event',null],[4,own,'2026-11-15','event','2026-11-01'],[5,own,'2030-01-01','event',null]] as const)
@@ -89,10 +87,9 @@ it('工作区含停用项、同时间按ID倒序，关联名称与会话计数�
   expect(await dispatch('list_workspaces')).toMatchObject({ value: [
     { workspace_id: 2, directory_id: 7, directory_name: '自有顶层目录', bound_session_count: 2 },
     { workspace_id: 1, enabled: false, project_name: '项目甲' },
-    { workspace_id: 3, folder_name: null },
   ] })
   expect(await dispatch('get_workspace', { workspace_id: 2 })).toMatchObject({ value: { workspace_id: 2, directory_id: 7 } })
-  expect(await dispatch('get_workspace', { workspace_id: 7 })).toMatchObject({ successful: false, value: { error: '工作区不存在；workspace_id 不是 directory_id、project_id 或 folder_id' } })
+  expect(await dispatch('get_workspace', { workspace_id: 7 })).toMatchObject({ successful: false, value: { error: '工作区不存在；workspace_id 不是 directory_id、project_id' } })
   expect(await dispatch('get_workspace', { workspace_id: 4 })).toMatchObject({ successful: false })
   expect(await dispatch('list_workspaces', { owner_id: other })).toMatchObject({ successful: false })
 })

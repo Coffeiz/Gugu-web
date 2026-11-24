@@ -7,9 +7,11 @@ import { databaseTime, nowUtc, utc } from '../../data/codec.js'
 import { normalizeAgentSessionTitle } from './application.js'
 import { createSqliteAgentAdmission } from '../run/sqlite-admission.js'
 import { enqueueAgentRagRebuildInTransaction } from '../rag/rebuild-worker.js'
-import { createSqlAgentSessionLister, projectAgentSessionGoal, readAgentSessionContext } from './list.js'
+import { applyAgentGoalCommand, createSqlAgentSessionLister, projectAgentSessionGoal, readAgentSessionContext } from './list.js'
 import { createSqlAgentInteractionHistory, readDelegatedPromptBindings } from './interaction-history.js'
 import { projectAgentTimelineEvents } from './message-projection.js'
+import { extractPlatformMentionIds, replacePlatformMentionIds } from '../context/messages/mentions.js'
+import { createSqlAgentGroupNames } from './group-names.js'
 import type { DesktopAgentChatReference } from '../../contracts/desktop.js'
 export { resolveDesktopChatReferences } from './desktop-references.js'
 
@@ -77,37 +79,31 @@ export async function listDesktopAgentSessions(db: Kysely<Database>, owner: stri
 }
 
 export async function manageDesktopSessionGoal(db: Kysely<Database>, owner: string, id: number,
-  action: 'status' | 'pause' | 'cancel' | 'resume') {
+  action: 'status' | 'pause' | 'cancel' | 'resume', im?: { platform: string; connectionId: string; groupSenderId?: string }) {
   const user = dataContext(owner).ownerId.replaceAll('-', '')
   return db.transaction().execute(async tx => {
+    const chat = im?.groupSenderId ? sql`chat_type='group' AND platform_user_id=${im.groupSenderId}`
+      : sql`COALESCE(chat_type,'c2c')='c2c'`
+    const scope = im ? sql`${chat} AND EXISTS (SELECT 1 FROM desktop_im_sessions im
+      WHERE im.owner_id=${user} AND im.session_id=${id} AND im.platform=${im.platform} AND im.connection_id=${im.connectionId})`
+      : sql`(source IS NULL OR source='web')`
     const { rows: [row] } = await sql<{ session_context: string | null; active_run_id: string | null }>`
       SELECT session_context,active_run_id FROM conversation_sessions WHERE user_id=${user} AND id=${id}
-        AND (source IS NULL OR source='web')`.execute(tx)
+        AND ${scope}`.execute(tx)
     if (!row) throw new CoreError('not_found', '当前会话不存在')
     const context = readAgentSessionContext(row.session_context, 'sqlite')
-    const text = typeof context.goal_text === 'string' ? context.goal_text.trim() : ''
-    if (action === 'status') return { text: text
-      ? `当前目标任务（${context.goal_status === 'paused' ? '已暂停' : '进行中'}）：${text}`
-      : '当前会话没有进行中的目标任务。' }
-    if (action === 'pause' && !text) return { text: '当前会话没有可暂停的目标任务。' }
-    if (action === 'resume' && !text) return { text: '当前会话没有可恢复的目标任务。' }
-    const interruptRunId = action !== 'resume' && projectAgentSessionGoal(context).goalActive ? row.active_run_id : null
-    if (action === 'resume') context.goal_status = 'active'
-    else if (action === 'pause') context.goal_status = 'paused'
-    else {
-      delete context.goal_text
-      delete context.goal_status
-    }
-    context.goal_mode = action === 'resume'
+    const interruptRunId = (action === 'pause' || action === 'cancel') && projectAgentSessionGoal(context).goalActive ? row.active_run_id : null
+    const result = applyAgentGoalCommand(context, action)
+    if (!result.changed) return { text: result.text }
     await sql`UPDATE conversation_sessions SET session_context=${JSON.stringify(context)}
       WHERE user_id=${user} AND id=${id}`.execute(tx)
     const cancelled = interruptRunId
       ? await createSqliteAgentAdmission(tx).requestCancel(owner, id, interruptRunId) : null
-    return { interruptRunId: cancelled?.outcome === 'requested' ? interruptRunId : null, text: action === 'resume' ? '目标任务已恢复。' : action === 'pause' ? '目标任务已暂停。' : '已取消当前目标任务。' }
+    return { interruptRunId: cancelled?.outcome === 'requested' ? interruptRunId : null, text: result.text }
   })
 }
 
-export interface DesktopSessionWorkspaceDirectory { id: string; name: string }
+export interface DesktopSessionWorkspaceDirectory { id: string; name: string; commandNumber?: number }
 
 function sessionWorkspaceDirectories(value: unknown): DesktopSessionWorkspaceDirectory[] {
   if (!Array.isArray(value)) throw new CoreError('storage_error', '桌面工作区目录列表无效')
@@ -120,33 +116,41 @@ function sessionWorkspaceDirectories(value: unknown): DesktopSessionWorkspaceDir
       || typeof row.name !== 'string' || !row.name.trim() || row.name.length > 100 || ids.has(row.id))
       throw new CoreError('storage_error', '桌面工作区目录记录无效')
     ids.add(row.id)
-    return [{ id: row.id, name: row.name }]
+    return [{ id: row.id, name: row.name, ...(typeof row.commandNumber === 'number' && Number.isSafeInteger(row.commandNumber) && row.commandNumber > 0 ? { commandNumber: row.commandNumber } : {}) }]
   })
 }
 
 function workspaceBinding(directory: DesktopSessionWorkspaceDirectory) {
   return {
     workspace_id: directory.id, workspace_name: directory.name, kind: 'directory', space: 'workspace',
-    project_id: null, folder_id: null, directory_id: directory.id, directory_name: directory.name,
+    project_id: null, directory_id: directory.id, directory_name: directory.name,
   }
 }
 
 /** 桌面把会话绑定保存在 session_context；它不授予或修改 Shell 文件系统权限。 */
 export async function manageDesktopSessionWorkspace(db: Kysely<Database>, owner: string, id: number,
   action: 'list' | 'show' | 'bind' | 'unlink', directoryId?: unknown,
-  readDirectories?: () => Promise<unknown>) {
+  readDirectories?: () => Promise<unknown>, im?: { platform: string; connectionId: string }) {
   const user = dataContext(owner).ownerId.replaceAll('-', '')
+  if (im) {
+    const scoped = await sql`SELECT 1 FROM desktop_im_sessions im
+      JOIN conversation_sessions s ON s.id=im.session_id AND s.user_id=im.owner_id
+      WHERE im.owner_id=${user} AND im.session_id=${id} AND im.platform=${im.platform} AND im.connection_id=${im.connectionId}
+        AND COALESCE(s.chat_type,'c2c')='c2c'`.execute(db)
+    if (!scoped.rows.length) throw new CoreError('not_found', '会话不存在')
+  }
   const directories = sessionWorkspaceDirectories(await readDirectories?.() ?? [])
   if (action === 'list') return { workspaces: directories }
-  if (action === 'bind') {
-    if (typeof directoryId !== 'string') throw new CoreError('invalid_request', '工作区标识无效')
-    const directory = directories.find(item => item.id === directoryId)
-    if (!directory) throw new CoreError('not_found', '工作区不存在或已失效')
-  }
+  const selector = typeof directoryId === 'string' ? directoryId.trim() : ''
+  const matches = action === 'bind' ? directories.filter(item => String(item.commandNumber ?? '') === selector || item.id === selector || item.name === selector
+    || item.id.slice('desktop:'.length, 'desktop:'.length + 8) === selector.toLowerCase()) : []
+  if (action === 'bind' && matches.length !== 1)
+    throw new CoreError(matches.length ? 'conflict' : 'not_found', matches.length
+      ? '找到多个工作区，请使用列表中的短 ID 或完整 ID' : '工作区不存在或已失效')
   const read = async (connection: Kysely<Database>) => (await sql<{
     session_context: string | null; active_run_id: string | null; chat_type: string | null
   }>`SELECT s.session_context,s.active_run_id,s.chat_type FROM conversation_sessions s
-      WHERE s.user_id=${user} AND s.id=${id} AND (s.source IS NULL OR s.source='web')`.execute(connection)).rows[0]
+      WHERE s.user_id=${user} AND s.id=${id} AND (${Boolean(im)} OR s.source IS NULL OR s.source='web')`.execute(connection)).rows[0]
   if (action === 'show') {
     const row = await read(db)
     if (!row) throw new CoreError('not_found', '会话不存在')
@@ -157,8 +161,6 @@ export async function manageDesktopSessionWorkspace(db: Kysely<Database>, owner:
     const current = directories.find(item => item.id === boundId)
     return { workspace: current ? workspaceBinding(current) : null }
   }
-  if (action === 'bind' && directoryId !== undefined && !directories.some(item => item.id === directoryId))
-    throw new CoreError('not_found', '工作区不存在或已失效')
   const update = async (tx: Kysely<Database>) => {
     const row = await read(tx)
     if (!row) throw new CoreError('not_found', '会话不存在')
@@ -167,9 +169,7 @@ export async function manageDesktopSessionWorkspace(db: Kysely<Database>, owner:
     const context = readAgentSessionContext(row.session_context, 'sqlite')
     if (action === 'unlink') delete context.workspace_binding
     else {
-      const directory = directories.find(item => item.id === directoryId)
-      if (!directory) throw new CoreError('not_found', '工作区不存在或已失效')
-      context.workspace_binding = workspaceBinding(directory)
+      context.workspace_binding = workspaceBinding(matches[0]!)
     }
     const current = readAgentSessionContext(row.session_context, 'sqlite').workspace_binding
     if (JSON.stringify(current ?? null) === JSON.stringify(context.workspace_binding ?? null))
@@ -179,6 +179,16 @@ export async function manageDesktopSessionWorkspace(db: Kysely<Database>, owner:
     return { workspace: action === 'unlink' ? null : context.workspace_binding }
   }
   return db.isTransaction ? update(db) : db.transaction().execute(update)
+}
+
+/** 工作区登记已从宿主移除后，只解绑匹配的本用户会话。 */
+export async function clearDesktopWorkspaceBindings(tx: Kysely<Database>, ownerId: string, directoryId: string) {
+  const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
+  await sql`UPDATE conversation_sessions
+    SET session_context=json_remove(session_context,'$.workspace_binding'),context_epoch=context_epoch+1,
+      snapshot_hash=NULL,snapshot_expires_at=NULL,session_info_hash=NULL
+    WHERE user_id=${owner} AND CASE WHEN json_valid(session_context)
+      THEN json_extract(session_context,'$.workspace_binding.directory_id')=${directoryId} ELSE false END`.execute(tx)
 }
 
 export async function createDesktopAgentSession(tx: Transaction<Database>, owner: string, title: unknown, greeting?: unknown): Promise<DesktopAgentSession> {
@@ -204,6 +214,19 @@ export async function readDesktopAgentMessages(db: Kysely<Database>, owner: stri
   return (await readDesktopAgentHistoryPage(db, owner, id)).messages
 }
 
+/** 旧桌面 IM 消息把 JSON 引用拼到了正文开头。读取时拆开，保留原始历史。 */
+function splitLegacyDesktopQuote(text: string) {
+  const prefix = '引用消息：'
+  const boundary = text.indexOf('\n\n')
+  if (!text.startsWith(prefix)) return { text }
+  try {
+    const quote: unknown = JSON.parse(text.slice(prefix.length, boundary < 0 ? undefined : boundary))
+    if (typeof quote === 'string' && quote.trim())
+      return { text: boundary < 0 ? '' : text.slice(boundary + 2), quotedText: quote }
+  } catch { /* 不是旧版引用格式，按原正文显示。 */ }
+  return { text }
+}
+
 export async function readDesktopAgentHistoryPage(
   db: Kysely<Database>, owner: string, id: number, before?: number,
   loadInteractionSecret?: () => Promise<string>,
@@ -212,13 +235,14 @@ export async function readDesktopAgentHistoryPage(
   const result = await sql<{
     execution_state: string; session_context: string | null; active: number; id: number | null; seq: number | null; role: DesktopAgentMessage['role'] | null; text: string | null; createdAt: string | null; timeline: string | null
     client_message_id: string | null; run_id: string | null; status: string | null
-    files: string | null; references_json: string | null
+    files: string | null; references_json: string | null; quoted_text: string | null; is_im: number
     chat_type: string | null; owner_platform_user_id: string | null; platform_user_id: string | null; platform_user_name: string | null
   }>`
     SELECT s.execution_state, s.session_context, ${isRunning} AS active, m.id, m.conversation_seq AS seq, m.role, m.content AS text, m.created_at AS "createdAt", m.display_timeline AS timeline,
       s.chat_type, CASE WHEN s.chat_type='group' AND EXISTS (SELECT 1 FROM desktop_im_sessions im
         WHERE im.session_id=s.id AND im.owner_id=s.user_id AND im.platform='qq') THEN s.platform_user_id END AS owner_platform_user_id,
-      m.files,m.references_json,m.platform_user_id,m.platform_user_name,
+      m.files,m.references_json,m.quoted_text,m.platform_user_id,m.platform_user_name,
+      EXISTS (SELECT 1 FROM desktop_im_sessions im WHERE im.session_id=s.id AND im.owner_id=s.user_id) AS is_im,
       m.client_message_id, coalesce(a.run_id,m.run_id) AS run_id, CASE WHEN d.startup_failed=1 THEN 'failed' ELSE c.status END AS status
     FROM conversation_sessions s
     LEFT JOIN conversation_messages m ON m.session_id = s.id
@@ -231,6 +255,31 @@ export async function readDesktopAgentHistoryPage(
     ORDER BY m.conversation_seq DESC LIMIT 21`.execute(db)
   if (!result.rows.length) throw new CoreError('not_found', '会话不存在')
   const page = result.rows.slice(0, 20)
+  const mentionNames = new Map<string, string>()
+  if (result.rows[0]!.chat_type === 'group' && result.rows[0]!.is_im) {
+    const ids = [...new Set(page.flatMap(row => [...extractPlatformMentionIds(row.text), ...extractPlatformMentionIds(row.quoted_text)]))]
+    const names = await createSqlAgentGroupNames(db, 'sqlite')(owner, id, ids)
+    for (const [key, value] of names) mentionNames.set(key, value)
+    if (ids.length) {
+      const bots = await sql<{ platform_bot_user_id: string }>`SELECT DISTINCT m.platform_bot_user_id FROM conversation_messages m
+        JOIN conversation_sessions s ON s.id=m.session_id
+        WHERE s.id=${id} AND s.user_id=${user} AND m.platform_bot_user_id IN (SELECT value FROM json_each(${JSON.stringify(ids)}))`.execute(db)
+      for (const bot of bots.rows) if (!mentionNames.has(bot.platform_bot_user_id)) mentionNames.set(bot.platform_bot_user_id, '咕咕')
+      const unresolved = ids.filter(candidate => !mentionNames.has(candidate))
+      if (unresolved.length) {
+        const observed = await sql<{ id: string; name: string }>`WITH ranked AS (
+          SELECT json_extract(bot.value,'$.id') AS id, json_extract(bot.value,'$.name') AS name,
+            ROW_NUMBER() OVER (PARTITION BY json_extract(bot.value,'$.id') ORDER BY m.conversation_seq DESC) AS rank
+          FROM conversation_messages m JOIN desktop_im_sessions im ON im.session_id=m.session_id
+          CROSS JOIN json_each(CASE WHEN json_valid(m.im_mention_facts) THEN m.im_mention_facts END,'$.otherBotNames') bot
+          WHERE im.session_id=${id} AND im.owner_id=${user} AND im.platform='qq' AND bot.type='object'
+            AND json_extract(bot.value,'$.id') IN (SELECT value FROM json_each(${JSON.stringify(unresolved)}))
+            AND json_type(bot.value,'$.name')='text'
+        ) SELECT id,name FROM ranked WHERE rank=1`.execute(db)
+        for (const bot of observed.rows) if (bot.name) mentionNames.set(bot.id, bot.name)
+      }
+    }
+  }
   const runIds = page.flatMap(row => row.role === 'user' && row.run_id ? [row.run_id] : [])
   const bindings = runIds.length ? (await sql<{ prompt_id: number; run_id: string }>`
     SELECT prompt_id,run_id FROM agent_interaction_bindings
@@ -265,8 +314,13 @@ export async function readDesktopAgentHistoryPage(
     const toolTimeline = timeline.filter(item => item.kind === 'tool')
     const assistantTimeline = timeline.filter(item => item.kind === 'assistant' && (item.text || item.files?.length || item.linkButtons))
     const interactions = row.role === 'user' && row.run_id ? promptsByRun.get(row.run_id) : undefined
+    const body = row.quoted_text ? { text: row.text!, quotedText: row.quoted_text }
+      : row.role === 'user' && row.is_im ? splitLegacyDesktopQuote(row.text!) : { text: row.text! }
     const message: DesktopAgentMessage = {
-      id: row.id, role: row.role!, text: row.text!, createdAt: utc(row.createdAt!).replace(' ', 'T'),
+      id: row.id, role: row.role!, ...body,
+      text: replacePlatformMentionIds(body.text, mentionNames) ?? body.text,
+      ...('quotedText' in body && body.quotedText ? { quotedText: replacePlatformMentionIds(body.quotedText, mentionNames) ?? body.quotedText } : {}),
+      createdAt: utc(row.createdAt!).replace(' ', 'T'),
       ...(row.platform_user_id ? { platformUserId: row.platform_user_id } : {}),
       ...(row.platform_user_name ? { platformUserName: row.platform_user_name } : {}),
       ...(row.files ? { files: JSON.parse(row.files) as DesktopAgentMessage['files'] } : {}),
@@ -300,7 +354,7 @@ export async function readDesktopAgentHistoryPage(
 }
 
 /** 完整问答同事务追加。模型失败时由宿主保留输入草稿。 */
-export async function appendDesktopAgentTurn(tx: Transaction<Database>, owner: string, id: number, text: unknown, reply: unknown, clientId?: string) {
+export async function appendDesktopAgentTurn(tx: Transaction<Database>, owner: string, id: number, text: unknown, reply: unknown, clientId?: string, trustedIm = false) {
   if (typeof text !== 'string' || !text.trim() || text.length > 32_000
     || typeof reply !== 'string' || !reply.trim() || reply.length > 1_000_000)
     throw new CoreError('invalid_request', '对话消息无效')
@@ -309,7 +363,7 @@ export async function appendDesktopAgentTurn(tx: Transaction<Database>, owner: s
   const { rows } = await sql<{ seq: number }>`
     SELECT coalesce(max(m.conversation_seq),0) AS seq
     FROM conversation_sessions s LEFT JOIN conversation_messages m ON m.session_id=s.id
-    WHERE s.id=${id} AND s.user_id=${user} AND (s.source IS NULL OR s.source='web')
+    WHERE s.id=${id} AND s.user_id=${user} AND (${Number(trustedIm)} OR s.source IS NULL OR s.source='web')
     GROUP BY s.id`.execute(tx)
   if (!rows[0]) throw new CoreError('not_found', '会话不存在')
   const seq = Number(rows[0].seq)

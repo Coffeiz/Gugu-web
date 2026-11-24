@@ -300,6 +300,7 @@ function openCreateEvent(date = selectedDate.value ?? todayIso.value, time = def
   Object.assign(eventDraft, { name: '', date, ...time, description: '', allDay })
   reminderError.value = ''
   eventForm.resetReminder()
+  void eventForm.loadImTargets().catch(() => { reminderError.value = '提醒渠道加载失败' })
   eventPopupAnchor.value = null
   eventPopupCentered.value = false
   eventPopupPosition.value = position ?? popupPositionFromPoint(window.innerWidth / 2, window.innerHeight / 2)
@@ -332,7 +333,7 @@ function openEditEvent(
   eventPopupCentered.value = !event && !anchor
   eventPopupPosition.value = event && !anchor ? popupPositionFromPoint(event.clientX, event.clientY) : null
   eventFormOpen.value = true
-  void eventForm.loadReminders(row).catch(error => {
+  void Promise.all([eventForm.loadReminders(row), eventForm.loadImTargets()]).catch(error => {
     if (editingEvent.value?.id === row.id) reminderError.value = error instanceof Error ? error.message : '活动提醒加载失败'
   })
 }
@@ -579,7 +580,6 @@ onUnmounted(() => {
           :day-layout="dayLayout"
           :week-bars-capped="weekBarsCapped"
           :deadline-warn-layer="() => null"
-          :bar-seg-fill="bar => bar.progress ?? 0"
           :darken-hex="darkenHex"
           :set-week-ref="setWeekRef"
           @week-mousemove="(event, week) => { const rect = (event.currentTarget as HTMLElement).getBoundingClientRect(); const col = Math.max(0, Math.min(6, Math.floor((event.clientX - rect.left) / rect.width * 7))); hoveredDateIso = week[col]?.iso ?? null }"

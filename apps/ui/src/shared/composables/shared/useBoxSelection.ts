@@ -3,40 +3,40 @@ import { ref, shallowRef, computed, type Ref } from 'vue'
 type Id = number | string
 interface Pt { x: number; y: number }
 
-export function useBoxSelection<F extends Id = Id, I extends Id = number>(containerRef: Ref<HTMLElement | null>, {
-  fileAttr        = 'data-file-id',
-  folderAttr      = 'data-folder-key',
-  extraFolderAttrs = [],
+export function useBoxSelection<F extends Id = string, I extends Id = string>(containerRef: Ref<HTMLElement | null>, {
+  filePathAttr    = 'data-file-path',
+  directoryPathAttr      = 'data-folder-key',
+  extraDirectoryPathAttrs = [],
   excludeSelector = 'button, .fc-card, .folder-card, .fc-upload, .list-row',
-  parseFileId     = ((value: string) => Number(value) as I),
-  parseFolderId   = ((v: string) => v as F),
+  parseFilePath     = ((value: string) => value as I),
+  parseDirectoryPath   = ((v: string) => v as F),
   onBoxSelect     = null,
   onClear         = null,
   getItemsInBox,
 }: {
-  fileAttr?: string
-  getItemsInBox?: (box: { left: number; top: number; width: number; height: number }) => { fileIds: Set<I>; folderIds: Set<F> } | null
-  folderAttr?: string
-  extraFolderAttrs?: string[]
+  filePathAttr?: string
+  getItemsInBox?: (box: { left: number; top: number; width: number; height: number }) => { filePaths: Set<I>; directoryPaths: Set<F> } | null
+  directoryPathAttr?: string
+  extraDirectoryPathAttrs?: string[]
   excludeSelector?: string
-  parseFileId?: (v: string) => I
-  parseFolderId?: (v: string) => F
-  onBoxSelect?: ((sel: { fileIds: Set<I>; folderIds: Set<F> }, e: MouseEvent) => void) | null
+  parseFilePath?: (v: string) => I
+  parseDirectoryPath?: (v: string) => F
+  onBoxSelect?: ((sel: { filePaths: Set<I>; directoryPaths: Set<F> }, e: MouseEvent) => void) | null
   // 点击空白区域（非拖框选、非 ctrl/shift）时的兜底清空只知道本组合式函数自己管的
-  // selectedFileIds/selectedFolderIds；调用方如果在组合式函数之外还维护了别的选择态
-  // （比如 Files/index.vue 的回收站文件夹用独立的 selectedTrashFolderIds，box 拖选时靠
-  // extraFolderAttrs+onBoxSelect 能覆盖到，但点击清空这条路径够不着），要一并清掉就传这个
+  // selectedFilePaths/selectedDirectoryPaths；调用方如果在组合式函数之外还维护了别的选择态
+  // （比如 Files/index.vue 的回收站文件夹用独立的 selectedTrashDirectoryPaths，box 拖选时靠
+  // extraDirectoryPathAttrs+onBoxSelect 能覆盖到，但点击清空这条路径够不着），要一并清掉就传这个
   // 钩子——2026-07-17 复现：回收站多选文件+文件夹后点空白，文件夹选中态没跟着清掉。
   onClear?: (() => void) | null
 } = {}) {
-  const selectedFileIds   = shallowRef(new Set<I>())
-  const selectedFolderIds = shallowRef(new Set<F>())
-  const previewFileIds    = shallowRef(new Set<I>())
-  const previewFolderIds  = shallowRef(new Set<F>())
+  const selectedFilePaths   = shallowRef(new Set<I>())
+  const selectedDirectoryPaths = shallowRef(new Set<F>())
+  const previewFilePaths    = shallowRef(new Set<I>())
+  const previewDirectoryPaths  = shallowRef(new Set<F>())
   const boxStart          = ref<Pt | null>(null)
   const boxEnd            = ref<Pt | null>(null)
   let   _cRect: DOMRect | null = null
-  let   _latestPreview: { fileIds: Set<I>; folderIds: Set<F> } = { fileIds: new Set(), folderIds: new Set() }
+  let   _latestPreview: { filePaths: Set<I>; directoryPaths: Set<F> } = { filePaths: new Set(), directoryPaths: new Set() }
 
   const selectionRect = computed(() => {
     if (!boxStart.value || !boxEnd.value) return null
@@ -49,51 +49,51 @@ export function useBoxSelection<F extends Id = Id, I extends Id = number>(contai
   })
 
   function clearSelection() {
-    selectedFileIds.value   = new Set()
-    selectedFolderIds.value = new Set()
+    selectedFilePaths.value   = new Set()
+    selectedDirectoryPaths.value = new Set()
     onClear?.()
   }
 
   function _getItemsInBox() {
     const rect = selectionRect.value
-    if (!rect || !containerRef.value) return { fileIds: new Set<I>(), folderIds: new Set<F>() }
+    if (!rect || !containerRef.value) return { filePaths: new Set<I>(), directoryPaths: new Set<F>() }
     const virtualItems = getItemsInBox?.(rect)
     if (virtualItems) return virtualItems
     const cRect     = containerRef.value.getBoundingClientRect()
     const st        = containerRef.value.scrollTop
-    const fileIds   = new Set<I>()
-    const folderIds = new Set<F>()
-    const folderSelectors = [folderAttr, ...extraFolderAttrs].map(attr => `[${attr}]`).join(', ')
-    containerRef.value.querySelectorAll(`[${fileAttr}], ${folderSelectors}`).forEach(el => {
+    const filePaths   = new Set<I>()
+    const directoryPaths = new Set<F>()
+    const folderSelectors = [directoryPathAttr, ...extraDirectoryPathAttrs].map(attr => `[${attr}]`).join(', ')
+    containerRef.value.querySelectorAll(`[${filePathAttr}], ${folderSelectors}`).forEach(el => {
       const er = el.getBoundingClientRect()
       const l  = er.left - cRect.left
       const t  = er.top  - cRect.top + st
       if (l < rect.left + rect.width && l + er.width > rect.left &&
           t < rect.top  + rect.height && t + er.height > rect.top) {
-        const fv = el.getAttribute(fileAttr)
-        const dv = [folderAttr, ...extraFolderAttrs]
+        const fv = el.getAttribute(filePathAttr)
+        const dv = [directoryPathAttr, ...extraDirectoryPathAttrs]
           .map(attr => el.getAttribute(attr))
           .find((value): value is string => value !== null)
-        if (fv !== null) fileIds.add(parseFileId(fv))
-        if (dv != null) folderIds.add(parseFolderId(dv))
+        if (fv !== null) filePaths.add(parseFilePath(fv))
+        if (dv != null) directoryPaths.add(parseDirectoryPath(dv))
       }
     })
-    return { fileIds, folderIds }
+    return { filePaths, directoryPaths }
   }
 
   function _updatePreview() {
     if (!selectionRect.value) {
-      _latestPreview = { fileIds: new Set(), folderIds: new Set() }
-      previewFileIds.value = new Set(); previewFolderIds.value = new Set()
+      _latestPreview = { filePaths: new Set(), directoryPaths: new Set() }
+      previewFilePaths.value = new Set(); previewDirectoryPaths.value = new Set()
       return
     }
-    const { fileIds, folderIds } = _getItemsInBox()
+    const { filePaths, directoryPaths } = _getItemsInBox()
     // _latestPreview keeps the complete hit set for mouseup semantics. The visual preview is only
     // for not-yet-selected items: selected + pre-selected on the same card creates two competing
     // paint states (and used to expose load-order differences in Mono folder cards).
-    _latestPreview = { fileIds, folderIds }
-    previewFileIds.value = new Set([...fileIds].filter(id => !selectedFileIds.value.has(id)))
-    previewFolderIds.value = new Set([...folderIds].filter(id => !selectedFolderIds.value.has(id)))
+    _latestPreview = { filePaths, directoryPaths }
+    previewFilePaths.value = new Set([...filePaths].filter(id => !selectedFilePaths.value.has(id)))
+    previewDirectoryPaths.value = new Set([...directoryPaths].filter(id => !selectedDirectoryPaths.value.has(id)))
   }
 
   function _swallowClick(e: Event) { e.stopImmediatePropagation() }
@@ -112,17 +112,17 @@ export function useBoxSelection<F extends Id = Id, I extends Id = number>(contai
     document.removeEventListener('mouseup',   _onMouseUp)
     if (selectionRect.value) {
       if (onBoxSelect) {
-        onBoxSelect({ fileIds: _latestPreview.fileIds, folderIds: _latestPreview.folderIds }, e)
+        onBoxSelect({ filePaths: _latestPreview.filePaths, directoryPaths: _latestPreview.directoryPaths }, e)
       } else {
-        selectedFileIds.value   = _latestPreview.fileIds
-        selectedFolderIds.value = _latestPreview.folderIds
+        selectedFilePaths.value   = _latestPreview.filePaths
+        selectedDirectoryPaths.value = _latestPreview.directoryPaths
       }
       document.addEventListener('click', _swallowClick, { capture: true, once: true })
     } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
       clearSelection()
     }
-    _latestPreview = { fileIds: new Set(), folderIds: new Set() }
-    previewFileIds.value = new Set(); previewFolderIds.value = new Set()
+    _latestPreview = { filePaths: new Set(), directoryPaths: new Set() }
+    previewFilePaths.value = new Set(); previewDirectoryPaths.value = new Set()
     boxStart.value = null; boxEnd.value = null; _cRect = null
   }
 
@@ -153,14 +153,14 @@ export function useBoxSelection<F extends Id = Id, I extends Id = number>(contai
   function cancelDrag() {
     document.removeEventListener('mousemove', _onMouseMove)
     document.removeEventListener('mouseup', _onMouseUp)
-    _latestPreview = { fileIds: new Set(), folderIds: new Set() }
-    previewFileIds.value = new Set(); previewFolderIds.value = new Set()
+    _latestPreview = { filePaths: new Set(), directoryPaths: new Set() }
+    previewFilePaths.value = new Set(); previewDirectoryPaths.value = new Set()
     boxStart.value = null; boxEnd.value = null; _cRect = null
   }
 
   return {
-    selectedFileIds, selectedFolderIds,
-    previewFileIds, previewFolderIds,
+    selectedFilePaths, selectedDirectoryPaths,
+    previewFilePaths, previewDirectoryPaths,
     boxStart, selectionRect,
     clearSelection,
     onContainerMouseDown, cancelDrag,

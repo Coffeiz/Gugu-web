@@ -46,7 +46,7 @@ const pgUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const redisUrl = process.env.GUGU_WEBUI_TEST_REDIS_URL
 const shellRootfs = process.env.GUGU_BUBBLEWRAP_TEST_ROOTFS
 
-for (const mode of ['子终态唤醒原父 Run', '跨父运行续聊', '父取消经 Redis 停止子 Run', '进程重启续跑原子 Run', '授权文件搜索与读取', '授权工作区路径引用', '授权文件库目录', '自动模式使用父工作区 Shell', '普通模式经父会话确认 Shell'] as const) {
+for (const mode of ['子终态唤醒原父 Run', '跨父运行续聊', '父取消经 Redis 停止子 Run', '进程重启续跑原子 Run', '授权文件搜索与读取', '授权工作区路径引用', '自动模式使用父工作区 Shell', '普通模式经父会话确认 Shell'] as const) {
   const workspaceMode = mode === '授权工作区路径引用'
   const confirmShell = mode === '普通模式经父会话确认 Shell'
   const shellMode = mode === '自动模式使用父工作区 Shell' || confirmShell
@@ -63,9 +63,7 @@ for (const mode of ['子终态唤醒原父 Run', '跨父运行续聊', '父取�
     url.searchParams.set('options', `-c search_path=${schema}`)
     const pool = new Pool({ connectionString: url.toString() })
     const root = await mkdtemp(join(tmpdir(), 'gugu-web-searcher-'))
-    const folderMode = mode === '授权文件库目录'
-    const fileMode = mode === '授权文件搜索与读取' || workspaceMode || folderMode
-    let folderId: number
+    const fileMode = mode === '授权文件搜索与读取' || workspaceMode
     let fileId: number | string
     let excludedFileId: number | string
     let fileKey: string
@@ -159,8 +157,8 @@ for (const mode of ['子终态唤醒原父 Run', '跨父运行续聊', '父取�
             const childId = started ? (await pool.query('SELECT child_id FROM agent_subagent_deliveries LIMIT 1')).rows[0]?.child_id : null
             choice = { delta: { tool_calls: [{ index: 0, id: started ? 'synthetic-wait' : 'synthetic-delegate', type: 'function',
               function: { name: started ? 'agent_wait' : 'agent_message', arguments: JSON.stringify(started ? { childId }
-                : { action: 'start', agentId: 'builtin:searcher', task: '合成委派专用请求',
-                ...(fileMode ? { resourceRefs: [folderMode ? `folder:${folderId}` : fileKey] } : {}) }) } }] }, finish_reason: 'tool_calls' }
+                : { action: 'spawn', agentId: 'builtin:searcher', task: '合成委派专用请求',
+                ...(fileMode ? { resourceRefs: [fileKey] } : {}) }) } }] }, finish_reason: 'tool_calls' }
           }
           response.writeHead(200, { 'content-type': 'text/event-stream' }).end(
             `data: ${JSON.stringify({ choices: [choice], usage: { prompt_tokens: 6, completion_tokens: 2 } })}\n\ndata: [DONE]\n\n`)
@@ -298,11 +296,6 @@ for (const mode of ['子终态唤醒原父 Run', '跨父运行续聊', '父取�
         fileKey = parseWorkspaceFileReference(fileId)!.key
         excludedFileKey = parseWorkspaceFileReference(excludedFileId)!.key
       } else if (fileMode) {
-        if (folderMode) {
-          const { rows: [folder] } = await pool.query<{ id: number }>(
-            "INSERT INTO folders(user_id,name) VALUES ($1,'合成委派目录') RETURNING id", [registered.user.id])
-          folderId = folder!.id
-        }
         const storage = join(root, 'storage', registered.user.id, '个人文件')
         await mkdir(storage, { recursive: true })
         const createFile = async (name: string, content: string) => {
@@ -315,17 +308,12 @@ for (const mode of ['子终态唤醒原父 Run', '跨父运行续聊', '父取�
         }
         fileId = await createFile('合成授权文件', '合成授权文件正文')
         excludedFileId = await createFile('合成排除文件', '合成排除文件正文')
-        if (folderMode) {
-          const { rows: [nested] } = await pool.query<{ id: number }>(
-            "INSERT INTO folders(user_id,parent_id,name) VALUES ($1,$2,'合成子目录') RETURNING id", [registered.user.id, folderId!])
-          await pool.query('UPDATE files SET folder_id=$1 WHERE id=$2', [nested!.id, fileId])
-        }
         fileKey = String(fileId)
       }
       const chat = (message: string, sessionId?: number, attachments?: string[]) => fetch(base + '/api/v1/agent/chat', {
         method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
         body: JSON.stringify({ message, locale: 'zh-CN', session_id: sessionId, attachments,
-          references: folderMode ? [{type: 'folder', id: folderId!}] : fileMode ? [fileId, excludedFileId].map(id => ({ type: 'file', id })) : undefined }), signal: AbortSignal.timeout(12_000),
+          references: fileMode ? [fileId, excludedFileId].map(id => ({ type: 'file', id })) : undefined }), signal: AbortSignal.timeout(12_000),
       })
       const delegated = await chat('合成委派专用请求')
       assert.equal(delegated.status, 200)

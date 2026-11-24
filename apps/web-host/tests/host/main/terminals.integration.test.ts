@@ -47,7 +47,7 @@ test('生产 Host 同步工作区导航、终端 API 与 Bubblewrap 就绪状态
       STORAGE__LOCAL_PATH: join(root, 'storage'), GUGU_WEBUI_HOST: '127.0.0.1', GUGU_WEBUI_PORT: String(await freePort()), GUGU_WEBUI_REDIS_URL: '' })
     const headers = (id: string) => ({ authorization: `Bearer ${createUserToken(id, 1, secret)}` })
     await pool.query(`CREATE TABLE workspaces(id integer, user_id uuid, name text, kind text,
-      folder_id integer, project_id integer, directory_id integer, enabled boolean, is_default boolean, updated_at timestamptz);
+      project_id integer, directory_id integer, enabled boolean, is_default boolean, updated_at timestamptz);
       CREATE TABLE conversation_sessions(id integer, user_id uuid, workspace_id integer);
       CREATE TABLE terminal_sessions(owner_id uuid, status text, closed_at timestamptz, output_chars integer)`)
     const request = { headers: headers(owner) }

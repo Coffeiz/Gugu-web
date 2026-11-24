@@ -1,211 +1,156 @@
+import { readSessionToolAttachments } from './session-attachments.js'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import path from 'node:path'
-import { Readable } from 'node:stream'
 import type { FileHandle } from 'node:fs/promises'
-import type { Pool, PoolClient } from 'pg'
-import type { RawBuilder } from 'kysely'
-import { CoreError } from '@gugu/core'
+import { posix } from 'node:path'
+import type { Pool } from 'pg'
+import { CoreError, dataContext } from '@gugu/core'
 import { stableJson } from '@gugu/core/agent'
 import type { RunIdentity, ToolCall } from '@gugu/core/agent'
-import type { SaveAttachmentPort } from '@gugu/core/tools'
+import { agentDownloadsLimit, type SaveAttachmentPort } from '@gugu/core/tools'
 import { createSessionWorkspaceTargetReader } from '@gugu/core/workspaces/shell-target'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { stageFile, type FileUploadInput, type FileUploadOperations, type FileUploadReceipt } from '../../../files/upload.js'
+import { createLocalFileTree } from '@gugu/fs/node'
+import { createWorkspaceFileReads, resolveFileDirectoryRoot, type FileDirectory } from '../../../workspaces/files.js'
 import { createWebAgentRagRunAuthorization } from '../../rag/authorize.js'
 import type { AgentDispatchLease } from '../../run/dispatch.js'
 
-// 已持久化的收据标识参与幂等键计算，工具改名时保留。
-const SAVE_METHOD = 'agent.file.save_uploaded_file' as const
+const method = 'agent.file.save_path_attachment'
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
-function receipt(identity: RunIdentity & { roundId: string }, call: ToolCall, attachId: string, target: FileUploadInput): FileUploadReceipt {
-  const hash = digest([SAVE_METHOD, identity.ownerId, identity.sessionId, identity.runId, identity.roundId, call.id, attachId])
-  return {
-    operationId: `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`,
-    fingerprint: digest([attachId, target]), method: SAVE_METHOD,
-  }
+type SaveInput = Parameters<SaveAttachmentPort['save']>[1]
+
+function saveName(original: string, suffix: string) {
+  const clean = Array.from(posix.basename(original).replace(/[\\/\p{Cc}<>:"|?*]/gu, '_').trim().replace(/^\.+/u, '')).slice(0, 48).join('') || '附件'
+  const extension = posix.extname(clean)
+  return clean.slice(0, clean.length - extension.length) + '-' + suffix + extension
 }
 
-function knownFailure(error: unknown): string | null {
-  if ((error as { statusCode?: unknown } | null)?.statusCode === 413) return '附件超过目标文件空间可用容量'
-  if (error instanceof CoreError && ['invalid_request', 'not_found', 'conflict'].includes(error.code)) return error.message
-  return null
-}
-
-function uploadTarget(input: Parameters<SaveAttachmentPort['save']>[1], workspaceDirectoryId: number | null = null): FileUploadInput {
-  return {
-    space: input.space, projectId: input.project_id ?? null, folderId: input.folder_id ?? null,
-    workspaceDirectoryId, stageName: '', mindMapId: null, onConflict: 'keep_both', overwriteFileId: null,
-  }
-}
-
-async function folderIdForPath(options: {
-  pool: Pick<Pool, 'query'>
-  ownerId: string
-  input: Parameters<SaveAttachmentPort['save']>[1]
-  workspaceDirectoryId: number | null
-  path: string
-  client?: Pick<PoolClient, 'query'>
-}): Promise<number> {
-  const names = options.path.split('/')
-  const result = await (options.client ?? options.pool).query<{ id: number | string }>(`
-    WITH RECURSIVE scoped_folders AS (
-      SELECT f.id, f.parent_id, f.name, ARRAY[f.name]::text[] AS path
-      FROM folders f
-      WHERE f.user_id=$1 AND f.deleted_at IS NULL AND f.parent_id IS NULL
-        AND f.project_id IS NOT DISTINCT FROM $2
-        AND f.workspace_directory_id IS NOT DISTINCT FROM $3
-      UNION ALL
-      SELECT child.id, child.parent_id, child.name, parent.path || child.name
-      FROM folders child JOIN scoped_folders parent ON child.parent_id=parent.id
-      WHERE child.user_id=$1 AND child.deleted_at IS NULL
-        AND child.project_id IS NOT DISTINCT FROM $2
-        AND child.workspace_directory_id IS NOT DISTINCT FROM $3
-        AND cardinality(parent.path)<64
-    )
-    SELECT id FROM scoped_folders WHERE path=$4::text[] LIMIT 2`, [
-    options.ownerId, options.input.space === 'project' ? options.input.project_id ?? null : null,
-    options.workspaceDirectoryId, names,
-  ])
-  if (result.rows.length !== 1) throw new CoreError('invalid_request', '目标文件夹不存在或不属于所选文件空间')
-  return Number(result.rows[0]!.id)
-}
-
-/** 按 owner/当前会话解析附件，复用正式文件配额、上传事务、Undo 与写入收据。 */
+/** 附件归属、目录授权和幂等收据沿用 Host 的可信运行身份。 */
 export function createWebAgentSaveAttachmentPort(options: {
   pool: Pick<Pool, 'query'>
-  db: SqlDataRuntime['db']
-  upload: FileUploadOperations
-  downloadAttachment(ownerId: string, attachId: string): Promise<{
-    fileName: string; ext: string; mimeType: string; handle: FileHandle
-  }>
+  core: SqlDataRuntime
+  storageRoot: string
+  downloadAttachment(ownerId: string, attachId: string): Promise<{ fileName: string; ext: string; mimeType: string; handle: FileHandle }>
   lease: AgentDispatchLease
+  authorizeOwner?: () => Promise<boolean>
 }): SaveAttachmentPort {
-  const expected = Object.freeze({ ...options.lease.identity })
-  const matchesLease = (identity: RunIdentity) => identity.ownerId === expected.ownerId
-    && identity.sessionId === expected.sessionId && identity.runId === expected.runId
-  const authorize = createWebAgentRagRunAuthorization(options.pool, options.lease, { enabledSaveAttachment: true })
-  async function resolveTarget(identity: RunIdentity, input: Parameters<SaveAttachmentPort['save']>[1],
-    signal: AbortSignal, client?: Pick<PoolClient, 'query'>): Promise<FileUploadInput> {
-    let workspaceDirectoryId: number | null = null
-    if (input.space === 'workspace') {
-      const read = createSessionWorkspaceTargetReader(options.db, 'postgres', async <Row>(statement: RawBuilder<Row>) => {
-        const compiled = statement.compile(options.db)
-        return (await (client ?? options.pool).query(compiled.sql, [...compiled.parameters])).rows as Row[]
-      })
-      const sessionId = Number(identity.sessionId)
-      if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new CoreError('invalid_request', '当前会话工作区不可用')
-      const selected = await read(identity.ownerId, sessionId, { lockSession: Boolean(client) })
-      signal.throwIfAborted()
-      if (!selected) throw new CoreError('invalid_request', '当前会话没有可写入的工作区目录；请绑定工作区或选择 personal/project')
-      if (selected.kind !== 'directory') throw new CoreError('invalid_request', '当前会话绑定的工作区没有可写入的文件目录；请省略目标位置参数以使用当前工作区落点')
-      workspaceDirectoryId = selected.directoryId
-    }
-    const target = input.folder_path === undefined ? input : {
-      ...input,
-      folder_id: await folderIdForPath({ pool: options.pool, ownerId: identity.ownerId, input,
-        workspaceDirectoryId, path: input.folder_path, ...(client ? { client } : {}) }),
-    }
-    signal.throwIfAborted()
-    return uploadTarget(target, workspaceDirectoryId)
-  }
+  const expected = options.lease.identity
+  const authorize = options.authorizeOwner ? undefined : createWebAgentRagRunAuthorization(options.pool, options.lease, { enabledSaveAttachment: true })
+  const readWorkspace = createSessionWorkspaceTargetReader(options.core.db, 'postgres')
+  const files = createWorkspaceFileReads(options.pool, options.storageRoot)
 
-  async function latestAttachment(identity: RunIdentity, signal: AbortSignal): Promise<string | null> {
-    signal.throwIfAborted()
-    if (!matchesLease(identity)) return null
-    const result = await options.pool.query<{ attach_id: string }>(`SELECT a.attach_id
-      FROM chat_attachments a
-      LEFT JOIN conversation_messages m ON m.id=a.message_id
-      LEFT JOIN conversation_sessions s ON s.id=m.session_id AND s.user_id=a.user_id
-      WHERE a.user_id=$1 AND (a.state='draft' OR (a.state='attached' AND s.id=$2))
-      ORDER BY a.created_at DESC,a.id DESC LIMIT 1`, [expected.ownerId, Number(expected.sessionId)])
-    signal.throwIfAborted()
-    return result.rows[0]?.attach_id ?? null
-  }
-
-  async function saveOne(identity: RunIdentity, attachId: string, target: FileUploadInput,
-    roundId: string, call: ToolCall, signal: AbortSignal): Promise<{ attach_id: string; file_id: number; name: string; path?: string; size_bytes: number; space: string; folder_id: number | null; project_id: number | null; mutated: boolean } | { attach_id: string; error: string }> {
-    signal.throwIfAborted()
-    if (!matchesLease(identity)) return { attach_id: attachId, error: '附件保存授权已失效' }
-    let opened: Awaited<ReturnType<typeof options.downloadAttachment>> | undefined
-    let directory: string | undefined
-    try {
-      opened = await options.downloadAttachment(expected.ownerId, attachId)
-      const capacity = await options.upload.getUploadCapacity(expected.ownerId, target)
-      signal.throwIfAborted()
-      directory = await mkdtemp(path.join(tmpdir(), 'gugu-agent-save-attachment-'))
-      const originalName = path.basename(opened.fileName).replace(/[\\/\p{Cc}]/gu, '_').slice(0, 300) || 'attachment.bin'
-      const staged = await stageFile(opened.handle.createReadStream({ autoClose: false }), directory, capacity, opened.mimeType, signal)
-      signal.throwIfAborted()
-      const stored = await options.upload.store(expected.ownerId, {
-        ...staged, input: target, originalName, mimeType: opened.mimeType || null,
-      }, {
-        idempotencyKey: null,
-        undoContextId: `agent:${expected.sessionId}:${expected.runId}`.slice(0, 128),
-        clientId: null,
-      }, {
-        receipt: receipt({ ...expected, roundId }, call, attachId, target), signal,
-        async authorize(client: Pick<PoolClient, 'query'>) {
-          const current = createWebAgentRagRunAuthorization(client, options.lease, { enabledSaveAttachment: true })
-          if (!await current.authorize(identity, 'save_attachment', signal)) throw new Error('附件保存授权已失效')
-          if (target.space === 'workspace') {
-            const currentTarget = await resolveTarget(identity, { source: 'attach_id', attach_id: attachId,
-              space: 'workspace', ...(target.folderId === null ? {} : { folder_id: target.folderId }) }, signal, client)
-            if (currentTarget.workspaceDirectoryId !== target.workspaceDirectoryId) throw new Error('附件保存授权已失效')
-          }
-        },
-      }) as { file?: Record<string, unknown>; replayed?: boolean }
-      signal.throwIfAborted()
-      const file = stored?.file
-      if (!file || !Number.isSafeInteger(file.id) || typeof file.displayName !== 'string'
-        || typeof file.ext !== 'string' || !Number.isSafeInteger(file.sizeBytes))
-        return { attach_id: attachId, error: '文件保存返回无效结果' }
-      return { attach_id: attachId, file_id: Number(file.id), name: `${file.displayName}${file.ext ? `.${file.ext}` : ''}`,
-        ...(typeof file.logicalPath === 'string' ? { path: file.logicalPath } : {}),
-        size_bytes: Number(file.sizeBytes), space: target.space, folder_id: target.folderId, project_id: target.projectId,
-        mutated: stored.replayed !== true }
-    } catch (error) {
-      signal.throwIfAborted()
-      return { attach_id: attachId, error: knownFailure(error) ?? '附件保存失败，请确认附件仍可用及目标空间权限' }
-    } finally {
-      await opened?.handle.close().catch(() => undefined)
-      if (directory) await rm(directory, { recursive: true, force: true }).catch(() => undefined)
+  async function resolveTarget(owner: string, session: number, input: SaveInput) {
+    let directory: FileDirectory = 'personal'
+    if (input.space === 'project') {
+      if (!input.project_id) throw new CoreError('invalid_request', '未指定项目')
+      directory = { projectId: input.project_id }
+    } else if (input.space === 'workspace') {
+      const target = await readWorkspace(owner, session)
+      if (target?.kind !== 'directory') throw new CoreError('invalid_request', '当前会话没有可写入的工作区目录')
+      directory = target.directoryId
     }
+    const root = await resolveFileDirectoryRoot(options.pool, owner, directory)
+    const useDownloads = input.space === 'personal' && input.folder_path === undefined
+    const folder = input.folder_path ?? (useDownloads ? 'download' : '')
+    const reference = folder && !useDownloads ? await files.reference(owner, directory, folder, undefined, 'folder') : null
+    return { directory, root, folder, folderReference: reference?.id ?? null }
   }
 
   return {
-    async save(identity, input, roundId, call, signal) {
-      signal.throwIfAborted()
-      if (!matchesLease(identity)) return { kind: 'failed', error: '附件保存授权已失效' }
-      let target: FileUploadInput
-      try { target = await resolveTarget(identity, input, signal) }
-      catch (error) { signal.throwIfAborted(); return { kind: 'failed', error: knownFailure(error) ?? '附件保存目标不可用' } }
-      const ids = input.source === 'latest'
-        ? [await latestAttachment(identity, signal)].filter((id): id is string => Boolean(id))
+    async save(identity, input, roundId, call: ToolCall, signal) {
+      const owner = identity.ownerId, session = Number(identity.sessionId)
+      const allowed = async () => {
+        signal.throwIfAborted()
+        return identity.ownerId === expected.ownerId && identity.sessionId === expected.sessionId
+          && identity.runId === expected.runId && (options.authorizeOwner
+            ? await options.authorizeOwner() : await authorize?.authorize(identity, 'save_attachment', signal) === true)
+      }
+      if (!await allowed()) return { kind: 'failed', error: '附件保存授权已失效' }
+      let target: Awaited<ReturnType<typeof resolveTarget>>
+      try { target = await resolveTarget(owner, session, input) }
+      catch (error) {
+        signal.throwIfAborted()
+        if (error instanceof CoreError && ['invalid_request', 'not_found', 'conflict'].includes(error.code))
+          return { kind: 'failed', error: error.message }
+        throw error
+      }
+      const ids = input.source === 'latest' ? (await readSessionToolAttachments(options.pool, identity, null)).map(row => row.attach_id)
         : input.source === 'attach_id' ? [input.attach_id ?? ''] : [...(input.attach_ids ?? [])]
-      if (input.source === 'latest' && ids.length === 0) return { kind: 'failed', error: '当前对话中没有可保存的近期附件' }
-      if (ids.some(id => !/^[A-Za-z0-9_-]{1,128}$/u.test(id))) return { kind: 'failed', error: '附件 ID 无效' }
-      const results = []
+      if (!ids.length) return { kind: 'failed', error: '当前对话没有可保存的附件' }
+      const owned = new Set((await readSessionToolAttachments(options.pool, identity, ids, input.source !== 'latest')).map(row => row.attach_id))
+      const saved: Record<string, unknown>[] = []
+      const failed: Array<{ attach_id: string; error: string }> = []
+      let mutated = false
       for (const id of ids) {
         signal.throwIfAborted()
-        results.push(await saveOne(identity, id, target, roundId, call, signal))
+        if (!owned.has(id)) { failed.push({ attach_id: id, error: '附件不存在或已过期' }); continue }
+        const key = digest([method, owner, identity.sessionId, identity.runId, roundId, call.id, id])
+        const operation = [key.slice(0, 8), key.slice(8, 12), '5' + key.slice(13, 16), '8' + key.slice(17, 20), key.slice(20, 32)].join('-')
+        const receipt = await options.core.operationWithTransaction(dataContext(owner), operation, method, { id, target }, async () => {
+          if (!await allowed()) throw new CoreError('conflict', '附件保存授权已失效')
+          const attachment = await options.downloadAttachment(owner, id)
+          try {
+            const stats = await attachment.handle.stat()
+            if (!stats.isFile() || stats.size > agentDownloadsLimit)
+              throw new CoreError('invalid_request', '附件超过 64 MiB 或不可读取')
+            const filename = saveName(attachment.fileName, key.slice(0, 16))
+            const relativePath = [target.folder, filename].filter(Boolean).join('/')
+            const current = await resolveTarget(owner, session, input)
+            if (stableJson(current) !== stableJson(target)) throw new CoreError('conflict', '保存目录已变化')
+            const tree = createLocalFileTree(options.storageRoot, target.root)
+            const useDownloads = input.space === 'personal' && input.folder_path === undefined
+            const directory = useDownloads ? createLocalFileTree(options.storageRoot, `${target.root}/${target.folder}`) : tree
+            if ((!target.folder || useDownloads) && !await directory.ensureRoot())
+              throw new CoreError('not_found', '保存目录不可用')
+            async function* data() {
+              let size = 0
+              for await (const chunk of attachment.handle.createReadStream({ autoClose: false, start: 0 })) {
+                signal.throwIfAborted()
+                size += chunk.byteLength
+                if (size > stats.size) throw new CoreError('conflict', '附件内容已变化')
+                yield chunk as Uint8Array
+              }
+              if (size !== stats.size || !await allowed() || stableJson(await resolveTarget(owner, session, input)) !== stableJson(target))
+                throw new CoreError('conflict', '附件或目录授权已变化')
+            }
+            try { await tree.upload(relativePath, data(), signal) }
+            catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+              // 文件已发布但收据未提交时，只认同一目标上内容完全相同的文件。
+              const prior = await tree.open(relativePath)
+              if (!prior) throw error
+              try {
+                if (prior.size !== stats.size) throw new CoreError('conflict', '保存路径已被占用')
+                const hash = async (handle: FileHandle) => {
+                  const digest = createHash('sha256')
+                  for await (const chunk of handle.createReadStream({ autoClose: false, start: 0 })) {
+                    signal.throwIfAborted()
+                    digest.update(chunk)
+                  }
+                  return digest.digest('hex')
+                }
+                if (await hash(prior.handle) !== await hash(attachment.handle))
+                  throw new CoreError('conflict', '保存路径已被占用')
+              } finally { await prior.handle.close() }
+            }
+            const file = await files.reference(owner, target.directory, relativePath)
+            return { attach_id: id, name: filename, path: file.location.value, size_bytes: stats.size,
+              space: input.space, link: 'gugu://open-object/file/' + file.location.value }
+          } finally { await attachment.handle.close() }
+        }, { signal }).catch(error => {
+          signal.throwIfAborted()
+          if (!(error instanceof CoreError) || !['invalid_request', 'not_found', 'conflict'].includes(error.code)) throw error
+          failed.push({ attach_id: id, error: error.message })
+          return null
+        })
+        if (receipt) {
+          saved.push(receipt.result as Record<string, unknown>)
+          mutated ||= !receipt.replayed
+        }
       }
-      const saved = results.filter((result): result is Extract<typeof result, { file_id: number }> => 'file_id' in result)
-      const failed = results.filter((result): result is Extract<typeof result, { error: string }> => 'error' in result)
-      if (input.source === 'attach_id' || input.source === 'latest') {
-        const single = results[0]
-        if (single && 'error' in single) return { kind: 'failed', error: single.error }
-        if (single && 'file_id' in single) return { kind: 'saved', mutated: single.mutated, value: {
-          file_id: single.file_id, name: single.name, ...(single.path ? { path: single.path } : {}), size: single.size_bytes, space: single.space,
-          ...(single.project_id ? { project_id: single.project_id } : {}), ...(single.folder_id ? { folder_id: single.folder_id } : {}),
-        } }
-        return { kind: 'failed', error: '附件不存在或已过期' }
-      }
-      const savedItems = saved.map(({ mutated: _mutated, ...item }) => item)
-      return { kind: 'saved', mutated: saved.some(item => item.mutated), value: {
-        success: true, saved_count: saved.length, failed_count: failed.length, saved: savedItems, failed,
-      } }
+      if (input.source !== 'attach_ids') return saved[0]
+        ? { kind: 'saved', mutated, value: saved[0] }
+        : { kind: 'failed', error: failed[0]?.error ?? '附件不存在或已过期' }
+      return { kind: 'saved', mutated, value: { success: true, saved_count: saved.length, failed_count: failed.length, saved, failed } }
     },
   }
 }

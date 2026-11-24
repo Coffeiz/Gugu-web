@@ -53,6 +53,22 @@ describe('Harness 准备编排保持短事务、身份与提示词边界', () =>
     expect(stableJson(b.area.dynamicTail)).toContain('原有提醒')
   })
 
+  it('工作区不可用时只准备本轮已装配 Schema 的工具', async () => {
+    const run = { ownerId: identity.ownerId, sessionId: identity.subject.id, runId: 'run-no-workspace' }
+    const loader = createCanonicalRunLoader(async () => ({
+      modelIdentity: 'test-model', contextWindow: 1000, accessScopeHash: 'test-scope',
+      input: { ...run, history: [], fixedPrefix: [], systemPrompt: '测试系统提示' },
+    }), {
+      configuration: async () => ({ identity, source: 'web', toolNames: ['shell', 'list_projects'] }),
+      discover: async () => [{ name: 'list_projects', schema: { type: 'object' } }],
+      capabilities: ports(),
+      formatPrefix: ({ original }) => original.fixedPrefix,
+    }, { digest: stableJson, nextId: () => 'entry-no-workspace', buildRag: async () => ({ tail: [] }) })
+    const loaded = await loader(run, new AbortController().signal)
+    if ('kind' in loaded) throw new Error('测试不应早退')
+    expect(loaded.capabilities?.toolNames).toEqual(['list_projects'])
+  })
+
   it.each([true, false])('定时任务标准准备不执行交互RAG或提交当前输入，Shell仅留system：%s', async systemInMessages => {
     const owner = { ownerId: '小北', sessionId: 'task-run-scope', runId: 'run-task' }
     const services = { digest: stableJson, nextId: () => 'entry-task' }
@@ -159,10 +175,10 @@ describe('Harness 准备编排保持短事务、身份与提示词边界', () =>
 
   it.each([['telegram', false], ['web', true]] as const)('按当前%s入口过滤present_file，不根据历史会话来源', async (source, allowed) => {
     const result = await prepareRunCapabilities({
-      identity, source, toolNames: ['present_file', 'read_file'],
+      identity, source, toolNames: ['open_item', 'read_file'],
       system: '静态系统', snapshot: '冻结快照'
     }, ports())
-    expect(result.toolNames.includes('present_file')).toBe(allowed)
+    expect(result.toolNames.includes('open_item')).toBe(allowed)
   })
 
   it('完整Schema模式只把Skill目录追加snapshot；配置过滤不能扩大工具范围', async () => {

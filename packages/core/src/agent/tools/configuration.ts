@@ -10,8 +10,8 @@ export function canonicalAgentToolName(name: string): string {
 }
 
 const CONFIGURED_AGENT_TOOL_NAMES = new Set([
-  'shell', 'view_image', 'present_file', 'send_file', 'save_attachment', 'list_recent_attachments', 'delete_folder', 'delete_file', 'list_trash', 'restore_file', 'restore_folder', 'permanent_delete',
-  'search_conversations', 'search_memory', 'remember', 'read_conversation', 'get_current_time', 'get_upcoming',
+  'shell', 'view_image', 'open_item', 'send_item', 'save_attachment', 'list_recent_attachments', 'delete_file', 'delete_item', 'list_trash', 'restore_file', 'restore_folder', 'permanent_delete',
+  'search_conversations', 'search_memory', 'group_context_search', 'remember', 'read_conversation', 'get_current_time', 'get_upcoming',
   'list_events', 'list_scheduled_tasks', 'create_scheduled_task', 'update_scheduled_task', 'delete_scheduled_task', 'list_workspaces', 'get_workspace',
   'list_contacts', 'create_contact', 'update_contact', 'list_projects', 'get_project', 'create_project', 'update_project', 'delete_project', 'delete_contact',
   'set_color', 'archive_project', 'add_stage', 'remove_stage', 'rename_stage', 'set_stages', 'update_stage',
@@ -19,7 +19,7 @@ const CONFIGURED_AGENT_TOOL_NAMES = new Set([
   'canvas_update_note', 'canvas_update_anchor', 'canvas_connect', 'canvas_delete', 'canvas_delete_note', 'canvas_disconnect', 'canvas_batch',
   'note_search', 'note_get', 'note_delete', 'note_restore', 'note_undo', 'use_skill', 'list_skills', 'create_skill', 'update_skill', 'delete_skill', 'note_create', 'note_update', 'ask_user',
   'search_tools', 'call_tool', 'manage_mcp_servers', 'web_search', 'web_download', 'http_get', 'similar_image_search', 'deep_research', 'send_link_buttons', 'send_email',
-  'read_knowledge', 'save_knowledge', 'update_knowledge', 'delete_knowledge', 'global_search', 'create_workspace', 'update_workspace', 'unlink_workspace', 'delete_workspace_directory',
+  'read_knowledge', 'save_knowledge', 'update_knowledge', 'delete_knowledge', 'global_search', 'create_workspace', 'update_workspace', 'set_project_workspace',
   'agent_message', 'agent_inbox', 'agent_cancel', 'agent_inspect',
   'undo_last_action', 'create_event', 'update_event', 'delete_event',
 ])

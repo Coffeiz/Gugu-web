@@ -14,7 +14,7 @@ const adapterIssues = {
   'call_tool 嵌套层数超过限制': { path: 'tool_name', rule: 'max_depth' },
 } as const
 
-export function rejectAdapterCall(error: string): ToolResult {
+export function rejectAdapterCall(error: string, errorCode?: string): ToolResult {
   const issue = Object.hasOwn(adapterIssues, error) ? adapterIssues[error as keyof typeof adapterIssues] : null
   return {
     kind: 'completed', successful: false, mutated: false, executed: false,
@@ -25,7 +25,7 @@ export function rejectAdapterCall(error: string): ToolResult {
       next_action: issue.path === 'tool_name'
         ? '请传入实际工具名称，并把业务参数放入 arguments 对象。'
         : '请先获取目标工具的完整 Schema，再通过 arguments 传入全部业务参数。',
-    } : { error },
+    } : { error, ...(errorCode ? { error_code: errorCode } : {}) },
   }
 }
 

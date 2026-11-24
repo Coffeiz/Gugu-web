@@ -81,8 +81,8 @@ export function createDiskTrash(
     const prefix = `${owner}/trash/`
     if (!Number.isSafeInteger(legacyId) || legacyId <= 0 || !source.startsWith(prefix))
       throw new CoreError('invalid_request', '旧回收项标识或路径无效')
-    legacyRoot.storageKey(source.slice(prefix.length))
-    createLocalFileTree(storage, await resolveRoot(owner, directory)).storageKey(relativePath)
+    legacyRoot.path(source.slice(prefix.length))
+    createLocalFileTree(storage, await resolveRoot(owner, directory)).path(relativePath)
     const timestamp = Date.parse(deletedAt)
     if (!Number.isFinite(timestamp)) throw new CoreError('invalid_request', '旧回收项删除时间无效')
 
@@ -127,7 +127,7 @@ export function createDiskTrash(
       const destinationRoot = await resolveRoot(owner, entry.directory)
       if (expectedRoot !== undefined && expectedRoot !== destinationRoot) throw new CoreError('conflict', '恢复目录授权已变化')
       const tree = createLocalFileTree(storage, destinationRoot)
-      const destination = tree.storageKey(entry.relativePath)
+      const destination = tree.path(entry.relativePath)
       if (!await createLocalFileTree(storage, posix.dirname(destination)).ensureRoot()) return false
       const key = item(owner, id)
       const restored = await moveLocalEntry(storage, `${key}/payload`, destination)

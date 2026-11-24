@@ -9,7 +9,8 @@ import { createClientOperations } from '../../src/modules/clients/service.js'
 import { createCalendarEventReader, createKyselyCalendarReadPort } from '@gugu/core/calendar'
 import { createKyselyNotificationOperations } from '@gugu/core/notifications'
 import { createTrackOperations } from '../../src/modules/site/track.js'
-import { createProjectFileCountListing, createProjectGetter, createProjectListing } from '../../src/modules/projects/store.js'
+import { createProjectFileCountListing, createProjectGetter, createProjectListing } from '@gugu/core'
+import { createPostgresProjectFileCountReader } from '@gugu/core/project-read-data'
 import { signedUserToken } from '../helpers/auth.js'
 import { createUserRepository } from '../../src/modules/auth/account/store.js'
 
@@ -354,13 +355,14 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
     } finally {
       await trackApp.close()
     }
+    const projectCounts = createPostgresProjectFileCountReader(pool)
     const projectApp = createApp({
       appName: 'Gugu',
       isReady: async () => true,
       userAuth: { secret, ...createUserRepository(pool) },
-      listProjects: createProjectListing(core, pool),
-      listProjectFileCounts: createProjectFileCountListing(pool),
-      getProject: createProjectGetter(core, pool),
+      listProjects: createProjectListing(core, projectCounts),
+      listProjectFileCounts: createProjectFileCountListing(projectCounts),
+      getProject: createProjectGetter(core, projectCounts),
       events: createCalendarEventReader(createKyselyCalendarReadPort(core.db, 'postgres')),
     })
 

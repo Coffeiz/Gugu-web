@@ -54,7 +54,7 @@ export interface ScheduledTaskExecutionPlan {
     scopeId: string
   }>
   authorizedTools: readonly string[]
-  emailAttachmentFileIds: readonly number[]
+  emailAttachmentFilePaths: readonly string[]
   workspaceId: number | null
   /** 准备时有效的授权引用。执行工具前仍须重新校验当前策略。 */
   filesystemGrantId: number | null
@@ -105,7 +105,7 @@ export function createKyselyScheduledTaskExecutionReader<DB>(
           AND event.user_id=scheduled_tasks.user_id AND event.deleted_at IS NULL
       ) END AS payload,event_id,channels,delivery_targets,authorized_tools,
       ${backend === 'postgres' ? sql`execution_mode` : sql`'instruction' AS execution_mode`},
-      email_attachment_file_ids,workspace_id,filesystem_authorization_grant_id,schedule_kind,end_at
+      email_attachment_file_paths,workspace_id,filesystem_authorization_grant_id,schedule_kind,end_at
       FROM scheduled_tasks WHERE id=${id} AND user_id=${user} AND enabled=TRUE`.execute(db)
     if (!row || (row.event_id != null && row.payload == null)) return { error: '任务不存在或已停用' }
     const endsAt = timestamp(row.end_at)
@@ -131,12 +131,12 @@ export function createKyselyScheduledTaskExecutionReader<DB>(
             AND (g.expires_at IS NULL OR g.expires_at>CURRENT_TIMESTAMP)`.execute(db)).rows[0]
       : undefined
     const authorizedTools = decoded(row.authorized_tools)
-    const emailAttachmentFileIds = decoded(row.email_attachment_file_ids)
+    const emailAttachmentFilePaths = decoded(row.email_attachment_file_paths)
     return { plan: {
       ownerId, id, name: String(row.name), payload: String(row.payload ?? ''), channels, deliveryTargets,
       ...(row.event_id != null || row.execution_mode === 'reminder' ? { executionMode: 'reminder' as const } : {}),
       authorizedTools: Array.isArray(authorizedTools) ? authorizedTools.filter((name): name is string => typeof name === 'string') : [],
-      emailAttachmentFileIds: Array.isArray(emailAttachmentFileIds) ? emailAttachmentFileIds.map(integer) : [],
+      emailAttachmentFilePaths: Array.isArray(emailAttachmentFilePaths) ? emailAttachmentFilePaths.filter((value): value is string => typeof value === 'string') : [],
       workspaceId,
       filesystemGrantId: grant ? integer(grant.id) : null,
     } }

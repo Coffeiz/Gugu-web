@@ -4,6 +4,7 @@ import { isIsolatedWorkspaceWrite } from '../agent/security/workspace-write.js'
 import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
+import { desktopTrashTarget, parseDesktopTrashCommand } from './desktop-shell-trash.js'
 import { executeDesktopHostShell } from './desktop-host-shell.js'
 import type { Database } from '../data/schema.js'
 import type { Kysely } from 'kysely'
@@ -36,6 +37,7 @@ export async function createDesktopShellTool(
   readAccess: (scope: import('../agent/tools/contracts.js').ToolScope) => Promise<DesktopHostAccess | null>,
   readSharedWorkspace?: () => Promise<{ path: string; identity: string } | null>,
   permissionIdentity?: import('../agent/models.js').RunIdentity,
+  moveToTrash?: (target: Awaited<ReturnType<typeof desktopTrashTarget>>, cwd: string, workspace: string | undefined, signal: AbortSignal) => Promise<unknown>,
 ) {
   const platform = desktopShellPlatform()
   if (!platform) return undefined
@@ -69,18 +71,31 @@ export async function createDesktopShellTool(
       hostCwd = await realpath(input.cwd).catch(() => undefined)
       if (!hostCwd || !(await stat(hostCwd).catch(() => null))?.isDirectory()) return fail('宿主机工作目录无效')
     }
+    const deletion = parseDesktopTrashCommand(input.command)
+    if (deletion.kind === 'blocked') return fail('请用独立的 rm 命令和明确路径移入废纸篓')
+    let trash: Awaited<ReturnType<typeof desktopTrashTarget>>[] | undefined
+    const trashCwd = hostCwd ?? sharedRoot?.path
+    if (deletion.kind === 'trash') {
+      if (!trashCwd || !moveToTrash || !access.dangerousEnabled) return fail('当前执行范围不可移入系统废纸篓')
+      try {
+        trash = await Promise.all(deletion.paths.map(path => desktopTrashTarget(path, trashCwd, sharedRoot?.path)))
+      } catch {
+        return fail('废纸篓目标不存在或超出允许范围')
+      }
+      if (new Set(trash.map(target => target.path)).size !== trash.length) return fail('废纸篓目标重复')
+    }
     const authorization = desktopHostAuthorization(access, permissionIdentity ?? scope.identity, digest)
     const systemMode = () => actionApprovalMode(
       authorization?.permits() ? 'never' : 'ask',
       true, scope.resolution !== null,
     )
-    const mode = system ? systemMode() : shellConfirmationMode(decision, {
+    const mode = trash ? actionApprovalMode('ask', true, scope.resolution !== null) : system ? systemMode() : shellConfirmationMode(decision, {
       system: false, isolatedWorkspace, approvalPolicy: access.automaticMode ? 'never' : 'ask', hasResolution: scope.resolution !== null,
     })
     if (mode === 'stale') return fail('命令确认对应的权限已变化')
     const snapshot = {
       targetIds: {},
-      targetsDigest: digest(hostCwd ?? sharedRoot ?? 'desktop-shell-temporary-directory'),
+      targetsDigest: digest(trash ?? hostCwd ?? sharedRoot ?? 'desktop-shell-temporary-directory'),
       versionsDigest: digest([platform.id, access.shellEnabled, access.dangerousEnabled]),
     }
     const argsDigest = digest(input)
@@ -90,6 +105,31 @@ export async function createDesktopShellTool(
     }
     const confirmed = mode === 'verify' ? await confirmation.gate.verify(call, scope, argsDigest, snapshot) : null
     if (confirmed && !confirmed.ok) return fail('Shell 执行确认无效或已过期')
+
+    if (trash && trashCwd && moveToTrash) {
+      if (digest(access) !== digest(await readAccess(scope))
+        || (sharedRoot && digest(await readSharedWorkspace?.()) !== digest(sharedRoot))) return fail('Shell 执行权限已变化')
+      if (!confirmed?.ok || !await db.transaction().execute(tx => confirmation.claim(tx, confirmed.value, scope.signal)))
+        return fail('废纸篓确认已使用或已失效')
+      const moved: string[] = []
+      const failed: string[] = []
+      for (const target of trash) {
+        if (scope.signal.aborted) break
+        try {
+          await moveToTrash(target, trashCwd, sharedRoot?.path, scope.signal)
+          moved.push(target.path)
+        } catch {
+          failed.push(target.path)
+        }
+      }
+      return { kind: 'completed', successful: moved.length === trash.length, executed: true, mutated: moved.length > 0,
+        value: {
+          status: scope.signal.aborted ? 'cancelled' : failed.length === 0 ? 'success' : moved.length ? 'partial' : 'error',
+          summary: scope.signal.aborted ? '操作已取消' : failed.length === 0 ? '已移入系统废纸篓'
+            : moved.length ? '部分目标已移入系统废纸篓，其余目标未移入' : '系统未能将目标移入废纸篓',
+          movedToTrash: moved, failed, cancelled: scope.signal.aborted,
+        } }
+    }
 
     if (hostCwd) {
       if (digest(access) !== digest(await readAccess(scope))) return fail('Shell 执行权限已变化')
@@ -137,5 +177,5 @@ export async function createDesktopShellTool(
     } finally {
       if (!sharedRoot) await rm(cwd, { recursive: true, force: true }).catch(() => {})
     }
-  }, readSharedWorkspace ? '使用 cwd=. 在父会话共享工作区内执行。绝对工作目录和读写操作按父会话的宿主权限规则判定。' : '使用 cwd=. 在隔离临时目录执行。需要在宿主机执行时，提供明确的绝对工作目录，普通模式首次授权后同一会话可执行 30 分钟。自动模式可直接执行宿主机命令。隔离空间不联网且临时文件不跨调用保存。', false)
+  }, (readSharedWorkspace ? '使用 cwd=. 在父会话共享工作区内执行。绝对工作目录和读写操作按父会话的宿主权限规则判定。' : '使用 cwd=. 在隔离临时目录执行。需要在宿主机执行时，提供明确的绝对工作目录，普通模式首次授权后同一会话可执行 30 分钟。自动模式可直接执行宿主机命令。隔离空间不联网且临时文件不跨调用保存。') + ' 删除持久文件时请使用独立的 rm 命令和明确路径，确认后移入系统废纸篓。', false)
 }

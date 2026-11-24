@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, rename } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { DesktopProjectDetails } from '@gugu/core/desktop'
 import { projectFileDirectory } from '@gugu/core/project-file-paths'
@@ -37,14 +37,18 @@ async function existingProjectDirectories(root: string, id: number) {
   return result
 }
 
-export async function resolveProjectFileRoot(
-  root: string, id: number, project: Awaited<ReturnType<ReadProjectFilesMetadata>>, create: boolean,
-) {
+function projectTarget(root: string, id: number, project: Awaited<ReturnType<ReadProjectFilesMetadata>>) {
   const date = project.startDate || project.createdAt
   const normalizedDate = /^\d{4}-(0[1-9]|1[0-2])-/.test(date) ? date : ''
   const name = project.name.replace(/[\x00-\x1f]/g, '_')
   const [, ...parts] = projectFileDirectory(name, id, normalizedDate).split('/')
-  const target = join(root, ...parts)
+  return { target: join(root, ...parts), parts }
+}
+
+export async function resolveProjectFileRoot(
+  root: string, id: number, project: Awaited<ReturnType<ReadProjectFilesMetadata>>, create: boolean,
+) {
+  const { target, parts } = projectTarget(root, id, project)
   if (!await directoryExists(root)) {
     if (!create) return null
     await mkdir(root, { recursive: true })
@@ -63,4 +67,33 @@ export async function resolveProjectFileRoot(
   if (previous[0]) await rename(previous[0], target)
   else await mkdir(target, { recursive: true })
   return target
+}
+
+/** 项目软删时整棵目录保留在同一个托管根内。 */
+export async function stageDesktopProjectDirectory(
+  root: string, id: number, project: Awaited<ReturnType<ReadProjectFilesMetadata>>, action: 'delete' | 'restore' | 'purge',
+) {
+  const active = await resolveProjectFileRoot(root, id, project, false)
+  const { target } = projectTarget(root, id, project)
+  const trash = join(dirname(root), '.gugu-project-trash')
+  const parked = join(trash, String(id))
+  const exists = await directoryExists(trash) && await directoryExists(parked)
+  if (active && exists) throw new DesktopError('conflict', '发现两份项目目录，请先处理冲突')
+  const from = action === 'restore' ? (exists ? parked : null) : active
+  const to = action === 'restore' ? target : parked
+  if (from) {
+    await mkdir(dirname(to), { recursive: true })
+    if (await directoryExists(to)) throw new DesktopError('conflict', '项目目录已存在')
+    await rename(from, to)
+  }
+  return {
+    async rollback() {
+      if (!from) return
+      if (await directoryExists(from)) throw new DesktopError('conflict', '项目目录恢复目标已存在')
+      await rename(to, from)
+    },
+    async finish() {
+      if (action === 'purge' && (from || exists)) await rm(parked, { recursive: true })
+    },
+  }
 }

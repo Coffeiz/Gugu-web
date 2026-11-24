@@ -7,7 +7,7 @@ import { openAnchoredLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
 import { resolveConfigOverridePath } from '../src/adapters/config/config-override-file.js'
 import { loadConfig } from '../src/config.js'
 import { isOwnedFileStorageKey, normalizeFileOwnerId } from '../src/modules/files/store.js'
-import { readPostgresProjectPathMirrorKey } from '../src/modules/files/folders/paths.js'
+import { readPostgresProjectPathKey } from '../src/modules/files/paths.js'
 import { originalStorageKey } from '../src/modules/files/trash/service.js'
 import { resolveFileDirectoryRoot, type FileDirectory } from '../src/modules/workspaces/files.js'
 import { personalFileStorageKey, workspaceDirectoryStorageKey } from '../src/modules/workspaces/roots.js'
@@ -22,7 +22,6 @@ type FileRow = {
   stage_name: string
   display_name: string
   ext: string
-  folder_id: number | null
   mind_map_id: number | null
   workspace_directory_id: number | null
   project_id: number | null
@@ -41,7 +40,7 @@ async function inspect(manifest: FileHandle | null) {
     const client = await pool.connect()
     try {
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
-      await record(manifest, { kind: 'header', version: 2, createdAt: new Date().toISOString() })
+      await record(manifest, { kind: 'header', version: 3, createdAt: new Date().toISOString() })
       const groups = new Map<string, {
         total: number; inPlace: number; needsPlacement: number; missing: number; unsafe: number
         sizeMismatch: number; stageTag: number
@@ -50,7 +49,7 @@ async function inspect(manifest: FileHandle | null) {
       while (true) {
         const { rows } = await client.query<FileRow>(
           `SELECT f.id, f.user_id, f.space, f.storage_key, f.size_bytes, f.deleted_at, f.stage_name, f.project_id,
-                  f.display_name, f.ext, f.folder_id, f.mind_map_id, f.workspace_directory_id, d.directory_name
+                  f.display_name, f.ext, f.mind_map_id, f.workspace_directory_id, d.directory_name
            FROM files f LEFT JOIN workspace_directories d
              ON d.id=f.workspace_directory_id AND d.user_id=f.user_id AND d.deleted_at IS NULL
            WHERE f.id>$1 ORDER BY f.id LIMIT 250`, [cursor],
@@ -101,7 +100,7 @@ async function inspect(manifest: FileHandle | null) {
             const key = `${owner}:${row.project_id}`
             if (!projectRoots.has(key)) {
               try {
-                projectRoots.set(key, await readPostgresProjectPathMirrorKey(client, owner, row.project_id))
+                projectRoots.set(key, await readPostgresProjectPathKey(client, owner, row.project_id))
               } catch (error) {
                 if (!(error instanceof CoreError) || error.code !== 'not_found') throw error
                 projectRoots.set(key, null)
@@ -135,28 +134,8 @@ async function inspect(manifest: FileHandle | null) {
         }
         cursor = rows.at(-1)!.id
       }
-      const { rows: [directories] } = await client.query(
-        `SELECT count(*) FILTER (WHERE deleted_at IS NULL)::int AS active,
-                count(*) FILTER (WHERE deleted_at IS NOT NULL)::int AS deleted
-         FROM folders`,
-      )
-      const { rows: [bindings] } = await client.query(
-        'SELECT count(*)::int AS folder_bindings FROM workspaces WHERE folder_id IS NOT NULL',
-      )
-      if (manifest) {
-        let folderCursor = 0
-        while (true) {
-          const { rows } = await client.query<{ id: number }>(
-            `SELECT id,user_id,name,project_id,workspace_directory_id,parent_id,deleted_at
-             FROM folders WHERE id>$1 ORDER BY id LIMIT 250`, [folderCursor],
-          )
-          if (!rows.length) break
-          for (const row of rows) await record(manifest, { kind: 'folder', legacy: row })
-          folderCursor = rows.at(-1)!.id
-        }
-      }
       await client.query('ROLLBACK')
-      return { files: Object.fromEntries(groups), directories, bindings }
+      return { files: Object.fromEntries(groups) }
     } finally {
       client.release()
     }

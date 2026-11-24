@@ -28,7 +28,7 @@ export function useFileLibrarySorting(options: SortingOptions): ComputedRef<Cont
       stage: file => file.projectName || file.stageName || '',
       createdAt: file => file.createdAt,
       size: file => file.sizeBytes ?? 0,
-      id: file => file.id,
+      id: file => file.filePath ?? '',
     },
   })
   return computed(() => sorted.sortedDirectory.value)

@@ -3,7 +3,7 @@ import type {Pool} from 'pg'
 import type {RunIdentity} from '@gugu/core/agent'
 import type {ImSendFilePort,ImSendFileInput} from '@gugu/core/tools'
 import type {ImActor} from '@gugu/core/im/access'
-import {imCanUseTool} from '@gugu/core/im/access'
+import { imCanUseTool } from '@gugu/core/agent/scenes/im'
 import type {FileReadOperations} from '../../../files/browse.js'
 import type {ImAttachmentScope} from '../inbound/attachments.js'
 import type {NodeImBotBinding} from '../inbound/inbox.js'
@@ -11,25 +11,25 @@ import type {GatewayPlatformSender} from '../connections.js'
 import {createImRunScope} from './scope.js'
 import {createImRunArtifactSender} from '../delivery/artifacts.js'
 
-/** 文件ID仅owner私聊；成员/群只开放已入库同scope附件，不将授权根交给模型。 */
+/** 文件路径仅供 owner 私聊使用；成员和群只开放同 scope 的附件。 */
 export function createImFileTools(options:{pool:Pick<Pool,'query'>;secretKey:string;storageRoot:string;identity:RunIdentity;actor:ImActor;scope:ImAttachmentScope;
   messageIds:readonly string[];payload:Readonly<Record<string,unknown>>;files:Pick<FileReadOperations,'getFile'|'openContent'>;
-  sender(binding:NodeImBotBinding):GatewayPlatformSender|null;authorizeTool(name:'send_file',signal?:AbortSignal):Promise<boolean>
+  sender(binding:NodeImBotBinding):GatewayPlatformSender|null;authorizeTool(name:'send_item',signal?:AbortSignal):Promise<boolean>
 }):{sendFile:ImSendFilePort}{
- const proof=createImRunScope({...options,authorize:async()=>await options.authorizeTool('send_file')})
+ const proof=createImRunScope({...options,authorize:async()=>await options.authorizeTool('send_item')})
  const ownerPrivate=options.actor.role==='owner'&&options.scope.chatType==='c2c'
  const same=(i:RunIdentity)=>i.ownerId===options.identity.ownerId&&i.sessionId===options.identity.sessionId&&i.runId===options.identity.runId
- const allowed=async(name:'send_file',signal?:AbortSignal)=>{signal?.throwIfAborted();if(!imCanUseTool(options.actor,name)||!await options.authorizeTool(name,signal))return false;await proof.read();return true}
- const artifactSender=createImRunArtifactSender({...options,authorize:()=>options.authorizeTool('send_file')})
+ const allowed=async(name:'send_item',signal?:AbortSignal)=>{signal?.throwIfAborted();if(!imCanUseTool(options.actor,name)||!await options.authorizeTool(name,signal))return false;await proof.read();return true}
+ const artifactSender=createImRunArtifactSender({...options,authorize:()=>options.authorizeTool('send_item')})
  const digest=(input:ImSendFileInput)=>{
-  if(!same(input.identity)||!input.roundId||!input.toolCallId||Boolean(input.fileId)===Boolean(input.attachId)||input.fileId!==undefined&&(!ownerPrivate||!Number.isSafeInteger(input.fileId)||input.fileId<1))throw new Error('IM 文件调用无效')
+  if(!same(input.identity)||!input.roundId||!input.toolCallId||Boolean(input.filePath)===Boolean(input.attachId)||input.filePath!==undefined&&!ownerPrivate)throw new Error('IM 文件调用无效')
   const s=options.scope
-  return createHmac('sha256',options.secretKey).update('gugu-im-send-file-v1\0').update(JSON.stringify([s.ownerId,s.botId,s.platform,s.chatType,s.chatId,s.platformUserId,input.fileId??null,input.attachId??null])).digest('hex')
+  return createHmac('sha256',options.secretKey).update('gugu-im-send-file-v1\0').update(JSON.stringify([s.ownerId,s.botId,s.platform,s.chatType,s.chatId,s.platformUserId,input.filePath??null,input.attachId??null])).digest('hex')
  }
  const values=(input:ImSendFileInput)=>[input.identity.ownerId,Number(input.identity.sessionId),input.identity.runId,digest(input)]
- const sendFile:ImSendFilePort={allowFileId:ownerPrivate,
+ const sendFile:ImSendFilePort={allowFilePath:ownerPrivate,
   async send(input){
-   if(!same(input.identity)||!await allowed('send_file',input.signal))return 'failed'
+   if(!same(input.identity)||!await allowed('send_item',input.signal))return 'failed'
    const key=values(input),attempt=randomUUID()
    const row=(await options.pool.query(`INSERT INTO gugu_im_file_tool_receipts(user_id,session_id,run_id,artifact_hash,state,attempt_id) VALUES($1,$2,$3,$4,'pending',$5)
     ON CONFLICT(user_id,session_id,run_id,artifact_hash) DO UPDATE SET artifact_hash=EXCLUDED.artifact_hash RETURNING state,attempt_id`,[...key,attempt])).rows[0]
@@ -37,9 +37,9 @@ export function createImFileTools(options:{pool:Pick<Pool,'query'>;secretKey:str
    if(row?.state!=='pending'||row.attempt_id!==attempt)return 'unknown'
    let state:'sent'|'failed'|'unknown'='unknown'
    try{
-    if(!await allowed('send_file',input.signal))state='failed'
+    if(!await allowed('send_item',input.signal))state='failed'
     else{
-     const acknowledgement=await artifactSender({identity:input.identity,deliveryId:digest(input),artifact:input.fileId?{file_id:input.fileId}:{attach_id:input.attachId!}},input.signal)
+     const acknowledgement=await artifactSender({identity:input.identity,deliveryId:digest(input),artifact:input.filePath?{file_path:input.filePath}:{attach_id:input.attachId!}},input.signal)
      const outcome=typeof acknowledgement==='string'?acknowledgement:acknowledgement.outcome
      state=outcome==='accepted'?'sent':outcome==='rejected'?'failed':'unknown'
     }
@@ -47,7 +47,7 @@ export function createImFileTools(options:{pool:Pick<Pool,'query'>;secretKey:str
     return changed.rowCount===1?state:'unknown'
    }catch{input.signal.throwIfAborted();return 'unknown'}
   },
-  async recover(input){try{if(!same(input.identity)||!await allowed('send_file'))return 'unknown';const row=(await options.pool.query('SELECT state FROM gugu_im_file_tool_receipts WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND artifact_hash=$4',values(input))).rows[0];return row?.state==='sent'?'sent':row?.state==='failed'?'failed':'unknown'}catch{return 'unknown'}},
+  async recover(input){try{if(!same(input.identity)||!await allowed('send_item'))return 'unknown';const row=(await options.pool.query('SELECT state FROM gugu_im_file_tool_receipts WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND artifact_hash=$4',values(input))).rows[0];return row?.state==='sent'?'sent':row?.state==='failed'?'failed':'unknown'}catch{return 'unknown'}},
  }
  return {sendFile}
 }

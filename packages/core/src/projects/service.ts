@@ -7,15 +7,15 @@ export interface ProjectRepository {
   list(archived?: boolean): Promise<ProjectRecord[]>
   findByName(name: string): Promise<ProjectRecord[]>
   listDeleted(since: string): Promise<ProjectRecord[]>
-  get(id: number): Promise<ProjectRecord | null>
+  get(id: number, includeDeleted?: boolean): Promise<ProjectRecord | null>
   create(values: Fields): Promise<ProjectRecord>
   update(id: number, version: number, values: Fields): Promise<boolean>
 }
 export class ProjectService {
   constructor(readonly repository: ProjectRepository) {}
-  get(id: number): Promise<ProjectRecord | null> {
+  get(id: number, includeDeleted?: boolean): Promise<ProjectRecord | null> {
     safeInteger(id)
-    return this.repository.get(id)
+    return this.repository.get(id, includeDeleted)
   }
   list(archived = false): Promise<ProjectRecord[]> {
     return this.repository.list(archived)

@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import type { MindRefSuggestItem } from '@/services/api'
 
 /** 公共对象引用补全状态：笔记和聊天共用防抖、请求序号和键盘选择行为。 */
-export function useReferenceSuggest(delay = 180, disk = false) {
+export function useReferenceSuggest(delay = 180, disk = false, accept?: (item: MindRefSuggestItem) => boolean) {
   const mindApi = useMindAccess()
   const items = ref<MindRefSuggestItem[]>([])
   const loading = ref(false)
@@ -21,7 +21,7 @@ export function useReferenceSuggest(delay = 180, disk = false) {
     timer = setTimeout(async () => {
       try {
         const result = await mindApi.refSuggest(text, 6, disk)
-        if (request === seq) { items.value = result; active.value = 0 }
+        if (request === seq) { items.value = accept ? result.filter(accept) : result; active.value = 0 }
       } catch {
         if (request === seq) items.value = []
       } finally {

@@ -7,6 +7,7 @@ import { databaseTime, integer, utc } from '../../data/codec.js'
 import type { Database } from '../../data/schema.js'
 import type { CanonicalRunContext, Json, RunIdentity } from '../models.js'
 import type { ContextSourcePorts } from '../ports.js'
+import { formatGroupMessage, formatQuotedContext } from './history/ordering.js'
 import { requireCanonicalSnapshotEffect } from './snapshot-effect.js'
 import { resolveCurrentTurnTextAttachments, type CurrentTurnAttachment } from '../attachments/current-turn.js'
 import { readDesktopTurnReferences, resolveDesktopChatReferences } from '../sessions/desktop-references.js'
@@ -18,6 +19,8 @@ function scope(ownerId: string, sessionId: string) {
 
 type HistoryRow = {
   baseline: number; baseline_hash: string | null; snapshot_hash: string | null; source: string | null
+  im_platform_sent_ms: number | null; im_event_received_ms: number | null
+  chat_type: string | null; platform_user_id: string | null; platform_user_name: string | null; owner_platform_user_id: string | null
   id: number | null; conversation_seq: number; history_anchor_seq: number | null; role: string; content: string
   content_json: string | null; covers_until_seq: number | null; run_id: string | null; round_id: string | null
   canonical_batch_id: number | null; created_at: string; sent_at: string | null; quoted_text: string | null; files: string | null
@@ -48,7 +51,8 @@ export function createSqliteAgentSessionSource(
   db: Kysely<Database>,
   options: {
     readAttachmentText?(identity: RunIdentity, attachment: CurrentTurnAttachment): Promise<string>
-    readReferencedFile?(id: string, signal?: AbortSignal): Promise<{ name: string; path: string; relativePath?: string; text: string | null } | null>
+    readReferencedFile?(id: string, signal?: AbortSignal): Promise<{ name: string; path: string; relativePath?: string; text: string | null; isFolder?: boolean } | null>
+    readProjectPath?(id: number, signal?: AbortSignal): Promise<string | null>
   } = {},
 ): Pick<ContextSourcePorts, 'historyReader' | 'readSnapshot' | 'currentTurn'> {
   return {
@@ -60,7 +64,7 @@ export function createSqliteAgentSessionSource(
           SELECT s.baseline_message_seq AS baseline,s.baseline_message_hash AS baseline_hash,s.snapshot_hash,s.source,
             m.id,m.conversation_seq,m.history_anchor_seq,m.role,m.content,m.content_json,m.covers_until_seq,
             m.run_id,m.round_id,m.canonical_batch_id,coalesce(anchor.created_at,m.created_at) AS created_at,
-            m.sent_at,m.quoted_text,m.files
+            m.sent_at,m.quoted_text,m.files,m.im_platform_sent_ms,m.im_event_received_ms,s.chat_type,m.platform_user_id,m.platform_user_name,s.platform_user_id AS owner_platform_user_id
           FROM conversation_sessions s LEFT JOIN conversation_messages m ON m.session_id=s.id
           LEFT JOIN conversation_messages anchor ON anchor.session_id=s.id AND anchor.conversation_seq=m.history_anchor_seq
             AND anchor.role='user' AND anchor.run_id=m.run_id
@@ -82,6 +86,9 @@ export function createSqliteAgentSessionSource(
               coversUntilSeq: row.covers_until_seq, runId: row.run_id, roundId: row.round_id,
               canonicalBatchId: row.canonical_batch_id === null ? null : String(row.canonical_batch_id),
               createdAt: utc(row.created_at), sentAt: row.sent_at === null ? null : utc(row.sent_at),
+              platformSentMs: row.im_platform_sent_ms, eventReceivedMs: row.im_event_received_ms,
+              chatType: row.chat_type, senderId: row.platform_user_id, senderName: row.platform_user_name,
+              ownerSpeaker: !!row.platform_user_id && row.platform_user_id === row.owner_platform_user_id,
               quote: row.quoted_text, files: files ?? undefined, source: row.source,
             }]
           }),
@@ -111,8 +118,11 @@ export function createSqliteAgentSessionSource(
     async currentTurn(identity, signal) {
       signal?.throwIfAborted()
       const { owner, session } = scope(identity.ownerId, identity.sessionId)
-      const { rows } = await sql<{ id: number; content: string; files: string | null; session_context: string | null; created_at: string }>`
-        SELECT m.id,m.content,m.files,s.session_context,m.created_at FROM agent_run_admissions a
+      const { rows } = await sql<{ id: number; content: string; files: string | null; session_context: string | null; created_at: string; chat_type: string | null;
+        platform_user_id: string | null; platform_user_name: string | null; owner_platform_user_id: string | null; quoted_text: string | null;
+        im_platform_sent_ms: number | null; im_event_received_ms: number | null }>`
+        SELECT m.id,m.content,m.files,s.session_context,m.created_at,s.chat_type,m.platform_user_id,m.platform_user_name,m.quoted_text,m.im_platform_sent_ms,m.im_event_received_ms,
+          s.platform_user_id AS owner_platform_user_id FROM agent_run_admissions a
         JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id
         JOIN conversation_messages m ON m.id=a.user_message_id AND m.session_id=s.id AND m.role='user'
         WHERE a.user_id=${owner} AND a.session_id=${session} AND a.run_id=${identity.runId}
@@ -141,11 +151,16 @@ export function createSqliteAgentSessionSource(
         ? [prepared.rawText, `用户上传了图片，可用 view_image 查看（attach_id：${imageIds.join('、')}）。`].filter(Boolean).join('\n\n')
         : prepared.rawText
       const rawText = await resolveDesktopChatReferences(db, identity.ownerId, references, input,
-        options.readReferencedFile ? id => options.readReferencedFile!(id, signal) : undefined, inherited)
-      return { currentUser: { persistedMessageId: String(row.id), rawText, messageTimestamp: utc(row.created_at),
+        options.readReferencedFile ? id => options.readReferencedFile!(id, signal) : undefined, inherited,
+        options.readProjectPath ? id => options.readProjectPath!(id, signal) : undefined)
+      return { currentUser: { persistedMessageId: String(row.id), rawText, messageTimestamp: row.im_platform_sent_ms ?? row.im_event_received_ms ?? utc(row.created_at),
+        ...(row.chat_type === 'group' && row.platform_user_id ? { groupSpeaker: { id: row.platform_user_id,
+          name: row.platform_user_name, owner: row.platform_user_id === row.owner_platform_user_id } } : {}),
         message: { role: 'user', content: goal.goalActive
           ? `${rawText}\n\n[目标任务] ${String(context.goal_text)}。仅当完整目标完成时，在答复末尾单独输出 ${GOAL_DONE_MARKER}，不要解释标记。`
-          : rawText }, files: prepared.cards } }
+          : row.chat_type === 'group' && row.platform_user_id
+            ? formatGroupMessage({ body: rawText, quote: row.quoted_text })
+            : formatQuotedContext(rawText, row.quoted_text) }, files: prepared.cards } }
     },
   }
 }

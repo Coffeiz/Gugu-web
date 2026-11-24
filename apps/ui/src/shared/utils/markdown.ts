@@ -75,11 +75,22 @@ function ensureExternalLinksOpenInNewTab(html: string, preserveChatActions = fal
   const root = document.createElement('div')
   root.innerHTML = html
   root.querySelectorAll<HTMLAnchorElement>('a').forEach((anchor) => {
-    const href = (anchor.getAttribute('href') || '').trim().toLowerCase()
-    if (preserveChatActions && href.startsWith('gugu:')) {
+    const href = (anchor.getAttribute('href') || '').trim()
+    if (preserveChatActions && href.toLowerCase().startsWith('gugu:')) {
       anchor.removeAttribute('target')
       anchor.removeAttribute('rel')
       return
+    }
+    if (preserveChatActions && href) {
+      // 与桌面外链打开规则对齐：移除网页地址的用户信息，保留实际主机和路径。
+      try {
+        const url = new URL(href, document.baseURI)
+        if ((url.protocol === 'http:' || url.protocol === 'https:') && (url.username || url.password)) {
+          url.username = ''
+          url.password = ''
+          anchor.setAttribute('href', url.href)
+        }
+      } catch { /* 其他链接继续沿用消毒后的行为。 */ }
     }
     anchor.setAttribute('target', '_blank')
     anchor.setAttribute('rel', 'noopener noreferrer')

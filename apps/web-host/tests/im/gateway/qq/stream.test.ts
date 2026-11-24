@@ -66,24 +66,26 @@ test('新流以原始消息 ID 发送，恢复时沿用已确认首帧的目标�
  }finally{await p.client.close()}
 })
 
-test('上一段结束后下一段立即发送完整首行，段内继续节流',async()=>{
+test('上一段结束后下一段立即发送首帧，段内继续节流',async()=>{
  const p=platform(),m=memory();let time=1000
  const stream=createPersistentQqProjection({identity,target,policyVersion:'v1',receipts:m.receipts,sender:p.sender,authorize:p.authorize,now:()=>time})
  const push=(sequence:number,type:RunEvent['type'],payload:RunEvent['payload'],round=1)=>stream.project({identity,deliveryId:`d-${sequence}`,event:event(sequence,type,payload,round)})
  try{
   await push(1,'token',{text:'第一段\n'})
   time=1200
-  await push(2,'round_end',{text:'第一段\n'})
-  await push(3,'token',{text:'第二'},2)
+  await push(2,'text_end',{text:'第一段\n'})
   assert.deepEqual(p.requests.map(f=>[f.input_state,f.index]),[[1,0],[10,1]])
+  await push(3,'round_end',{text:'第一段\n'})
+  await push(4,'token',{text:'第二'},2)
+  assert.deepEqual(p.requests.map(f=>[f.input_state,f.index]),[[1,0],[10,1],[1,0]])
   time=1250
-  await push(4,'token',{text:'段\n'},2)
+  await push(5,'token',{text:'段\n'},2)
   assert.deepEqual(p.requests.map(f=>[f.input_state,f.index]),[[1,0],[10,1],[1,0]])
   time=1300
-  await push(5,'token',{text:'第二行\n'},2)
+  await push(6,'token',{text:'第二行\n'},2)
   assert.equal(p.requests.length,3)
   time=1750
-  await push(6,'token',{text:'第三行\n'},2)
+  await push(7,'token',{text:'第三行\n'},2)
   assert.deepEqual(p.requests.map(f=>[f.input_state,f.index]),[[1,0],[10,1],[1,0],[1,1]])
  }finally{await p.client.close()}
 })
@@ -219,7 +221,7 @@ test('同Run事件按序持久，工具前关闭当前流、交互暂停/恢复�
   time=2000;assert.equal(await send(event(6,'token',{text:'正式结果\n'},2)),'accepted')
   assert.equal(await send(event(7,'round_end',{text:'正式结果'},2)),'accepted')
   const before=p.requests.length
-  assert.equal(await send(event(8,'final',{status:'completed',text:'正式结果'},2)),'accepted');assert.equal(p.requests.length,before+1)
+  assert.equal(await send(event(8,'final',{status:'completed',text:'正式结果'},2)),'accepted');assert.equal(p.requests.length,before)
   assert.deepEqual(p.requests.map(item=>item.input_state),[1,10,1,10]);assert.ok(!JSON.stringify(p.requests).includes('synthetic-private-password'))
  }finally{await p.client.close()}
 })
@@ -250,24 +252,27 @@ test('正式失败终态先关闭已见partial，再发送实际final错误文�
   assert.equal(await uncertain.project({identity,event:event(2,'final',{status:'failed',text:'禁止追加'}),deliveryId:'d2'}),'unknown');assert.ok(!q.requests.some(item=>String(item.content_raw).includes('禁止追加')))
  }finally{await q.client.close()}
 })
-test('round_end仅冻结，final使用权威未发送正文且规范链接不重复发送',async()=>{
+test('单轮结束时即发送正文，final 不重复发送或覆盖已经送达的链接',async()=>{
  for(const changed of [false,true]){
   const p=platform(),m=memory(),projection=createPersistentQqProjection({identity,target,policyVersion:'v1',receipts:m.receipts,sender:p.sender,authorize:p.authorize,now:()=>1000})
   const text='请看[内部](gugu://file/1)'
   try{await projection.project({identity,event:event(1,'round_end',{text}),deliveryId:'d1'});const before=p.requests.length
-   assert.equal(before,0)
-   assert.equal(await projection.project({identity,event:event(2,'final',{status:'completed',text:changed?'权威未发送正文':text}),deliveryId:'d2'}),'accepted');assert.equal(p.requests.length,1)
+   assert.equal(before,1)
+   assert.equal(await projection.project({identity,event:event(2,'final',{status:'completed',text:changed?'权威未发送正文':text}),deliveryId:'d2'}),changed?'unknown':'accepted');assert.equal(p.requests.length,1)
   }finally{await p.client.close()}
  }
 })
-test('ROUND_END后final在原stream补后缀；改写已确认前缀只关闭partial并unknown，不另发全文',async()=>{
+test('无换行首帧立即发送，单轮结束关闭流，终态仅补发新增后缀',async()=>{
  for(const rewrite of [false,true]){
   const p=platform(),m=memory(),projection=createPersistentQqProjection({identity,target,policyVersion:'v1',receipts:m.receipts,sender:p.sender,authorize:p.authorize,now:()=>1000})
-  try{await projection.project({identity,event:event(1,'token',{text:'已确认首行\n'}),deliveryId:'d1'});await projection.project({identity,event:event(2,'round_end',{text:'已确认首行\n'}),deliveryId:'d2'})
-   assert.equal(p.requests.length,1)
+  try{await projection.project({identity,event:event(1,'token',{text:'已确认首行'}),deliveryId:'d1'})
+   assert.equal(p.requests[0]!.content_raw,'已确认首行')
+   await projection.project({identity,event:event(2,'round_end',{text:'已确认首行\n'}),deliveryId:'d2'})
+   assert.equal(p.requests.length,2)
    assert.equal(await projection.project({identity,event:event(3,'final',{status:'completed',text:rewrite?'完全重写':'已确认首行\n最终后缀'}),deliveryId:'d3'}),rewrite?'unknown':'accepted')
-   assert.equal(p.requests.length,2);assert.equal(p.requests[1]!.stream_msg_id,'stream_1');assert.equal(p.requests[1]!.index,1)
-   assert.equal(p.requests[1]!.content_raw,rewrite?'已确认首行\n':'已确认首行\n最终后缀\n')
+   assert.equal(p.requests.length,rewrite?2:3);assert.equal(p.requests[1]!.stream_msg_id,'stream_1');assert.equal(p.requests[1]!.index,1)
+   assert.equal(p.requests[1]!.content_raw,'已确认首行\n')
+   if(!rewrite)assert.equal(p.requests[2]!.content_raw,'最终后缀\n')
   }finally{await p.client.close()}
  }
 })
@@ -276,10 +281,13 @@ test('流式图表前关闭文本、真实图片ACK后图后新段；final不重
  const text='图前说明\n```mermaid\ngraph TD; A-->B\n```\n图后说明'
  const make=()=>createPersistentQqProjection({identity,target,policyVersion:'charts',receipts:m.receipts,sender:p.sender,authorize:p.authorize,now:()=>1000,renderCharts:async()=>[png],
   async sendChart(bytes){assert.deepEqual(bytes,png);assert.equal(p.requests.at(-1)!.input_state,10);images++;return{outcome:'accepted',platformMessageIds:['chart-message']}}})
- try{assert.equal(await make().project({identity,event:event(1,'token',{text}),deliveryId:'d1'}),'accepted')
-  const final=event(2,'final',{status:'completed',text});assert.equal(await make().project({identity,event:final,deliveryId:'d2'}),'accepted')
-  assert.equal(images,1);assert.deepEqual(p.requests.map(item=>item.content_raw),['图前说明\n','图后说明\n']);const before=p.requests.length
-  assert.equal(await make().project({identity,event:final,deliveryId:'d2'}),'accepted');assert.equal(images,1);assert.equal(p.requests.length,before)
+ try{const first='图前说明\n``'
+  assert.equal(await make().project({identity,event:event(1,'token',{text:first}),deliveryId:'d1'}),'accepted')
+  assert.deepEqual(p.requests.map(item=>item.content_raw),['图前说明\n'])
+  assert.equal(await make().project({identity,event:event(2,'token',{text:text.slice(first.length)}),deliveryId:'d2'}),'accepted')
+  const final=event(3,'final',{status:'completed',text});assert.equal(await make().project({identity,event:final,deliveryId:'d3'}),'accepted')
+  assert.equal(images,1);assert.deepEqual(p.requests.map(item=>item.content_raw),['图前说明\n','图前说明\n','图后说明','图后说明\n']);const before=p.requests.length
+  assert.equal(await make().project({identity,event:final,deliveryId:'d3'}),'accepted');assert.equal(images,1);assert.equal(p.requests.length,before)
  }finally{await p.client.close()}
 })
 test('第一张图未获发送回执时后台仍可渲染下一张，图片保持原顺序且不重复渲染', { timeout: 5000 }, async () => {

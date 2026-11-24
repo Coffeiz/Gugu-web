@@ -1,8 +1,9 @@
+import { classifyGatewayGroupMessage } from '@gugu/gateway'
 import {createHash} from 'node:crypto'
 import type {Pool} from 'pg'
 import {openLocalFile} from '@gugu/fs/node'
 import {stableJson} from '@gugu/core/agent'
-import {classifyImGroupInbound,imActorInputFromPayload} from '@gugu/core/im/access'
+import {imActorInputFromPayload} from '@gugu/core/im/access'
 import {createPostgresImAccess} from '../inbound/access.js'
 import {createPostgresImConversationStore} from '../agent/conversations.js'
 import {createImInboundEnvelope} from '../inbound/envelope.js'
@@ -42,7 +43,7 @@ export function createImAttentionVoiceSource(options:{
    const row=(await client.query(`SELECT group_requires_at,group_read_enabled FROM user_bots
     WHERE user_id=$1 AND id=$2::integer AND platform=$3 AND enabled IS TRUE`,[binding.ownerId,binding.botId,binding.platform])).rows[0]
    if(!row||typeof row.group_requires_at!=='boolean'||typeof row.group_read_enabled!=='boolean')throw invalid()
-   return classifyImGroupInbound({...input,groupMentioned:payload.group_mentioned===true},{readOnly:row.group_requires_at&&row.group_read_enabled,requiresAt:row.group_requires_at})??'reply'
+   return classifyGatewayGroupMessage({...input,groupMentioned:payload.group_mentioned===true},row.group_requires_at ? row.group_read_enabled ? 'record_only' : 'reply_mentions' : 'reply_all')??'reply'
   },
  }).readValidatedStartedSegment
  async function read(raw:ImAttentionVoiceReadInput,signal:AbortSignal):Promise<readonly ImAttentionVoiceSource[]>{

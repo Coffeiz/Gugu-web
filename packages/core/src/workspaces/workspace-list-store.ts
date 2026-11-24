@@ -35,7 +35,7 @@ export function createKyselyWorkspaceListReader(db: Kysely<WorkspaceListTables>,
     async workspaces(ownerId, signal) {
       return read(signal, async () => {
         const rows = await db.selectFrom('workspaces')
-        .select(['id', 'name', 'kind', 'folder_id', 'project_id', 'directory_id', 'enabled', 'is_default'])
+        .select(['id', 'name', 'kind', 'project_id', 'directory_id', 'enabled', 'is_default'])
         .where('user_id', '=', owner(ownerId)).orderBy('updated_at', 'desc').execute()
         return rows.map(row => ({ ...row, enabled: Boolean(row.enabled), is_default: Boolean(row.is_default) }))
       })
@@ -50,25 +50,26 @@ export function createKyselyWorkspaceListReader(db: Kysely<WorkspaceListTables>,
 }
 
 /** 与管理列表同属工作区域；关联名称及计数均在SQL内按同一owner验证。 */
-export function createKyselyAgentWorkspaceReader(db: Kysely<any>, backend: 'sqlite' | 'postgres'): import('./workspace-list.js').WorkspaceAgentReadPort {
+export function createKyselyAgentWorkspaceReader(db: Kysely<any>, backend: 'sqlite' | 'postgres',
+  directoryLocation?: (ownerId: string, directoryName: string) => import('../agent/sessions/reference-context.js').ResolvedObjectPath,
+): import('./workspace-list.js').WorkspaceAgentReadPort {
   return { async read(rawOwner, workspaceId, signal) {
     signal?.throwIfAborted()
     const normalized = dataContext(rawOwner).ownerId, owner = backend === 'sqlite' ? normalized.replaceAll('-', '') : normalized
     if (workspaceId !== undefined && typeof workspaceId !== 'number') return []
     const filter = workspaceId === undefined ? sql`` : sql` AND w.id=${workspaceId}`
     try {
-      const result = await sql<Record<string, unknown>>`SELECT w.id,w.name,w.kind,w.enabled,w.is_default,w.project_id,w.folder_id,w.directory_id,
-        p.name AS project_name,f.name AS folder_name,d.name AS directory_name,
+      const result = await sql<Record<string, unknown>>`SELECT w.id,w.name,w.kind,w.enabled,w.is_default,w.project_id,w.directory_id,
+        p.name AS project_name,d.name AS directory_name${directoryLocation ? sql`,d.directory_name AS directory_segment` : sql``},
         (SELECT count(*) FROM conversation_sessions s WHERE s.user_id=${owner} AND s.workspace_id=w.id) AS bound_session_count
         FROM workspaces w LEFT JOIN projects p ON p.id=w.project_id AND p.user_id=w.user_id
-        LEFT JOIN folders f ON f.id=w.folder_id AND f.user_id=w.user_id
-        LEFT JOIN workspace_directories d ON d.id=w.directory_id AND d.user_id=w.user_id
-        WHERE w.user_id=${owner}${filter} ORDER BY w.updated_at DESC,w.id DESC`.execute(db)
+        LEFT JOIN workspace_directories d ON d.id=w.directory_id AND d.user_id=w.user_id${directoryLocation ? sql` AND d.deleted_at IS NULL` : sql``}
+        WHERE w.user_id=${owner} AND w.kind IN ('project','directory')${filter} ORDER BY w.updated_at DESC,w.id DESC`.execute(db)
       return result.rows.map(row => ({ workspace_id: Number(row.id), name: String(row.name), kind: String(row.kind), enabled: Boolean(row.enabled),
         is_default: Boolean(row.is_default), bound_session_count: Number(row.bound_session_count), project_id: row.project_id == null ? null : Number(row.project_id),
-        folder_id: row.folder_id == null ? null : Number(row.folder_id),
         ...(row.project_id == null ? {} : { project_name: row.project_name == null ? null : String(row.project_name) }),
-        ...(row.folder_id == null ? {} : { folder_name: row.folder_name == null ? null : String(row.folder_name) }),
+        ...(directoryLocation && row.kind === 'directory' && typeof row.directory_segment === 'string'
+          ? { location: directoryLocation(normalized, row.directory_segment) } : {}),
         ...(row.directory_id == null ? {} : { directory_id: Number(row.directory_id), directory_name: row.directory_name == null ? null : String(row.directory_name) }) }))
     } finally { signal?.throwIfAborted() }
   } }

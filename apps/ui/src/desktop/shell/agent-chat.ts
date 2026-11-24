@@ -64,6 +64,7 @@ export function desktopHistoryToWebShape(page: DesktopAgentHistoryPage, active =
         id: message.id,
         role: message.role,
         content: message.text,
+        quotedText: message.quotedText,
         createdAt: message.createdAt,
         clientMessageId: message.clientMessageId,
         runId: message.runId,

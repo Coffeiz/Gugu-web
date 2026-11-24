@@ -470,9 +470,10 @@ function submit() {
 .sched-prompt-column { display: flex; flex-direction: column; }
 .divider { height: 1px; background: var(--divider-line); margin: 2px 0 10px; }
 .divider-full { margin-left: 0; margin-right: 0; }
-.title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: 6px 11px; margin-bottom: 10px; border: 1px solid var(--input-border); border-radius: var(--radius-xs); background: var(--input-bg); transition: border-color 0.15s, box-shadow 0.15s; }
+.title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: 6px 11px; margin-bottom: 10px; border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s; }
 .title-input::placeholder { color: var(--input-placeholder); font-weight: 700; }
-.title-input:focus { border-color: var(--input-border-focus); }
+.title-input:hover { background: var(--input-bg-hover); border-color: var(--input-border-hover); }
+.title-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); }
 .field { display: block; margin-bottom: 11px; }
 .field > span { display: block; font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
 .field-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; }

@@ -171,7 +171,7 @@ export function isDecisionDodge(userRequest: string | null | undefined, reply: s
   const policy = getGuardLocale(locale)
   if (!userRequest || !reply || policy.question.test(reply))
     return false
-  let request = userRequest
+  let request = userRequest.replace(/\[引用消息\][\s\S]*?\[\/引用消息END\]/gu, '')
   const prefix = '💬 用户引用/回复了一条历史消息（原文：「', marker = '），针对这条消息说：\n\n'
   const quoteStart = request.indexOf(prefix)
   if (quoteStart >= 0) {

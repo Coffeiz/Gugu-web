@@ -44,8 +44,14 @@ test('隔离PostgreSQL：冻结原Run、完整批次发起者、实时撤权与�
       CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer REFERENCES conversation_sessions(id),role text,run_id text,platform_user_id text,chat_type text,created_at timestamptz);
       CREATE TABLE agent_run_startups(user_id uuid,session_id integer,run_id text,status text,created_at timestamptz);
       CREATE TABLE agent_run_checkpoints(user_id uuid,session_id integer,run_id text,status text,version bigint,sequence bigint,phase text,nonce bytea,payload bytea,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,session_id,run_id));
+      CREATE TABLE agent_inbox_waits(owner_id text,session_id text,run_id text);
+      CREATE TABLE agent_subagent_waits(owner_id text,parent_session_id text,parent_run_id text);
       CREATE TABLE agent_run_leases(user_id uuid,session_id integer,run_id text,token text,fence bigint,expires_at timestamptz,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,session_id));
       CREATE TABLE agent_run_events(user_id uuid,session_id integer,run_id text,event_id text,sequence bigint,nonce bytea,payload bytea,created_at timestamptz,acknowledged_at timestamptz,PRIMARY KEY(user_id,session_id,run_id,event_id));
+      CREATE TABLE interaction_prompts(id integer,user_id uuid,session_id integer,status text,expires_at timestamptz);
+      CREATE TABLE agent_interaction_bindings(user_id uuid,session_id integer,run_id text,prompt_id integer);
+      CREATE TABLE agent_interaction_resumes(user_id uuid,session_id integer,run_id text,prompt_id integer,
+        receipt text,created_at timestamptz,completed_at timestamptz,claim_token text,claim_expires_at timestamptz);
       CREATE TABLE agent_run_interaction_receipts(user_id uuid,session_id integer,run_id text,receipt text,created_at timestamptz);
       CREATE TABLE agent_run_dispatch(sequence bigserial PRIMARY KEY,user_id uuid,session_id integer,run_id varchar(128),state text,message_id integer,nonce bytea,payload bytea,request_expires_at timestamptz,token text,fence bigint DEFAULT 0,lease_expires_at timestamptz,cancel_requested boolean DEFAULT false,blocked_reason text,UNIQUE(user_id,session_id,run_id));
       CREATE UNIQUE INDEX selected ON agent_run_dispatch(user_id,session_id) WHERE state='selected';
@@ -105,6 +111,9 @@ test('隔离PostgreSQL：冻结原Run、完整批次发起者、实时撤权与�
       await reset();await run('waiting',[1],['synthetic-member'])
       await pool.query(`UPDATE agent_run_dispatch SET state='done';INSERT INTO agent_run_checkpoints(user_id,session_id,run_id,status) VALUES('${owner}',1,'waiting','waiting')`)
       const read=await service.read(scope);assert.equal(read.state,'waiting_confirm')
+      await pool.query("INSERT INTO agent_inbox_waits VALUES($1,1,'waiting')", [owner])
+      assert.equal((await service.read(scope)).state, 'waiting_agent')
+      await pool.query('DELETE FROM agent_inbox_waits')
       await run('new-selected',[2],['synthetic-member']);await run('new-queued',[3],['synthetic-member'])
       assert.equal(await service.cancel(scope,read.cancelReference!),true)
       assert.deepEqual((await pool.query('SELECT run_id,state,cancel_requested FROM agent_run_dispatch ORDER BY sequence')).rows,[
@@ -195,7 +204,7 @@ test('隔离PostgreSQL：冻结原Run、完整批次发起者、实时撤权与�
         authorize:async current=>await access.readBot(current)!==null, inspectSecret:async()=>{throw new Error('群控制不读秘密stage')},
         applySecret:async()=>{throw new Error('群控制不写秘密stage')},bindQqOwnerIfUnbound:async()=>{},consumeBinding:async()=>false,
         consumeTextChoice:async()=>null,reply:async(_scope,text)=>{replies.push(text)} })
-      assert.equal(await inbound({scope,text:'/stop',hasPendingMedia:false,botMentioned:false},new AbortController().signal),'consumed')
+      assert.equal(await inbound({scope,text:'/stop',hasPendingMedia:false,botMentioned:true},new AbortController().signal),'consumed')
       assert.deepEqual(replies,['🛑 已停止当前任务'])
       assert.equal(await dispatch.settleExpired(owner,'1'),false,'等待取消不得被普通waiting结算跳过')
       assert.deepEqual(await dispatch.listReady(),[{ownerId:owner,sessionId:'1'}])

@@ -107,8 +107,10 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
     return key
   }
   function renderGroup(children: unknown, columns: number, depth: number) {
-    if (!Array.isArray(children) || !children.length || children.length > 24) throw new Error()
-    const html = children.map(child => render(child, depth + 1)).join('')
+    // 模型有时会直接输出单个子组件，统一按单元素列表校验和渲染。
+    const items = Array.isArray(children) ? children : [fields(children)]
+    if (!items.length || items.length > 24) throw new Error()
+    const html = items.map(child => render(child, depth + 1)).join('')
     return html ? `<div class="chat-smart-layout" data-columns="${columns}">${html}</div>` : ''
   }
 
@@ -124,13 +126,18 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
       case 'split': {
         const ratio = component.ratio ?? '50:50'
         if (ratio !== '50:50' && ratio !== '60:40' && ratio !== '40:60') throw new Error()
-        const primary = renderGroup(component.primary, 1, depth)
+        // 兼容历史卡片把主栏写成通用的 children。
+        const primary = renderGroup(component.primary ?? component.children, 1, depth)
         const secondary = renderGroup(component.secondary, 1, depth)
         const fixed = component.fixed == null ? null : fields(component.fixed)
         if (fixed && ((fixed.side !== 'primary' && fixed.side !== 'secondary')
           || (fixed.width !== 'rail' && fixed.width !== 'compact'))) throw new Error()
         const fixedAttrs = fixed ? ` data-smart-fixed="${fixed.side}" data-smart-width="${fixed.width}"` : ''
-        return `<div class="chat-smart-split"><div class="chat-smart-split-track" data-smart-ratio="${ratio}"${fixedAttrs}><div>${primary}</div><div${condition(component.secondaryWhen)}>${secondary}</div></div></div>`
+        // 空栏不占网格列，另一栏可使用完整宽度。
+        const primaryColumn = `<div${primary ? '' : ' hidden'}>${primary}</div>`
+        const secondaryColumn = `<div${secondary ? condition(component.secondaryWhen) : ' hidden'}>${secondary}</div>`
+        return primary || secondary
+          ? `<div class="chat-smart-split"><div class="chat-smart-split-track" data-smart-ratio="${ratio}"${fixedAttrs}>${primaryColumn}${secondaryColumn}</div></div>` : ''
       }
       case 'panel': {
         const height = component.height ?? 'auto'
@@ -168,7 +175,8 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
           return `<li data-smart-time-state="${state}"><span class="chat-smart-list-detail">${text(item.when, 80)}${state ? ` · ${t(`timeline_${state}`)}` : ''}</span>
             <strong class="chat-smart-label">${href ? `<a href="${href}">${title}</a>` : title}</strong>${detail}</li>`
         }).join('')
-        return `<section class="chat-smart-section chat-smart-timeline"><h4>${text(component.label)}</h4><ol>${items}</ol></section>`
+        const heading = component.label == null ? '' : `<h4>${text(component.label)}</h4>`
+        return `<section class="chat-smart-section chat-smart-timeline">${heading}<ol>${items}</ol></section>`
       }
       case 'ranking': {
         if (!Array.isArray(component.criteria) || component.criteria.length < 2 || component.criteria.length > 8
@@ -218,7 +226,9 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
         if (!Array.isArray(component.options) || component.options.length < 2 || component.options.length > 6) throw new Error()
         const options = component.options.map(fields)
         const keys = options.map(option => id(option.id))
-        const stateKey = component.state == null ? null : id(component.state)
+        const requestedStateKey = component.state == null ? null : id(component.state)
+        // 未声明共享状态的切换器仍可使用自己的默认选项。
+        const stateKey = requestedStateKey !== null && state.has(requestedStateKey) ? requestedStateKey : null
         const active = stateKey ? state.get(stateKey) : component.default == null ? keys[0] : id(component.default)
         if (typeof active !== 'string' || new Set(keys).size !== keys.length || !keys.includes(active)) throw new Error()
         const buttons = options.map((option, index) =>
@@ -246,8 +256,8 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
       case 'metric': {
         const binding = bindingAttributes(component.bind)
         const initial = component.value ?? (binding ? 0 : undefined)
-        const value = typeof initial === 'number' ? number(initial) : text(initial, 80)
-        return `<div class="chat-smart-metric"${colorAttribute(component.color)}${binding}><span class="chat-smart-label">${iconSlot(component.icon)}${text(component.label)}</span><strong><span>${value}</span><span data-smart-unit>${component.unit == null ? '' : text(component.unit, 20)}</span></strong></div>`
+        const value = typeof initial === 'number' ? number(initial) : initial === '' ? '—' : text(initial, 80)
+        return `<div class="chat-smart-metric"${colorAttribute(component.color)}${binding}><span class="chat-smart-label">${iconSlot(component.icon)}${text(component.label)}</span><strong><span>${value}</span><span data-smart-unit>${component.unit == null || component.unit === '' ? '' : text(component.unit, 20)}</span></strong></div>`
       }
       case 'progress': {
         const binding = bindingAttributes(component.bind)
@@ -255,7 +265,7 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
         if (max <= 0 || current < 0 || current > max) throw new Error()
         const caption = text(component.label)
         return `<div class="chat-smart-progress-block"${colorAttribute(component.color)}${binding}><span class="chat-smart-label">${iconSlot(component.icon)}${caption}</span>
-          <strong><span>${current}</span><span data-smart-unit>${component.unit == null ? ` / ${max}` : text(component.unit, 20)}</span></strong>
+          <strong><span>${current}</span><span data-smart-unit>${component.unit == null || component.unit === '' ? ` / ${max}` : text(component.unit, 20)}</span></strong>
           <progress value="${current}" max="${max}" aria-label="${caption}"></progress></div>`
       }
       case 'slider': {
@@ -317,9 +327,9 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
       }
       case 'chart': {
         const { kind, points } = component
-        if ((kind !== 'line' && kind !== 'bar') || !Array.isArray(points) || !points.length || points.length > 40) throw new Error()
+        if ((kind !== 'line' && kind !== 'bar' && kind !== 'pie') || !Array.isArray(points) || !points.length || points.length > 40) throw new Error()
         const title = text(component.label)
-        const unit = component.unit == null ? '' : text(component.unit, 20)
+        const unit = component.unit == null || component.unit === '' ? '' : text(component.unit, 20)
         const filter = component.filter == null ? null : fields(component.filter)
         const source = filter ? id(filter.source) : null
         if (filter && filter.operator !== 'lte' && filter.operator !== 'gte') throw new Error()
@@ -327,11 +337,13 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
         const rows = points.map(point => {
           const item = fields(point)
           const value = item.value === null ? null : number(item.value)
+          if (kind === 'pie' && value !== null && value < 0) throw new Error()
           return `<li data-smart-point${value === null ? '' : ` data-smart-compare="${value}"`}><span>${text(item.label, 80)}</span><strong>${value === null ? '—' : `${value}${unit}`}</strong></li>`
         }).join('')
         return `<figure class="chat-smart-chart" data-smart-chart="${kind}" data-smart-chart-unit="${unit}"${colorAttribute(component.color)}${source ? ` data-smart-filter="${source}" data-smart-operator="${filter?.operator}"` : ''}>
           <figcaption class="chat-smart-label">${iconSlot(component.icon)}${title}</figcaption>
           <div class="chat-smart-chart-canvas"><canvas aria-hidden="true"></canvas></div>
+          ${kind === 'pie' ? '<ul class="chat-smart-pie-legend" data-smart-pie-legend hidden></ul>' : ''}
           <details><summary><span data-smart-chart-chevron aria-hidden="true"></span>${t('chartData')}</summary><ul>${rows}</ul></details>
           <p class="chat-smart-view-notice" data-smart-empty hidden>${t('empty')}</p>
         </figure>`

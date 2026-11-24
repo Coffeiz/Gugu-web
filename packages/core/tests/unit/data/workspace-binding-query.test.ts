@@ -17,8 +17,8 @@ function session(id: number, user = owner, workspaceId: number | null = null) {
   native.prepare('INSERT INTO conversation_sessions(id,user_id,workspace_id) VALUES (?,?,?)').run(id, key(user), workspaceId)
 }
 function workspace(id: number, user = owner, enabled = true) {
-  native.prepare('INSERT INTO workspaces(id,user_id,name,kind,folder_id,project_id,directory_id,enabled,is_default,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .run(id, key(user), '工作区' + id, 'directory', null, null, id + 10, Number(enabled), 0, '2026-01-01')
+  native.prepare('INSERT INTO workspaces(id,user_id,name,kind,project_id,directory_id,enabled,is_default,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(id, key(user), '工作区' + id, 'directory', null, id + 10, Number(enabled), 0, '2026-01-01')
 }
 function saved(id = 1) {
   return native.prepare('SELECT workspace_id FROM conversation_sessions WHERE id=?').get(id) as { workspace_id: number | null }
@@ -27,7 +27,7 @@ function operations() { return createWorkspaceBindings(createKyselyWorkspaceBind
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'gugu-workspace-binding-'))
   native = new SQLite(join(directory, 'bindings.db'))
-  native.exec('CREATE TABLE workspaces(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,kind TEXT,folder_id INTEGER,project_id INTEGER,directory_id INTEGER,enabled INTEGER,is_default INTEGER,updated_at TEXT);'
+  native.exec('CREATE TABLE workspaces(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,kind TEXT,project_id INTEGER,directory_id INTEGER,enabled INTEGER,is_default INTEGER,updated_at TEXT);'
     + 'CREATE TABLE conversation_sessions(id INTEGER PRIMARY KEY,user_id TEXT,workspace_id INTEGER);')
   owner = randomUUID(); other = randomUUID(); queries = 0
   db = new Kysely<WorkspaceBindingTables>({ dialect: new SqliteDialect({ database: native }), log() { queries++ } })
@@ -38,7 +38,7 @@ describe('工作区绑定真实临时SQLite事务', () => {
   it('bind持久写入与固定count1，current返回count0，unbind实际清空', async () => {
     workspace(1); session(1); session(2, owner, 1)
     const api = operations()
-    expect(await api.bind(owner.toUpperCase(), 1, 1)).toEqual({ id: 1, name: '工作区1', kind: 'directory', folderId: null,
+    expect(await api.bind(owner.toUpperCase(), 1, 1)).toEqual({ id: 1, name: '工作区1', kind: 'directory',
       projectId: null, directoryId: 11, enabled: true, isDefault: false, boundSessionCount: 1 })
     expect(saved()).toEqual({ workspace_id: 1 })
     expect(await api.current(owner, 1)).toMatchObject({ id: 1, boundSessionCount: 0 })

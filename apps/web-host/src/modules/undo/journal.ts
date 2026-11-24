@@ -1,3 +1,5 @@
+import { projectFileStorageKey } from '../files/paths.js'
+import { moveLocalEntry } from '@gugu/fs/node'
 import { randomUUID } from 'node:crypto'
 import { recoverProjectFileMoves, type ProjectUndoMove, type ProjectUndoJournalStorage } from '@gugu/core/projects/undo'
 import type { ProjectDeleteRuntime } from '@gugu/core/tools'
@@ -14,7 +16,7 @@ const forwardAfter = 'agent_committed'
 
 const journalLock = "hashtext('gugu-project-undo-journal')"
 
-type ProjectDeleteMove = ProjectUndoMove & { fileId: number }
+type ProjectDeleteMove = ProjectUndoMove
 
 export async function hasProjectDeleteJournalSchema(db: Pick<Pool, 'query'>): Promise<boolean> {
   const result = await db.query<{ ready: boolean }>(
@@ -105,18 +107,29 @@ async function recoverForwardDelete(client: PoolClient, storage: ProjectUndoJour
       )
       if (receipt.rows[0] && receipt.rows[0].method !== 'agent.project.delete') throw new Error('项目删除日志与操作收据不匹配')
       const committed = Boolean(receipt.rows[0])
-      const fileIds = journal.moves.map(move => move.fileId)
-      if (fileIds.some(id => !Number.isSafeInteger(id) || id < 1) || new Set(fileIds).size !== fileIds.length)
-        throw new Error('项目删除文件日志无效')
-      const files = await client.query<{ id: number; storage_key: string; deleted_at: Date | null }>(
-        `SELECT id,storage_key,deleted_at FROM files WHERE user_id=$1 AND id=ANY($2::int[]) ORDER BY id FOR UPDATE${background ? ' NOWAIT' : ''}`,
-        [owner, fileIds],
-      )
-      const byId = new Map(files.rows.map(file => [file.id, file]))
-      for (const move of journal.moves) {
-        const file = byId.get(move.fileId)
-        if (!file || file.storage_key !== (committed ? move.to : move.from) || (file.deleted_at !== null) !== committed)
+      const projectDirectoryPattern = new RegExp(`^${owner}/\\.gugu-project-trash/([1-9]\\d*)$`)
+      const fileMoves = journal.moves.filter(move => !projectDirectoryPattern.test(move.to))
+      for (const move of fileMoves) {
+        const files = await client.query<{ path: string; deleted_at: Date | null }>(
+          `SELECT path,deleted_at FROM files WHERE user_id=$1 AND path=$2 FOR UPDATE${background ? ' NOWAIT' : ''}`,
+          [owner, committed ? move.to : move.from],
+        )
+        const file = files.rows[0]
+        if (!file || file.path !== (committed ? move.to : move.from) || (file.deleted_at !== null) !== committed)
           throw new Error('项目删除后的文件记录已变化')
+      }
+      for (const move of journal.moves) {
+        const projectMatch = projectDirectoryPattern.exec(move.to)
+        if (!projectMatch) continue
+        const projectId = Number(projectMatch[1])
+        const result = await client.query<{ name: string; start_date: unknown; created_at: unknown; deleted_at: unknown }>(
+          `SELECT name,start_date,created_at,deleted_at FROM projects WHERE user_id=$1 AND id=$2 FOR UPDATE${background ? ' NOWAIT' : ''}`,
+          [owner, projectId],
+        )
+        const project = result.rows[0]
+        if (!project || (project.deleted_at !== null) !== committed
+          || move.from !== projectFileStorageKey(owner, projectId, project.name, project.start_date, project.created_at))
+          throw new Error('项目删除后的目录记录已变化')
       }
       await recoverProjectFileMoves({ ownerId: owner, beforeStatus: forwardBefore, afterStatus: forwardAfter, moves: journal.moves },
         committed ? forwardAfter : forwardBefore, storage)
@@ -170,15 +183,14 @@ export function createPostgresProjectDeleteJournal(pool: Pick<Pool, 'connect'>, 
         await recoverForwardDelete(client, storage, owner, operationId)
         let id: string | undefined
         return execute({
-          async record(fileId, from, to) {
-            if (!Number.isSafeInteger(fileId) || fileId < 1) throw new Error('项目删除文件 ID 无效')
+          async record(from, to) {
             if (!id) {
               const next = randomUUID()
               await saveProjectUndoJournal(client, { id: next, ownerId: owner, operationId,
                 beforeStatus: forwardBefore, afterStatus: forwardAfter, moves: [] })
               id = next
             }
-            const move: ProjectDeleteMove = { fileId, from, to }
+            const move: ProjectDeleteMove = { from, to }
             await appendProjectUndoMove(client, id, move)
           },
           async finish() {
@@ -190,7 +202,7 @@ export function createPostgresProjectDeleteJournal(pool: Pick<Pool, 'connect'>, 
   }
 }
 
-/** 恢复常规文件；目录恢复在获得不覆盖原子移动能力前保留日志。 */
+/** 恢复常规文件及整棵项目目录，均拒绝覆盖目标。 */
 export function createLocalProjectUndoJournalStorage(storageRoot: string): ProjectUndoJournalStorage {
   return {
     async exists(ownerId, key) {
@@ -210,6 +222,10 @@ export function createLocalProjectUndoJournalStorage(storageRoot: string): Proje
       const source = await checkedPath(root, ownerId, from, false)
       const target = await checkedPath(root, ownerId, to)
       await mkdir(path.dirname(target), { recursive: true })
+      if ((await lstat(source)).isDirectory()) {
+        if (!await moveLocalEntry(root, from, to)) throw new Error('项目目录恢复失败')
+        return
+      }
       await moveProjectFileNoReplace(source, target, async () => {
         await checkedPath(root, ownerId, from, false)
         await checkedPath(root, ownerId, to)

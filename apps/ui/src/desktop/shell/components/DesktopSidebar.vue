@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Brand from '@/components/common/layout/Brand.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -17,6 +18,9 @@ const emit = defineEmits<{
 
 <template>
   <aside class="desktop-sidebar" :class="{ 'is-compact': compact }" :aria-label="t('navigation.main')">
+    <div v-if="!compact" class="sidebar-brand">
+      <Brand />
+    </div>
     <nav>
       <div class="nav-group">
         <span class="nav-group-label">{{ t('navigation.workspace') }}</span>
@@ -54,10 +58,17 @@ const emit = defineEmits<{
 
 <style scoped>
 .desktop-sidebar {
+  --sidebar-bottom-inset: calc(var(--desktop-workspace-edge) + var(--desktop-workspace-inset) + 1px);
   --sidebar-avatar-size: 32px;
   --sidebar-footer-inset: 8px;
   --sidebar-footer-overlap: calc(var(--sidebar-avatar-size) / 2 + var(--sidebar-footer-inset) + 1px);
-  position: relative; grid-column: 1; grid-row: 1 / 3; z-index: 2; display: flex; flex-direction: column; min-width: 0; padding: calc(var(--desktop-topbar-height) + 2px) 14px 18px; background: transparent; }
+  position: relative; grid-column: 1; grid-row: 1 / 3; z-index: 2; display: flex; flex-direction: column; min-width: 0; padding: calc(var(--desktop-topbar-height) + 2px) 14px var(--sidebar-bottom-inset); background: transparent; }
+.sidebar-brand {
+  flex: none;
+  margin-bottom: var(--space-xs);
+  pointer-events: none;
+}
+.sidebar-brand :deep(.brand) { margin-bottom: 0; }
 .desktop-sidebar nav {
   display: flex;
   flex: 1;
@@ -71,7 +82,8 @@ const emit = defineEmits<{
   scrollbar-width: none;
 }
 .desktop-sidebar nav::-webkit-scrollbar { display: none; }
-.nav-group { display: grid; gap: 3px; padding: 0 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--content-divider) 70%, transparent); }
+.nav-group { position: relative; display: grid; gap: 3px; padding: 0 0 9px; }
+.nav-group::after { content: ""; position: absolute; inset: auto 4px 0; height: 1px; background: var(--divider-line); pointer-events: none; }
 .nav-group-label { padding: 7px 12px 3px; color: var(--text-tertiary, var(--text-secondary)); font-size: 10px; font-weight: 650; letter-spacing: .04em; }
 .nav-item { display: flex; align-items: center; gap: 13px; width: 100%; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px; color: var(--content-secondary, var(--text-secondary)); background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease; }
 .nav-item :deep(svg) { width: 18px; height: 18px; flex: 0 0 18px; }
@@ -83,22 +95,22 @@ const emit = defineEmits<{
 .sidebar-footer:hover { background: color-mix(in srgb, var(--surface-card-solid) 95%, rgb(from var(--content-primary) r g b / 1)); }
 .settings-avatar { display: grid; place-items: center; width: var(--sidebar-avatar-size); height: var(--sidebar-avatar-size); flex: none; border-radius: 50%; background: var(--avatar-fallback-bg); color: var(--content-on-accent); }
 .settings-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.desktop-sidebar.is-compact { padding-right: 7px; padding-left: 7px; }
+.desktop-sidebar.is-compact { --sidebar-footer-overlap: calc(var(--sidebar-avatar-size) / 2); padding-right: 7px; padding-left: 7px; }
 .desktop-sidebar.is-compact .nav-label,.desktop-sidebar.is-compact .nav-group-label { display: none; }
 .desktop-sidebar.is-compact .nav-item { justify-content: center; padding-right: 0; padding-left: 0; }
-.desktop-sidebar.is-compact .nav-group { padding-bottom: 6px; }
+.desktop-sidebar.is-compact .nav-group { padding-bottom: 7px; }
 .desktop-sidebar.is-compact .settings-label { display: none; }
-.desktop-sidebar.is-compact .sidebar-footer { justify-content: center; padding-inline: 0; border-color: transparent; border-radius: 50%; background: transparent; box-shadow: none; }
+.desktop-sidebar.is-compact .sidebar-footer { align-self: center; justify-content: center; inline-size: var(--sidebar-avatar-size); block-size: var(--sidebar-avatar-size); padding: 0; border: 0; border-radius: 50%; background: transparent; box-shadow: none; }
 .sidebar-resize { position: absolute; z-index: 5; top: var(--desktop-topbar-height); right: -5px; bottom: 0; width: 10px; padding: 0; border: 0; background: transparent; cursor: col-resize; touch-action: none; }
 .sidebar-resize::after { position: absolute; top: 50%; left: 4px; width: 2px; height: 36px; border-radius: 2px; background: transparent; content: ''; transform: translateY(-50%); transition: background .15s ease; }
 .sidebar-resize:hover::after,.sidebar-resize:focus-visible::after { background: var(--primary); }
 .sidebar-resize:focus-visible { outline: none; }
 @media (max-width: 760px) {
-  .desktop-sidebar { padding: calc(var(--desktop-topbar-height) + 2px) 7px 16px; }
-  .nav-label,.nav-group-label { display: none; }
+  .desktop-sidebar { --sidebar-footer-overlap: calc(var(--sidebar-avatar-size) / 2); padding: calc(var(--desktop-topbar-height) + 2px) 7px var(--sidebar-bottom-inset); }
+  .sidebar-brand,.nav-label,.nav-group-label { display: none; }
   .nav-item { justify-content: center; padding: 0; }
   .settings-label { display: none; }
-  .sidebar-footer { justify-content: center; padding-inline: 0; border-color: transparent; border-radius: 50%; background: transparent; box-shadow: none; }
+  .sidebar-footer { align-self: center; justify-content: center; inline-size: var(--sidebar-avatar-size); block-size: var(--sidebar-avatar-size); padding: 0; border: 0; border-radius: 50%; background: transparent; box-shadow: none; }
   .sidebar-resize { display: none; }
 }
 </style>

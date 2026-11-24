@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { createPostgresSubagentRetention } from '@gugu/core/agent-sessions'
 
 /** Agent Run 事件与检查点的默认保留期；事件是恢复与审计日志，除当前活跃运行外没有读取路径。 */
 export const AGENT_RUN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
@@ -35,7 +36,7 @@ export async function cleanupExpiredAgentRuns(
 
 /** 首轮及后续均等待间隔；停止时等待在途清理结束。 */
 export function startAgentRunRetentionWorker(options: {
-  pool: Pick<Pool, 'query'>
+  pool: Pool
   intervalMs?: number
   retentionMs?: number
   now?: () => Date
@@ -51,11 +52,13 @@ export function startAgentRunRetentionWorker(options: {
     timer = setTimeout(resolve, interval)
     timer.unref()
   })
+  const cleanupSubagents = createPostgresSubagentRetention(options.pool)
   const running = (async () => {
     while (!stopped) {
       await wait()
       if (stopped) break
       try {
+        await cleanupSubagents()
         await cleanupExpiredAgentRuns(options.pool, options.now?.() ?? new Date(), options.retentionMs)
       } catch {
         try { options.onError() } catch { /* 诊断失败不能终止后续清理 */ }

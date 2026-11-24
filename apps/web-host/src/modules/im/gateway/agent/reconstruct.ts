@@ -1,7 +1,9 @@
+import { projectAgentSessionGoal, readAgentSessionContext } from '@gugu/core/agent-sessions'
 import { createAgentRunToolPorts, contextAccessScopeHash, stableJson, type CanonicalContextPorts, type CanonicalRunContext, type ContextSourcePorts, type RunEvent, type RunIdentity } from '@gugu/core/agent'
 import type { ProviderContextFactoryInput, ProviderFactoryContext } from '@gugu/core/providers'
 import { assembleSubagentCatalog, builtinSubagentCatalog } from '@gugu/core/agent'
-import { imActorInputFromPayload, imCanUseTool, imContextPolicy, type ImActor, type ImActorInput } from '@gugu/core/im/access'
+import { imActorInputFromPayload, type ImActor, type ImActorInput } from '@gugu/core/im/access'
+import { createImAgentContextBuilder, imOwnerPrivate, imCanUseTool, imContextPolicy, imUnavailableTool } from '@gugu/core/agent/scenes/im'
 import { createImRunDelivery, ImRunDeliveryBlocked, type ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
 import type { AgentDispatchLease, ImAgentDispatchInput } from '../../../agent/run/dispatch.js'
 import { agentDispatchSource } from '../../../agent/run/dispatch.js'
@@ -12,7 +14,6 @@ import { createWebAgentBindingHistory, type WebAgentBinding, type WebAgentRecons
 import { createPostgresAgentRunStore } from '../../../agent/run/store.js'
 import { createPostgresCurrentTurnReader, createWebAgentSourceLoader } from '../../../agent/context/source.js'
 import type { AgentContextBuilderPorts } from '@gugu/core/agent'
-import { createImAgentContextBuilder } from './context.js'
 import { createPostgresImAccess } from '../inbound/access.js'
 import { ImDeliveryStoreError, withPostgresImDeliveryStore, type ImDeliverySession } from '../delivery/store.js'
 import { parseImAttentionRecord } from '@gugu/core/im/attention/directive'
@@ -22,6 +23,34 @@ import { ImVoiceUnavailableError } from '../inbound/message.js'
 
 type ImLease = AgentDispatchLease & { input: ImAgentDispatchInput }
 type Route = { binding: { ownerId: string; botId: string; platform: ImAgentDispatchInput['im']['platform'] }; payload: Record<string, unknown> }
+
+/** Agent 持续提交，积压由持久事件日志承担，内存只记录提交水位。 */
+export function followCommittedImEvents(source: AsyncIterable<RunEvent>, readCursor: () => Promise<number>, readAfter: (cursor: number) => Promise<readonly RunEvent[]>) {
+  let committed = 0
+  let finished = false
+  let waiting: (() => void) | undefined
+  const wake = () => { waiting?.(); waiting = undefined }
+  const producer = (async () => {
+    try { for await (const event of source) { committed = event.sequence; wake() } }
+    finally { finished = true; wake() }
+  })()
+  void producer.catch(() => {})
+  const events = { async *[Symbol.asyncIterator]() {
+    let cursor = await readCursor()
+    while (!finished || cursor < committed) {
+      if (cursor >= committed) { await new Promise<void>(resolve => { waiting = resolve }); continue }
+      const upper = committed
+      const page = await readAfter(cursor)
+      if (!page.length || page[0]!.sequence !== cursor + 1) throw new Error('IM 已提交事件不可读')
+      for (const event of page) {
+        if (event.sequence > upper) break
+        cursor = event.sequence
+        yield event
+      }
+    }
+  } }
+  return { events, producer }
+}
 export interface ImAgentReconstructionResources extends Omit<WebAgentReconstructionResources, 'source' | 'mcp' | 'context'> {
   /** 生产工厂绑定真实用量、私有续接提交和成功反思任务同事务登记。 */
   history?: PersistentAgentRuntimeOptions['history']
@@ -33,6 +62,7 @@ export interface ImAgentReconstructionResources extends Omit<WebAgentReconstruct
   builder: Omit<AgentContextBuilderPorts, 'dynamic'> & { now(): number }
   sender: ImRunDeliveryPorts<CanonicalRunContext>['sender']
   showIntermediateReplies?: boolean
+  toolLocale?: string | null
   streamFactory?(receipts: ImDeliverySession, authorize: () => Promise<boolean>): NonNullable<ImRunDeliveryPorts<CanonicalRunContext>['stream']> & { prepare?(events: AsyncIterable<RunEvent>): AsyncIterable<RunEvent>; close?(): Promise<void> }
   /** 平台可观察实际Run生命周期（如微信typing）；每次平台动作仍须调用当前授权。 */
   observeRun?(events: AsyncIterable<RunEvent>, authorize: () => Promise<boolean>): AsyncIterable<RunEvent>
@@ -165,7 +195,7 @@ export function createImAgentReconstructor(options: ImAgentReconstructorOptions)
       const load: CanonicalContextPorts['load'] = async (identity, signal) => {
         try {
           const loaded = await source.load(identity, signal)
-          if (actor.role === 'owner' && actor.chatType === 'c2c' && 'input' in loaded
+          if (imOwnerPrivate(actor) && 'input' in loaded
             && (await resources.toolRegistry.capabilities(identity)).some(tool => tool.name === 'agent_message')) {
             loaded.input.systemPrompt = assembleSubagentCatalog(loaded.input.systemPrompt, builtinSubagentCatalog)
           }
@@ -207,9 +237,10 @@ export function createImAgentReconstructor(options: ImAgentReconstructorOptions)
           },
           tools: {
             plan: resources.toolRegistry.tools.plan,
+            unavailableTool: imUnavailableTool,
             async dispatch(call, scope) {
               if (!imCanUseTool(actor, call.name) || !await authorizeTool(input, call.name))
-                return { kind: 'completed', value: { error: 'IM 工具权限已变更' }, successful: false, mutated: false, executed: false }
+                return { kind: 'completed', value: imUnavailableTool(call.name), successful: false, mutated: false, executed: false }
               return resources.toolRegistry.tools.dispatch(call, scope)
             },
             async reconcile(call, target) {
@@ -238,7 +269,15 @@ export function createImAgentReconstructor(options: ImAgentReconstructorOptions)
         : createPersistentAgentRuntime({ ...persistentOptions,
           context: { ...context, preparation: { ...context.preparation, buildRag: resources.ragContext }, load } })
       let closed = false
-      return { harness: instance.harness, cancellation: instance.cancellation,
+      return { harness: {
+        resume: instance.harness.resume,
+        async *start(identity: RunIdentity, startOptions?: Parameters<typeof instance.harness.start>[1]) {
+          const { rows: [session] } = await options.pool.query<{ session_context: unknown }>(
+            'SELECT session_context FROM conversation_sessions WHERE user_id=$1 AND id=$2', [identity.ownerId, identity.sessionId])
+          const goalMode = actor.role === 'owner' && projectAgentSessionGoal(readAgentSessionContext(session?.session_context, 'postgres')).goalActive
+          return yield* instance.harness.start(identity, { ...startOptions, goalMode })
+        },
+      }, cancellation: instance.cancellation,
         async consume(events: AsyncIterable<RunEvent>) {
           // 专用PG连接锁包围整个投递；平台未知不会取消已在运行的Agent。
           let started = false
@@ -247,15 +286,20 @@ export function createImAgentReconstructor(options: ImAgentReconstructorOptions)
             const projection = resources.streamFactory?.(receipts, authorize)
             const delivery = createImRunDelivery({ runner: instance.harness, events: { readAfter: instance.store.readEventsAfter }, receipts,
               digest: contextServices.digest, authorize: async target => sameIdentity(target, id) && await authorize(), sender: resources.sender,
-              stream: projection, showIntermediateReplies: resources.showIntermediateReplies })
-            const observed = { async *[Symbol.asyncIterator]() { started = true; yield* events } }
+              stream: projection, toolLocale: resources.toolLocale ?? lease.input.locale, showIntermediateReplies: resources.showIntermediateReplies })
+            started = true
+            const { events: observed, producer } = followCommittedImEvents(events, () => receipts.cursor(id),
+              cursor => instance.store.readEventsAfter(id, cursor))
             const deliveryEvents = resources.observeRun
               ? resources.observeRun(observed, authorizeCurrent) : observed
             try { await delivery.consume(id, projection?.prepare?.(deliveryEvents) ?? deliveryEvents) }
             catch (error) {
               if (!(error instanceof ImRunDeliveryBlocked)) throw error
               options.diagnose('delivery_pending')
-            } finally { await projection?.close?.() }
+            } finally {
+              try { await projection?.close?.() }
+              finally { await producer }
+            }
           }, { secretKey: options.secretKey, platform: actor.platform === 'wechat' ? undefined : actor.platform, ledger: {
             scope: { ownerId: id.ownerId, botId: actor.botId, platform: actor.platform, chatType: actor.chatType, chatId: actor.chatId },
             recipientSenderId: subject ? String(subject.platform_user_id) : actor.platformUserId,

@@ -11,19 +11,20 @@ import { readFileUndoArtifact } from './adapters/files.js'
 
 export interface FileUndoStorage {
   read(key: string): Promise<Uint8Array | null>
+  move?(fromKey: string, toKey: string): Promise<void>
   replace(key: string, bytes: Uint8Array): Promise<{ rollback(): Promise<void>; finalize(): Promise<void> }>
 }
 
-/** 查询只覆盖两个旧资源适配器的参数化语句，生命周期不得越过当前调用。 */
+/** 查询只覆盖当前资源适配器的参数化语句，生命周期不得越过当前调用。 */
 export async function withUndoTransactionClient<T>(tx: UndoAdapterContext['tx'], work: (client: PoolClient) => Promise<T>): Promise<T> {
   let active = true, pending: Promise<unknown> | null = null
   const client = {
     async query(text: string, parameters: unknown[] = []) {
       if (!active || pending) throw new Error('撤销事务查询已结束或正在执行')
-      const select = /^SELECT \* FROM (?:calendar_events|scheduled_tasks|projects|files|folders) WHERE id=\$1 AND user_id=\$2 FOR UPDATE$/
-      const column = '(?:title|date|time|end_time|type|contact_name|project_id|description|deleted_at|enabled|name|payload|execution_mode|cron|schedule_kind|start_at|reminder_lead_minutes|channels|delivery_targets|summary|status|start_date|deadline|color|progress|current_stage|priority|archived|done_at|stages_json|storage_key|display_name)'
-      const assignment = `(?:${column}=\\$[1-9][0-9]*|version=COALESCE\\(version,1\\)\\+1|storage_key=\\$3 \\|\\| substring\\(storage_key from char_length\\(\\$4\\)\\+1\\))`
-      const update = new RegExp(`^UPDATE (?:calendar_events|scheduled_tasks|projects|files|folders) SET ${assignment}(?:, ?${assignment})* WHERE (?:id=\\$1 AND user_id=\\$2|user_id=\\$1 AND project_id=\\$2 AND left\\(storage_key,char_length\\(\\$4\\)\\)=\\$4)(?: RETURNING (?:version|\\*))?$`)
+      const select = /^SELECT \* FROM (?:calendar_events|scheduled_tasks|projects) WHERE id=\$1 AND user_id=\$2 FOR UPDATE$|^SELECT \* FROM files WHERE path=\$1 AND user_id=\$2 FOR UPDATE$/
+      const column = '(?:title|date|time|end_time|type|contact_name|project_id|description|deleted_at|enabled|name|payload|execution_mode|cron|schedule_kind|start_at|reminder_lead_minutes|channels|delivery_targets|summary|status|start_date|deadline|color|progress|current_stage|priority|archived|done_at|stages_json|path|display_name)'
+      const assignment = `(?:${column}=\\$[1-9][0-9]*|version=COALESCE\\(version,1\\)\\+1|path=\\$3 \\|\\| substring\\(path from char_length\\(\\$4\\)\\+1\\)|version=version\\+1)`
+      const update = new RegExp(`^(?:UPDATE (?:calendar_events|scheduled_tasks|projects) SET ${assignment}(?:, ?${assignment})* WHERE id=\\$1 AND user_id=\\$2|UPDATE files SET ${assignment}(?:, ?${assignment})* WHERE (?:path=\\$1 AND user_id=\\$2|user_id=\\$1 AND project_id=\\$2 AND left\\(path,char_length\\(\\$4\\)\\)=\\$4))(?: RETURNING (?:version|\\*))?$`)
       if (typeof text !== 'string' || /;|--|\/\*|\*\//.test(text) || !(select.test(text) || update.test(text)) || !Array.isArray(parameters) || parameters.length < 2) throw new Error('撤销事务查询不允许该语句')
       const query = { sql: text, parameters, query: { kind: 'RawNode', sqlFragments: [text], parameters: [] } }
       const current = tx.executeQuery(query as unknown as Parameters<typeof tx.executeQuery>[0])

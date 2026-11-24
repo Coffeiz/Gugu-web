@@ -1,5 +1,5 @@
 import type { Json } from '../agent/models.js'
-import { agentContextPolicy } from '../agent/context/source-policy.js'
+import { agentContextPolicy } from '../agent/scenes/source-policy.js'
 import type { ImActor } from './access.js'
 
 const budget = 3000

@@ -10,7 +10,6 @@ interface WorkspaceRow {
   id: number
   name: string
   kind: WorkspaceDeclaration['kind']
-  folder_id: number | null
   project_id: number | null
   directory_id: number | null
   enabled: boolean
@@ -29,7 +28,7 @@ async function workspaceForOwner(
   requireEnabled: boolean,
 ): Promise<WorkspaceDeclaration | null> {
   const result = await client.query<WorkspaceRow & Record<string, unknown>>(
-    `SELECT id, name, kind, folder_id, project_id, directory_id, enabled, is_default
+    `SELECT id, name, kind, project_id, directory_id, enabled, is_default
      FROM workspaces
      WHERE id = $1 AND user_id = $2${requireEnabled ? ' AND enabled IS TRUE' : ''}`,
     [workspaceId, ownerId],
@@ -40,7 +39,6 @@ async function workspaceForOwner(
     id: Number(row.id),
     name: row.name,
     kind: row.kind,
-    folderId: row.folder_id == null ? null : Number(row.folder_id),
     projectId: row.project_id == null ? null : Number(row.project_id),
     directoryId: row.directory_id == null ? null : Number(row.directory_id),
     enabled: row.enabled,
@@ -50,7 +48,7 @@ async function workspaceForOwner(
 }
 
 /** Host 保留 PostgreSQL 事务与行锁，绑定规则及错误判断委托 Core 公共用例。 */
-export function createPostgresWorkspaceBindingOperations(pool: Pool): WorkspaceBindingOperations {
+export function createPostgresWorkspaceBindingOperations(pool: Pick<Pool, 'connect'>): WorkspaceBindingOperations {
   return createWorkspaceBindings({
     transaction: work => withPostgresTransaction(pool, client => work({
       async getOwnedSession(ownerId, sessionId) {

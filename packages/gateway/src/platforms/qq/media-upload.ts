@@ -8,11 +8,11 @@ export const QQ_ATTACHMENT_MAX_BYTES = 30 * 1024 * 1024;
 const prefixBytes = 10_002_432;
 type Stage = 'input' | 'prepare' | 'part' | 'finish' | 'complete' | 'close';
 export class QqMediaUploadError extends Error {
-  constructor(readonly stage: Stage, readonly outcome: 'UNKNOWN' | 'FAILED_CONFIRMED', readonly statusCode?: number) { super('QQ 媒体上传失败'); this.name = 'QqMediaUploadError'; }
+  constructor(readonly stage: Stage, readonly outcome: 'UNKNOWN' | 'FAILED_CONFIRMED', readonly statusCode?: number, readonly errorCode?: number) { super('QQ 媒体上传失败'); this.name = 'QqMediaUploadError'; }
 }
 function error(stage: Stage, value: unknown): QqMediaUploadError {
   if (value instanceof QqMediaUploadError) return value;
-  if (value instanceof QqApiError) return new QqMediaUploadError(stage, value.outcome, value.statusCode);
+  if (value instanceof QqApiError) return new QqMediaUploadError(stage, value.outcome, value.statusCode, value.errorCode);
   return new QqMediaUploadError(stage, 'UNKNOWN');
 }
 function positive(value: unknown): number | undefined {
@@ -21,10 +21,10 @@ function positive(value: unknown): number | undefined {
 }
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const hash = (algorithm: string, bytes: Uint8Array) => createHash(algorithm).update(bytes).digest('hex');
-export interface QqMediaUploadInput { target: 'users' | 'groups'; openid: string; fileType: 1 | 2 | 3 | 4; data: Uint8Array; fileName: string; signal?: AbortSignal; authorize?(): Promise<boolean> }
+export interface QqMediaUploadInput { target: 'users' | 'groups'; openid: string; fileType: 1 | 2 | 3 | 4; data: Uint8Array; fileName: string; signal?: AbortSignal; authorize?(): Promise<boolean>; partConcurrencyLimit?: 5 }
 
 /** QQ分块媒体准备，不发送消息；file_info成功也不是消息投递回执。 */
-export function createQqMediaUploader(options: { client: Pick<ReturnType<typeof createQqClient>, 'call'>; transport?: ProviderTransport; timeoutMs?: number }) {
+export function createQqMediaUploader(options: { client: Pick<ReturnType<typeof createQqClient>, 'call'>; transport?: ProviderTransport; timeoutMs?: number; observe?: (metrics: Readonly<Record<string, number>>) => void }) {
   const timeoutMs = options.timeoutMs ?? 300_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300_000) throw new QqMediaUploadError('input', 'FAILED_CONFIRMED');
   const lifetime = new AbortController(); const tasks = new Set<Promise<Record<string, unknown>>>();
@@ -32,6 +32,8 @@ export function createQqMediaUploader(options: { client: Pick<ReturnType<typeof 
   async function run(input: QqMediaUploadInput): Promise<Record<string, unknown>> {
     if (!['users', 'groups'].includes(input.target) || !/^[A-Za-z0-9_-]{1,256}$/.test(input.openid) || ![1, 2, 3, 4].includes(input.fileType) || !(input.data instanceof Uint8Array) || !input.data.byteLength || input.data.byteLength > QQ_ATTACHMENT_MAX_BYTES || !input.fileName || /[\r\n\0]/.test(input.fileName)) throw new QqMediaUploadError('input', 'FAILED_CONFIRMED');
     // 固定本次上传快照；调用方改变原数组不能破坏hash与分块内容一致性。
+    const started = performance.now();
+    const metrics = { prepareMs: 0, transferMs: 0, putMs: 0, finishMs: 0, completeMs: 0, parts: 0, concurrency: 0, elapsedMs: 0 };
     const data = Buffer.from(input.data);
     const work = new AbortController();
     const signal = AbortSignal.any([lifetime.signal, work.signal, ...(input.signal ? [input.signal] : [])]);
@@ -42,6 +44,7 @@ export function createQqMediaUploader(options: { client: Pick<ReturnType<typeof 
       signal.throwIfAborted();
       if (input.authorize && !await input.authorize()) throw new QqMediaUploadError('input', 'FAILED_CONFIRMED');
       const prepare = await options.client.call('POST', path + '/upload_prepare', { signal, timeoutMs, authorize: input.authorize, body: { file_type: input.fileType, file_name: input.fileName, file_size: data.byteLength, md5: hash('md5', data), sha1: hash('sha1', data), md5_10m: hash('md5', data.subarray(0, prefixBytes)) } });
+      metrics.prepareMs = Math.round(performance.now() - started);
       const blockSize = positive(prepare.block_size);
       if (typeof prepare.upload_id !== 'string' || !prepare.upload_id || !blockSize || !Array.isArray(prepare.parts) || !prepare.parts.length || prepare.parts.length !== Math.ceil(data.byteLength / blockSize)) throw new QqMediaUploadError('prepare', 'FAILED_CONFIRMED');
       const uploadId = prepare.upload_id;
@@ -60,7 +63,10 @@ export function createQqMediaUploader(options: { client: Pick<ReturnType<typeof 
       // 不改写预签名query；底层ProviderTransport继续负责公共URL策略与DNS固定。
       if (!transport) { opening ??= import('@gugu/core/providers/node').then(({ NodeProviderTransport }) => new NodeProviderTransport({ trustEnvironment: false })); transport = await opening; }
       const advertised = object(prepare.upload_config) ? prepare.upload_config.concurrency : prepare.concurrency;
-      const concurrency = typeof advertised === 'number' && Number.isSafeInteger(advertised) && advertised > 0 ? Math.min(advertised, 10) : 1;
+      const concurrency = typeof advertised === 'number' && Number.isSafeInteger(advertised) && advertised > 0 ? Math.min(advertised, input.partConcurrencyLimit ?? 10) : 1;
+      metrics.parts = parts.length;
+      metrics.concurrency = Math.min(concurrency, parts.length);
+      const transferStarted = performance.now();
       let next = 0;
       let firstError: QqMediaUploadError | undefined;
       stage = 'part';
@@ -74,28 +80,38 @@ export function createQqMediaUploader(options: { client: Pick<ReturnType<typeof 
           try {
             signal.throwIfAborted();
             if (input.authorize && !await input.authorize()) throw new QqMediaUploadError('part', 'FAILED_CONFIRMED');
+            const putStarted = performance.now();
             response = await transport!.request({ method: 'PUT', url: part.url, headers: { 'content-type': 'application/octet-stream' }, body: part.bytes, timeoutMs }, signal);
+            metrics.putMs += Math.round(performance.now() - putStarted);
             signal.throwIfAborted();
             if (response.status < 200 || response.status >= 300) throw new QqMediaUploadError('part', response.status >= 400 && response.status < 500 && response.status !== 408 ? 'FAILED_CONFIRMED' : 'UNKNOWN', response.status);
             // COS PUT成功不读取可能回显敏感字段的响应正文，取消以释放连接。
             await response.cancel(); response = undefined;
             partStage = 'finish';
-            if (input.authorize && !await input.authorize()) throw new QqMediaUploadError('finish', 'FAILED_CONFIRMED');
+            // QQ 客户端紧贴实际请求复核，避免重复读取同一授权。
+            const finishStarted = performance.now();
             await options.client.call('POST', path + '/upload_part_finish', { signal, timeoutMs, authorize: input.authorize, body: { upload_id: uploadId, part_index: part.index, block_size: part.bytes.byteLength, md5: hash('md5', part.bytes) } });
+            metrics.finishMs += Math.round(performance.now() - finishStarted);
           } catch (value) { firstError ??= error(partStage, value); work.abort(); return; }
           finally { signal.removeEventListener('abort', cancel); try { await response?.cancel(); } catch { /* 不暴露原始网络异常。 */ } }
         }
       };
-      await Promise.allSettled(Array.from({ length: Math.min(concurrency, parts.length) }, worker));
+      await Promise.allSettled(Array.from({ length: metrics.concurrency }, worker));
+      metrics.transferMs = Math.round(performance.now() - transferStarted);
       if (firstError) throw firstError;
       signal.throwIfAborted();
       stage = 'complete';
-      if (input.authorize && !await input.authorize()) throw new QqMediaUploadError('complete', 'FAILED_CONFIRMED');
+      const completeStarted = performance.now();
       const complete = await options.client.call('POST', path + '/files', { signal, timeoutMs, authorize: input.authorize, body: { upload_id: uploadId } });
+      metrics.completeMs = Math.round(performance.now() - completeStarted);
       if (typeof complete.file_info !== 'string' || !complete.file_info) throw new QqMediaUploadError('complete', 'UNKNOWN');
       return complete;
     } catch (value) { throw error(stage, value); }
-    finally { clearTimeout(timer); work.abort(); }
+    finally {
+      clearTimeout(timer); work.abort();
+      metrics.elapsedMs = Math.round(performance.now() - started);
+      try { options.observe?.(metrics); } catch { /* 诊断失败不影响投递结果。 */ }
+    }
   }
   return {
     upload(input: QqMediaUploadInput) {

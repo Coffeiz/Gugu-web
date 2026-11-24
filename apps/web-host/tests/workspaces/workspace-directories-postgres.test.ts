@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdir, stat } from 'node:fs/promises'
+import { mkdir, stat, writeFile } from 'node:fs/promises'
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,7 +15,7 @@ const userId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const otherUserId = '3c01ac44-6576-41f0-9d99-3d2f0cb456ef'
 
 test('PostgreSQL Workspace Directory CRUD 保持归属、计数、绑定和删除事务/文件顺序', {
-  skip: !databaseUrl,
+  skip: !databaseUrl || process.platform !== 'linux',
 }, async () => {
   const schema = `gugu_workspace_directories_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: databaseUrl, max: 1 })
@@ -38,14 +38,6 @@ test('PostgreSQL Workspace Directory CRUD 保持归属、计数、绑定和删�
         id serial PRIMARY KEY, user_id uuid NOT NULL, name text NOT NULL, kind text NOT NULL,
         directory_id integer, enabled boolean NOT NULL, is_default boolean NOT NULL DEFAULT false,
         created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE files (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_directory_id integer NOT NULL,
-        space text NOT NULL, folder_id integer, deleted_at timestamptz, updated_at timestamptz
-      );
-      CREATE TABLE folders (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_directory_id integer NOT NULL,
-        parent_id integer, deleted_at timestamptz, updated_at timestamptz, version integer NOT NULL DEFAULT 1
       );
       CREATE TABLE conversation_sessions (id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_id integer);
       CREATE TABLE scheduled_tasks (id serial PRIMARY KEY, user_id uuid, workspace_id integer, enabled boolean NOT NULL);
@@ -86,10 +78,10 @@ test('PostgreSQL Workspace Directory CRUD 保持归属、计数、绑定和删�
     ])
 
     const bindingId = userBindings.rows[1]!.id
-    await pool.query('INSERT INTO files(user_id,workspace_directory_id,space,folder_id) VALUES ($1,$2,\'workspace\',NULL),($1,$2,\'workspace\',40),($1,$2,\'workspace\',NULL)', [userId, created.id])
-    await pool.query('UPDATE files SET deleted_at=now() WHERE id=(SELECT max(id) FROM files)')
-    await pool.query('INSERT INTO folders(user_id,workspace_directory_id,parent_id) VALUES ($1,$2,NULL),($1,$2,41),($1,$2,NULL)', [userId, created.id])
-    await pool.query('UPDATE folders SET deleted_at=now() WHERE id=(SELECT max(id) FROM folders)')
+    const physicalRoot = join(root, userId, 'workspace', created.directory_name)
+    await mkdir(join(physicalRoot, '子目录', '空目录'), { recursive: true })
+    await writeFile(join(physicalRoot, '根文件.txt'), '根文件')
+    await writeFile(join(physicalRoot, '子目录', '文件.txt'), '子目录文件')
     await pool.query('INSERT INTO conversation_sessions(user_id,workspace_id) VALUES ($1,$2)', [userId, bindingId])
     await pool.query('INSERT INTO scheduled_tasks(user_id,workspace_id,enabled) VALUES ($1,$2,true)', [userId, bindingId])
     await pool.query('INSERT INTO terminal_sessions(id,owner_id,workspace_id,status) VALUES (\'pty-1\',$1,$2,\'running\')', [userId, bindingId])
@@ -122,7 +114,6 @@ test('PostgreSQL Workspace Directory CRUD 保持归属、计数、绑定和删�
     )
 
     await pool.query(tablesSql('postgres').ragJobs)
-    const physicalRoot = join(root, userId, 'workspace', created.directory_name)
     assert.ok(prepared.includes(physicalRoot))
     failTermination = true
     await assert.rejects(operations.delete(userId, created.id), /PTY termination failed/)
@@ -130,8 +121,6 @@ test('PostgreSQL Workspace Directory CRUD 保持归属、计数、绑定和删�
     assert.equal((await pool.query('SELECT workspace_id FROM conversation_sessions')).rows[0]!.workspace_id, bindingId)
     assert.equal((await pool.query('SELECT enabled FROM scheduled_tasks')).rows[0]!.enabled, true)
     assert.equal((await pool.query('SELECT closed_at FROM terminal_sessions WHERE id=\'pty-1\'')).rows[0]!.closed_at, null)
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM files WHERE deleted_at IS NOT NULL')).rows[0]!.count, 1)
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM folders WHERE deleted_at IS NOT NULL')).rows[0]!.count, 1)
     assert.ok(await stat(physicalRoot))
 
     failTermination = false
@@ -144,8 +133,6 @@ test('PostgreSQL Workspace Directory CRUD 保持归属、计数、绑定和删�
     assert.deepEqual((await pool.query('SELECT status, closed_at FROM terminal_sessions WHERE id=\'pty-1\'')).rows[0], {
       status: 'terminated', closed_at: new Date('2026-11-13T12:00:00.000Z'),
     })
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM files WHERE deleted_at IS NOT NULL')).rows[0]!.count, 3)
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM folders WHERE deleted_at IS NOT NULL')).rows[0]!.count, 3)
     await assert.rejects(stat(physicalRoot), { code: 'ENOENT' })
   } finally {
     await pool?.end()

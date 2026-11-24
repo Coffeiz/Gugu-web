@@ -4,10 +4,12 @@ import { wechatPrivateMessage } from '../../../packages/gateway/tests/fixtures/w
 import { setTimeout as delay } from 'node:timers/promises'
 import { expect, it, vi } from 'vitest'
 import { createDesktopWechatGateway } from '../src/main/im/gateway/platforms/wechat/index.js'
+import type { IpcHost } from '../src/main/ipc/types.js'
 import type { createDesktopImDispatch } from '../src/main/im/gateway/delivery/dispatch.js'
 
 it('微信桌面轮询只接受绑定私聊，回复携带原会话凭据，停用后停止发送', async () => {
   const bot = { botId: 'bot', userId: wechatPrivateMessage.from_user_id, token: 'synthetic-token', baseUrl: 'https://ilinkai.weixin.qq.com', enabled: true, revision: '1' }
+  const control = vi.fn(async (method: string) => method === 'im.inbox.status' ? { status: 'running' } : { outcome: 'requested' })
   const admitted = vi.fn(async () => {})
   const binding = Promise.withResolvers<Parameters<ReturnType<typeof createDesktopImDispatch>>[0]>()
   const requests: Record<string, unknown>[] = []
@@ -15,9 +17,9 @@ it('微信桌面轮询只接受绑定私聊，回复携带原会话凭据，停�
   let deliveredUpdates = false
   const cursors: string[] = []
   let committed: string | null = 'previous'
-  const message = (fromUser: string, token: string, messageId: number, groupId?: string) => ({
+  const message = (fromUser: string, token: string, messageId: number, groupId?: string, text = '测试') => ({
     message_type: 1, message_id: messageId, from_user_id: fromUser, context_token: token, group_id: groupId,
-    item_list: [{ type: 1, text_item: { text: '测试' } }],
+    item_list: [{ type: 1, text_item: { text } }],
   })
   const key = Buffer.alloc(16, 7)
   const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1])
@@ -42,6 +44,9 @@ it('微信桌面轮询只接受绑定私聊，回复携带原会话凭据，停�
           wechatPrivateMessage, { ...wechatPrivateMessage, message_id: 4 },
           { ...image, from_user_id: 'other', message_id: 6 }, image,
           { ...wechatPrivateMessage, message_id: 7, item_list: [{ type: 3, voice_item: {} }] },
+          message('other', 'other-context', 8, undefined, '/stop'),
+          message(bot.userId, 'status-context', 9, undefined, '/status'),
+          message(bot.userId, 'stop-context', 10, undefined, '/stop'),
         ] }
       }
       if (request.url.endsWith('/getconfig')) response = { ret: 0, typing_ticket: 'synthetic-ticket' }
@@ -54,7 +59,7 @@ it('微信桌面轮询只接受绑定私聊，回复携带原会话凭据，停�
         expect(admitted).toHaveBeenCalledTimes(3)
         committed = value
       },
-    }))
+    }), undefined, undefined, { request: control as IpcHost['request'] })
   try {
     await gateway.start()
     const dispatch = await binding.promise
@@ -73,7 +78,12 @@ it('微信桌面轮询只接受绑定私聊，回复携带原会话凭据，停�
     expect(requests).toEqual([expect.objectContaining({
       to_user_id: bot.userId, context_token: 'private-context',
       item_list: [{ type: 1, text_item: { text: '没收到这条语音的转写，请重发语音或改用文字。' } }],
+    }), expect.objectContaining({ to_user_id: bot.userId, context_token: 'status-context',
+      item_list: [{ type: 1, text_item: { text: '当前任务仍在运行。' } }],
+    }), expect.objectContaining({ to_user_id: bot.userId, context_token: 'stop-context',
+      item_list: [{ type: 1, text_item: { text: '🛑 已停止当前任务' } }],
     })])
+    expect(control.mock.calls.map(([method]) => method)).toEqual(['im.inbox.status', 'im.inbox.cancelRun'])
     requests.length = 0
     const stopTyping = dispatch.startTyping!('private-context')
     await vi.waitFor(() => expect(typingRequests).toEqual([

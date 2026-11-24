@@ -44,13 +44,15 @@ export function createAgentRunToolPorts(options: {
     const permitted = new Set((await discoverRelatedTools(signal, name.startsWith('mcp_') ? { names: [name] } : undefined)).map(definition => definition.name))
     return permitted.has('call_tool') && permitted.has(canonicalAgentToolName(name))
   }
+  const unavailable = options.registry.tools.unavailableTool
   const tools: ToolPort = {
+    ...(unavailable ? { unavailableTool: unavailable } : {}),
     async resolveCall(call, candidate, signal) {
       if (!matchesRun(candidate)) return { error: '工具运行身份不匹配' }
       const target = resolveCallTool(call)
       if ('error' in target || call.name !== 'call_tool') return target
       if (!await mayForward(target.call.name, signal))
-        return { error: '工具不存在或未开放' }
+        return unavailable?.(target.call.name) ?? { error: '工具不存在或未开放' }
       return { call: { ...target.call, adapter: 'call_tool' } }
     },
     ...(plan ? { async plan(calls, candidate) {
@@ -63,7 +65,7 @@ export function createAgentRunToolPorts(options: {
         kind: 'completed', value: { error: '工具运行身份不匹配' }, successful: false, mutated: false, executed: false,
       } satisfies ToolResult
       if (call.adapter === 'call_tool' && !await mayForward(call.name, scope.signal)) return {
-        kind: 'completed', value: { error: '工具不存在或未开放' }, successful: false, mutated: false, executed: false,
+        kind: 'completed', value: unavailable?.(call.name) ?? { error: '工具不存在或未开放' }, successful: false, mutated: false, executed: false,
       }
       return options.registry.tools.dispatch(call, { ...scope, discoverRelatedTools: lookup => discoverRelatedTools(scope.signal, lookup) })
     },

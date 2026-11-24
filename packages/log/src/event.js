@@ -22,6 +22,14 @@ export function createAgentLog({ regular, diagnostic, fingerprint, now = Date.no
     },
     diagnose(code, failure) {
       const time = new Date(now()).toISOString()
+      if (code === 'finalization_hook_failed' && failure) {
+        // 可见日志已有收尾警告；异常细节只保留白名单字段和脱敏堆栈。
+        writeLogRecord(diagnostic, { time, level: 'warn', event: 'agent.run.finalization_failed',
+          run: runId(failure.identity),
+          attributes: { phase: runPhase(failure.phase), errorCode: failureCode(failure.error) },
+          frames: errorFrames(failure.error) })
+        return
+      }
       if (code !== 'run_failed' || !failure) {
         writeLogRecord(regular, { time, level: 'error', event: 'agent.runtime.failure',
           attributes: { errorCode: runtimeFailures.has(code) ? code : 'internal_error' } })

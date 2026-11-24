@@ -9,6 +9,7 @@ import type { DesktopPreviewWindowState } from '@gugu/desktop-contracts'
 
 const preview = shallowRef<PreviewWindow>()
 const failed = ref(false)
+const hideReveal = ref(false)
 const windowState = shallowRef<DesktopPreviewWindowState>({ fullscreen: false, pinned: false })
 const unsubscribe = previewWindowBridge?.onStateChanged(state => { windowState.value = state })
 onUnmounted(() => unsubscribe?.())
@@ -19,6 +20,7 @@ onMounted(async () => {
     const [reply, state] = await Promise.all([previewWindowBridge.read(), previewWindowBridge.state('read')])
     if (state.ok) windowState.value = state.result
     if (!reply?.ok) { failed.value = true; return }
+    hideReveal.value = 'canReveal' in reply.result && reply.result.canReveal === false
     preview.value = {
       id: 1, file: reply.result, reloadToken: 1, siblings: [],
       textFallback: isTextFallbackCandidate(reply.result.ext, reply.result.mimeType),
@@ -45,7 +47,7 @@ async function reveal() {
 </script>
 
 <template>
-  <FloatPreviewWindow v-if="preview" :win="preview" native-window :native-state="windowState" @close="close" @reveal="reveal"
+  <FloatPreviewWindow v-if="preview" :win="preview" native-window :hide-native-reveal="hideReveal" :native-state="windowState" @close="close" @reveal="reveal"
     @toggle-fullscreen="toggleWindow('fullscreen')" @toggle-pin="toggleWindow('pin')" />
   <p v-else-if="failed" role="alert">无法打开文件预览</p>
   <AppToast />

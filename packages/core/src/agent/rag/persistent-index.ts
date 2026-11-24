@@ -86,9 +86,9 @@ export function createSqlRagPersistentIndexReader(db:Kysely<any>,backend:'postgr
   snapshot: (rawOwner:string,signal?:AbortSignal) => readSnapshot(rawOwner,signal),
   /** scope 必须来自 Host 已验证的授权快照，不能使用模型参数。 */
   async snapshotForScope(rawOwner:string,scope:RagSearchScope,signal?:AbortSignal){
-   if(!scope || !['owner','group','member','project','folder'].includes(scope.scope_type||''))throw new Error('RAG 授权范围无效')
+   if(!scope || !['owner','group','member','project'].includes(scope.scope_type||''))throw new Error('RAG 授权范围无效')
    if(['group','member'].includes(scope.scope_type!)&&(!scope.scope_id||!scope.platform||!scope.bot_id||!scope.group_id))throw new Error('RAG 授权范围不完整')
-   if(['project','folder'].includes(scope.scope_type!)&&!scope.scope_id)throw new Error('RAG 授权范围不完整')
+   if(scope.scope_type==='project'&&!scope.scope_id)throw new Error('RAG 授权范围不完整')
    const scopeFilter = ['group','member'].includes(scope.scope_type!)
     ? sql`platform=${scope.platform} AND bot_id=${scope.bot_id} AND group_id=${scope.group_id}
       AND ((scope_type=${scope.scope_type} AND scope_id=${scope.scope_id}) OR (${Number(scope.scope_type==='member')}=1 AND scope_type='group'))`
@@ -96,7 +96,7 @@ export function createSqlRagPersistentIndexReader(db:Kysely<any>,backend:'postgr
    const snapshot=await readSnapshot(rawOwner,signal,scopeFilter)
    const documents=snapshot.documents.filter(doc=>{
     if(scope.scope_type==='owner')return doc.scope_type==='owner'
-    if(scope.scope_type==='project'||scope.scope_type==='folder')return doc.scope_type==='owner'&&String(doc.metadata?.[scope.scope_type==='project'?'project_id':'folder_id']??'')===scope.scope_id
+    if(scope.scope_type==='project')return doc.scope_type==='owner'&&String(doc.metadata?.project_id??'')===scope.scope_id
     if(doc.platform!==scope.platform||doc.bot_id!==scope.bot_id||doc.group_id!==scope.group_id)return false
     return doc.scope_type===scope.scope_type&&doc.scope_id===scope.scope_id || scope.scope_type==='member'&&doc.scope_type==='group'
    })

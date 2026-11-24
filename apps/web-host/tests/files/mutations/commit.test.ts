@@ -18,9 +18,9 @@ test('确认 COMMIT 已提交但响应丢失后保留数据库新路径和文件
   await writeFile(source, '合成正文')
 
   const before: Record<string, unknown> = {
-    id: 1, user_id: owner, display_name: '笔记', ext: 'md', space: 'personal',
-    workspace_directory_id: null, project_id: null, stage_name: '', folder_id: null,
-    mind_map_id: null, storage_key: sourceKey, version: 1, size: '12 B', size_bytes: 12,
+    user_id: owner, display_name: '笔记', ext: 'md', space: 'personal',
+    workspace_directory_id: null, project_id: null, stage_name: '',
+    mind_map_id: null, path: sourceKey, version: 1, size: '12 B', size_bytes: 12,
     mime_type: 'text/markdown', created_at: new Date('2026-01-01T00:00:00Z'),
     deleted_at: null, img_width: null, img_height: null,
   }
@@ -38,8 +38,8 @@ test('确认 COMMIT 已提交但响应丢失后保留数据库新路径和文件
     else if (statement.startsWith('UPDATE files SET display_name=')) {
       assert.ok(pending)
       pending = { ...pending, display_name: values[3], ext: values[4], stage_name: values[5],
-        folder_id: values[6], project_id: values[7], workspace_directory_id: values[8],
-        space: values[9], storage_key: values[10], version: 2 }
+        project_id: values[6], workspace_directory_id: values[7],
+        space: values[8], path: values[9], version: 2 }
       rows = [{ ...pending }]
     } else if (statement === 'COMMIT') {
       commitCount += 1
@@ -48,30 +48,30 @@ test('确认 COMMIT 已提交但响应丢失后保留数据库新路径和文件
       throw new Error('模拟数据库已提交但 COMMIT 响应丢失')
     } else if (statement === 'ROLLBACK') pending = null
     else if (statement.startsWith('SELECT p.name project_name')) rows = []
-    else if (statement.startsWith('SELECT storage_key,version FROM files')) rows = [{ storage_key: durable.storage_key, version: durable.version }]
+    else if (statement.startsWith('SELECT path,version FROM files')) rows = [{ path: durable.path, version: durable.version }]
     else throw new Error(`测试桩未识别 SQL: ${statement.slice(0, 48)}`)
     return { rows, rowCount: rows.length } as unknown as QueryResult<Row>
   }
   const client = { query, release() {} } as unknown as PoolClient
   const pool = { connect: async () => client, query } as unknown as Pool
-  const events: number[] = []
+  const events: string[] = []
 
   try {
     const operations = createPostgresFileUpdateOperations(pool, {
       storageRoot: root,
       async publishChanged(event) { events.push(event.entityId) },
     })
-    const result = await operations.update(owner, 1, {
-      version: 1, displayName: '新笔记', folderSet: false, projectSet: false, workspaceDirectorySet: false,
+    const result = await operations.update(owner, sourceKey, {
+      version: 1, displayName: '新笔记', folderPathSet: false, projectSet: false, workspaceDirectorySet: false,
     }, { idempotencyKey: null, undoContextId: null, clientId: 'test' }) as { displayName: string; version: number }
 
     assert.equal(commitCount, 1)
     assert.equal(result.displayName, '新笔记')
     assert.equal(result.version, 2)
-    assert.equal(durable.storage_key, targetKey)
+    assert.equal(durable.path, targetKey)
     assert.equal(await readFile(target, 'utf8'), '合成正文')
     await assert.rejects(readFile(source), { code: 'ENOENT' })
-    assert.deepEqual(events, [1])
+    assert.deepEqual(events, [targetKey])
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -83,9 +83,9 @@ test('无法核实 COMMIT 结果时保留原路径和目标路径中的文件副
   await writeFile(source, '合成正文')
 
   let durable: Record<string, unknown> = {
-    id: 1, user_id: owner, display_name: '笔记', ext: 'md', space: 'personal',
-    workspace_directory_id: null, project_id: null, stage_name: '', folder_id: null,
-    mind_map_id: null, storage_key: sourceKey, version: 1, size: '4 B', size_bytes: 8,
+    user_id: owner, display_name: '笔记', ext: 'md', space: 'personal',
+    workspace_directory_id: null, project_id: null, stage_name: '',
+    mind_map_id: null, path: sourceKey, version: 1, size: '4 B', size_bytes: 8,
     mime_type: 'text/markdown', created_at: new Date('2026-01-01T00:00:00Z'),
     deleted_at: null, img_width: null, img_height: null,
   }
@@ -101,15 +101,15 @@ test('无法核实 COMMIT 结果时保留原路径和目标路径中的文件副
     else if (statement.startsWith('UPDATE files SET display_name=')) {
       assert.ok(pending)
       pending = { ...pending, display_name: values[3], ext: values[4], stage_name: values[5],
-        folder_id: values[6], project_id: values[7], workspace_directory_id: values[8],
-        space: values[9], storage_key: values[10], version: 2 }
+        project_id: values[6], workspace_directory_id: values[7],
+        space: values[8], path: values[9], version: 2 }
       rows = [{ ...pending }]
     } else if (statement === 'COMMIT') {
       durable = { ...(pending ?? durable) }
       pending = null
       throw new Error('模拟数据库已提交但 COMMIT 响应丢失')
     } else if (statement === 'ROLLBACK') pending = null
-    else if (statement.startsWith('SELECT storage_key,version FROM files')) throw new Error('模拟核实连接暂时不可用')
+    else if (statement.startsWith('SELECT path,version FROM files')) throw new Error('模拟核实连接暂时不可用')
     else throw new Error(`测试桩未识别 SQL: ${statement.slice(0, 48)}`)
     return { rows, rowCount: rows.length } as unknown as QueryResult<Row>
   }
@@ -119,10 +119,10 @@ test('无法核实 COMMIT 结果时保留原路径和目标路径中的文件副
   try {
     const operations = createPostgresFileUpdateOperations(pool, { storageRoot: root, async publishChanged() {} })
     await assert.rejects(operations.update(owner, 1, {
-      version: 1, displayName: '新笔记', folderSet: false, projectSet: false, workspaceDirectorySet: false,
+      version: 1, displayName: '新笔记', folderPathSet: false, projectSet: false, workspaceDirectorySet: false,
     }, { idempotencyKey: null, undoContextId: null, clientId: null }), /提交结果暂时无法确认/)
 
-    assert.equal(durable.storage_key, targetKey)
+    assert.equal(durable.path, targetKey)
     assert.equal(await readFile(source, 'utf8'), '合成正文')
     assert.equal(await readFile(target, 'utf8'), '合成正文')
   } finally { await rm(root, { recursive: true, force: true }) }

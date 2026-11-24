@@ -47,6 +47,7 @@ export interface ToolRegistryOptions {
   readonly confirmationGatedDestructiveTools?: readonly ToolDefinition[]
   /** 仅用于缺年份的旧日期输入；未提供时不猜测年份。 */
   normalizationYear?(identity: RunIdentity): number
+  unavailableTool?: ToolPort['unavailableTool']
   /** 每次发现与执行重新判权；可结合平台能力及最新授权状态。 */
   authorize(identity: RunIdentity, name: string): Promise<boolean>
 }

@@ -13,6 +13,10 @@ const levels = new Map(Object.entries({
   'web_push.failed': 'warn',
   'host.trash_purge_unavailable': 'warn', 'host.search_usage_unavailable': 'warn',
   'gateway.started': 'info', 'gateway.stopped': 'info', 'gateway.start_failed': 'error',
+  'gateway.qq_upload_timing': 'info',
+  'gateway.qq_upload_failed': 'warn', 'gateway.qq_file_message_failed': 'warn',
+  'gateway.qq_file_delivery_started': 'info',
+  'gateway.qq_file_delivery_result': 'info',
   'gateway.stop_failed': 'error', 'gateway.degraded': 'warn',
   'gateway.rag_timeout': 'warn', 'gateway.rag_late_completion': 'info',
   'sandbox.probe_failed': 'warn', 'sandbox.command_failed': 'warn', 'sandbox.system_completed': 'info',
@@ -85,7 +89,22 @@ export function createRuntimeLog({ regular, diagnostic }) {
     const mediaStatus = (code === 'qq-event-failed' && ['qq_media_address', 'qq_media_download'].includes(errorCode)
       || code === 'feishu-event-failed' && errorCode === 'feishu_media_download') ? error?.httpStatus : undefined
     const iLinkDetails = typeof code === 'string' && code.startsWith('wechat-') ? safeILinkDetails(error) : {}
+    const { uploadStage, httpStatus, upstreamCode, deliveryOutcome } = details
     const attributes = {
+      ...(event === 'gateway.qq_upload_timing' ? Object.fromEntries(
+        ['prepareMs', 'transferMs', 'putMs', 'finishMs', 'completeMs', 'parts', 'concurrency', 'elapsedMs']
+          .flatMap(key => {
+            const value = details.uploadMetrics?.[key]
+            return Number.isSafeInteger(value) && value >= 0 ? [[key, value]] : []
+          }),
+      ) : {}),
+      ...(event === 'gateway.qq_file_delivery_result' && ['accepted', 'rejected', 'unknown'].includes(deliveryOutcome)
+        ? { deliveryOutcome } : {}),
+      ...(['gateway.qq_upload_failed', 'gateway.qq_file_message_failed'].includes(event) ? {
+        ...(['input', 'prepare', 'part', 'finish', 'complete', 'close'].includes(uploadStage) ? { uploadStage } : {}),
+        ...(Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? { httpStatus } : {}),
+        ...(Number.isSafeInteger(upstreamCode) ? { upstreamCode } : {}),
+      } : {}),
       ...(event === 'host.core_worker_exit' && ['out_of_memory', 'uncaught_exception', 'unexpected_exit', 'watchdog_timeout'].includes(code)
         && Number.isSafeInteger(exitCode) ? { code, exitCode } : {}),
       ...(event.startsWith('host.shutdown_phase_') && shutdownPhases.has(phase) ? { phase } : {}),

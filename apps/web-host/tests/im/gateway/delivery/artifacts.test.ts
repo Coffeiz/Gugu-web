@@ -13,7 +13,7 @@ import { imAttachmentScopeKey, type ImAttachmentScope } from '../../../../src/mo
 import { context, receipt, platform, temporary, fakeDatabase, deliveryOutcome, owner, other, data, stored } from '../run-sender.fixtures.js'
 test('真实本地附件→真实Telegram上传，拒绝root路径/歧义引用/跨Run并忽略模型伪造文件名', async () => temporary(async root => {
   const db = fakeDatabase(), p = platform('telegram'), c = context()
-  const send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(db.pool, null, root),
+  const send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(db.pool, root),
     sender: () => p.sender, authorize: async () => true })
   try {
     const result = await send({ identity: c.identity, deliveryId: 'a', artifact: { attach_id: 'attachment', name: '不可信模型名称' } })
@@ -53,7 +53,7 @@ test('四平台制品透传真实调用者取消：上传中止后无后续消�
    const path=new URL(request.url).pathname
    if(kind==='telegram'||kind==='feishu'&&path.endsWith('/files')||kind==='qq'&&path.endsWith('/upload_prepare')||kind==='wechat'&&path.endsWith('/getuploadurl'))controller.abort()
   })
-  const send=createImRunArtifactSender({...c,pool:db.pool,storageRoot:root,messageIds:['11'],files:createPostgresFileReadOperations(db.pool,null,root),sender:()=>p.sender,authorize:async()=>true})
+  const send=createImRunArtifactSender({...c,pool:db.pool,storageRoot:root,messageIds:['11'],files:createPostgresFileReadOperations(db.pool, root),sender:()=>p.sender,authorize:async()=>true})
   try{
    const result=await send({identity:c.identity,deliveryId:'cancelled-upload',artifact:{attach_id:'attachment'}},controller.signal)
    assert.notEqual(deliveryOutcome(result),'accepted',kind)
@@ -78,7 +78,7 @@ test('飞书/QQ/微信上传阶段撤权后不发消息或后续分片确认，�
       if (kind === 'feishu' && path.endsWith('/files') || kind === 'qq' && (phase === 'prepare' ? path.endsWith('/upload_prepare') : request.method === 'PUT')
         || kind === 'wechat' && (phase === 'prepare' ? path.endsWith('/getuploadurl') : path === '/c2c/upload')) allowed = false
     })
-    const send = createImRunArtifactSender({ ...c, pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(db.pool, null, root),
+    const send = createImRunArtifactSender({ ...c, pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(db.pool, root),
       sender: () => p.sender, authorize: async () => allowed })
     try {
       const result = await send({ identity: c.identity, deliveryId: 'withdraw', artifact: { attach_id: 'attachment' } })
@@ -103,7 +103,7 @@ test('Telegram制品在真实sender队列中等待后撤权，出队不再发送
   try {
     await enteredPromise
     const c = context(), db = fakeDatabase(), send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'],
-      files: createPostgresFileReadOperations(db.pool, null, root), sender: () => p.sender, authorize: async () => allowed })
+      files: createPostgresFileReadOperations(db.pool, root), sender: () => p.sender, authorize: async () => allowed })
     const pending = send({ identity: c.identity, deliveryId: 'queued', artifact: { attach_id: 'attachment' } })
     await queuedPromise; allowed = false; release(); await first
     assert.notEqual(deliveryOutcome(await pending), 'accepted')
@@ -113,7 +113,7 @@ test('Telegram制品在真实sender队列中等待后撤权，出队不再发送
 
 test('未知发送错误不重试，不公开源文件内容/路径；本地文件失踪在平台请求前失败', async () => temporary(async root => {
   const db = fakeDatabase(), c = context(), p = platform('telegram', () => { throw new Error('synthetic-private-transport') })
-  const send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(db.pool, null, root),
+  const send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(db.pool, root),
     sender: () => p.sender, authorize: async () => true })
   try {
     assert.equal(await send({ identity: c.identity, deliveryId: 'unknown', artifact: { attach_id: 'attachment' } }), 'unknown')
@@ -136,12 +136,12 @@ test('真实隔离PG/FS→四平台真实sender/client协议，旧file_id只读o
       CREATE TABLE conversation_messages(id integer,session_id integer,run_id text,role text,chat_type text,platform_user_id text,conversation_seq integer,im_platform_message_id text);
       CREATE TABLE gugu_im_inbound_receipts(user_id uuid,session_id integer,message_id integer,run_id text,state text,platform text,bot_id text,chat_type text,scope_hash text,event_hash text,fingerprint text,sealed_payload jsonb);
       CREATE TABLE chat_attachments(attach_id text,user_id uuid,message_id integer,state text,platform text,extra jsonb,storage_key text,name text,ext text,mime text,size bigint);
-      CREATE TABLE projects(id integer,user_id uuid,name text,color text); CREATE TABLE folders(id integer,user_id uuid,name text);
+      CREATE TABLE projects(id integer,user_id uuid,name text,color text);
       CREATE TABLE files(id integer,user_id uuid,display_name text,ext text,space text,workspace_directory_id integer,storage_key text,project_id integer,stage_name text,
-        folder_id integer,mind_map_id integer,size text,size_bytes bigint,mime_type text,created_at timestamptz,deleted_at timestamptz,img_width integer,img_height integer,version integer)`)
+        mind_map_id integer,size text,size_bytes bigint,mime_type text,created_at timestamptz,deleted_at timestamptz,img_width integer,img_height integer,version integer)`)
     await pool.query("INSERT INTO conversation_sessions VALUES(91,$1,'web',NULL,NULL,NULL)", [owner])
     await pool.query("INSERT INTO files(id,user_id,display_name,ext,storage_key,size_bytes,mime_type,created_at,version) VALUES(1,$1,'兼容旧文件','txt',$2,$3,'text/plain',clock_timestamp(),1)", [owner, stored, data.length])
-    const db = pool, files = createPostgresFileReadOperations(db, null, root)
+    const db = pool, files = createPostgresFileReadOperations(db, root)
     for (const kind of ['telegram', 'feishu', 'qq', 'wechat'] as const) {
       const c = context(kind), p = platform(kind)
       await db.query('DELETE FROM chat_attachments'); await db.query('DELETE FROM gugu_im_inbound_receipts'); await db.query('DELETE FROM conversation_messages')

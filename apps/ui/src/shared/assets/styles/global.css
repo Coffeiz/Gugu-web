@@ -112,13 +112,10 @@ input[type="checkbox"]:not(.arco-checkbox-icon):not(.app-checkbox__input):disabl
 /* :active 会同时命中被点的子元素和所有祖先卡片。只在卡片内部没有任何 active 子元素时
    才下沉：编辑、阶段、颜色、待办、删除和之后新增的所有控件都会自然保持 hover 状态，
    不再靠一份会漏项的子元素白名单逐个撤销。画布贴纸的连接提示移至 canvas-card-effects.css。 */
-/* 只要按下反馈、不要悬停抬起：顶栏「上传文件/新建项目」、定时任务「新建任务」按钮、
-   咕咕聊天里的文件条由自己的主题化规则负责阴影——按钮/挤在气泡堆里的文件条，抬起要么跟布局
-   不搭要么显得跟旁边气泡割裂，只保留点击下沉这一半效果。 */
 .press-fx {
   transition: transform var(--motion-hover-control) ease, opacity var(--motion-hover-control) ease, box-shadow var(--motion-hover-card) ease-out;
 }
-.press-fx.press-fx:hover:not(.msg-file) {
+.press-fx.press-fx:hover {
   --topbar-btn-shadow: 0 4px 14px rgba(80,90,110,0.3);
   box-shadow: 0 4px 14px rgba(80,90,110,0.3) !important;   /* 按钮面积更小，阴影提到 30% 才看得见；仍不做上浮 */
 }

@@ -11,7 +11,7 @@ const patchBody = z.object({
 }).strict()
 const replaceBody = z.object({ items: z.array(pendingQueueItemSchema).max(200) }).strict()
 
-const integerFields = new Set(['session_id', 'key', 'id', 'remove_keys', 'file_id', 'size', 'size_bytes', 'img_width', 'img_height'])
+const integerFields = new Set(['session_id', 'key', 'id', 'remove_keys', 'size', 'size_bytes', 'img_width', 'img_height'])
 const floatFields = new Set(['duration'])
 const booleanFields = new Set(['qq_face', 'quoted', 'upload'])
 

@@ -21,7 +21,7 @@ export function createWebScheduledTaskContextSources(options: {
   const { pool, storageRoot, redis, serverTimezone, now } = options
   const kind = 'scheduled_task'
   const preferences = createAgentPreferenceContextSources(pool, createLocalPreferenceTextFiles(storageRoot), redis, serverTimezone, kind)
-  const { loadProjects, loadEvents, loadFilesOverview } = createAgentOverviewSources(pool, () => new Date(now()), kind)
+  const { loadProjects, loadEvents, loadFilesOverview } = createAgentOverviewSources(pool, storageRoot, () => new Date(now()), kind)
   return {
     now,
     loadGroupStyle: preferences.loadGroupStyle,

@@ -154,13 +154,14 @@ onBeforeUnmount(() => {
   font-size: 0.88em;
   color: var(--content-primary);
   background: color-mix(in srgb, var(--action-primary) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--action-outline) 50%, transparent);
   border-radius: 5px; padding: 1px 5px;
 }
 .md-view :deep(blockquote) {
   margin: 7px 0; padding: 2px 0 2px 10px;
   border-left: 2.5px solid var(--color-primary); color: var(--text-secondary);
 }
-.md-view :deep(hr) { border: none; border-top: 1px solid rgba(0,0,0,0.1); margin: 9px 0; }
+.md-view :deep(hr) { border: none; border-top: 1px solid var(--content-divider); margin: 9px 0; }
 
 .md-view :deep(table) { border-collapse: collapse; margin: 7px 0; width: 100%; font-size: 0.9em; }
 .md-view :deep(th), .md-view :deep(td) { border: 1px solid var(--border-document-table); padding: 4px 7px; text-align: left; }

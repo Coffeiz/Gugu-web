@@ -1,5 +1,8 @@
+import { matchFolderSearchHits } from '@gugu/core'
+import { desktopTrashTarget } from '../../../../packages/core/src/runtime/desktop-shell-trash.js'
 import { applicationMenuChannels, type ApplicationMenuCommand } from '@gugu/desktop-contracts'
 import { buildApplicationMenu, buildStatusMenu } from './application-menu.js'
+import { createNativeFileDialogs } from './native-file-dialogs.js'
 import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
 import { createGatewayPowerPolicy } from './im/gateway-power.js'
 import { createDesktopImAttachmentSender } from './im/gateway/delivery/attachments.js'
@@ -61,8 +64,8 @@ import {
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
-import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, join, resolve, sep } from 'node:path'
+import { lstat, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import {
@@ -222,8 +225,17 @@ else {
       const agentModel = createDesktopAgentModelService(createDesktopAgentModelStore(dataDirectory, safeStorage), resolveModelProxy)
       const admitIm = createDesktopImInbox(host, safeStorage, dataDirectory)
       const pendingImAsks = createDesktopImPendingAskStore(dataDirectory, safeStorage)
-      const imAttachments = createDesktopImAttachmentSender(dataDirectory, safeStorage)
-      const dispatchIm = createDesktopImDispatch(host, safeStorage, agentModel, () => host.request<DesktopAppearancePreferences>('preferences.desktop.get'), (code, error, rpcMethod) => report('gateway.degraded', { code, error, rpcMethod }), imAttachments.register)
+      const imAttachments = createDesktopImAttachmentSender(dataDirectory, safeStorage, error =>
+        report('gateway.qq_upload_failed', { uploadStage: error.stage, httpStatus: error.statusCode, upstreamCode: error.errorCode }),
+        (httpStatus, upstreamCode) => report('gateway.qq_file_message_failed', { httpStatus, upstreamCode }))
+      const workspaceCommands = {
+        list: () => files.agentWorkspaceList(),
+        async remove(directoryId: string) {
+          await files.handlers[DESKTOP_CHANNELS.files]!({ action: 'workspace-remove', directoryId })
+          await host.request('agent.sessions.clearWorkspaceBindings', { directoryId })
+        },
+      }
+      const dispatchIm = createDesktopImDispatch(host, safeStorage, agentModel, () => host.request<DesktopAppearancePreferences>('preferences.desktop.get'), (code, error, rpcMethod) => report('gateway.degraded', { code, error, rpcMethod }), imAttachments.register, workspaceCommands)
       const callbackIm = createDesktopImCallback(host, agentModel)
       let imTranscriber: Promise<ReturnType<typeof createDesktopImVoiceTranscriber>> | undefined
       const transcribeImVoice = async (input: { bytes: Uint8Array; mime: string; ext: string }, signal: AbortSignal,
@@ -243,7 +255,7 @@ else {
       // 扫码任务只在本进程有效，使用本次启动的本地身份隔离。
       const wechatPairing = createDesktopWechatPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => { wechat?.refresh(); await wechat?.settled() })
       const wechatReach = createDesktopWechatReach(dataDirectory, safeStorage)
-      const wechatGateway = wechat = createDesktopWechatGateway(wechatPairing, admitIm, dispatchIm, newImTransport, createDesktopWechatCursor(dataDirectory, safeStorage), (code, error) => report('gateway.degraded', { code, error }), wechatReach)
+      const wechatGateway = wechat = createDesktopWechatGateway(wechatPairing, admitIm, dispatchIm, newImTransport, createDesktopWechatCursor(dataDirectory, safeStorage), (code, error) => report('gateway.degraded', { code, error }), wechatReach, host)
       const feishuPairing = createDesktopFeishuPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => {
         feishu?.refresh()
         await feishu?.settled()
@@ -251,7 +263,7 @@ else {
       const feishuGateway = feishu = createDesktopFeishuGateway(feishuPairing, admitIm, dispatchIm, newImTransport, undefined, callbackIm, imVoice, { host, encryption: safeStorage }, pendingImAsks)
       const qqPairing = createDesktopQqPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), () => qq?.refresh())
       const qqGateway = qq = createDesktopQqGateway(qqPairing, admitIm, dispatchIm, newImTransport, undefined, callbackIm,
-        (code, error) => report('gateway.degraded', { code, error }), { host, encryption: safeStorage, dataDirectory, voice: imVoice, references: createDesktopQqReferences(dataDirectory, safeStorage) })
+        (code, error) => report('gateway.degraded', { code, error }), { host, encryption: safeStorage, dataDirectory, voice: imVoice, observeUpload: uploadMetrics => report('gateway.qq_upload_timing', { uploadMetrics }), references: createDesktopQqReferences(dataDirectory, safeStorage) })
       const scheduledIm = bindDesktopScheduledIm({ feishuPairing, qqPairing, wechatPairing, wechatReach, telegram: gateway, transport: newImTransport,
         async readScheduledGroup(params, signal) {
           const reader = params.platform === 'qq' ? qqGateway : params.platform === 'feishu' ? feishuGateway : params.platform === 'telegram' ? gateway : null
@@ -263,7 +275,6 @@ else {
         const power = gatewayPower = createGatewayPowerPolicy(() => !closing && !suspended && keepGatewayOnline
           && gateways.some(gateway => gateway.health().configured > 0))
         gateways.forEach(gateway => gateway.onConfigurationChanged(power.update))
-        await Promise.all(gateways.map(gateway => gateway.start()))
       }
       const uiPath = app.isPackaged
         ? join(app.getAppPath(), 'ui/desktop.html')
@@ -271,24 +282,25 @@ else {
       const uiUrl = DESKTOP_UI_URL
       const trustedUiUrl = devUiUrl ?? uiUrl
       const readProject = (id: number) => host.request<DesktopProjectDetails>('projects.board.get', { id })
+      const readLifecycleProject = (id: number) => host.request<DesktopProjectDetails>('projects.board.get', { id, includeDeleted: true })
       const droppedReferences = createDroppedFileReferences(dataDirectory, path => shell.openPath(path))
+      const fileDialogs = createNativeFileDialogs(() => mainWindow)
       const files = desktopFiles(filesRoot, {
         async save(name) {
-          const options = { defaultPath: name }
-          const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+          const result = await fileDialogs.save({ defaultPath: name })
           return result.canceled ? undefined : result.filePath
         },
         reveal(path) { shell.showItemInFolder(path) },
         open: path => shell.openPath(path),
         async pickDirectory() {
-          const options: Electron.OpenDialogOptions = { properties: ['openDirectory', 'createDirectory'] }
-          const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+          const result = await fileDialogs.open({ properties: ['openDirectory', 'createDirectory'] })
           return result.canceled ? undefined : result.filePaths[0]
         },
         trash: path => shell.trashItem(path),
         async thumbnail(bytes, name) {
           const systemThumbnail = process.platform === 'darwin' || process.platform === 'win32'
-          if (!systemThumbnail || /\.(?:jpe?g|png)$/i.test(name)) {
+          // JPEG 的方向可能由 EXIF 指定；系统缩略图会在转成 PNG 前应用它。
+          if (!systemThumbnail || /\.png$/i.test(name)) {
             const image = nativeImage.createFromBuffer(bytes)
             if (!image.isEmpty()) {
               const { width, height } = image.getSize()
@@ -330,6 +342,19 @@ else {
           signal.throwIfAborted()
           return desktopMail.sendForAgent(params, signal)
         }
+        if (method === 'agent.shell.trash') {
+          const { path, identity, cwd, workspace } = params
+          if (typeof path !== 'string' || !isAbsolute(path) || typeof identity !== 'string'
+            || typeof cwd !== 'string' || !isAbsolute(cwd)
+            || (workspace !== null && (typeof workspace !== 'string' || !isAbsolute(workspace))))
+            throw new DesktopError('invalid_request', '废纸篓请求无效')
+          const current = await desktopTrashTarget(path, cwd, workspace ?? undefined)
+          if (current.path !== path || current.identity !== identity)
+            throw new DesktopError('invalid_request', '废纸篓目标已经变化')
+          signal.throwIfAborted()
+          await shell.trashItem(path)
+          return { ok: true }
+        }
         if (method === 'agent.tools.policy' && Object.keys(params).length === 0)
           return desktopAgentToolPolicy()
         if (method === 'agent.log.append') {
@@ -356,21 +381,28 @@ else {
             throw new DesktopError('invalid_request', '文件搜索参数无效')
           return files.globalFileSearch(queries, mode, perType, signal)
         }
-        if (method === 'agent.files.downloadTarget' && Object.keys(params).length === 0)
-          return files.agentDownloadTarget()
+        if (method === 'agent.files.downloadTarget' && (Object.keys(params).length === 0
+          || Object.keys(params).length === 1 && typeof params.folderPath === 'string'))
+          return files.agentDownloadTarget(params.folderPath)
         if (method === 'agent.files.commitDownload') return files.agentCommitDownload(dataDirectory, params, signal)
         if (method === 'agent.files.saveAttachment')
           return files.agentSaveAttachment(params, signal ?? AbortSignal.timeout(30_000))
         if (method === 'agent.files.workspaceInstructions' && Object.keys(params).length === 1
           && typeof params.directoryId === 'string' && /^[a-f0-9-]{36}$/iu.test(params.directoryId))
           return files.agentWorkspaceInstructions(params.directoryId)
+        if (method === 'agent.files.projectWorkspaceBinding' && Object.keys(params).length === 3)
+          return files.handlers[DESKTOP_CHANNELS.files]!({ action: 'project-workspace-binding',
+            projectId: params.projectId, directoryId: params.directoryId, bound: params.bound })
         if (method === 'agent.files.workspaceList' && Object.keys(params).length === 0)
-          return files.handlers[DESKTOP_CHANNELS.files]!({ action: 'workspace-list' })
+          return files.agentWorkspaceList()
         if (method === 'agent.files.overview' && Object.keys(params).length === 0)
           return files.agentOverview()
         if (method === 'agent.files.projectOverview' && Object.keys(params).length === 1
           && typeof params.projectId === 'number' && Number.isSafeInteger(params.projectId) && params.projectId > 0)
           return files.agentProjectFileOverview(params.projectId, signal)
+        if (method === 'agent.files.projectPath' && Object.keys(params).length === 1
+          && typeof params.projectId === 'number' && Number.isSafeInteger(params.projectId) && params.projectId > 0)
+          return files.agentProjectFilePath(params.projectId)
         if (method === 'agent.files.searchReferences' && Object.keys(params).length === 1
           && typeof params.query === 'string' && params.query.length <= 4096)
           return files.handlers[DESKTOP_CHANNELS.files]!({ action: 'search', query: params.query })
@@ -382,6 +414,76 @@ else {
           return droppedReferences.resolve(params.id)
         if (method === 'agent.files.resolve' && Object.keys(params).length === 1 && typeof params.path === 'string')
           return files.agentResolveFile(params.path)
+        if (method === 'agent.files.libraryFileReference' && Object.keys(params).length === 1
+          && typeof params.path === 'string' && isAbsolute(params.path) && params.path.length <= 4096) {
+          const path = params.path
+          const { groups } = await files.globalFileSearch([path], 'OR', 1, signal)
+          const hit = groups.find(group => group.type === 'file')?.items.find(item => item.path_file.location.value === path)
+          if (!hit) return null
+          const { directoryId, relativePath } = hit.path_file
+          const reference = await files.handlers[DESKTOP_CHANNELS.files]!({ action: 'reference', directoryId, path: relativePath })
+          if (!reference || typeof reference !== 'object' || !('id' in reference) || typeof reference.id !== 'string') return null
+          const file = await files.resolveWorkspaceReference(reference.id)
+          signal.throwIfAborted()
+          return file?.path === path ? reference.id : null
+        }
+        if (method === 'agent.files.deleteItem') {
+          const { path, kind, expected } = params
+          if (typeof path !== 'string' || !isAbsolute(path) || path.length > 4096
+            || (kind !== 'file' && kind !== 'folder') || (expected !== undefined && typeof expected !== 'string')
+            || Object.keys(params).length !== (expected === undefined ? 2 : 3))
+            throw new DesktopError('invalid_request', '废纸篓请求无效')
+          const { groups } = await files.globalFileSearch([path], 'OR', 2, signal)
+          const hit = groups.find(group => group.type === kind)?.items.find(item =>
+            item.path_file.relativePath && item.path_file.location.value === path)
+          if (!hit) return null
+          const { directoryId, relativePath } = hit.path_file
+          const reference = await files.handlers[DESKTOP_CHANNELS.files]!({ action: 'reference', directoryId, path: relativePath, kind })
+          if (!reference || typeof reference !== 'object' || !('id' in reference) || typeof reference.id !== 'string') return null
+          const item = await files.resolveWorkspaceReference(reference.id)
+          if (!item || item.path !== path) return null
+          const target = await desktopTrashTarget(path, dirname(path))
+          const info = await lstat(path, { bigint: true })
+          if (target.path !== path || [info.dev, info.ino, info.birthtimeNs].join('.') !== item.fileIdentity
+            || (kind === 'folder' ? !info.isDirectory() : !info.isFile())
+            || [info.dev, info.ino, info.mode, info.ctimeNs].join(':') !== target.identity) return null
+          const version = JSON.stringify([reference.id, target.identity])
+          if (expected === undefined) return version
+          if (version !== expected) return null
+          signal.throwIfAborted()
+          await shell.trashItem(path)
+          return true
+        }
+        if (method === 'agent.files.openFolder' && Object.keys(params).length === 2
+          && typeof params.path === 'string' && params.path.length <= 4096 && typeof params.referenceOnly === 'boolean') {
+          const query = params.path
+          if (isAbsolute(query)) {
+            try {
+              const { path, referenceId, name } = await files.resolveAgentFolderPath(query)
+              signal.throwIfAborted()
+              if (!params.referenceOnly && await shell.openPath(path)) return { error: '无法打开文件夹' }
+              return { file: { name, ext: '', referenceId, surface: 'system', location: { kind: 'host_absolute', value: path } } }
+            } catch (error) {
+              if (error instanceof DesktopError && ['invalid_request', 'forbidden', 'not_found'].includes(error.code))
+                return { error: error.message }
+              if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+                return { error: '文件夹不存在或已移动' }
+              throw error
+            }
+          }
+          const { groups, partial } = await files.globalFileSearch([query], 'OR', 20, signal)
+          const matches = matchFolderSearchHits(query, groups.find(group => group.type === 'folder')?.items.filter(hit => 'link' in hit && hit.link) ?? [])
+          const item = matches.length === 1 && !partial ? matches[0] : undefined
+          const referenceId = item && 'link' in item && typeof item.link === 'string' ? item.link.split('/').at(-1) : undefined
+          const folder = referenceId ? await files.resolveWorkspaceReference(referenceId) : null
+          signal.throwIfAborted()
+          if (!folder || folder.type !== 'folder' || !item || folder.path !== item.path_file.location.value) return {
+            error: matches.length > 1 ? `找到多个同名文件夹，请选择准确路径：${matches.slice(0, 5).map(hit => hit.path_file.location.value).join('、')}`
+              : '未找到可确认的唯一文件夹，请提供准确路径',
+          }
+          if (!params.referenceOnly && await shell.openPath(folder.path)) return { error: '无法打开文件夹' }
+          return { file: { name: item.title, ext: '', referenceId, surface: 'system', location: { kind: 'host_absolute', value: folder.path } } }
+        }
         if (method === 'agent.files.present' && typeof params.path === 'string'
           && (params.referenceOnly === undefined || params.referenceOnly === true)
           && Object.keys(params).length === (typeof params.referenceId === 'string' || typeof params.hostIdentity === 'string' ? 2 : 1)
@@ -442,7 +544,13 @@ else {
             throw error
           }
         }
-        if (method === 'agent.im.sendAttachment') return imAttachments.send(params, signal, files.agentReadSendFile)
+        if (method === 'agent.im.sendAttachment') {
+          const isQq = params.platform === 'qq'
+          if (isQq) report('gateway.qq_file_delivery_started')
+          const outcome = await imAttachments.send(params, signal, files.agentReadSendFile)
+          if (isQq) report('gateway.qq_file_delivery_result', { deliveryOutcome: outcome })
+          return outcome
+        }
         if (method === 'agent.im.authorizeGroupTool') {
           const groupGateway = params.platform === 'feishu' ? feishuGateway : params.platform === 'telegram' ? gateway : params.platform === 'qq' ? qqGateway : undefined
           return groupGateway && 'authorizeGroupTool' in groupGateway ? groupGateway.authorizeGroupTool(params, signal) : false
@@ -571,6 +679,12 @@ else {
           const file = id.startsWith('drop-') ? await droppedReferences.resolve(id) : await files.resolveWorkspaceReference(id)
           return file ? Array.from(basename(file.path)).slice(0, 255).join('') : null
         }),
+        [DESKTOP_CHANNELS.deleteBoardProject]: (id: unknown) =>
+          files.changeProjectDirectory(id, 'delete', () => host.request('projects.board.delete', { id }), readLifecycleProject),
+        [DESKTOP_CHANNELS.restoreBoardProject]: (id: unknown) =>
+          files.changeProjectDirectory(id, 'restore', () => host.request('projects.board.restore', { id }), readLifecycleProject),
+        [DESKTOP_CHANNELS.purgeBoardProject]: (id: unknown) =>
+          files.changeProjectDirectory(id, 'purge', () => host.request('projects.board.purge', { id }), readLifecycleProject),
         [DESKTOP_CHANNELS.updateAppearance]: async (patch: unknown) => {
           const updated = await host.request<DesktopAppearancePreferences>('preferences.desktop.update', { patch })
           useSystemProxy = updated.useSystemProxy === true
@@ -583,7 +697,7 @@ else {
         ...agentSessionHandlers(host, agentModel, event => {
           if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(DESKTOP_CHANNELS.agentChatEvent, event)
         }, resolveEmbedding,
-          attachIds => removeDesktopAgentAttachmentFiles(dataDirectory, attachIds)),
+          attachIds => removeDesktopAgentAttachmentFiles(dataDirectory, attachIds), workspaceCommands),
         ...agentAttachments,
         ...telegramHandlers(gateway),
         ...pairingHandlers('wechat', wechatPairing, wechatGateway.health),
@@ -602,7 +716,7 @@ else {
             const options: Electron.OpenDialogOptions = {
               properties: ['openFile'], filters: [{ name: 'ZIP', extensions: ['zip'] }],
             }
-            const selected = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+            const selected = await fileDialogs.open(options)
             const path = selected.filePaths[0]
             if (selected.canceled || !path) return null
             const { digest, added, skipped } = await host.request<{ digest: string; added: number; skipped: number }>(
@@ -626,7 +740,7 @@ else {
         },
         [DESKTOP_CHANNELS.exportBusinessArchive]: async () => {
           const options = { defaultPath: `gugu-export-${randomUUID().slice(0, 12)}.zip`, filters: [{ name: 'ZIP', extensions: ['zip'] }] }
-          const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+          const result = await fileDialogs.save(options)
           if (result.canceled || !result.filePath) return null
           const directory = await mkdtemp(join(dirname(result.filePath), '.gugu-export-'))
           const temporary = join(directory, 'archive.zip')
@@ -673,25 +787,27 @@ else {
       }
       const projectWindows = registerProjectWindows({
         mainWindow: () => mainWindow, uiUrl: trustedUiUrl, preload, quitting: () => quitting,
-        readProject, dataDirectory,
+        readProject, dataDirectory, isWorkspaceBoundToProject: files.isWorkspaceBoundToProject,
       })
       const previewWindowManager = registerPreviewWindows({
         mainWindow: () => mainWindow, uiUrl: trustedUiUrl, preload,
         trustsProject: projectWindows.trusts,
         reference: command => files.handlers[DESKTOP_CHANNELS.files]!(command),
+        resolveLibraryPath: files.resolvePresentation,
+        readAttachment: id => readDesktopAgentAttachment(host, dataDirectory, id),
         reveal: ({ directoryId, relativePath: path, identity }) =>
           files.handlers[DESKTOP_CHANNELS.files]!({ action: 'reveal', directoryId, path, identity }),
       })
       previewWindows = previewWindowManager
       ipcMain.handle(DESKTOP_CHANNELS.startFileDrag, (event, directoryId: unknown, path: unknown, preview: unknown) => {
-        const isTrusted = () => (!!mainWindow && trustedCaller(event, [mainWindow], trustedUiUrl))
+        const isTrusted = async () => (!!mainWindow && trustedCaller(event, [mainWindow], trustedUiUrl))
           || projectWindows.trusts(event, DESKTOP_CHANNELS.startFileDrag, directoryId)
         return desktopReply(isTrusted(), async () => {
           const file = await files.resolveFileForDrag(directoryId, path)
           const cardImage = typeof preview === 'string' && preview.length <= 1_500_000 && preview.startsWith('data:image/png;base64,')
             ? nativeImage.createFromDataURL(preview) : undefined
           const icon = cardImage && !cardImage.isEmpty() ? cardImage : await app.getFileIcon(file, { size: 'normal' })
-          if (!isTrusted()) throw new DesktopError('forbidden', '当前窗口无法拖出文件')
+          if (!await isTrusted()) throw new DesktopError('forbidden', '当前窗口无法拖出文件')
           if (icon.isEmpty()) throw new DesktopError('unsupported', '无法获取系统文件图标')
           event.sender.send(DESKTOP_CHANNELS.nativeFileDragSource, file)
           try { event.sender.startDrag({ file, icon }) }
@@ -703,9 +819,9 @@ else {
         })
       })
       registerDesktopIpc(ipcMain, handlers, {
-        authorize: (event, channel, args) =>
+        authorize: async (event, channel, args) =>
           (!!mainWindow && trustedCaller(event, [mainWindow], trustedUiUrl))
-          || projectWindows.trusts(event, channel, args[0])
+          || await projectWindows.trusts(event, channel, args[0])
           || previewWindowManager.trusts(event, channel, args[0]),
         onResult: (event, channel, result) => {
           if (channel === DESKTOP_CHANNELS.updateBoardProject)
@@ -778,18 +894,25 @@ else {
           if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(DESKTOP_CHANNELS.scheduleChanged)
         }, error => report('scheduled_tasks.check_failed', { error }))
       }
+      let sleepTransition = Promise.resolve()
       powerMonitor.on('suspend', () => {
-        if (closing) return
+        if (closing || suspended) return
         suspended = true
         sleepGeneration++
         gatewayPower?.release()
         stopReminders?.()
-        void host.pause().catch(error => report('host.stop_failed', { error }))
+        const draining = Promise.all(gateways.map(gateway => gateway.suspend()))
+        sleepTransition = sleepTransition.then(async () => {
+          await draining
+          if (!closing) await host.pause()
+        }).catch(error => report('host.stop_failed', { error }))
       })
       powerMonitor.on('resume', () => {
         if (closing || !suspended) return
         const generation = sleepGeneration
-        void host.start().then(async () => {
+        void sleepTransition.then(async () => {
+          if (closing || generation !== sleepGeneration || !suspended) return
+          await host.start()
           if (closing || generation !== sleepGeneration || !suspended) return
           suspended = false
           gatewayPower?.update()
@@ -806,7 +929,7 @@ else {
           : icon.resize({ width: 16 })
         if (process.platform === 'darwin') {
           trayIcon.setTemplateImage(true)
-          if (!app.isPackaged) app.dock?.setIcon(icon)
+          if (!app.isPackaged) app.dock?.setIcon(nativeImage.createFromPath(join(assets, 'icon-macos.png')))
         }
         tray = new Tray(trayIcon)
         tray.setToolTip('咕咕')
@@ -819,6 +942,10 @@ else {
       else await createWindow()
       startReminders()
       report('host.started')
+      if (!smoke && !closing) {
+        for (const gateway of gateways)
+          void Promise.resolve().then(() => gateway.start()).catch(error => report('gateway.degraded', { error }))
+      }
     })
     .catch(async (error) => {
       gatewayPower?.close()
@@ -828,7 +955,9 @@ else {
       for (const gateway of [telegram, wechat, feishu, qq])
         await gateway?.stop().catch(closeError => report('host.stop_failed', { error: closeError }))
       await lifecycle?.close().catch(closeError => report('host.stop_failed', { error: closeError }))
-      if (!smoke)
+      if (devUiUrl && previewSocket)
+        console.error('桌面预览启动失败：' + (error instanceof DesktopError ? error.code : 'internal_error'))
+      else if (!smoke)
         await dialog.showMessageBox({
           type: 'error',
           message:

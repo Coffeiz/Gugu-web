@@ -50,7 +50,9 @@ defineExpose({ svgEl: computed(() => svgRef.value), dropTargetEl: computed(() =>
   width: var(--gugu-fab-size);
   height: var(--gugu-fab-size);
   border-radius: 50%;
-  background: var(--surface-card-solid);
+  background: color-mix(in srgb, var(--surface-card-solid) 68%, transparent);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
   border: 1px solid var(--gugu-fab-border);
   cursor: pointer;
   display: flex;
@@ -95,8 +97,7 @@ defineExpose({ svgEl: computed(() => svgRef.value), dropTargetEl: computed(() =>
   width: var(--gugu-fab-logo-size);
   height: var(--gugu-fab-logo-size);
   display: block;
-  background-color: var(--text-primary);
-  mask: url('../../../assets/brand/gugu-bird-mask.png') center / contain no-repeat;
+  background: url('/brand/bird-colored.svg') center / contain no-repeat;
 }
 .ai-fab-spin { animation: fab-spin 8s linear infinite; transform-origin: center; }
 @keyframes fab-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

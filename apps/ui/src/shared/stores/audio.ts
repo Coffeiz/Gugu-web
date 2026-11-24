@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { filesApi } from '@/services/api'
+import type { PathFileRef } from '@/services/api'
+import { usePathFileAccess } from '@/services/pathFileAccess'
 
 const AUDIO_FILE_KEY = 'gugu_audio_file'
 const AUDIO_PLAYBACK_MODE_KEY = 'gugu_audio_playback_mode'
@@ -12,10 +14,10 @@ export type AudioPlaybackMode = typeof PLAYBACK_MODES[number]
 const bc = new BroadcastChannel('gugu_audio')
 
 export interface AudioTrack {
-  id?: number
+  filePath?: string
   displayName?: string
   ext?: string
-  folderId?: number | null
+  workspaceFile?: PathFileRef
   projectId?: number | null
   space?: string
   workspaceDirectoryId?: number | null
@@ -26,14 +28,13 @@ function isAudioTrack(file: AudioTrack): boolean {
   return ['MP3', 'WAV', 'OGG', 'FLAC', 'M4A', 'AAC', 'OPUS'].includes((file.ext ?? '').toUpperCase())
 }
 
-function sameDirectory(left: AudioTrack, right: AudioTrack): boolean {
-  return left.space === right.space
-    && (left.projectId ?? null) === (right.projectId ?? null)
-    && (left.folderId ?? null) === (right.folderId ?? null)
-    && (left.workspaceDirectoryId ?? null) === (right.workspaceDirectoryId ?? null)
+export function audioTrackKey(track: AudioTrack | null | undefined): string | null {
+  if (track?.workspaceFile) return JSON.stringify([track.workspaceFile.directoryId, track.workspaceFile.relativePath])
+  return track?.filePath ? `path:${track.filePath}` : null
 }
 
 export const useAudioStore = defineStore('audio', () => {
+  const pathFiles = usePathFileAccess()
   const file    = ref<AudioTrack | null>(null)
   const playlist = ref<AudioTrack[]>([])
   const blobUrl = ref<string | null>(null)
@@ -62,33 +63,36 @@ export const useAudioStore = defineStore('audio', () => {
   // 其他 tab 开始播放时，停掉本 tab
   bc.onmessage = () => stop()
 
-  function updateDuration(id: number, duration: number) {
+  function updateDuration(key: string, duration: number) {
     if (!Number.isFinite(duration) || duration <= 0) return
-    playlist.value = playlist.value.map(track => track.id === id ? { ...track, duration } : track)
-    if (file.value?.id === id) file.value = { ...file.value, duration }
+    playlist.value = playlist.value.map(track => audioTrackKey(track) === key ? { ...track, duration } : track)
+    if (audioTrackKey(file.value) === key && file.value) file.value = { ...file.value, duration }
   }
 
   function updatePlaylist(current: AudioTrack, siblings?: AudioTrack[]) {
     if (siblings) {
-      const tracks = new Map<number, AudioTrack>()
+      const tracks = new Map<string, AudioTrack>()
       for (const sibling of siblings) {
-        if (sibling.id != null && isAudioTrack(sibling)) tracks.set(sibling.id, sibling)
+        const key = audioTrackKey(sibling)
+        if (key && isAudioTrack(sibling)) tracks.set(key, sibling)
       }
-      if (current.id != null && tracks.has(current.id)) {
-        tracks.set(current.id, { ...tracks.get(current.id)!, ...current })
-      } else if (current.id != null && isAudioTrack(current)) {
-        tracks.set(current.id, current)
+      const key = audioTrackKey(current)
+      if (key && tracks.has(key)) {
+        tracks.set(key, { ...tracks.get(key)!, ...current })
+      } else if (key && isAudioTrack(current)) {
+        tracks.set(key, current)
       }
       playlist.value = [...tracks.values()]
-    } else if (!playlist.value.some(track => track.id === current.id)) {
-      playlist.value = current.id != null && isAudioTrack(current) ? [current] : []
+    } else if (!playlist.value.some(track => audioTrackKey(track) === audioTrackKey(current))) {
+      playlist.value = audioTrackKey(current) && isAudioTrack(current) ? [current] : []
     }
   }
 
   async function play(f: AudioTrack, siblings?: AudioTrack[]) {
     updatePlaylist(f, siblings)
-    if (f.id == null) return              // 没有文件 id 无法取流
-    if (file.value?.id === f.id) return  // 同一首不重新加载
+    const key = audioTrackKey(f)
+    if (!key) return
+    if (audioTrackKey(file.value) === key) return
     bc.postMessage('playing')
     revoke()
     file.value    = f
@@ -98,8 +102,9 @@ export const useAudioStore = defineStore('audio', () => {
     try {
       // 交给原生 audio 直接请求流地址，让浏览器自行使用 Range，避免把大文件
       // 一次性聚合成 Blob 后才开始播放。
-      const { url } = await filesApi.getStreamUrl(f.id)
-      if (requestEpoch !== getAccountBoundaryEpoch() || file.value?.id !== f.id) return
+      const url = f.workspaceFile ? pathFiles.contentUrl(f.workspaceFile)
+        : f.filePath ? (await filesApi.getStreamUrl(f.filePath)).url : (() => { throw new Error('文件路径不可用') })()
+      if (requestEpoch !== getAccountBoundaryEpoch() || audioTrackKey(file.value) !== key) return
       blobUrl.value = url
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
@@ -113,21 +118,21 @@ export const useAudioStore = defineStore('audio', () => {
     if (file.value) return
     try {
       const saved = JSON.parse(localStorage.getItem(AUDIO_FILE_KEY) ?? 'null')
-      if (!saved?.id) return
+      if (!audioTrackKey(saved)) { localStorage.removeItem(AUDIO_FILE_KEY); return }
       const requestEpoch = getAccountBoundaryEpoch()
       try {
-        const page = await filesApi.page({
-          space: saved.space ?? (saved.projectId != null ? 'project' : 'personal'),
-          projectId: saved.projectId ?? undefined,
-          folderId: saved.folderId ?? undefined,
-          workspaceDirectoryId: saved.workspaceDirectoryId ?? undefined,
-          limit: 100,
-        })
+        const path = saved.workspaceFile ?? (saved.filePath ? (await filesApi.location(saved.filePath)).pathFile : null)
+        if (!path) throw new Error('文件路径不可用')
+        const parent = path.relativePath.split('/').slice(0, -1).join('/')
+        const entries = await pathFiles.entries(path.directoryId, parent)
         if (requestEpoch !== getAccountBoundaryEpoch()) return
-        const files = page.items
-        const current = files.find(candidate => candidate.id === saved.id) ?? saved
-        const siblings = files.filter(candidate => isAudioTrack(candidate) && sameDirectory(candidate, current))
-        if (isAudioTrack(current) && !siblings.some(candidate => candidate.id === current.id)) siblings.unshift(current)
+        const siblings: AudioTrack[] = entries.filter(entry => entry.kind === 'file').map(entry => {
+          const dot = entry.name.lastIndexOf('.')
+          return { displayName: dot > 0 ? entry.name.slice(0, dot) : entry.name,
+            ext: dot > 0 ? entry.name.slice(dot + 1) : '', workspaceFile: { directoryId: path.directoryId, relativePath: entry.relativePath } }
+        }).filter(isAudioTrack)
+        const current = { ...saved, workspaceFile: path }
+        if (isAudioTrack(current) && !siblings.some(candidate => audioTrackKey(candidate) === audioTrackKey(current))) siblings.unshift(current)
         await play(current, siblings)
       } catch {
         if (requestEpoch === getAccountBoundaryEpoch()) await play(saved)
@@ -136,10 +141,10 @@ export const useAudioStore = defineStore('audio', () => {
   }
 
   async function loadTrackDuration(track: AudioTrack): Promise<void> {
-    if (track.id == null || track.duration) return
-    const trackId = track.id
-    if (playlist.value.find(candidate => candidate.id === trackId)?.duration) return
-    if (!playlist.value.some(candidate => candidate.id === trackId)) return
+    const trackId = audioTrackKey(track)
+    if (!trackId || track.duration) return
+    if (playlist.value.find(candidate => audioTrackKey(candidate) === trackId)?.duration) return
+    if (!playlist.value.some(candidate => audioTrackKey(candidate) === trackId)) return
     const requestEpoch = getAccountBoundaryEpoch()
     const requestKey = `${requestEpoch}:${trackId}`
     const existing = durationLoads.get(requestKey)
@@ -148,8 +153,9 @@ export const useAudioStore = defineStore('audio', () => {
     const task = (async () => {
       let probe: HTMLAudioElement | null = null
       try {
-        const { url } = await filesApi.getStreamUrl(trackId)
-        if (!url || requestEpoch !== getAccountBoundaryEpoch() || !playlist.value.some(candidate => candidate.id === trackId)) return
+        const url = track.workspaceFile ? pathFiles.contentUrl(track.workspaceFile)
+          : track.filePath ? (await filesApi.getStreamUrl(track.filePath)).url : (() => { throw new Error('文件路径不可用') })()
+        if (!url || requestEpoch !== getAccountBoundaryEpoch() || !playlist.value.some(candidate => audioTrackKey(candidate) === trackId)) return
         probe = new Audio()
         probe.preload = 'metadata'
         const duration = await new Promise<number>((resolve, reject) => {
@@ -167,7 +173,7 @@ export const useAudioStore = defineStore('audio', () => {
           probe!.src = url
           probe!.load()
         })
-        if (requestEpoch === getAccountBoundaryEpoch() && playlist.value.some(candidate => candidate.id === trackId)) {
+        if (requestEpoch === getAccountBoundaryEpoch() && playlist.value.some(candidate => audioTrackKey(candidate) === trackId)) {
           updateDuration(trackId, duration)
         }
       } catch {
@@ -185,7 +191,7 @@ export const useAudioStore = defineStore('audio', () => {
   }
 
   async function loadPlaylistDurations() {
-    const pending = playlist.value.filter(track => track.id != null && !track.duration)
+    const pending = playlist.value.filter(track => audioTrackKey(track) && !track.duration)
     // Limit concurrent metadata requests so opening a large directory does not fan out
     // an unbounded burst of signed-URL requests and media connections.
     let cursor = 0
@@ -199,16 +205,16 @@ export const useAudioStore = defineStore('audio', () => {
   }
 
   function stepTrack(offset: number) {
-    if (playlist.value.length < 2 || file.value?.id == null) return
-    const index = playlist.value.findIndex(track => track.id === file.value?.id)
+    if (playlist.value.length < 2 || !audioTrackKey(file.value)) return
+    const index = playlist.value.findIndex(track => audioTrackKey(track) === audioTrackKey(file.value))
     if (index < 0) return
     const nextIndex = (index + offset + playlist.value.length) % playlist.value.length
     void play(playlist.value[nextIndex])
   }
 
   function playRandomTrack() {
-    if (playlist.value.length < 2 || file.value?.id == null) return
-    const candidates = playlist.value.filter(track => track.id !== file.value?.id)
+    if (playlist.value.length < 2 || !audioTrackKey(file.value)) return
+    const candidates = playlist.value.filter(track => audioTrackKey(track) !== audioTrackKey(file.value))
     const next = candidates[Math.floor(Math.random() * candidates.length)]
     if (next) void play(next)
   }

@@ -1,4 +1,4 @@
-
+import { PROTECTED_HISTORY_ROUNDS } from './history/retention.js'
 import type { BudgetResult,CanonicalMessage,Json,ProtectedWindow,ProviderUsage,Usage } from '../models.js'
 import { AgentRunError } from '../models.js'
 import type { MessageArea } from './history/canonical-history.js'
@@ -98,7 +98,7 @@ export function enforceProviderOverflow(area: MessageArea, window: ProtectedWind
   }
   else {
     const body = before.slice(0, from), tail = before.slice(from)
-    const units = atomicMessageUnits(body), kept = units.slice(-10).flat().map(index => body[index]!)
+    const units = atomicMessageUnits(body), kept = units.slice(-PROTECTED_HISTORY_ROUNDS).flat().map(index => body[index]!)
     result = [...kept, ...tail]
   }
   const revision = area.revision

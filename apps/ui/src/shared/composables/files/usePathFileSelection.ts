@@ -12,6 +12,7 @@ export function usePathFileSelection(options: {
   container: Ref<HTMLElement | null>
   getEntries: () => PathFileEntry[]
   getSelectedEntries: () => PathFileEntry[]
+  trash?: (file: PathFileRef, entry: PathFileEntry) => Promise<unknown>
   reload: () => void
 }) {
   const pathFilesApi = usePathFileAccess()
@@ -20,19 +21,20 @@ export function usePathFileSelection(options: {
   const forced = ref(false)
   const cut = shallowRef<{ directoryId: PathFileRef['directoryId']; entries: PathFileEntry[]; mode: 'cut' | 'copy' } | null>(null)
   const moving = ref(false)
+  const downloading = ref(false)
   const box = useBoxSelection<string, string>(container, {
-    fileAttr: 'data-path-file',
-    folderAttr: 'data-path-folder',
-    parseFileId: value => value,
-    onBoxSelect: ({ fileIds, folderIds }, event) => {
+    filePathAttr: 'data-path-file',
+    directoryPathAttr: 'data-path-folder',
+    parseFilePath: value => value,
+    onBoxSelect: ({ filePaths, directoryPaths }, event) => {
       const additive = event.shiftKey || event.ctrlKey || event.metaKey
-      box.selectedFileIds.value = additive ? new Set([...box.selectedFileIds.value, ...fileIds]) : fileIds
-      box.selectedFolderIds.value = additive ? new Set([...box.selectedFolderIds.value, ...folderIds]) : folderIds
+      box.selectedFilePaths.value = additive ? new Set([...box.selectedFilePaths.value, ...filePaths]) : filePaths
+      box.selectedDirectoryPaths.value = additive ? new Set([...box.selectedDirectoryPaths.value, ...directoryPaths]) : directoryPaths
     },
     onClear: () => { forced.value = false },
   })
-  const selectedPaths = computed(() => new Set([...box.selectedFileIds.value, ...box.selectedFolderIds.value]))
-  const previewPaths = computed(() => new Set([...box.previewFileIds.value, ...box.previewFolderIds.value]))
+  const selectedPaths = computed(() => new Set([...box.selectedFilePaths.value, ...box.selectedDirectoryPaths.value]))
+  const previewPaths = computed(() => new Set([...box.previewFilePaths.value, ...box.previewDirectoryPaths.value]))
   const selectionMode = computed(() => forced.value || selectedPaths.value.size > 0)
   const cutPaths = computed(() => new Set(cut.value?.mode === 'cut' && cut.value.directoryId === target.value?.directoryId
     ? cut.value?.entries.map(entry => entry.relativePath) : []))
@@ -49,8 +51,8 @@ export function usePathFileSelection(options: {
     else forced.value = true
   }
   function selectEntries(entries: PathFileEntry[]) {
-    box.selectedFileIds.value = new Set(entries.filter(entry => entry.kind === 'file').map(entry => entry.relativePath))
-    box.selectedFolderIds.value = new Set(entries.filter(entry => entry.kind === 'directory').map(entry => entry.relativePath))
+    box.selectedFilePaths.value = new Set(entries.filter(entry => entry.kind === 'file').map(entry => entry.relativePath))
+    box.selectedDirectoryPaths.value = new Set(entries.filter(entry => entry.kind === 'directory').map(entry => entry.relativePath))
   }
 
   function select(entry: PathFileEntry, event?: MouseEvent | KeyboardEvent) {
@@ -66,7 +68,7 @@ export function usePathFileSelection(options: {
       }
     }
     anchor = entry.relativePath
-    const ids = entry.kind === 'directory' ? box.selectedFolderIds : box.selectedFileIds
+    const ids = entry.kind === 'directory' ? box.selectedDirectoryPaths : box.selectedFilePaths
     const next = new Set(ids.value)
     if (next.has(entry.relativePath)) next.delete(entry.relativePath)
     else next.add(entry.relativePath)
@@ -107,8 +109,8 @@ export function usePathFileSelection(options: {
         cut.value = remaining.length ? { ...clipboard, entries: remaining } : null
       }
       if (target.value?.directoryId === location.directoryId) {
-        box.selectedFileIds.value = new Set([...box.selectedFileIds.value].filter(id => !completed.has(id)))
-        box.selectedFolderIds.value = new Set([...box.selectedFolderIds.value].filter(id => !completed.has(id)))
+        box.selectedFilePaths.value = new Set([...box.selectedFilePaths.value].filter(id => !completed.has(id)))
+        box.selectedDirectoryPaths.value = new Set([...box.selectedDirectoryPaths.value].filter(id => !completed.has(id)))
       }
       await refresh()
     } finally {
@@ -183,7 +185,9 @@ export function usePathFileSelection(options: {
       for (const entry of entries) {
         if (epoch !== accountBoundaryEpoch.value) break
         try {
-          await pathFilesApi.moveToTrash({ directoryId: location.directoryId, relativePath: entry.relativePath })
+          const file = { directoryId: location.directoryId, relativePath: entry.relativePath }
+          if (options.trash) await options.trash(file, entry)
+          else await pathFilesApi.moveToTrash(file)
           completed.add(entry.relativePath)
         } catch (error) { if (epoch === accountBoundaryEpoch.value) showAppError(errorMessage(error)) }
       }
@@ -199,11 +203,23 @@ export function usePathFileSelection(options: {
 
   async function downloadSelected() {
     const location = target.value
-    if (!location) return
+    if (!location || downloading.value) return
+    const epoch = accountBoundaryEpoch.value
+    downloading.value = true
     try {
-      for (const entry of getSelectedEntries()) if (entry.kind === 'file')
-        await pathFilesApi.download({ directoryId: location.directoryId, relativePath: entry.relativePath })
-    } catch (error) { showAppError(errorMessage(error)) }
+      const entries = getSelectedEntries()
+      if (entries.length === 1 && entries[0]!.kind === 'file') {
+        await pathFilesApi.download({ directoryId: location.directoryId, relativePath: entries[0]!.relativePath })
+      } else if (entries.length && pathFilesApi.downloadArchive) {
+        await pathFilesApi.downloadArchive(location, entries.map(entry => entry.relativePath))
+      } else if (entries.length && entries.every(entry => entry.kind === 'file')) {
+        for (const entry of entries) await pathFilesApi.download({ directoryId: location.directoryId, relativePath: entry.relativePath })
+      } else if (entries.length) {
+        throw new Error('当前环境暂不支持批量下载')
+      }
+    } catch (error) {
+      if (epoch === accountBoundaryEpoch.value) showAppError(errorMessage(error))
+    } finally { downloading.value = false }
   }
 
   watch([() => target.value?.directoryId, () => target.value?.relativePath, accountBoundaryEpoch], clearSelection, { flush: 'sync' })
@@ -214,9 +230,9 @@ export function usePathFileSelection(options: {
     boxStart: box.boxStart,
     selectionRect: box.selectionRect,
     onContainerMouseDown: box.onContainerMouseDown,
-    fileCount: computed(() => box.selectedFileIds.value.size),
-    folderCount: computed(() => box.selectedFolderIds.value.size),
-    selectionMode, selectedPaths, previewPaths, cutPaths, pasteCount, canPaste,
+    fileCount: computed(() => box.selectedFilePaths.value.size),
+    folderCount: computed(() => box.selectedDirectoryPaths.value.size),
+    selectionMode, selectedPaths, previewPaths, cutPaths, pasteCount, canPaste, downloading,
     select, handleShortcut, clearSelection, toggleSelection, clearCut, paste, moveInto, downloadSelected,
     trashSelected: () => trashEntries(getSelectedEntries()),
     trashEntry: (entry: PathFileEntry) => trashEntries([entry], entry),

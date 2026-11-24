@@ -80,3 +80,13 @@ export function projectAgentToolBrief(catalog: CapabilityCatalog | null, names: 
   const toolReminder = [catalog.toolCatalog, shellReminder, catalog.mcpReminder].filter(Boolean).join('\n\n')
   return { providerToolNames, ...(toolReminder ? { toolReminder } : {}) }
 }
+
+/** 从当前运行已授权的定义生成目录和发给模型的工具声明。 */
+export function projectToolCatalog(preferences: unknown, tools: PreparedToolDefinition[], mcpReminder: string) {
+  const toolNames = tools.map(tool => tool.name)
+  const catalog = createAgentToolBrief(preferences, tools)
+  const brief = projectAgentToolBrief({ ...catalog, mcpReminder }, toolNames)
+  const { providerToolNames } = brief
+  const visible = providerToolNames ? tools.filter(tool => providerToolNames.includes(tool.name)) : tools
+  return { capabilities: { toolNames, tools, ...brief }, visible }
+}

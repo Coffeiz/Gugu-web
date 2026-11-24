@@ -44,4 +44,40 @@ describe('文件库选择工具栏归档操作', () => {
     app.unmount()
     host.remove()
   })
+
+  it('路径多选仅在支持压缩时提供压缩入口', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const actions: string[] = []
+    const app = createApp({ render: () => h(FileSelectionToolbar, {
+      fileCount: 1, folderCount: 1, pathActions: true, pathCompress: true,
+      onArchive: () => actions.push('compress'),
+    }) })
+    app.use(i18n)
+    app.mount(host)
+    const button = host.querySelector('[data-testid="selection-compress"]') as HTMLButtonElement
+    expect(button).not.toBeNull()
+    button.click()
+    expect(actions).toEqual(['compress'])
+    app.unmount()
+    host.remove()
+  })
+
+  it('路径多选包含目录时可使用归档下载', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const actions: string[] = []
+    const app = createApp({ render: () => h(FileSelectionToolbar, {
+      fileCount: 1, folderCount: 1, pathActions: true, pathDownload: true,
+      onDownload: () => actions.push('download'),
+    }) })
+    app.use(i18n)
+    app.mount(host)
+    const button = host.querySelector('[data-testid="selection-download"]') as HTMLButtonElement
+    expect(button).not.toBeNull()
+    button.click()
+    expect(actions).toEqual(['download'])
+    app.unmount()
+    host.remove()
+  })
 })

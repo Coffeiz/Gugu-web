@@ -1,4 +1,5 @@
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
+import { createHash } from 'node:crypto'
 import { undoRetentionCompletion } from '@gugu/core/undo'
 import { normalizeFileOwnerId } from '../files/store.js'
 
@@ -17,13 +18,13 @@ function artifactOperationIds(ownerId: string, row: Candidate): Set<string> {
   const refs = typeof row.artifact_refs === 'string' ? JSON.parse(row.artifact_refs) : row.artifact_refs
   if (!refs || typeof refs !== 'object' || Array.isArray(refs)) return ids
   for (const [ref, value] of Object.entries(refs)) {
-    const fileId = /^file:([1-9]\d*)$/.exec(ref)?.[1]
-    if (!fileId || !value || typeof value !== 'object' || Array.isArray(value)) continue
+    if (!ref.startsWith('file:') || !value || typeof value !== 'object' || Array.isArray(value)) continue
+    const fileKey = createHash('sha256').update(ref.slice('file:'.length)).digest('hex').slice(0, 24)
     for (const key of Object.values(value as Record<string, unknown>)) {
       if (typeof key !== 'string') continue
       const parts = key.split('/')
       if (parts.length === 5 && parts[0] === owner && parts[1] === '.undo'
-        && /^op-[0-9a-f]{32}$/.test(parts[2]!) && parts[3] === `file-${fileId}`
+        && /^op-[0-9a-f]{32}$/.test(parts[2]!) && parts[3] === `file-${fileKey}`
         && (parts[4] === 'before' || parts[4] === 'after')) ids.add(parts[2]!) // 兼容旧版本 artifact 路径与 Undo 行 ID 错位。
     }
   }

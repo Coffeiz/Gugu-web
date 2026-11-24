@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { describe,expect,it } from 'vitest'
 import type { CanonicalRunPreparationPorts,ContextSourcePorts,Json,PreparationPorts,SessionSnapshotState } from "../../../src/agent/index.js"
-import { DEFAULT_IDLE_TTL_MS,contextAccessScopeHash,createMainContextBuilder,updateBaselineSnapshot,createCanonicalRunLoader,createCanonicalSourceLoader,prepareContext,prepareRunContextSources,stableJson } from "../../../src/agent/index.js"
+import { DEFAULT_IDLE_TTL_MS,contextAccessScopeHash,updateBaselineSnapshot,createCanonicalRunLoader,createCanonicalSourceLoader,prepareContext,prepareRunContextSources,stableJson } from "../../../src/agent/index.js"
 const identity = { ownerId: 'owner', sessionId: 'session', runId: 'run' }
 function fixture() {
   let id = 0, now = 0, builds = 0, ragCalls = 0
@@ -67,6 +67,20 @@ describe('Core标准上下文来源组合', () => {
     expect(changed.sourceEffects.sessionSnapshot.phase).toBe('rebuild')
     expect(changed.sourceEffects.sessionSnapshot.state.context?.access_scope_hash).not.toBe(scope)
   })
+  it('同一会话进入 IM 再返回应用时分别重建已缓存的提示词快照', async () => {
+    const value = fixture()
+    let scene: 'default' | 'im' = 'default'
+    const select = value.ports.select
+    value.ports.select = async (...args) => ({ ...await select(...args), scene })
+    for (const next of ['default', 'im', 'default'] as const) {
+      scene = next
+      const result = await prepareRunContextSources(identity, value.ports)
+      expect(result.sourceEffects.sessionSnapshot.phase).toBe('rebuild')
+      value.store(result.sourceEffects.sessionSnapshot.state)
+    }
+    expect((await prepareRunContextSources(identity, value.ports)).sourceEffects.sessionSnapshot.phase).toBe('hit')
+  })
+
   it.each([{ frozen: [] as Json[] }, { frozen: [{ name: '合成用户技能', content_digest: '版本一' }] as Json[] }])('用户Skill首次冻结入同一快照候选，下一Run只接收该冻结元数据：%j', async ({ frozen }) => {
     const value = fixture(), original = structuredClone(value.stored()), seen: unknown[] = []
     const run: CanonicalRunPreparationPorts = {
@@ -120,8 +134,8 @@ describe('Core标准上下文来源组合', () => {
     expect(value.ragCalls()).toBe(0)
     const prepared = await prepareContext(loaded.input, value.preparation)
     expect(value.ragCalls()).toBe(1)
-    expect(prepared.area.messages.filter(message => message.content === '【消息正文】\n消息3')).toHaveLength(1)
-    expect(prepared.area.messages.findIndex(message => message.content === '合成RAG')).toBeLessThan(prepared.area.messages.findIndex(message => message.content === '【消息正文】\n消息3'))
+    expect(prepared.area.messages.filter(message => message.content === '消息3')).toHaveLength(1)
+    expect(prepared.area.messages.findIndex(message => message.content === '合成RAG')).toBeLessThan(prepared.area.messages.findIndex(message => message.content === '消息3'))
   })
   it('标准sources把显式原始query透传到真实prepare召回，保持已持久当前水位', async () => {
     const value = fixture(), seen: unknown[] = []
@@ -149,7 +163,7 @@ describe('Core标准上下文来源组合', () => {
     expect(second.sourceEffects.sessionSnapshot.phase).toBe('hit')
     expect(second.sourceEffects.sessionSnapshot.state.snapshotExpiresAt).toBe(1_801_000)
   })
-  it('主场景从迁移前快照续期，到期重建时仍沿压缩基线读取历史', async () => {
+  it('默认组装续期旧格式快照，到期重建时仍沿压缩基线读取历史', async () => {
     const value = fixture()
     const before = await prepareRunContextSources(identity, value.ports)
     const compacted = updateBaselineSnapshot(before.sourceEffects.sessionSnapshot.state,
@@ -165,12 +179,9 @@ describe('Core标准上下文来源组合', () => {
         baselineSeq: 2, baselineHash: '合成已持久基线哈希', snapshotHash: value.stored().snapshotHash,
       } }
     }
-    const migrated = { ...value.ports, builder: createMainContextBuilder(value.ports.builder) }
     value.advance(DEFAULT_IDLE_TTL_MS - 1)
     value.events.length = 0
-    const oldHit = await prepareRunContextSources(identity, value.ports)
-    const hit = await prepareRunContextSources(identity, migrated)
-    expect(hit).toEqual(oldHit)
+    const hit = await prepareRunContextSources(identity, value.ports)
     expect(hit.sourceEffects.sessionSnapshot.phase).toBe('hit')
     expect(hit.sourceEffects.sessionSnapshot.state.snapshotExpiresAt).toBe(2 * DEFAULT_IDLE_TTL_MS - 1)
     expect(hit.input.snapshotText).toBe('项目概览1')
@@ -178,7 +189,7 @@ describe('Core标准上下文来源组合', () => {
 
     value.store(hit.sourceEffects.sessionSnapshot.state)
     value.advance(DEFAULT_IDLE_TTL_MS)
-    const rebuilt = await prepareRunContextSources(identity, migrated)
+    const rebuilt = await prepareRunContextSources(identity, value.ports)
     expect(rebuilt.sourceEffects.sessionSnapshot).toMatchObject({
       phase: 'rebuild', state: { baselineMessageSeq: 2, context: { history_baseline_message_seq: 2 } },
     })

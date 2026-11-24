@@ -1,11 +1,12 @@
+import { resolveImToolLabel } from '@gugu/core/im/run-delivery'
 import { formatImToolReceipt } from '../../ir/tool-receipt.js'
 import { buildFeishuCardElements } from './sender.js'
 
 type Element = Record<string, unknown>
-export type FeishuToolEvent = { type: 'tool_call' | 'tool_done'; toolCallId?: string; name?: string; label?: string; status?: string; input?: unknown; result?: unknown }
+export type FeishuToolEvent = { type: 'tool_call' | 'tool_done'; toolCallId?: string; name?: string; label?: string; status?: string; display?: unknown; input?: unknown; result?: unknown }
 /** 只允许可信Host为私聊打开详情；脱敏必须沿用正式出站策略。 */
-export type FeishuToolSummaryPolicy = { chatType: 'group'; includeDetails?: false; sanitize(text: string): string }
-  | { chatType: 'p2p'; includeDetails?: boolean; sanitize(text: string): string }
+export type FeishuToolSummaryPolicy = { chatType: 'group'; includeDetails?: false; locale?: string | null; sanitize(text: string): string }
+  | { chatType: 'p2p'; includeDetails?: boolean; locale?: string | null; sanitize(text: string): string }
 type TextBlock = { kind: 'text'; id: string; text: string }
 type ToolBlock = { kind: 'tools'; events: FeishuToolEvent[] }
 type Block = TextBlock | ToolBlock | { kind: 'image'; key: string; source: string }
@@ -150,7 +151,7 @@ export class FeishuPresentation {
     return this.elements().flatMap(element => element.tag === 'markdown' ? [String(element.content ?? '')]
       : element.tag === 'collapsible_panel' && Array.isArray(element.elements) ? element.elements.map(child => child && typeof child === 'object' ? String((child as Element).content ?? '') : '') : []).filter(Boolean).join('\n\n')
   }
-  private label(event: FeishuToolEvent): string { return clip(this.policy!.sanitize((event.label || event.name || '工具').trim().replace(/\s+/g, ' ')), 80) }
+  private label(event: FeishuToolEvent): string { return clip(this.policy!.sanitize((event.label?.trim() || resolveImToolLabel(event.name, event.display, undefined, this.policy!.locale)).replace(/\s+/g, ' ')), 80) }
   private detail(value: unknown): string {
     if (typeof value === 'string') { try { const parsed: unknown = JSON.parse(value); if (parsed && typeof parsed === 'object') value = parsed } catch { /* 普通文本结果 */ } }
     const language = typeof value === 'string' ? 'text' : 'json'
@@ -160,7 +161,7 @@ export class FeishuPresentation {
     return '```' + language + '\n' + this.policy!.sanitize(body.replaceAll('```', '` ` `')) + '\n```'
   }
   private entry(event: FeishuToolEvent): string {
-    if (!this.policy!.includeDetails) return formatImToolReceipt(event, this.policy!.sanitize)
+    if (!this.policy!.includeDetails) return formatImToolReceipt(event, this.policy!.sanitize, this.policy!.locale)
     const status = event.status ?? '', label = this.label(event), done = event.type === 'tool_done'
     const [icon, state] = done ? ({ success: ['✅', '已完成'], ok: ['✅', '已完成'], waiting: ['⏸️', '等待确认'], cancelled: ['⏹️', '已停止'] }[status] ?? ['⚠️', '未完成'])
       : ({ queued: ['⏳', '排队中'], running: ['⏳', '执行中'], invalid: ['⚠️', '未执行'], cancelled: ['⏹️', '已停止'] }[status] ?? ['⏳', '执行中'])

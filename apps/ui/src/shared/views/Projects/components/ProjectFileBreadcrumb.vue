@@ -8,12 +8,12 @@
     </button>
     <button v-if="folderStack.length === 0" class="bc-seg"
       data-bc-idx="-1" @click="emit('navigate', -1)">
-      <span class="bc-label">{{ t('sharedUi.projectFiles') }}</span>
+      <span class="bc-label"><slot name="root">{{ t('sharedUi.projectFiles') }}</slot></span>
     </button>
     <RuntimeBreadcrumbTarget v-else class="bc-seg" :target-id="breadcrumbSurfaceId(runtimeScope, -1)"
       :surface-id="breadcrumbSurfaceId(runtimeScope, -1)"
       data-bc-idx="-1" @click="emit('navigate', -1)">
-        <span class="bc-label">{{ t('sharedUi.projectFiles') }}</span>
+      <span class="bc-label"><slot name="root">{{ t('sharedUi.projectFiles') }}</slot></span>
     </RuntimeBreadcrumbTarget>
     <template v-for="(segment, index) in folderStack" :key="segment.id">
       <Icon name="action.next" :size="10" class="bc-sep" />

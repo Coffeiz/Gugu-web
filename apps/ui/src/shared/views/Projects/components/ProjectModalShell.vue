@@ -25,7 +25,7 @@ defineEmits(['close'])
 
 <style>
 /* ProjectModal 的布局根节点由本组件渲染，不能依赖父组件的 scoped 选择器命中。
-   这里仅保留根布局职责，左右栏及其内容样式仍由 ProjectModal/ProjectFilesPanel 管理。 */
+   这里仅保留根布局职责，左右栏及其内容样式仍由 ProjectModal/ProjectDiskFiles 管理。 */
 .project-modal-root {
   display: flex;
   width: 100%;

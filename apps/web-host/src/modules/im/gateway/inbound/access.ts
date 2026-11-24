@@ -1,4 +1,5 @@
-import { imCanUseTool, imContextPolicy, resolveImAccess, resolveImActor, type ImAccess, type ImAccessScope, type ImActor, type ImActorInput, type ImBotAccess, type ImPlatform } from '@gugu/core/im/access'
+import { resolveImAccess, resolveImActor, type ImAccess, type ImAccessScope, type ImActor, type ImActorInput, type ImBotAccess, type ImPlatform } from '@gugu/core/im/access'
+import { imCanUseTool, imContextPolicy } from '@gugu/core/agent/scenes/im'
 import { normalizeUserBotTools } from '@gugu/core/im/user-bots'
 import { normalizeOwnerId } from '../../../../shared/owner-context.js'
 

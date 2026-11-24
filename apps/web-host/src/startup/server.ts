@@ -17,10 +17,12 @@ import { resolveConfigOverridePath } from '../adapters/config/config-override-fi
 import { hasProjectDeleteJournalSchema } from '../modules/undo/journal.js'
 import { PostgresMigrationError } from '@gugu/database/postgres'
 import { checkRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
-import { checkTrashPurgeMigration } from '@gugu/database/postgres/migrations/0009_trash_purge'
 import { checkSearchUsageMigration } from '@gugu/database/postgres/migrations/0010_search_usage'
 import { migrateWebAgentPrompts, webAgentPromptRoot } from '../modules/agent/context/prompts.js'
 import { hasProjectExpiryJournalSchema } from '../modules/projects/lifecycle/expiry.js'
+import { createLocalFileUndoStorage } from '../modules/files/storage/undo.js'
+import { migrateLegacyFileUndoAnchors } from '../modules/undo/legacy-file-anchors.js'
+import { migrateLegacyMindFileAnchors } from '../modules/mind/legacy-file-anchors.js'
 import { createRedisEventPublisher } from '../adapters/cache/redis-events.js'
 import { createAdminAuth, createAdminPromptOptions } from './admin.js'
 import { createPool } from './postgres.js'
@@ -49,6 +51,9 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   const redisEvents = config.redisUrl ? createRedisEventPublisher(config.redisUrl) : undefined
   let core: SqlDataRuntime
   try {
+    // 旧文件行号锚点必须在数据库迁移 0042 删除 files.id 前转换为路径。
+    await migrateLegacyFileUndoAnchors(pool, createLocalFileUndoStorage(config.storageLocalPath))
+    await migrateLegacyMindFileAnchors(pool, config.storageLocalPath)
     core = await createPostgresRuntime({ url: config.databaseUrl, maxConnections: config.postgresPoolMax })
   } catch (error) {
     // 保留 Admin 登录和配置入口，让用户可以修正数据库连接；业务 API 仍由未就绪状态阻断。
@@ -105,7 +110,6 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   }
 
   let canRebuildAgentMemoryIndex = false
-  let trashPurgeSchemaApplied = false
   let searchUsageSchemaApplied = false
   let projectJournalPool: Pool | undefined
   let imRuntime: ReturnType<typeof createNodeImHostRuntime> | undefined
@@ -113,9 +117,6 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   let imDeliveryPool: Pool | undefined
   let web: Awaited<ReturnType<typeof createWebUiApp>>
   try {
-    trashPurgeSchemaApplied = await checkFeatureMigration('host.trash_purge_unavailable', checkTrashPurgeMigration)
-    if (trashPurgeSchemaApplied && process.platform !== 'linux')
-      report('host.trash_purge_unavailable', { code: 'platform_unsupported' })
     searchUsageSchemaApplied = await checkFeatureMigration('host.search_usage_unavailable', checkSearchUsageMigration)
     // 日志跨事务持有会话锁，使用独立连接池，避免占用本次确认仍需使用的业务连接。
     if (process.platform === 'linux' && core.receipts && await hasProjectDeleteJournalSchema(pool))
@@ -124,7 +125,7 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
       && (!projectJournalPool || !await hasProjectExpiryJournalSchema(pool)))
       throw new Error('项目过期清理 Worker 需要已迁移的项目日志结构')
     web = await createWebUiApp(config, pool, core, redisEvents, env, () => canRebuildAgentMemoryIndex,
-      projectJournalPool, trashPurgeSchemaApplied, searchUsageSchemaApplied, {
+      projectJournalPool, searchUsageSchemaApplied, {
         bindMcp(runtime) { sharedMcp = runtime },
         async clearOwner(ownerId, remove) {
           if (imRuntime) await imRuntime.clearOwner(ownerId, remove)
@@ -148,6 +149,8 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
     const gateway = createNodeImHostRuntime({ pool, deliveryPool: imDeliveryPool ?? pool, core, redisUrl: config.redisUrl,
       secretKey: config.secretKey, storageRoot: config.storageLocalPath, configOverridePath, environment: env,
       promptRoot, publicAppUrl: config.publicAppUrl, ownership, mcpRuntime: sharedMcp, imOwnerTools: web.imOwnerTools, registerImSubagentParentBinder: web.registerImSubagentParentBinder, mcpDirectory: web.imMcpDirectory,
+      filesystemAuthorization: web.imFilesystemAuthorization,
+      automaticModeEnabled: config.workspaceRuntimeSettings.automaticModeEnabled,
       runAgent: web.runAgent, observation: web.loopScopeTrace?.forSource('im'), log: web.agentRunLog,
       diagnose(code, error) {
         if (code === 'im_rag_timeout') gatewayLog('gateway.rag_timeout', { error })

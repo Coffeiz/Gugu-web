@@ -189,6 +189,8 @@ function openNewWithStatus(status) {
 }
 
 .kanban {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;

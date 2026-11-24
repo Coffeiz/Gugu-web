@@ -23,27 +23,29 @@ test('认证文件 Undo 路由经 Core SQLite 事务恢复正文、版本并支�
   const db = runtime.db as any
   const executeRaw = (statement: string) => db.executeQuery({ sql: statement, parameters: [], query: { kind: 'RawNode', sqlFragments: [statement], parameters: [] } })
   const fileKey = `${ownerId}/个人文件/内容.md`
-  const artifactPrefix = `${ownerId}/.undo/op-${'a'.repeat(32)}/file-1`
+  const fileHash = (await import('node:crypto')).createHash('sha256').update(fileKey).digest('hex').slice(0, 24)
+  const artifactPrefix = `${ownerId}/.undo/op-${'a'.repeat(32)}/file-${fileHash}`
+  const fileRef = `file:${fileKey}`
   try {
     await db.schema.createTable('files')
-      .addColumn('id', 'integer', (column: any) => column.primaryKey())
       .addColumn('user_id', 'text', (column: any) => column.notNull())
       .addColumn('display_name', 'text')
       .addColumn('ext', 'text')
-      .addColumn('storage_key', 'text')
+      .addColumn('path', 'text')
       .addColumn('version', 'integer', (column: any) => column.notNull())
       .addColumn('size', 'text')
       .addColumn('size_bytes', 'integer')
       .addColumn('mime_type', 'text')
       .addColumn('deleted_at', 'text')
+      .addPrimaryKeyConstraint('files_pkey', ['user_id', 'path'])
       .execute()
-    await db.insertInto('files').values({ id: 1, user_id: ownerKey, display_name: '内容', ext: 'md', storage_key: fileKey, version: 2, size: '9 B', size_bytes: 9, mime_type: 'text/markdown', deleted_at: null }).execute()
-    const before = { items: { 'file:1': { id: 1, display_name: '内容', ext: 'md', storage_key: fileKey, version: 1, size: '9 B', size_bytes: 9 } } }
-    const after = { items: { 'file:1': { id: 1, display_name: '内容', ext: 'md', storage_key: fileKey, version: 2, size: '9 B', size_bytes: 9 } } }
+    await db.insertInto('files').values({ user_id: ownerKey, display_name: '内容', ext: 'md', path: fileKey, version: 2, size: '9 B', size_bytes: 9, mime_type: 'text/markdown', deleted_at: null }).execute()
+    const before = { items: { [fileRef]: { display_name: '内容', ext: 'md', path: fileKey, version: 1, size: '9 B', size_bytes: 9 } } }
+    const after = { items: { [fileRef]: { display_name: '内容', ext: 'md', path: fileKey, version: 2, size: '9 B', size_bytes: 9 } } }
     await db.insertInto('undo_operations').values({
       id: 'op', user_id: ownerKey, undo_context_id: 'editor', group_id: 'group', resource: 'files', action: 'update',
-      target_refs: JSON.stringify([{ kind: 'file', id: 1 }]), before_state: JSON.stringify(before), after_state: JSON.stringify(after),
-      base_versions: '{}', artifact_refs: JSON.stringify({ 'file:1': { before_key: `${artifactPrefix}/before`, after_key: `${artifactPrefix}/after` } }),
+      target_refs: JSON.stringify([{ kind: 'file', path: fileKey }]), before_state: JSON.stringify(before), after_state: JSON.stringify(after),
+      base_versions: '{}', artifact_refs: JSON.stringify({ [fileRef]: { before_key: `${artifactPrefix}/before`, after_key: `${artifactPrefix}/after` } }),
       actor_type: 'web', status: 'active', created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86_400_000).toISOString(), undone_at: null, failure_code: null,
     }).execute()
     await mkdir(path.join(storageRoot, path.dirname(fileKey)), { recursive: true })
@@ -67,19 +69,19 @@ test('认证文件 Undo 路由经 Core SQLite 事务恢复正文、版本并支�
       const undo = await app.inject({ method: 'POST', url: '/api/v1/undo', headers: auth, payload: { operation_id: 'op', context_id: 'editor' } })
       assert.equal(undo.statusCode, 200)
       assert.equal(await readFile(path.join(storageRoot, fileKey), 'utf8'), '旧正文')
-      assert.equal((await db.selectFrom('files').select('version').where('id', '=', 1).executeTakeFirst()).version, 3)
+      assert.equal((await db.selectFrom('files').select('version').where('path', '=', fileKey).executeTakeFirst()).version, 3)
 
       await executeRaw("CREATE TRIGGER fail_file_undo_update BEFORE UPDATE ON files BEGIN SELECT RAISE(ABORT, 'fixture failure'); END")
       const failedRedo = await app.inject({ method: 'POST', url: '/api/v1/undo/redo', headers: auth, payload: { operation_id: 'op', context_id: 'editor' } })
       assert.equal(failedRedo.statusCode, 500)
       assert.equal(await readFile(path.join(storageRoot, fileKey), 'utf8'), '旧正文')
-      assert.equal((await db.selectFrom('files').select('version').where('id', '=', 1).executeTakeFirst()).version, 3)
+      assert.equal((await db.selectFrom('files').select('version').where('path', '=', fileKey).executeTakeFirst()).version, 3)
       await executeRaw('DROP TRIGGER fail_file_undo_update')
 
       const redo = await app.inject({ method: 'POST', url: '/api/v1/undo/redo', headers: auth, payload: { operation_id: 'op', context_id: 'editor' } })
       assert.equal(redo.statusCode, 200)
       assert.equal(await readFile(path.join(storageRoot, fileKey), 'utf8'), '新正文')
-      assert.equal((await db.selectFrom('files').select('version').where('id', '=', 1).executeTakeFirst()).version, 4)
+      assert.equal((await db.selectFrom('files').select('version').where('path', '=', fileKey).executeTakeFirst()).version, 4)
       assert.deepEqual(events.map(event => event.operation), ['update', 'update'])
     } finally { await app.close() }
   } finally {

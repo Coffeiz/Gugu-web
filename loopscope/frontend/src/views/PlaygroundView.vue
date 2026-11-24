@@ -2,8 +2,8 @@
   <div class="workspace">
     <section class="sessions">
       <header>
-        <div><span class="eyebrow">SESSIONS</span><h2>Conversation</h2></div>
-        <button v-if="!localDesktopMode" class="new" :title="t('playground.newSession')" @click="newSession">＋</button>
+        <div><span class="eyebrow">SESSIONS</span><h2>{{ subagents ? t('playground.subagents') : 'Conversation' }}</h2></div>
+        <button v-if="!subagents && !localDesktopMode" class="new" :title="t('playground.newSession')" @click="newSession">＋</button>
       </header>
       <div v-if="!connected && !localDesktopMode" class="empty small">{{ t('playground.openDev') }}</div>
       <button
@@ -15,8 +15,19 @@
         <span class="session-title">{{ s.title }}</span>
         <span class="sid">#{{ s.id }}</span>
       </button>
+      <section v-for="[agentId, children] in subagentGroups" :key="agentId" class="subagent-group">
+        <h3 :title="agentId || undefined">{{ subagentName(agentId) }}</h3>
+        <button
+          v-for="session in children" :key="session.session_key"
+          class="session-row subagent-row" :class="{ active: session.session_key === desktopSession?.session_key }"
+          :disabled="sending" @click="selectDesktopSession(session)"
+        >
+          <span class="session-title">{{ childIdentifier(session) }}</span>
+          <span v-if="hasChildIdentifier(session)" class="sid">#{{ session.external_session_id }}</span>
+        </button>
+      </section>
       <button
-        v-for="session in desktopSessions" :key="session.session_key"
+        v-for="session in topLevelTraceSessions" :key="session.session_key"
         class="session-row" :class="{ active: session.session_key === desktopSession?.session_key }"
         :disabled="sending" @click="selectDesktopSession(session)"
       >
@@ -29,11 +40,11 @@
     <section class="session-stage">
       <header class="session-head">
         <div>
-          <span class="eyebrow">{{ activeSessionId ? `SESSION #${activeSessionId}` : 'NEW SESSION' }}</span>
-          <h1>{{ desktopSession?.title || activeSession?.title || 'New conversation' }}</h1>
+          <span class="eyebrow">{{ activeSessionId ? `SESSION #${activeSessionId}` : subagents ? '' : 'NEW SESSION' }}</span>
+          <h1>{{ (subagents && desktopSession ? `${subagentName(subagentId(desktopSession))} · ${childIdentifier(desktopSession)}` : desktopSession?.title) || activeSession?.title || (subagents ? t('playground.subagents') : 'New conversation') }}</h1>
         </div>
         <div class="head-actions">
-          <button v-if="activeSessionId" class="refresh" :title="refreshLabel" :aria-label="refreshLabel" @click="refreshAll">↻</button>
+          <button v-if="activeSessionId || subagents" class="refresh" :title="refreshLabel" :aria-label="refreshLabel" @click="refreshAll">↻</button>
           <div v-if="activeId" class="view-switch">
             <button :class="{ active: sessionView === 'conversation' }" @click="showConversation">{{ t('playground.conversation') }}</button>
             <button :class="{ active: sessionView === 'monitor' }" @click="openMonitor">Monitor</button>
@@ -98,6 +109,9 @@
         <p v-if="error" class="error">{{ error }}</p>
       </template>
 
+      <div v-else-if="subagents && !activeSessionKey" class="empty">
+        <strong>{{ t('playground.noSubagentSessions') }}</strong>
+      </div>
       <SessionMonitor
         v-else
         :key="activeSessionKey ?? undefined"
@@ -131,13 +145,49 @@ import { buildTraceRounds } from '../utils/runExport'
 import { prettyJson } from '../utils/prettyJson'
 import { formatCompactNumber } from '../utils/formatNumber'
 
+const props = defineProps({ subagents: Boolean })
+
 const sessions = ref<GuguSession[]>([])
 const activeId = ref<number | null>(null)
 const desktopSessions = ref<TraceSession[]>([])
+const allTraceSessions = ref<TraceSession[]>([])
 const desktopSession = ref<TraceSession | null>(null)
+const topLevelTraceSessions = computed(() => props.subagents ? [] : desktopSessions.value.filter(session => !session.parent_session_id))
+const childTraceSessions = computed(() => allTraceSessions.value.filter(session => session.parent_session_id))
+const subagentGroups = computed(() => {
+  const groups = new Map<string, TraceSession[]>()
+  if (!props.subagents) return groups
+  for (const session of childTraceSessions.value) {
+    const id = subagentId(session)
+    const children = groups.get(id)
+    if (children) children.push(session)
+    else groups.set(id, [session])
+  }
+  return groups
+})
+
+function subagentId(session: TraceSession) {
+  // 旧版只有 Searcher，且将内部会话号写入 child_id。
+  return session.agent_id || (session.child_id && session.child_id === session.external_session_id ? 'builtin:searcher' : '')
+}
+
+function subagentName(id: string) {
+  if (id === 'builtin:searcher') return 'Searcher'
+  return id || t('playground.unknownAgent')
+}
+
+function hasChildIdentifier(session: TraceSession) {
+  return Boolean(session.child_id && (session.agent_id || session.child_id !== session.external_session_id))
+}
+
+function childIdentifier(session: TraceSession) {
+  return hasChildIdentifier(session)
+    ? session.child_id
+    : t('playground.sessionIdentifier', { id: session.external_session_id })
+}
 const activeSessionId = computed(() => desktopSession.value?.external_session_id ?? activeId.value)
 const activeSessionKey = computed(() => desktopSession.value?.session_key ?? (activeId.value == null ? null : `web:${activeId.value}`))
-const refreshLabel = computed(() => t(desktopSession.value ? 'playground.refreshRuns' : 'playground.refreshSession'))
+const refreshLabel = computed(() => t(props.subagents || desktopSession.value ? 'playground.refreshRuns' : 'playground.refreshSession'))
 const messages = ref<ChatMessage[]>([])
 const activeChatType = ref<string | null>(null)
 const ownerPlatformUserId = ref<string | null>(null)
@@ -156,7 +206,7 @@ const oldestMessageId = ref<number | null>(null)
 const hasOlderRuns = ref(false)
 const loadingOlderRuns = ref(false)
 const mode = ref<'normal'|'detail'>('normal')
-const sessionView = ref<'conversation'|'monitor'>('conversation')
+const sessionView = ref<'conversation'|'monitor'>(props.subagents ? 'monitor' : 'conversation')
 const monitorFocusRunId = ref('')
 const draft = ref('')
 const sending = ref(false)
@@ -175,13 +225,16 @@ const runRefreshes = new Map<string, Promise<TraceRunSummary[]>>()
 let desktopSessionRefresh: Promise<void> | undefined
 
 async function refreshSessions() {
-  if (!connected.value) return
+  if (props.subagents || !connected.value) return
   sessions.value = await listGuguSessions()
 }
 function refreshDesktopSessions() {
   if (!connected.value && !localDesktopMode) return Promise.resolve()
   desktopSessionRefresh ??= listTraceSessions()
-    .then(entries => { desktopSessions.value = entries.filter(session => session.source === 'desktop') })
+    .then(entries => {
+      allTraceSessions.value = entries
+      desktopSessions.value = entries.filter(session => session.source === 'desktop')
+    })
     .catch(() => { /* Collector 暂不可用时保留已有会话。 */ })
     .finally(() => { desktopSessionRefresh = undefined })
   return desktopSessionRefresh
@@ -248,7 +301,9 @@ async function refreshLiveRun(runId: string) {
   spanHasMore.value = { ...spanHasMore.value, [runId]: Boolean(page.hasMore) }
 }
 function onTraceEvent(event: { run_id: string; session_key: string; status: string }) {
-  if (event.session_key.startsWith('gugu:desktop:')
+  if (props.subagents && !allTraceSessions.value.some(session => session.session_key === event.session_key)) {
+    void refreshSubagentSessions()
+  } else if (event.session_key.startsWith('gugu:desktop:')
     && !desktopSessions.value.some(session => session.session_key === event.session_key)) void refreshDesktopSessions()
   if (!traceSessionKeys().includes(event.session_key)) return
   if (sessionView.value !== 'monitor' && mode.value !== 'detail') return
@@ -412,7 +467,16 @@ function messageRoleLabel(message: ChatMessage): string {
       ? t('playground.groupMemberWithId', { id: message.platformUserId })
       : t('playground.groupMember'))
 }
+async function refreshSubagentSessions() {
+  await refreshDesktopSessions()
+  const first = childTraceSessions.value[0]
+  if (!activeSessionKey.value && first) await selectDesktopSession(first)
+}
 async function refreshAll() {
+  if (props.subagents && !desktopSession.value) {
+    await refreshSubagentSessions()
+    return
+  }
   const desktop = desktopSession.value
   if (desktop) {
     error.value = ''
@@ -622,8 +686,12 @@ function preview(v: unknown) {
 }
 async function onBootstrap() {
   connected.value = !localDesktopMode && !!loadBootstrap()
+  if (props.subagents) {
+    await refreshSubagentSessions()
+    return
+  }
   await Promise.all([refreshSessions(), refreshDesktopSessions()])
-  if (!activeSessionKey.value && desktopSessions.value[0] && localDesktopMode) await selectDesktopSession(desktopSessions.value[0])
+  if (!activeSessionKey.value && topLevelTraceSessions.value[0] && localDesktopMode) await selectDesktopSession(topLevelTraceSessions.value[0])
   else if (!activeSessionKey.value && sessions.value[0]) await selectSession(sessions.value[0].id)
 }
 onMounted(async () => {
@@ -646,6 +714,9 @@ h1,h2 { margin:3px 0 0; font-size:18px; }
 .eyebrow { font-size:10px; letter-spacing:.11em; color:var(--content-tertiary); font-weight:600; }
 .new { border:0; background:var(--action-soft); color:var(--action-primary); border-radius:10px; width:32px; height:32px; }
 .session-row { width:100%; margin-top:8px; display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; text-align:left; border:1px solid transparent; background:transparent; border-radius:12px; padding:10px; color:var(--content-secondary); }
+.subagent-group { margin-top:16px; }
+.subagent-group h3 { margin:0 0 0 10px; color:var(--content-secondary); font-size:12px; overflow-wrap:anywhere; }
+.subagent-row { grid-template-columns:minmax(0,1fr) auto; font-family:var(--font-mono); }
 .session-row:hover { background:var(--surface-card); }
 .session-row.active { background:var(--surface-raised); border-color:var(--border-subtle); box-shadow:var(--elevation-card); color:var(--content-primary); }
 .source,.sid { font-size:10px; color:var(--content-tertiary); font-family:var(--font-mono); }

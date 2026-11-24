@@ -23,7 +23,6 @@ it('工作区 Agent 查询复用桌面文件目录登记并过滤个人文件根
     name: '合成工作区',
     kind: 'directory',
     project_id: null,
-    folder_id: null,
     directory_id: directories[1]!.id,
     directory_name: '合成工作区',
   }])
@@ -33,6 +32,18 @@ it('工作区 Agent 查询复用桌面文件目录登记并过滤个人文件根
   })
   await expect(queries.get(owner, 'desktop:22222222-2222-4222-8222-222222222222')).resolves.toBeNull()
   expect(hostRequest).toHaveBeenCalledWith('agent.files.workspaceList', {}, undefined)
+})
+
+it('工作区工具保留本机路径 IR 和不可用状态', async () => {
+  const location = { kind: 'host_absolute', value: '/合成目录/资料' }
+  const queries = createAgentWorkspaceQueries(createDesktopWorkspaceReadPort(async () => [
+    { ...directories[1], available: true, location },
+    { id: 'desktop:22222222-2222-4222-8222-222222222222', name: '离线目录', available: false },
+  ]))
+  await expect(queries.list(owner)).resolves.toMatchObject([
+    { available: true, location },
+    { available: false },
+  ])
 })
 
 it('工作区 Agent 查询拒绝未通过文件服务校验的登记结果', async () => {

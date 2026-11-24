@@ -69,7 +69,7 @@ export const exampleUi = {
 
 ### Agent 工具名称
 
-工具气泡显示名集中放在 `sections/toolNames.ts`，按 `zh-CN`、`ja-JP`、`en-US` 三种语言维护，key 必须与后端稳定的 `Tool.name` 一致。`Tool.name` 是机器标识，不得翻译；`Tool.label` 只作为无法使用前端 i18n 时的 fallback。
+工具气泡与 IM 回执共用 Core 的 `agent/sessions/tool-labels.ts`，前端经 `sections/toolNames.ts` 导入，按 `zh-CN`、`ja-JP`、`en-US` 三种语言维护，key 必须与后端稳定的 `Tool.name` 一致。`Tool.name` 是机器标识，不得翻译；`Tool.label` 只作为无法使用前端 i18n 时的 fallback。
 
 对于 `call_tool` 这类固定 Adapter，组件必须先解析事件参数中的实际工具名，再查找 `toolNames.<name>`；不能显示 Adapter 名 `call_tool`。历史事件也只依赖稳定工具名，切换语言后应能重新渲染。新增工具必须同时补齐三种语言，并通过 i18n key 扫描、类型检查和相关 UI 测试。
 

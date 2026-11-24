@@ -22,11 +22,14 @@ export async function finishForRun<C>(scope: RunCoordination<C>, status: 'comple
   if (!scope.state || scope.finalized)
     throw new AgentRunError('invalid_state', '运行已终结')
   const incomplete = status === 'failed' || status === 'unknown'
-  const hasCancelledHistory = status === 'cancelled' && (scope.state.text || scope.state.roundTexts.length
-    || scope.state.completedToolCount || scope.state.displayTimeline.some(item => item.kind === 'tool' && item.toolStatus === 'cancelled'))
-  // 失败只保留已经公开的输出。缓冲中的草稿仍可能被回复门拦下。
-  const visibleText = incomplete ? scope.state.displayTimeline.filter(item => item.kind === 'assistant' && item.text)
-    .map(item => item.text).join('\n\n') : status === 'cancelled' ? scope.state.text : text
+  const cancelled = status === 'cancelled'
+  const hasCancelledHistory = cancelled && (scope.state.displayTimeline.length > 0
+    || scope.state.files.length > 0 || scope.state.completedToolCount > 0)
+  // 未通过回复门的草稿不进入历史。时间线会保留所有已展示的轮次和工具。
+  const visibleText = incomplete || cancelled
+    ? scope.state.displayTimeline.filter(item => item.kind === 'assistant' && item.text)
+      .map(item => item.text).join('\n\n')
+    : text
   const history = scope.state.context !== null && (status === 'completed' || incomplete || hasCancelledHistory)
     ? { outcome: (silent ? 'silent' : status === 'completed' ? 'success' : 'interruption') as 'success' | 'interruption' | 'silent',
       context: scope.state.context, text: visibleText }
@@ -39,13 +42,13 @@ export async function finishForRun<C>(scope: RunCoordination<C>, status: 'comple
     try {
       await scope.ports.context.afterFinal(scope.identity, scope.state.context, { status: 'completed', text, roundTexts: scope.state.roundTexts, usage: scope.state.totalUsage, hadTools: scope.state.replyState.anyToolCalled, displayTimeline: scope.state.displayTimeline })
     }
-    catch {
+    catch (error) {
       // 持久化已经成功，Job发布异常不能改写终态或重放本轮业务。
       const at = Date.parse(scope.ports.clock.now()) || Date.now()
       recordAgentRunLog(scope.ports.log, {
         identity: scope.identity, at, level: 'warn', event: 'agent.run.finalization_failed',
       })
-      scope.ports.diagnose('finalization_hook_failed')
+      scope.ports.diagnose('finalization_hook_failed', { identity: scope.identity, phase: scope.state.phase, error })
     }
   }
   return event!

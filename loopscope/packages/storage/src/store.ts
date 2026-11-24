@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto'
-import { and, asc, count, desc, eq, inArray, lt, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, lt, not, sql } from 'drizzle-orm'
 import { TraceRunFinishSchema, TraceRunInputSchema, type TokenUsage, type TraceRunInput } from '@loopscope/contracts'
 import { artifacts, contextFragments, openDatabase, runs, sessions, spans, usage } from '@loopscope/db'
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
+
+// 桌面反思可与对话共用 session key，按 Run 的场景字段识别。
+const reflectionRun = sql<boolean>`coalesce(json_extract(${runs.attributesJson}, '$.scenario') = 'reflection', 0)`
 
 function sessionTitle(input: unknown, fallback: string): string {
   let content = record(input).user_message
@@ -291,31 +294,41 @@ export class TraceStore {
         errorCount: sql<number>`coalesce(sum(case when ${runs.status} = 'error' then 1 else 0 end), 0)`,
       })
       .from(sessions)
-      .leftJoin(runs, eq(runs.sessionKey, sessions.sessionKey))
+      .innerJoin(runs, and(eq(runs.sessionKey, sessions.sessionKey), not(reflectionRun)))
+      .where(sql`${sessions.source} <> 'reflection'`)
       .groupBy(sessions.sessionKey)
       .orderBy(sql`${sessions.updatedAt} desc`)
       .all()
-    return rows.map(row => ({
+    return rows.map(row => {
+      const latest = this.connection.db.select({ attributes: runs.attributesJson }).from(runs)
+        .where(and(eq(runs.sessionKey, row.sessionKey), not(reflectionRun))).orderBy(desc(runs.startedAt)).get()
+      const subagent = record(record(latest?.attributes).subagent_trace)
+      return ({
       session_key: row.sessionKey,
       external_session_id: row.externalSessionId ?? '',
       source: row.source,
       title: row.title.startsWith('[{')
         ? sessionTitle(this.connection.db.select({ input: runs.inputJson }).from(runs)
-          .where(eq(runs.sessionKey, row.sessionKey)).orderBy(desc(runs.startedAt)).get()?.input,
+          .where(and(eq(runs.sessionKey, row.sessionKey), not(reflectionRun))).orderBy(desc(runs.startedAt)).get()?.input,
           `Session ${row.externalSessionId ?? row.sessionKey}`)
         : row.title,
       created_at: row.createdAt,
       updated_at: row.updatedAt,
       run_count: Number(row.runCount ?? 0),
       error_count: Number(row.errorCount ?? 0),
-    }))
+      ...(typeof subagent.parent_session_id === 'string' ? {
+        parent_session_id: subagent.parent_session_id,
+        parent_run_id: typeof subagent.parent_run_id === 'string' ? subagent.parent_run_id : '',
+        child_id: typeof subagent.child_id === 'string' ? subagent.child_id : '',
+        ...(typeof subagent.agent_id === 'string' ? { agent_id: subagent.agent_id } : {}),
+      } : {}),
+    })})
   }
 
   listRuns(sessionKey: string, options: { limit?: number; before?: number } = {}) {
     const limit = Math.min(Math.max(Math.trunc(options.limit ?? 20), 1), 100)
-    const condition = options.before == null
-      ? eq(runs.sessionKey, sessionKey)
-      : and(eq(runs.sessionKey, sessionKey), lt(runs.startedAt, options.before))
+    const condition = and(eq(runs.sessionKey, sessionKey), not(reflectionRun),
+      options.before == null ? undefined : lt(runs.startedAt, options.before))
     // 原始载荷可能远大于摘要字段；列表响应不会返回 raw_json，因此查询时也不要读取它。
     const rows = this.connection.db.select({
       id: runs.id,
@@ -337,7 +350,7 @@ export class TraceStore {
 
   listReflectionRuns(options: { limit?: number; before?: number } = {}) {
     const limit = Math.min(Math.max(Math.trunc(options.limit ?? 50), 1), 100)
-    const conditions = [eq(sessions.source, 'reflection')]
+    const conditions = [sql`(${sessions.source} = 'reflection' OR ${reflectionRun})`]
     if (options.before != null) conditions.push(lt(runs.startedAt, options.before))
     const rows = this.connection.db.select({
       run: {

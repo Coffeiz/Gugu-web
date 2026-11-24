@@ -126,7 +126,7 @@ export type DesktopCoreHostRequest = {
 }
 type DesktopCoreHostRequestHandler = (request: DesktopCoreHostRequest) => Promise<unknown>
 export class CoreHost {
-  private agentRunListeners = new Set<(sessionId: number, runId: string, interactionChanged?: true) => void>()
+  private agentRunListeners = new Set<(sessionId: number, runId: string | undefined, interactionChanged?: true) => void>()
   private hostControllers = new Map<number, AbortController>()
   private hostRequestHandler?: DesktopCoreHostRequestHandler
   private waiting?: Waiting
@@ -260,7 +260,7 @@ export class CoreHost {
         }
         if (message.v === 2 && message.event === 'agent_run_changed'
           && typeof message.sessionId === 'number' && Number.isSafeInteger(message.sessionId) && message.sessionId > 0
-          && typeof message.runId === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(message.runId)) {
+          && (message.runId === undefined || (typeof message.runId === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(message.runId)))) {
           for (const listener of this.agentRunListeners) listener(message.sessionId, message.runId, message.interactionChanged === true ? true : undefined)
           continue
         }
@@ -319,7 +319,7 @@ export class CoreHost {
       }
     })
   }
-  onAgentRunChanged(listener: (sessionId: number, runId: string, interactionChanged?: true) => void): () => void {
+  onAgentRunChanged(listener: (sessionId: number, runId: string | undefined, interactionChanged?: true) => void): () => void {
     this.agentRunListeners.add(listener)
     return () => { this.agentRunListeners.delete(listener) }
   }
@@ -511,15 +511,14 @@ export interface Caller {
   senderFrame: unknown
 }
 export async function desktopReply<T>(
-  trusted: boolean,
+  trusted: boolean | Promise<boolean>,
   action: () => Promise<T>,
 ): Promise<DesktopReply<T>> {
-  if (!trusted)
-    return {
+  try {
+    if (!await trusted) return {
       ok: false,
       error: { code: 'forbidden', message: '此窗口无权使用桌面能力' },
     }
-  try {
     return { ok: true, result: await action() }
   } catch (error) {
     return {

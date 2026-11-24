@@ -12,12 +12,12 @@ import type { TrashEntry } from '../../../files/trash/disk.js'
 import type { createWebAgentToolConfirmation } from '../confirm.js'
 
 type Confirmation = ReturnType<typeof createWebAgentToolConfirmation>
-type Action = 'delete_file' | 'restore_file' | 'restore_folder' | 'permanent_delete'
+type Action = 'delete_item' | 'restore_file' | 'restore_folder' | 'permanent_delete'
 const trashPrefix = '/trash/'
 const maxBatchSize = 50
 const trashPath = /^\/trash\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/u
 const descriptions = {
-  delete_file: '按沙盒映射路径将一个文件移入回收站，需确认，可在 30 天内恢复。使用 /workspace、/personal、/project 下的路径，或相对于当前工作区的路径。成功返回回收站路径。',
+  delete_item: '按沙盒映射路径将一个文件或文件夹移入回收站，需确认，可在 30 天内恢复。使用 /workspace、/personal、/project 下的路径，或相对于当前工作区的路径。成功返回回收站路径。',
   restore_file: '按 list_trash 返回的 /trash 路径恢复文件到原来的沙盒位置，需确认。',
   restore_folder: '按 list_trash 返回的 /trash 路径恢复文件夹到原来的沙盒位置，需确认。',
   permanent_delete: '永久删除回收项：path 删除单项，paths 批量删除，all=true 清空。使用 list_trash 返回的路径，操作需确认且不可恢复。',
@@ -79,8 +79,9 @@ export function createAgentDiskTrashTools(options: {
 
   function mutation(action: Action): ToolDefinition {
     const single = z.object({ path: z.string().min(1).max(4096).refine(path =>
-      action === 'delete_file' ? !/[\p{Cc}\\]/u.test(path) && !path.endsWith('/') : trashPath.test(path)) }).strict()
-    const parse = action === 'permanent_delete' ? z.union([
+      action === 'delete_item' ? !/[\p{Cc}\\]/u.test(path) && !path.endsWith('/') : trashPath.test(path)) }).strict()
+    const deletion = single.extend({ kind: z.enum(['file', 'folder']) })
+    const parse = action === 'delete_item' ? deletion : action === 'permanent_delete' ? z.union([
       single,
       z.object({ paths: z.array(z.string().regex(trashPath)).min(1).max(maxBatchSize)
         .refine(paths => new Set(paths).size === paths.length) }).strict(),
@@ -92,7 +93,7 @@ export function createAgentDiskTrashTools(options: {
       properties: { path: pathSchema, paths: { type: 'array', items: pathSchema, minItems: 1, maxItems: maxBatchSize, uniqueItems: true },
         all: { type: 'boolean', const: true } },
       oneOf: [{ required: ['path'] }, { required: ['paths'] }, { required: ['all'] }],
-    } : { type: 'object', additionalProperties: false, required: ['path'], properties: { path: pathSchema } }
+    } : { type: 'object', additionalProperties: false, required: action === 'delete_item' ? ['path', 'kind'] : ['path'], properties: { path: pathSchema, ...(action === 'delete_item' ? { kind: { type: 'string', enum: ['file', 'folder'] } } : {}) } }
     return {
       definition: { name: action, schema: { type: 'function', function: { name: action, description: descriptions[action],
         parameters } } },
@@ -171,16 +172,18 @@ export function createAgentDiskTrashTools(options: {
               },
             }
           }
-          if (action === 'delete_file') {
+          if (action === 'delete_item') {
             const target = await resolveTarget(scope.identity, path)
-            const opened = await createLocalFileTree(options.storageRoot, target.root).open(target.relative)
+            const { kind } = deletion.parse(input)
+            const tree = createLocalFileTree(options.storageRoot, target.root)
+            const opened = await (kind === 'folder' ? tree.openDirectory(target.relative) : tree.open(target.relative))
             if (!opened) throw new CoreError('not_found', '文件不存在或目标不是普通文件')
             let version
             try {
               const stat = await opened.handle.stat({ bigint: true })
               version = [target.source, stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String)
             } finally { await opened.handle.close() }
-            return { path: target.absolute, version, summary: `将文件移入回收站（30 天内可恢复）：${target.absolute}`,
+            return { path: target.absolute, version, summary: `将${kind === 'folder' ? '文件夹及其所有子项' : '文件'}移入回收站（30 天内可恢复）：${target.absolute}`,
               apply: async () => publicEntry(await files.trashPath(ownerId, target.directory, target.relative, target.root), target.absolute) }
           }
           const id = trashPath.exec(path)![1]!
@@ -207,9 +210,11 @@ export function createAgentDiskTrashTools(options: {
     validate: input => pagination.safeParse(input),
     async execute(input, scope) {
       if (!await options.authorize(scope.identity, scope.signal)) return failure('当前会话没有回收站权限')
+      scope.signal.throwIfAborted()
       const { offset } = pagination.parse(input)
       const { ownerId } = scope.identity
       const entries = await files.listDiskTrash(ownerId)
+      scope.signal.throwIfAborted()
       const items = await Promise.all(entries.slice(offset, offset + 50).map(async entry => {
         let original: string | null
         try { original = await originalPath(ownerId, entry) }
@@ -219,8 +224,9 @@ export function createAgentDiskTrashTools(options: {
         }
         return publicEntry(entry, original)
       }))
+      scope.signal.throwIfAborted()
       return success({ items, next_offset: offset + items.length < entries.length ? offset + items.length : null }, false)
     },
   }
-  return [list, ...(['delete_file', 'restore_file', 'restore_folder', 'permanent_delete'] as const).map(mutation)]
+  return [list, ...(['delete_item', 'restore_file', 'restore_folder', 'permanent_delete'] as const).map(mutation)]
 }

@@ -133,26 +133,30 @@ function canResumeCheckpoint(checkpoint: RunCheckpoint<CanonicalRunContext>) {
   return inflight.size > 0 && checkpoint.calls.every(call => receipts.get(call.id) === 'completed' || inflight.has(call.id))
 }
 
-/** 仅在运行时取得数据库独占锁后调用。保留已提交输出，不重放结果未知的调用。 */
+/** 重启时接管遗留运行，或在单个生成器退出后结算该运行。 */
 export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path: string, ownerId: string,
   reconcile?: (call: ToolCall, identity: RunIdentity & { roundId: string }) => Promise<ToolResult>,
   resume?: (checkpoint: RunCheckpoint<CanonicalRunContext>) => Promise<boolean>,
   restoreBoundRun?: (identity: RunIdentity, source: string | null) => boolean | Promise<boolean>,
+  stoppedRun?: { identity: RunIdentity; parent?: RunIdentity },
 ): Promise<void> {
   const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
-  await sql`UPDATE desktop_agent_reflection_jobs
-    SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,
-      claimed_at_ms=NULL,last_error='reflection_interrupted'
-    WHERE user_id=${owner} AND status='processing'`.execute(db)
-  // 独占锁已接管，未绑定运行的整理任务不会再提交；仅释放状态，保留已落库的基线。
-  await sql`UPDATE conversation_sessions AS s SET execution_state='idle',active_run_id=NULL
-    WHERE s.user_id=${owner} AND (s.source IS NULL OR s.source='web') AND s.execution_state='baseline_updating'
-      AND NOT EXISTS (SELECT 1 FROM agent_run_admissions a
-        WHERE a.user_id=s.user_id AND a.session_id=s.id AND a.run_id=s.active_run_id)`.execute(db)
-  const active = await listActiveSqliteAgentRuns(db, ownerId)
+  if (!stoppedRun) {
+    await sql`UPDATE desktop_agent_reflection_jobs
+      SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,
+        claimed_at_ms=NULL,last_error='reflection_interrupted'
+      WHERE user_id=${owner} AND status='processing'`.execute(db)
+    // 独占锁已接管，未绑定运行的整理任务不会再提交；仅释放状态，保留已落库的基线。
+    await sql`UPDATE conversation_sessions AS s SET execution_state='idle',active_run_id=NULL
+      WHERE s.user_id=${owner} AND (s.source IS NULL OR s.source='web') AND s.execution_state='baseline_updating'
+        AND NOT EXISTS (SELECT 1 FROM agent_run_admissions a
+          WHERE a.user_id=s.user_id AND a.session_id=s.id AND a.run_id=s.active_run_id)`.execute(db)
+  }
+  const active = stoppedRun ? [{ identity: stoppedRun.identity, source: stoppedRun.parent ? 'subagent' : null }]
+    : await listActiveSqliteAgentRuns(db, ownerId)
   if (!active.length) return
   // 独占接管先释放全部旧租约，再开始重建运行，避免父子重启顺序影响恢复。
-  for (const { identity } of active) await sql`UPDATE agent_run_leases SET expires_at_ms=0
+  if (!stoppedRun) for (const { identity } of active) await sql`UPDATE agent_run_leases SET expires_at_ms=0
     WHERE user_id=${owner} AND session_id=${identity.sessionId} AND run_id=${identity.runId}`.execute(db)
   const secret = await loadSqliteAgentRunSecret(db, path)
   const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, { writeHistory: writeSqliteAgentHistory })
@@ -162,6 +166,7 @@ export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path:
     if (await restoreBoundRun?.(identity, source)) continue
     const row = { session_id: Number(identity.sessionId), run_id: identity.runId }
     const previous = await store.read(identity)
+    if (stoppedRun && previous && previous.status !== 'running' && previous.status !== 'preparing') continue
     if (!previous) {
       await failStart(identity)
       continue
@@ -180,9 +185,10 @@ export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path:
       } else {
         const ready = previous.subagentWaitChildId
           ? !await store.isSubagentPending(identity, previous.subagentWaitChildId)
-          : Boolean((await store.readAgentInbox?.(identity))?.length || (await store.readSubagentFinals?.(identity))?.length)
-        if (ready && !(previous.agentInboxWaiting && previous.phase === 'decision'
-          && await store.hasPendingSubagents?.(identity))) {
+          : previous.phase === 'decision'
+            ? !await store.hasPendingSubagents?.(identity)
+            : Boolean((await store.readAgentInbox?.(identity))?.length || (await store.readSubagentFinals?.(identity))?.length)
+        if (ready) {
           // 会话被同会话的其他运行占用时保持等待，由子代理交付后的唤醒继续，不中断整体恢复。
           try { await resume?.(previous) }
           catch { /* 恢复失败时保留等待状态，等待下一次唤醒。 */ }
@@ -254,8 +260,15 @@ export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path:
         checkpoint: { ...previous, version: previous.version + 1, sequence, status, phase: 'idle', errorCode,
           displayTimeline,
           text, remoteStatusUnknown, pending: null, queuedInteractions: [], resolution: null, resolutionClosure: null },
-        history: previous.context ? { outcome: 'interruption', context: previous.context, text } : null,
+        history: !stoppedRun?.parent && previous.context ? { outcome: 'interruption', context: previous.context, text } : null,
+        ...(stoppedRun?.parent ? { subagentTerminalDelivery: { parent: stoppedRun.parent,
+          outcome: { status: 'failed' as const, reasonCode: errorCode } } } : {}),
       })
     } finally { await leases.release(identity, lease) }
   }
+}
+
+/** 生成器退出后，只结算该运行；仍有有效租约时交由当前执行者处理。 */
+export function settleStoppedSqliteAgentRun(db: Kysely<Database>, path: string, identity: RunIdentity, parent?: RunIdentity) {
+  return settleExclusiveSqliteAgentRuns(db, path, identity.ownerId, undefined, undefined, undefined, { identity, parent })
 }

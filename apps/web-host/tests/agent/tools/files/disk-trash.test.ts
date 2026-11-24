@@ -32,15 +32,21 @@ test('没有 Shell 和目录授权时按账号路径回收真实文件，确认�
       return accepted.get(call.id) === args + target.versionsDigest ? { ok: true, value: call.id } : { ok: false }
     },
   }
-  const confirmation = { gate } as unknown as Options['confirmations']['delete_file']
+  const confirmation = { gate } as unknown as Options['confirmations']['delete_item']
   let authorized = true
+  let authorizationFailure = false
+  let abortDuringAuthorization: AbortController | null = null
   const ownerTools = createOwnerFileTools({
     viewImage: createViewImageTool({ authorize: async () => false, supportsImage: async () => false, mount: async () => null,
       async open() { throw new Error('本测试不读取图片') } }),
     async read() { return null },
     async mounts() { throw new Error('回收站不得创建 Shell 挂载') },
     trash: {
-      async authorize(candidate) { return authorized && candidate.ownerId === identity.ownerId },
+      async authorize(candidate) {
+        if (authorizationFailure) throw new Error('synthetic-private-credential')
+        abortDuringAuthorization?.abort()
+        return authorized && candidate.ownerId === identity.ownerId
+      },
       async currentDirectory() { return null },
       storageRoot, pool: { query: (async (sql: string, args: unknown[]) => {
         if (sql.includes('FROM projects')) {
@@ -53,7 +59,7 @@ test('没有 Shell 和目录授权时按账号路径回收真实文件，确认�
         }
         throw new Error('个人磁盘回收操作不应访问旧文件表')
       }) as Options['pool']['query'] },
-      confirmations: { delete_file: confirmation, restore_file: confirmation, restore_folder: confirmation, permanent_delete: confirmation },
+      confirmations: { delete_item: confirmation, restore_file: confirmation, restore_folder: confirmation, permanent_delete: confirmation },
       async claim(_confirmation, reference) {
         if (consumed.has(reference)) return false
         consumed.add(reference)
@@ -76,18 +82,18 @@ test('没有 Shell 和目录授权时按账号路径回收真实文件，确认�
   const path = '/personal/小北.txt'
   for (const invalid of ['/personal', '/personal/../workspace/default/小北.txt', '小北.txt',
     '/project/其他账号项目 #42/小北.txt', '/workspace/其他账号工作区/小北.txt']) {
-    const result = await call('delete_file', { path: invalid }, 'invalid')
+    const result = await call('delete_item', { path: invalid, kind: 'file' }, 'invalid')
     assert.equal(result.kind === 'completed' && result.successful, false)
   }
-  assert.notEqual((await call('delete_file', { path: '/etc/example' }, 'outside')).kind, 'waiting')
-  assert.equal((await call('delete_file', { path }, 'stale')).kind, 'waiting')
+  assert.notEqual((await call('delete_item', { path: '/etc/example', kind: 'file' }, 'outside')).kind, 'waiting')
+  assert.equal((await call('delete_item', { path, kind: 'file' }, 'stale')).kind, 'waiting')
   await writeFile(file, '确认后内容发生变化')
-  const stale = await call('delete_file', { path }, 'stale', true)
+  const stale = await call('delete_item', { path, kind: 'file' }, 'stale', true)
   assert.equal(stale.kind === 'completed' && stale.successful, false)
   assert.equal(await readFile(file, 'utf8'), '确认后内容发生变化')
 
-  assert.equal((await call('delete_file', { path }, 'delete')).kind, 'waiting')
-  const deleted = await call('delete_file', { path }, 'delete', true)
+  assert.equal((await call('delete_item', { path, kind: 'file' }, 'delete')).kind, 'waiting')
+  const deleted = await call('delete_item', { path, kind: 'file' }, 'delete', true)
   assert.ok(deleted.kind === 'completed' && deleted.successful)
   assert.match((deleted.value as { path: string }).path, /^\/trash\/[0-9a-f-]+$/)
   const trash = (deleted.value as { path: string }).path
@@ -96,6 +102,18 @@ test('没有 Shell 和目录授权时按账号路径回收真实文件，确认�
   const denied = await call('list_trash', {}, 'denied')
   assert.equal(denied.kind === 'completed' && denied.successful, false)
   authorized = true
+  const cancelled = new AbortController()
+  cancelled.abort()
+  await assert.rejects(registry.tools.dispatch({ id: 'pre-cancel', name: 'list_trash', input: {} }, { ...scope, signal: cancelled.signal, resolution: null }))
+  const during = new AbortController()
+  abortDuringAuthorization = during
+  await assert.rejects(registry.tools.dispatch({ id: 'during-cancel', name: 'list_trash', input: {} }, { ...scope, signal: during.signal, resolution: null }))
+  abortDuringAuthorization = null
+  authorizationFailure = true
+  const failed = await call('list_trash', {}, 'failure')
+  assert.ok(failed.kind === 'completed' && !failed.successful)
+  assert.doesNotMatch(JSON.stringify(failed), /synthetic-private-credential/)
+  authorizationFailure = false
   const listed = await call('list_trash', {}, 'list')
   assert.ok(listed.kind === 'completed' && listed.successful)
   assert.equal((listed.value as { items: { path: string }[] }).items[0]!.path, trash)
@@ -104,12 +122,12 @@ test('没有 Shell 和目录授权时按账号路径回收真实文件，确认�
   const restored = await call('restore_file', { path: trash }, 'restore', true)
   assert.equal(restored.kind === 'completed' && restored.successful, true)
   assert.equal(await readFile(file, 'utf8'), '确认后内容发生变化')
-  const replay = await call('delete_file', { path }, 'delete', true)
+  const replay = await call('delete_item', { path, kind: 'file' }, 'delete', true)
   assert.equal(replay.kind === 'completed' && replay.successful, false)
   assert.equal(await readFile(file, 'utf8'), '确认后内容发生变化')
 
-  assert.equal((await call('delete_file', { path }, 'delete-again')).kind, 'waiting')
-  const second = await call('delete_file', { path }, 'delete-again', true)
+  assert.equal((await call('delete_item', { path, kind: 'file' }, 'delete-again')).kind, 'waiting')
+  const second = await call('delete_item', { path, kind: 'file' }, 'delete-again', true)
   assert.ok(second.kind === 'completed' && second.successful)
   const purge = { path: (second.value as { path: string }).path }
   assert.equal((await call('permanent_delete', purge, 'purge')).kind, 'waiting')
@@ -119,14 +137,28 @@ test('没有 Shell 和目录授权时按账号路径回收真实文件，确认�
   assert.ok(empty.kind === 'completed' && empty.successful)
   assert.deepEqual((empty.value as { items: unknown[] }).items, [])
 
+  await writeFile(file, '并发删除保护')
+  assert.equal((await call('delete_item', { path, kind: 'file' }, 'concurrent')).kind, 'waiting')
+  const concurrent = await Promise.all([
+    call('delete_item', { path, kind: 'file' }, 'concurrent', true),
+    call('delete_item', { path, kind: 'file' }, 'concurrent', true),
+  ])
+  assert.equal(concurrent.filter(result => result.kind === 'completed' && result.successful).length, 1)
+  const concurrentTrash = await call('list_trash', {}, 'after-concurrent')
+  assert.ok(concurrentTrash.kind === 'completed' && concurrentTrash.successful)
+  assert.equal((concurrentTrash.value as { items: unknown[] }).items.length, 1)
+  assert.equal((await call('permanent_delete', { all: true }, 'clear-concurrent')).kind, 'waiting')
+  const clearedConcurrent = await call('permanent_delete', { all: true }, 'clear-concurrent', true)
+  assert.ok(clearedConcurrent.kind === 'completed' && clearedConcurrent.successful)
+
   const noItems = await call('permanent_delete', { all: true }, 'empty-trash')
   assert.ok(noItems.kind === 'completed' && noItems.successful && !noItems.mutated)
 
   async function recycle(name: string, key: string) {
     await writeFile(join(storageRoot, root, name), name)
-    const input = { path: '/personal/' + name }
-    assert.equal((await call('delete_file', input, key)).kind, 'waiting')
-    const result = await call('delete_file', input, key, true)
+    const input = { path: '/personal/' + name, kind: 'file' }
+    assert.equal((await call('delete_item', input, key)).kind, 'waiting')
+    const result = await call('delete_item', input, key, true)
     assert.ok(result.kind === 'completed' && result.successful)
     return (result.value as { path: string }).path
   }

@@ -13,7 +13,7 @@ export function createFeishuRunEventProjector(options = {}) {
             if (event.type === 'tool_call' || event.type === 'tool_done')
                 return [{ type: event.type,
                         ...(typeof payload.toolCallId === 'string' ? { toolCallId: payload.toolCallId } : {}),
-                        ...(typeof payload.name === 'string' ? { name: payload.name, label: resolveImToolLabel(payload.name, payload.display) } : {}),
+                        ...(typeof payload.name === 'string' ? { name: payload.name, label: resolveImToolLabel(payload.name, payload.display, undefined, options.toolSummary?.locale) } : {}),
                         ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
                         ...('result' in payload ? { result: payload.result } : {}),
                     }];

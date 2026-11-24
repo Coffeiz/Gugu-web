@@ -25,6 +25,10 @@ export interface QqInboundPayload extends ObjectValue {
     message_id: string;
     platform_message_id: string;
     platform_sent_ms: number | null;
+    other_bot_names?: Array<{
+        id: string;
+        name: string;
+    }>;
     chat_type: 'group' | 'c2c';
     chat_id?: string;
     text: string;

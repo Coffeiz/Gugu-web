@@ -10,7 +10,7 @@ export function agentCommandMenu() {
     { command: '/new', label: '开启新对话', description: '清空当前对话上下文', insert: '/new' },
     { command: '/memory', label: '查看记忆', description: '查看咕咕记住的内容', insert: '/memory' },
     { command: '/forget', label: '忘记一条记忆', description: '输入要忘记的内容', insert: '/forget ' },
-    { command: '/workspace', label: '工作区', description: '查看、绑定、删除工作区或管理沙盒权限', insert: '/workspace ' },
+    { command: '/workspace', label: '工作区', description: '查看、绑定、解除或删除工作区', insert: '/workspace ' },
     { command: '/auto', label: '自动模式', description: '查看或开启、关闭自动模式', insert: '/auto ' },
     { command: '/help', label: '命令帮助', description: '查看全部命令说明', insert: '/help' },
   ]
@@ -45,4 +45,28 @@ export function parseAgentGoalArgument(argument: string): 'status' | 'pause' | '
   if (['resume', '继续', '恢复'].includes(value)) return 'resume'
   if (['cancel', '取消', 'stop'].includes(value)) return 'cancel'
   return 'create'
+}
+
+export function parseDesktopWorkspaceCommand(argument: string): { action: 'list' | 'show' | 'bind' | 'unlink'; directoryId?: string } | null {
+  const value = argument.trim()
+  if (!value || value === 'list' || value === '列表') return { action: 'list' }
+  if (value === 'show' || value === '查看' || value === '当前') return { action: 'show' }
+  if (value === 'unlink' || value === '解除绑定' || value === '取消绑定') return { action: 'unlink' }
+  const explicit = /^bind\s+(.+)$/iu.exec(value)?.[1]?.trim()
+  const directoryId = explicit || value
+  return explicit || /^(?:desktop:[a-f0-9-]{36}|[a-f0-9]{8}|[1-9][0-9]*)$/iu.test(directoryId)
+    ? { action: 'bind', directoryId } : null
+}
+
+export function desktopWorkspaceReply(action: 'list' | 'show' | 'bind' | 'unlink', result: unknown): string {
+  const value = result && typeof result === 'object' && !Array.isArray(result) ? result as Record<string, unknown> : {}
+  if (action === 'list') {
+    const workspaces = Array.isArray(value.workspaces) ? value.workspaces as Array<Record<string, unknown>> : []
+    return workspaces.length ? `可绑定的工作区：\n${workspaces.map(row => `- ${typeof row.commandNumber === 'number' ? `${row.commandNumber}. ` : ''}${String(row.name)}`).join('\n')}\n\n使用 \`/workspace bind <序号或名称>\` 绑定。` : '当前没有可绑定的工作区。'
+  }
+  if (action === 'unlink') return '已解除当前会话的工作区绑定。'
+  const workspace = value.workspace && typeof value.workspace === 'object' ? value.workspace as Record<string, unknown> : null
+  if (!workspace) return action === 'show' ? '当前会话未绑定工作区。' : '工作区绑定失败。'
+  return action === 'show' ? `当前会话绑定的工作区：${String(workspace.workspace_name)}`
+    : `已将当前会话绑定到工作区「${String(workspace.workspace_name)}」。`
 }

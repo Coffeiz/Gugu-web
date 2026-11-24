@@ -7,8 +7,8 @@
   <FileBrowserToolbar
     :class="{ 'desktop-native-toolbar': nativeWindow }"
     :data-window-drag="desktop ? '' : undefined"
-    :can-paste="clipboard?.canPaste ?? pmCbStore.hasContent()"
-    :paste-count="clipboard?.count ?? (pmCbStore.fileIds.length + pmCbStore.folderIds.length)"
+    :can-paste="clipboard?.canPaste ?? false"
+    :paste-count="clipboard?.count ?? 0"
     :selection-mode="pmInSelectionMode"
     :view-mode="fileViewMode"
     :show-new-folder="showNewFolder"
@@ -39,7 +39,9 @@
         @go-back="pmGoBack"
         @go-forward="pmGoForward"
         @navigate="pmNavigateTo"
-      />
+      >
+        <template v-if="desktop && $slots.root" #root><slot name="root" /></template>
+      </ProjectFileBreadcrumb>
     </template>
   </FileBrowserToolbar>
 </template>
@@ -60,7 +62,7 @@ const props = defineProps({
 const { t } = useI18n()
 const {
   stagesExpanded, togglePmStages, pmCanGoBack, pmGoBack, pmCanGoForward, pmGoForward,
-  pmNavigateTo, folderStack, pmCbStore, pmCtxPaste, pmInSelectionMode,
+  pmNavigateTo, folderStack, pmCtxPaste, pmInSelectionMode,
   togglePmSelectionMode, fileViewMode, showNewFolder, newFolderName, folderLoading, createFolder,
   PM_SORT_OPTIONS, pmSortKey, pmSortDir, onPmSortSelect, closeProjectModal, runtimeScope,
   workspaceAvailable, workspaceExists, toggleWorkspace,

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdir, mkdtemp, open, rename, stat, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { Readable } from 'node:stream'
 import { join } from 'node:path'
 import Fastify from 'fastify'
 import { createCanvas } from '@napi-rs/canvas'
@@ -38,6 +39,69 @@ const rowResponse = {
   boundSessionCount: 3,
   boundTaskCount: 1,
 }
+
+test('路径引用接口校验认证、批量和路径层级', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-reference-route-'))
+  const reads = createWorkspaceFileReads({} as Parameters<typeof createWorkspaceFileReads>[0], root)
+  const calls: unknown[][] = []
+  const ctx = setup({ files: { ...reads, async resolveRelative(owner, directory, path, paths) {
+    calls.push([owner, directory, path, paths])
+    return paths.map(value => ({ path: value, file: null, folder: null }))
+  } } })
+  try {
+    const url = '/api/v1/files/personal/resolve-relative?path=docs%2Fa.md'
+    assert.equal((await ctx.app.inject({ method: 'POST', url, payload: { paths: ['b.md'] } })).statusCode, 401)
+    assert.equal((await ctx.app.inject({ method: 'POST', url, headers: { authorization: 'user' }, payload: { paths: [Array(65).fill('x').join('/')] } })).statusCode, 422)
+    assert.equal((await ctx.app.inject({ method: 'POST', url, headers: { authorization: 'user' }, payload: { paths: Array(5).fill(Array(60).fill('x').join('/')) } })).statusCode, 422)
+    const response = await ctx.app.inject({ method: 'POST', url, headers: { authorization: 'user' }, payload: { paths: ['b.md'] } })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(calls, [[ownerId, 'personal', 'docs/a.md', ['b.md']]])
+  } finally { await ctx.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test('路径压缩接口从认证上下文取用户并拒绝非法输入', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-compress-route-'))
+  const reads = createWorkspaceFileReads({} as Parameters<typeof createWorkspaceFileReads>[0], root)
+  const calls: unknown[][] = []
+  const ctx = setup({ files: { ...reads, async compressArchive(owner, directory, paths, name) {
+    calls.push([owner, directory, paths, name])
+    return { relativePath: '资料/归档.zip' }
+  } } })
+  try {
+    const url = '/api/v1/files/personal/compress'
+    const payload = { paths: ['资料/说明.txt'], name: '归档' }
+    assert.equal((await ctx.app.inject({ method: 'POST', url, payload })).statusCode, 401)
+    assert.equal(calls.length, 0)
+    const response = await ctx.app.inject({ method: 'POST', url, headers: { authorization: 'user' }, payload })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json(), { relativePath: '资料/归档.zip' })
+    assert.deepEqual(calls, [[ownerId, 'personal', payload.paths, '归档']])
+    assert.equal((await ctx.app.inject({ method: 'POST', url, headers: { authorization: 'user' }, payload: { paths: [1], name: '归档' } })).statusCode, 422)
+    assert.equal(calls.length, 1)
+  } finally { await ctx.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test('路径批量下载校验认证并使用当前用户', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-download-route-'))
+  const reads = createWorkspaceFileReads({} as Parameters<typeof createWorkspaceFileReads>[0], root)
+  const calls: unknown[][] = []
+  const ctx = setup({ files: { ...reads, async downloadArchive(owner, directory, paths) {
+    calls.push([owner, directory, paths])
+    return Readable.from([Buffer.from('合成归档')]) as ReturnType<typeof import('node:fs').createReadStream>
+  } } })
+  try {
+    const url = '/api/v1/files/personal/download-archive', payload = { paths: ['资料/说明.txt', '资料/子目录'] }
+    assert.equal((await ctx.app.inject({ method: 'POST', url, payload })).statusCode, 401)
+    assert.equal(calls.length, 0)
+    const result = await ctx.app.inject({ method: 'POST', url, headers: { authorization: 'user' }, payload })
+    assert.equal(result.statusCode, 200)
+    assert.equal(result.headers['content-type'], 'application/zip')
+    assert.equal(result.body, '合成归档')
+    assert.deepEqual(calls, [[ownerId, 'personal', payload.paths]])
+    assert.equal((await ctx.app.inject({ method: 'POST', url, headers: { authorization: 'user' }, payload: { paths: [] } })).statusCode, 422)
+    assert.equal(calls.length, 1)
+  } finally { await ctx.close(); await rm(root, { recursive: true, force: true }) }
+})
 
 function setup(overrides: Partial<WorkspaceDirectoryOperations> = {}) {
   const calls: unknown[][] = []
@@ -108,15 +172,12 @@ for (const [name, storagePath, url] of [
     const otherWorkspace = join(root, otherOwner, storagePath)
     const ctx = setup({ files: createWorkspaceFileReads({
       async query(sql: string, args: unknown[]) {
-        if (sql.startsWith('SELECT 1 FROM files')) {
-          assert.equal(args[0], ownerId)
-          return { rows: Array.isArray(args[1]) && args[1].includes(`${ownerId}/${storagePath}/legacy.txt`) ? [{}] : [] }
-        }
         assert.equal(args[1], ownerId)
         if (name === '项目文件') {
           assert.match(sql, /FROM projects/)
           return { rows: args[0] === 9 ? [{ name: '设计', start_date: '2026-01-04', created_at: '2026-01-04' }] : [] }
         }
+        assert.match(sql, /FROM workspace_directories/)
         return { rows: args[0] === 7 ? [{ directory_name: 'default' }] : [] }
       },
     } as unknown as Parameters<typeof createWorkspaceFileReads>[0], root) })
@@ -137,6 +198,11 @@ for (const [name, storagePath, url] of [
       await symlink(otherWorkspace, join(workspace, 'other'))
       await mkdir(join(workspace, 'docs/nested'))
       await writeFile(join(workspace, 'docs/nested/child.txt'), '不计入上级')
+      const references = await ctx.app.inject({ method: 'POST', url: `${url}/resolve-relative?path=docs%2Ft.txt`, headers: { authorization: 'user' }, payload: { paths: ['nested/child.txt', '../../private.txt'] } })
+      assert.equal(references.statusCode, 200)
+      assert.equal(references.json()[0].file.relativePath, 'docs/nested/child.txt')
+      assert.equal(references.json()[1].file, null)
+
       const listing = await request(`${url}/entries`)
       assert.equal(listing.statusCode, 200)
       assert.deepEqual(listing.json().map(({ name, fileCount, folderCount }: { name: string; fileCount: number; folderCount: number }) => ({ name, fileCount, folderCount })),
@@ -179,11 +245,6 @@ for (const [name, storagePath, url] of [
 
       const mutation = (method: 'POST' | 'PATCH', path: string, payload?: Record<string, unknown>) =>
         ctx.app.inject({ method, url: path, headers: { authorization: 'user' }, payload })
-      if (name !== '默认工作区') {
-        await writeFile(join(workspace, 'legacy.txt'), '旧文件')
-        assert.equal((await mutation('PATCH', `${url}/entries?path=legacy.txt`, { destination: 'renamed.txt' })).statusCode, 409)
-        assert.equal((await request(`${url}/content?path=legacy.txt`)).body, '旧文件')
-      }
       assert.equal((await mutation('POST', `${url}/folders?path=target`)).statusCode, 201)
       assert.equal((await mutation('POST', `${url}/folders?path=target`)).statusCode, 409)
       const uploadText = async (path: string, content: string, overwrite = false) => {

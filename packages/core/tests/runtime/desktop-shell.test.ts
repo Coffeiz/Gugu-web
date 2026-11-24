@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+import { formatToolResult } from '../../src/agent/providers/tool-result-format.js'
 import { createHostShellGrants, shellConfirmationMode } from '../../src/agent/security/shell-policy.js'
 import { tmpdir } from 'node:os'
 import { expect, it, vi } from 'vitest'
@@ -131,4 +134,39 @@ it('共享父工作区按相同自动模式和操作风险决定挂载权限', a
   expect(await tool!.execute(read, scope, { ...call, input: read })).toMatchObject({ successful: true, mutated: false })
   expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ cwd: workspace, readonlyPaths: [workspace], readwritePaths: [] }),
     expect.any(AbortSignal), undefined)
+})
+
+it('通过确认后逐项回报废纸篓结果，部分成功不显示为全部失败', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-trash-result-'))
+  try {
+    await Promise.all(['local.txt', 'external.txt'].map(name => writeFile(join(directory, name), '合成内容')))
+    const db = { transaction: () => ({ execute: (callback: (tx: unknown) => unknown) => callback({}) }) } as unknown as Kysely<Database>
+    const confirmation = {
+      gate: { verify: async () => ({ ok: true, value: {} }) },
+      claim: async () => true,
+    } as unknown as ReturnType<typeof createSqliteToolConfirmation>
+    const move = vi.fn(async (target: { path: string }) => {
+      if (basename(target.path) === 'external.txt') throw new Error('合成系统拒绝')
+    })
+    platform.diagnostics.mockResolvedValue({ supported: false, methods: [], checkAvailable: true })
+    const tool = await createDesktopShellTool(db, confirmation, JSON.stringify,
+      async () => ({ automaticMode: false, shellEnabled: true, dangerousEnabled: true }), undefined, undefined, move)
+    const input = { cwd: directory, command: 'rm -f local.txt external.txt' }
+    const scope: ToolScope = {
+      identity: { ownerId: 'owner', sessionId: '1', runId: 'run' },
+      roundId: 'round', signal: AbortSignal.timeout(5000), resolution: {} as NonNullable<ToolScope['resolution']>,
+      async execute() { throw new Error('移入废纸篓不应调用普通 Shell 执行器') },
+    }
+    const result = await tool!.execute(input, scope, { id: 'call', name: 'shell', input })
+    expect(move).toHaveBeenCalledTimes(2)
+    expect(result).toMatchObject({ kind: 'completed', successful: false, executed: true, mutated: true,
+      value: { status: 'partial', movedToTrash: [expect.stringMatching(/local\.txt$/u)], failed: [expect.stringMatching(/external\.txt$/u)] } })
+    if (result.kind !== 'completed') throw new Error('废纸篓操作尚未完成')
+    const projected = formatToolResult('shell', JSON.stringify(result.value), true)
+    expect(projected).toContain('[执行状态]部分成功')
+    expect(projected).toContain('[已移入废纸篓]')
+    expect(projected).toContain('[未移入废纸篓]')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

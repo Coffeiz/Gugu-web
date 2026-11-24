@@ -87,8 +87,7 @@ export const useMindStore = defineStore('mind', () => {
   let pendingMindRefresh = false
 
   function refreshMindFromLiveEvent() {
-    if (!loaded.value) return
-    fetchNotes()
+    if (loaded.value) fetchNotes()
     if (canvasesLoaded.value) fetchCanvases()
     if (activeCanvasId.value != null) loadCanvas(activeCanvasId.value, { priority: 'background' })
   }

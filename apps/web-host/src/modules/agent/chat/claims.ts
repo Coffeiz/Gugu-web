@@ -88,7 +88,7 @@ export function registerAgentPendingQueueClaimRoutes(
 
 export function createPostgresAgentPendingQueueClaims(
   pool: Pick<Pool, 'query' | 'connect'>,
-  options: { isSessionActive(sessionId: number): Promise<boolean>; nowSeconds?: () => number; createToken?: () => string },
+  options: Pick<Parameters<typeof createPostgresAgentPendingQueue>[1], 'isSessionActive' | 'nowSeconds' | 'createToken'>,
 ) {
   const service = createPostgresAgentPendingQueue(pool, options)
   return { claim: service.claim, release: service.release }

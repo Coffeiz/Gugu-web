@@ -1,6 +1,8 @@
 import { type QqLinkButton } from '@gugu/core/im/qq-text';
 import { type createQqClient } from './client.js';
 import { z } from 'zod';
+/** 只提前发送不会被后续链接、围栏或 Markdown 标记重写的纯文本部分。 */
+export declare function qqStreamPrefix(text: string): string;
 type Outcome = 'accepted' | 'rejected' | 'unknown';
 export interface QqReceipt {
     outcome: Outcome;
@@ -12,6 +14,7 @@ export interface QqTarget {
     messageId?: string;
     messageFormat?: 'compat' | 'markdown';
     mentionUserId?: string;
+    mentionUserName?: string;
     /** 仅接受Host从当前群授权资料读取的名单。 */
     knownMemberIds?: readonly string[];
 }
@@ -74,8 +77,8 @@ export interface QqButtonReceipt extends QqReceipt {
 export declare function buildQqKeyboard(prompt: QqInteractionPrompt): Record<string, unknown>;
 /** 只呈现已授权选项，绝不把token、secret字段值或session写进用户说明。 */
 export declare function formatQqInteractionFallback(prompt: QqInteractionPrompt): string;
-/** 只升级可信普通@ID；模型已明确写出的旧mention标签按Python升级。 */
-export declare function splitQqGroupMentions(text: string, userId?: string, known?: readonly string[]): {
+/** 只有来自当前群的可信成员 ID 能被转成 QQ 提及。 */
+export declare function splitQqGroupMentions(text: string, userId?: string, known?: readonly string[], userName?: string): {
     mention: string;
     body: string;
 };
@@ -103,10 +106,11 @@ export declare function createQqSender(options: {
         fileInfo: string;
         image: boolean;
         filename?: string;
-    }, signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<QqReceipt>;
+    }, signal?: AbortSignal, authorize?: () => Promise<boolean>, onFailure?: (status?: number, code?: number) => void): Promise<QqReceipt>;
     privateStream(target: QqTarget, signal?: AbortSignal, lifecycle?: {
         authorize?: () => Promise<boolean>;
         automaticFlush?: boolean;
+        partialText?: boolean;
         snapshot?: unknown;
         checkpoint?(snapshot: QqStreamSnapshot): Promise<void>;
     }): {

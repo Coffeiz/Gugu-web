@@ -5,7 +5,7 @@ import { AgentRunError,isEarlyExit } from '../models.js'
 import { collapseConsumedImage,createToolResultCheckpoint,hasInitialInlineImage,restorePreparedContext,savePreparedContext } from './history/attachment-refs.js'
 import { appendCanonicalEvents,blocks,canonicalizeMessage,canonicalToolRound,copy,mediaTypes,MessageArea,portableSnapshot,redactToolRequestHeaders,refreshCanonicalToolSchemas } from './history/canonical-history.js'
 import { resolveCallTool } from '../tools/call-adapter.js'
-import { hasOnlyLegacyTimeContext,isInternalUserMessage,lastUserIndex,protectedMessageIds,restoreHistoryForRequest,userTextFromMessage,validateHistoryRows } from './history/ordering.js'
+import { hasOnlyLegacyTimeContext,isInternalUserMessage,lastUserIndex,protectedMessageIds,restoreHistoryForRequest,userTextFromMessage,validateHistoryRows,wrapMessageTime } from './history/ordering.js'
 import type { CanonicalContextPorts,ContextPort,ContextServices,PreparationPorts } from '../ports.js'
 import { enforceProviderOverflow,shouldCompact } from './budget.js'
 import { applyCompaction,compactContext } from './compaction.js'
@@ -60,7 +60,7 @@ export function rawUserText(user: CurrentUser): string {
   const unwrap = (text: string): string => {
     if (/^\s*\[system-reminder\][\s\S]*\[\/system-reminder\]\s*$/u.test(text))
       return ''
-    return text.replace(/^\s*【消息时间】[^\n]*\n【消息正文】\n|^\s*【消息正文】\n/u, '')
+    return text.replace(/^\s*【消息时间】[^\n]*\n【消息正文】\n|^\s*【消息正文】\n|^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?: \/ [^\]\n]+)?\]: /u, '')
   }
   return unwrap(userTextFromMessage(user.message))
 }
@@ -77,22 +77,7 @@ export function currentRunQuery(input: Pick<PrepareContextInput, 'query' | 'curr
   return input.currentUser ? rawUserText(input.currentUser) : ''
 }
 
-export function inlineMessageTime(content: Json, time?: string | null): Json {
-  const value = (time ?? '').trim().replace(/^\[system-reminder\]\s*|\s*\[\/system-reminder\]$/g, '').replace(/^消息时间：/, '').trim()
-  const prefix = value ? `【消息时间】${value}\n` : ''
-  const wrapped = (text: string): boolean => text.trimStart().startsWith('【消息正文】')
-    || (text.includes('【消息正文】') && (text.trimStart().startsWith('【消息时间】') || text.includes('【群消息】')))
-  if (typeof content === 'string')
-    return wrapped(content) ? prefix + content : `${prefix}【消息正文】\n${content}`
-  if (Array.isArray(content)) {
-    const first = blocks(content).find(block => block.type === 'text')
-    if (first && wrapped(String(first.text ?? '')))
-      return [...(prefix ? [{ type: 'text', text: prefix }] : []), ...copy(content)]
-    return [{ type: 'text', text: `${prefix}【消息正文】\n` }, ...copy(content)]
-  }
-  return content && typeof content === 'object'
-    ? [{ type: 'text', text: `${prefix}【消息正文】\n` }, copy(content)] : `${prefix}【消息正文】\n${content ?? ''}`
-}
+export const inlineMessageTime = wrapMessageTime
 
 export function persistedStance(rows: readonly PersistedHistoryRow[], services: ContextServices): string | null {
   for (const row of [...rows].reverse())
@@ -207,7 +192,7 @@ export async function prepareContext(input: PrepareContextInput, ports: Preparat
       }
       const messageTime = user.messageTime ?? (user.messageTimestamp && input.userTimezone
         ? ports.formatMessageTime?.(user.messageTimestamp, input.userTimezone) : undefined)
-      const message = canonicalizeMessage({ ...copy(user.message), content: inlineMessageTime(user.message.content, messageTime) })
+      const message = canonicalizeMessage({ ...copy(user.message), content: inlineMessageTime(user.message.content, messageTime, input.groupChat ? user.groupSpeaker : undefined) })
       const values = blocks(message.content)
       const source = values.some(block => block.type === 'knowledge-context' && block.scope === 'explicit-reference') ? 'reference'
         : values.some(block => mediaTypes.has(block.type)) ? 'attachment' : 'user'

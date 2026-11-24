@@ -18,7 +18,7 @@ const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
 const otherOwnerId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'
 
-test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后事件', {
+test('PostgreSQL 项目删除/恢复在无 files 与 folders 表时原子更新关联资源和 Undo', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
 }, async () => {
   const schema = `gugu_project_trash_${randomUUID().replaceAll('-', '')}`
@@ -39,18 +39,6 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
       progress integer NOT NULL, stages_json text NOT NULL, current_stage varchar(100),
       priority varchar(20), version integer NOT NULL, archived boolean NOT NULL,
       done_at timestamptz, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
-      deleted_at timestamptz
-    )`)
-    await pool.query(`CREATE TABLE folders (
-      id serial PRIMARY KEY, user_id uuid NOT NULL, project_id integer, workspace_directory_id integer,
-      parent_id integer, name varchar(200) NOT NULL, version integer NOT NULL, deleted_at timestamptz
-    )`)
-    await pool.query(`CREATE TABLE files (
-      id serial PRIMARY KEY, user_id uuid NOT NULL, display_name varchar(300) NOT NULL,
-      ext varchar(20) NOT NULL, space varchar(20) NOT NULL, project_id integer, folder_id integer,
-      workspace_directory_id integer, stage_name varchar(100), mind_map_id integer,
-      storage_key varchar(500) NOT NULL, version integer NOT NULL, size varchar(50),
-      size_bytes bigint NOT NULL, mime_type varchar(200), img_width integer, img_height integer,
       deleted_at timestamptz
     )`)
     await pool.query(`CREATE TABLE calendar_events (
@@ -82,13 +70,6 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
        RETURNING id`, [ownerId, stamp],
     )
     const projectId = projectRows.rows[0]!.id
-    await pool.query('INSERT INTO folders (id, user_id, project_id, name, version) VALUES (31, $1, $2, \'文档\', 2)', [ownerId, projectId])
-    await pool.query(
-      `INSERT INTO files (id, user_id, display_name, ext, space, project_id, folder_id, storage_key,
-         version, size, size_bytes, mime_type)
-       VALUES (41, $1, '计划', 'md', 'project', $2, 31, $3, 4, '8', 8, 'text/markdown')`,
-      [ownerId, projectId, `${ownerId}/项目文件/2026/11/PG 回归项目 #${projectId}/文档/计划.md`],
-    )
     await pool.query(
       `INSERT INTO calendar_events (id, user_id, title, date, type, project_id, version)
        VALUES (51, $1, '交付', '2026-11-15', 'deadline', $2, 5)`, [ownerId, projectId],
@@ -117,7 +98,7 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
       if (event.operation === 'create') assert.equal(projectState.rows[0]!.deleted_at, null)
       published.push({ resource: event.resource, operation: event.operation })
       if (event.resource === 'projects' && event.payload !== undefined) projectPayloads.push(event.payload)
-    })
+    }, async () => 1)
     const trash = createProjectTrashService(runtime, {
       async moveToTrash(owner, file) {
         storage.push(['trash', file.id])
@@ -132,21 +113,16 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
     await trash.deleteProject(ownerId, projectId, { undoContextId: 'tab-trash', clientId: 'pg-test' })
     const deletedRows = await pool.query(
       `SELECT p.deleted_at AS project_deleted, p.version AS project_version,
-              f.deleted_at AS file_deleted, f.version AS file_version, f.storage_key,
-              d.deleted_at AS folder_deleted, e.deleted_at AS event_deleted, t.enabled
-       FROM projects p CROSS JOIN files f CROSS JOIN folders d CROSS JOIN calendar_events e
-       CROSS JOIN scheduled_tasks t WHERE p.id=$1 AND f.id=41 AND d.id=31 AND e.id=51 AND t.id=61`,
+              e.deleted_at AS event_deleted, t.enabled
+       FROM projects p CROSS JOIN calendar_events e
+       CROSS JOIN scheduled_tasks t WHERE p.id=$1 AND e.id=51 AND t.id=61`,
       [projectId],
     )
     const deleted = deletedRows.rows[0]!
     assert.ok(deleted.project_deleted)
     assert.equal(deleted.project_version, 4)
-    assert.equal(deleted.file_deleted?.getTime(), deleted.project_deleted?.getTime())
-    assert.equal(deleted.folder_deleted?.getTime(), deleted.project_deleted?.getTime())
     assert.equal(deleted.event_deleted?.getTime(), deleted.project_deleted?.getTime())
-    assert.equal(deleted.file_version, 5)
     assert.equal(deleted.enabled, false)
-    assert.match(deleted.storage_key, /\/trash\//)
     assert.deepEqual((await pool.query(`SELECT source_id,pending_source_ids,generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='scheduled_task'`, [ownerId])).rows[0], { source_id: '61', pending_source_ids: ['61'], generation: 1 })
     const undo = await pool.query(
       `SELECT resource, action, actor_type, target_refs, before_state, after_state,
@@ -154,7 +130,7 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
     )
     assert.equal(undo.rowCount, 1)
     assert.deepEqual(undo.rows[0]!.target_refs.map((ref: any) => `${ref.kind}:${ref.id}`).sort(),
-      ['event:51', 'file:41', 'folder:31', `project:${projectId}`, 'task:61'])
+      ['event:51', `project:${projectId}`, 'task:61'])
     assert.equal(undo.rows[0]!.resource, 'projects')
     assert.equal(undo.rows[0]!.action, 'delete')
     assert.equal(undo.rows[0]!.actor_type, 'web')
@@ -174,28 +150,23 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
     assert.equal((await pool.query('SELECT updated_at::text FROM projects WHERE id=$1', [projectId])).rows[0].updated_at, '2026-11-14 00:30:00.123+08')
     const activeRows = await pool.query(
       `SELECT p.deleted_at AS project_deleted, p.version AS project_version,
-              f.deleted_at AS file_deleted, f.version AS file_version, d.deleted_at AS folder_deleted,
-              e.deleted_at AS event_deleted, t.enabled, f.storage_key
-       FROM projects p CROSS JOIN files f CROSS JOIN folders d CROSS JOIN calendar_events e
-       CROSS JOIN scheduled_tasks t WHERE p.id=$1 AND f.id=41 AND d.id=31 AND e.id=51 AND t.id=61`,
+              e.deleted_at AS event_deleted, t.enabled
+       FROM projects p CROSS JOIN calendar_events e
+       CROSS JOIN scheduled_tasks t WHERE p.id=$1 AND e.id=51 AND t.id=61`,
       [projectId],
     )
     const active = activeRows.rows[0]!
     assert.equal(active.project_deleted, null)
     assert.equal(active.project_version, 5)
-    assert.equal(active.file_deleted, null)
-    assert.equal(active.file_version, 6)
-    assert.equal(active.folder_deleted, null)
     assert.equal(active.event_deleted, null)
     assert.equal(active.enabled, true)
     assert.deepEqual((await pool.query(`SELECT source_id,pending_source_ids,generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='scheduled_task'`, [ownerId])).rows[0], { source_id: '61', pending_source_ids: ['61'], generation: 2 })
-    assert.ok(!String(active.storage_key).includes('/trash/'))
     await assert.rejects(trash.deleteProject(otherOwnerId, projectId), { code: 'not_found' })
     assert.deepEqual(published.map(({ resource, operation }) => [resource, operation]), [
-      ['projects', 'delete'], ['files', 'delete'], ['calendar', 'delete'], ['scheduled_tasks', 'update'],
-      ['projects', 'create'], ['files', 'create'], ['calendar', 'create'], ['scheduled_tasks', 'update'],
+      ['projects', 'delete'], ['calendar', 'delete'], ['scheduled_tasks', 'update'],
+      ['projects', 'create'], ['calendar', 'create'], ['scheduled_tasks', 'update'],
     ])
-    assert.deepEqual(storage, [['trash', 41], ['restore', 41]])
+    assert.deepEqual(storage, [])
 
     await pool.query(`${tablesSql('postgres').receipts};
       CREATE TABLE project_undo_journals(id uuid PRIMARY KEY,user_id uuid,operation_id varchar(64),before_status varchar(16),
@@ -207,7 +178,7 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
       input: { userMessageId: 1, locale: null, origin: null, accessVersion: 'a'.repeat(64), v: 2 as const, source: 'web' as const } }
     await pool.query('INSERT INTO conversation_sessions VALUES (1,$1,$2)', [ownerId, identity.runId])
     await pool.query("INSERT INTO agent_run_dispatch VALUES ($1,1,$2,'selected',$3,1,CURRENT_TIMESTAMP+interval '5 minutes')", [ownerId, identity.runId, lease.token])
-    const originalKey: string = active.storage_key
+    const originalKey = `${ownerId}/项目文件/2026/11/PG 回归项目 #${projectId}/文档/计划.md`
     await mkdir(path.dirname(path.join(root, originalKey)), { recursive: true })
     await writeFile(path.join(root, originalKey), '实际文件内容')
     let intent: ConfirmationIntent | undefined, publishedAgent = 0
@@ -215,7 +186,7 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
       now: () => 0,
       async authorize() { return 'synthetic-epoch' },
       async prepare(binding, snapshot) {
-        assert.deepEqual(snapshot.targetIds?.file_id, [41])
+        assert.equal(snapshot.targetIds?.file_id?.length ?? 0, 0)
         intent = { schemaVersion: 2, binding, intentId: 'intent', interactionId: 'confirm', operationId: 'operation',
           purpose: 'action', action: 'delete_project', authorizationEpoch: 'synthetic-epoch', expiresAt: 60_000,
           targetsDigest: snapshot.targetsDigest, versionsDigest: snapshot.versionsDigest }
@@ -257,12 +228,10 @@ test('PostgreSQL 项目删除/恢复原子更新同批资源、Undo 和提交后
     await pool.query('ALTER TABLE rag_index_jobs DROP CONSTRAINT reject_calendar_job')
     const result = await registry.tools.dispatch(call, resume)
     assert.ok(result.kind === 'completed' && result.successful && result.mutated, JSON.stringify(result))
-    const trashedKey = (await pool.query('SELECT storage_key FROM files WHERE id=41')).rows[0].storage_key
-    assert.equal(await readFile(path.join(root, trashedKey), 'utf8'), '实际文件内容')
-    assert.equal(await local.exists(ownerId, originalKey), false)
+    assert.equal(await readFile(path.join(root, originalKey), 'utf8'), '实际文件内容')
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM project_undo_journals')).rows[0].n, 0)
     assert.deepEqual(await makeRegistry().tools.dispatch(call, resume), { ...result, mutated: false })
-    assert.equal(publishedAgent, 4)
+    assert.equal(publishedAgent, 3)
     const jobs = await pool.query('SELECT source_type FROM rag_index_jobs WHERE user_id=$1 ORDER BY source_type', [ownerId])
     assert.deepEqual(jobs.rows.map(row => row.source_type), ['calendar', 'project', 'scheduled_task'])
   } finally {

@@ -9,19 +9,16 @@ export function assembleSubagentCatalog(system: string | undefined,
   if (!entries.length) return system
   const catalog = [...entries].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
   const fragments = compileContextFragments([
-    { id: 'main.instructions', version: 1, region: 'system', kind: 'instruction', value: system ?? '' },
-    { id: 'main.subagent_catalog', version: 7, region: 'system', kind: 'instruction',
+    { id: 'main.instructions', region: 'system', kind: 'instruction', value: system ?? '' },
+    { id: 'main.subagent_catalog', region: 'system', kind: 'instruction',
       value: [
         '可委派的子 Agent',
         ...catalog.map(entry => `${entry.id}：${entry.description}`),
         '',
-        '优先委派。遇到多来源查证、跨多份文件比对、复杂排查或其他多步任务，先拆出可独立完成的部分。只要目录里有能力匹配的助手，就在自己开始这部分工作前派单。互不依赖的事项可以同时派出。单步任务或没有合适助手时直接处理。',
-        '',
-        '派单与分工。交代目标、范围、必要的已授权资料和预期结果。派单成功后，记下返回的 childId，简短告诉用户已交给助手，再推进未委派且不依赖结果的工作。',
-        '',
-        '自动续跑。派单后可以先告诉用户进度，再处理未委派的工作。当前 Run 准备结束时，系统会自动等待尚未返回的子任务，收到结果后继续执行。需要查看未读消息或报告时可调用 agent_inbox。信箱为空时立即返回，由系统负责等待和唤醒。',
-        '',
-        '核对与交付。收到结果后，核对关键结论、来源和影响用户判断的疑点。证据不足时优先请原助手补查；只有助手无法继续时，才接手必要部分。最后整合结果回复用户。',
+        '复杂任务可以委派独立的部分。派单前先判断能否复用同一会话已有的子 Agent：已有报告足以回答时直接用；同一目标的追问、补查、纠错，或能沿用已查资料时，优先用 agent_message 的 send，把新增要求发给原 childId。子 Agent 已完成也可以继续交办；仍在做同一件事时等待回传。',
+        '需要复用但不确定 childId 或状态时，可以用 agent_inspect 查一次同会话的子 Agent。只有没有合适的已有子 Agent，或任务目标独立且确实需要并行、隔离上下文时，才用 spawn。交办时说明目标、范围、已授权资料和预期结果。',
+        '派单后记下 childId，简短告知用户进度，再做不依赖结果的工作。系统会自动等待、回传并续跑。需要找历史未读报告时查信箱；不要轮询。',
+        '收到报告后核对关键结论和来源。证据不足时请原助手补查，最后整合回复。',
       ].join('\n') },
   ])
   return fragments.system.map(fragment => fragment.value).filter(Boolean).join('\n\n')

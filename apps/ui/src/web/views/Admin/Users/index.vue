@@ -37,7 +37,6 @@
             <span class="col-email">{{ t('adminUsers.email') }}</span>
             <span class="col-reg">{{ t('adminUsers.registeredAt') }}</span>
             <span class="col-usage">{{ t('adminUsers.tokenUsage') }}</span>
-            <span class="col-storage">{{ t('adminUsers.storageUsage') }}</span>
             <span class="col-status">{{ t('adminUsers.status') }}</span>
             <span class="col-action"></span>
           </div>
@@ -67,20 +66,6 @@
                     <span class="usage-bar-fill" :style="tokenBarStyle(u)"></span>
                   </span>
                   <span class="usage-limit">/ {{ fmtTokens(u.token_limit_weekly) }}</span>
-                </template>
-              </span>
-            </span>
-            <span class="col-storage">
-              <span class="usage-wrap">
-                <span class="usage-num">{{ fmtBytes(u.storage_used) }}</span>
-                <template v-if="u.storage_limit_bytes === -1">
-                  <span class="usage-limit">/ {{ t('adminQuota.unlimited') }}</span>
-                </template>
-                <template v-else-if="u.storage_limit_bytes > 0">
-                  <span class="usage-bar-bg">
-                    <span class="usage-bar-fill" :style="storageBarStyle(u)"></span>
-                  </span>
-                  <span class="usage-limit">/ {{ fmtBytes(u.storage_limit_bytes) }}</span>
                 </template>
               </span>
             </span>
@@ -261,25 +246,13 @@ function fmtTokens(n: number) {
   return String(n)
 }
 
-function fmtBytes(n: number) {
-  if (n == null || n === 0) return '—'
-  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
-  if (n >= 1048576)    return (n / 1048576).toFixed(1) + ' MB'
-  if (n >= 1024)       return (n / 1024).toFixed(0) + ' KB'
-  return n + ' B'
-}
-
 function tokenBarStyle(u: any) {
   const pct = u.token_limit_weekly ? Math.min(100, (u.tokens_week / u.token_limit_weekly) * 100) : 0
   const color = pct >= 90 ? 'rgba(220,80,80,0.8)' : pct >= 70 ? 'rgba(220,160,60,0.8)' : 'rgba(80,160,200,0.7)'
   return { width: pct + '%', background: color }
 }
 
-function storageBarStyle(u: any) {
-  const pct = u.storage_limit_bytes ? Math.min(100, (u.storage_used / u.storage_limit_bytes) * 100) : 0
-  const color = pct >= 90 ? 'rgba(220,80,80,0.8)' : pct >= 70 ? 'rgba(220,160,60,0.8)' : 'rgba(80,200,140,0.7)'
-  return { width: pct + '%', background: color }
-}
+
 
 onMounted(load)
 </script>
@@ -329,7 +302,7 @@ onMounted(load)
 
 .ut-head {
   display: grid;
-  grid-template-columns: 200px 180px 96px 1fr 1fr 62px 178px;
+  grid-template-columns: 200px 180px 96px 1fr 62px 178px;
   padding: 10px 16px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: rgba(255,255,255,0.25);
@@ -338,7 +311,7 @@ onMounted(load)
 
 .ut-row {
   display: grid;
-  grid-template-columns: 200px 180px 96px 1fr 1fr 62px 178px;
+  grid-template-columns: 200px 180px 96px 1fr 62px 178px;
   padding: 10px 16px;
   align-items: center;
   border-bottom: 1px solid var(--panel-divider);

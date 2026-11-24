@@ -260,7 +260,7 @@
     "layer": "L1",
     "owner": "apps/web-host/src/modules/projects/persistence/project-expiry-postgres.ts",
     "productionEntry": "apps/web-host/src/main.ts → startProjectExpiryWorker → PostgreSQL project expiry journals → Local staged files",
-    "keyBehavior": "owner-scoped 清理、配额事务、存储失败回滚、未知提交保留暂存文件、重启日志恢复且不覆盖并发文件",
+    "keyBehavior": "项目目录清理、事务失败回滚、未知提交保留暂存目录、重启日志恢复且不覆盖并发目录",
     "ci": "backend-ts"
   },
   "apps/web-host/tests/projects/project-expiry-worker.test.ts": {

@@ -128,6 +128,8 @@ export function windowOptions(
 }
 const editingFocus = new WeakMap<Electron.WebContents, EditingFocus>()
 const rendererEditKeys = new Set(['a', 'c', 'v', 'x', 'y', 'z'])
+const securedDownloadSessions = new WeakSet<Electron.Session>()
+const securedDownloadContents = new WeakSet<Electron.WebContents>()
 
 export function dispatchWindowEdit(contents: Electron.WebContents, action: ApplicationEditAction) {
   if (contents.isDestroyed()) return
@@ -165,7 +167,21 @@ export function secureWindow(window: BrowserWindow, openExternal?: (url: string)
     (_contents, _permission, callback) => callback(false),
   )
   window.webContents.session.setPermissionCheckHandler(() => false)
-  window.webContents.session.on('will-download', (event) => event.preventDefault())
+  const session = window.webContents.session
+  securedDownloadContents.add(window.webContents)
+  if (!securedDownloadSessions.has(session)) {
+    securedDownloadSessions.add(session)
+    session.on('will-download', (event, item, contents) => {
+      // 只允许应用生成的 Mermaid PNG 走系统保存窗口，外部下载仍由专用文件入口处理。
+      if (securedDownloadContents.has(contents) && item.getURL().startsWith('blob:')
+        && item.getMimeType() === 'image/png'
+        && /^mermaid-diagram-[\dTZ-]+\.png$/u.test(item.getFilename())) {
+        item.setSaveDialogOptions({ defaultPath: item.getFilename(), filters: [{ name: 'PNG', extensions: ['png'] }] })
+        return
+      }
+      event.preventDefault()
+    })
+  }
 }
 export function trustedCaller(
   event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>,

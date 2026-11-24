@@ -49,10 +49,7 @@ export interface RedisEventPublisher {
   bumpContextRevision(userId: string, resource: string): Promise<boolean>
   publishResourceChanged(input: ResourceChangedInput): Promise<boolean>
   publishAgentRunChanged(input: { ownerId: string; sessionId: number; runId: string; status: 'running' | 'waiting' | 'completed' | 'failed' }): Promise<boolean>
-  publishTrashPurgeProgress(input: {
-    ownerId: string; jobId: number; status: 'queued' | 'running' | 'waiting' | 'completed' | 'failed'
-    progressCurrent: number; progressTotal: number; failedCount: number
-  }): Promise<boolean>
+
 }
 
 export interface RedisAgentCancellationCommands {
@@ -361,12 +358,7 @@ export function createRedisPasswordResetCommands(redisUrl: string): PasswordRese
   }
 }
 
-/** 唤醒共享 Python 回收站 Worker；数据库任务已持久化，Redis 通知失败可由 Worker 扫描恢复。 */
-export function createRedisTrashPurgeNotifier(redisUrl: string): () => Promise<void> {
-  return async () => {
-    await withRedis(redisUrl, (command) => command('PUBLISH', 'jobs:trash-purge:wakeup', '1'))
-  }
-}
+
 
 /** Read the WebUI session-list status snapshot with the same key and terminal rule as genstream. */
 export function createRedisAgentActiveStatusReader(redisUrl: string) {
@@ -644,26 +636,7 @@ export function createRedisEventPublisher(
       }
     },
 
-    async publishTrashPurgeProgress(input) {
-      try {
-        await withRedis(redisUrl, (command) => command('PUBLISH', `events:${input.ownerId}`, JSON.stringify({
-          protocol_version: 'live-event-v1',
-          event_id: eventId(),
-          type: 'task.progress',
-          task_type: 'trash_purge',
-          task_id: input.jobId,
-          status: input.status,
-          progress_current: input.progressCurrent,
-          progress_total: input.progressTotal,
-          failed_count: input.failedCount,
-          created_at: now().toISOString(),
-        })))
-        return true
-      } catch {
-        reportFailure('trash purge progress notification')
-        return false
-      }
-    },
+
   }
 }
 

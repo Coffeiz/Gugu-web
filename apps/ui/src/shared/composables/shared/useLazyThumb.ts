@@ -12,11 +12,11 @@ import { getThumb, getCachedThumb } from '@/composables/shared/useThumbCache'
 
 // 指令挂在 <img> 上，额外记两个私有句柄用于断开/重试
 type LazyThumbEl = HTMLImageElement & { _lazyThumbObs?: IntersectionObserver | null; _lazyThumbRetry?: ReturnType<typeof setTimeout> | null }
-type LazyThumbValue = { id?: number | string; size?: string; revision?: number | string }
+type LazyThumbValue = { id?: string; size?: string; revision?: number | string }
 
 const ROOT_MARGIN: Record<string, string> = { tiny: '400px', card: '250px' }
 
-function _load(el: LazyThumbEl, id: number | string, size: string = 'card', revision?: number | string, tries = 0) {
+function _load(el: LazyThumbEl, id: string, size: string = 'card', revision?: number | string, tries = 0) {
   const cached = getCachedThumb(id, size, revision)
   if (cached) {
     el.src = cached

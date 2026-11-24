@@ -27,7 +27,7 @@ beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'gugu-workspace-query-'))
   db = new SQLite(join(directory, 'query.db'))
   db.exec('CREATE TABLE user_preferences(user_id TEXT PRIMARY KEY,data_json TEXT);'
-    + 'CREATE TABLE workspaces(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,kind TEXT,folder_id INTEGER,project_id INTEGER,directory_id INTEGER,enabled INTEGER,is_default INTEGER,updated_at TEXT);'
+    + 'CREATE TABLE workspaces(id INTEGER PRIMARY KEY,user_id TEXT,name TEXT,kind TEXT,project_id INTEGER,directory_id INTEGER,enabled INTEGER,is_default INTEGER,updated_at TEXT);'
     + 'CREATE TABLE conversation_sessions(id INTEGER PRIMARY KEY,user_id TEXT,workspace_id INTEGER);')
   owner = randomUUID(); other = randomUUID(); sqlCalls = 0
   settings = { shellEnabled: true, shellSystemEnabled: true, shellDangerousEnabled: true,
@@ -57,8 +57,8 @@ describe('工作区公共列表用例与真实Kysely/临时SQLite读适配器', 
     workspace(2, owner, false, '2026-01-03')
     const result = await createWorkspaceLister(store, { readRuntimeSettings: readSettings })(owner)
     expect(result.items).toEqual([
-      { id: 2, name: '工作区2', kind: 'directory', folderId: null, projectId: null, directoryId: null, enabled: false, isDefault: false, boundSessionCount: 0 },
-      { id: 1, name: '工作区1', kind: 'directory', folderId: null, projectId: null, directoryId: null, enabled: true, isDefault: false, boundSessionCount: 0 },
+      { id: 2, name: '工作区2', kind: 'directory', projectId: null, directoryId: null, enabled: false, isDefault: false, boundSessionCount: 0 },
+      { id: 1, name: '工作区1', kind: 'directory', projectId: null, directoryId: null, enabled: true, isDefault: false, boundSessionCount: 0 },
     ])
   })
   it.each(['{损坏JSON', '[]'])('损坏或非对象偏好%s使用历史默认', async payload => {

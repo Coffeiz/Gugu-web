@@ -34,17 +34,18 @@ const extensions = new Map([
 export function createDesktopWebDownload(options: {
   dataRoot: string
   authorized(identity: RunIdentity): Promise<boolean>
-  readTarget(signal: AbortSignal): Promise<unknown>
-  commit(input: { target: string; stage: string; filename: string }, signal: AbortSignal): Promise<unknown>
+  readTarget(signal: AbortSignal, folderPath?: string): Promise<unknown>
+  commit(input: { target: string; stage: string; filename: string; folderPath?: string }, signal: AbortSignal): Promise<unknown>
   open: WebDownloadPort['open']
 }) {
   return createWebDownloadTool({
     fixedDestination: true,
+    allowFolderPath: true,
     open: options.open,
     extension: type => extensions.get(type) ?? null,
-    async prepare(_location, scope) {
+    async prepare({ folderPath }, scope) {
       if (!await options.authorized(scope.identity)) return { error: '下载运行授权已失效' }
-      const target = await options.readTarget(scope.signal)
+      const target = await options.readTarget(scope.signal, folderPath)
       if (typeof target !== 'string' || !target) return { error: '个人文件目录不可用' }
       return {
         capacity: agentDownloadsLimit,
@@ -55,11 +56,11 @@ export function createDesktopWebDownload(options: {
               await pipeline(Readable.from(data, { objectMode: false }),
                 createWriteStream(join(directory, 'body'), { flags: 'wx', mode: 0o600 }), { signal })
               signal.throwIfAborted()
-              await options.commit({ filename, target, stage: basename(directory) }, signal)
+              await options.commit({ filename, target, stage: basename(directory), ...(folderPath === undefined ? {} : { folderPath }) }, signal)
             } finally {
               await rm(directory, { recursive: true, force: true })
             }
-          }),
+          }, `/personal/${folderPath ?? 'download'}`),
       }
     },
   })

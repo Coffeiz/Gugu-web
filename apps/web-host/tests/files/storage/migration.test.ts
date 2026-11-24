@@ -77,7 +77,7 @@ test('旧回收项导入可重跑，还原冲突不覆盖，同一个历史 ID �
     assert.deepEqual(await trash.list(other), [])
 
     const pool = { query() { assert.fail('已迁移的 ID 不能回查文件表') } } as unknown as Pool
-    const reader = createPostgresFileReadOperations(pool, null, root)
+    const reader = createPostgresFileReadOperations(pool, root)
     assert.equal(await reader.openContent(owner, fileId), null)
     await writeFile(join(root, restoreKey), '不同文件')
     await assert.rejects(trash.restore(owner, id), { code: 'EEXIST' })

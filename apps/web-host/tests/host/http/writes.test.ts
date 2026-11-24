@@ -200,17 +200,17 @@ test('workspace creation binds the owner from RequestContext and maps core error
     userAuth: userAuth(),
     createWorkspace: async (id, input) => {
       calls.push({ id, input })
-      throw new CoreError('conflict', '文件夹不存在')
+      throw new CoreError('conflict', '工作区创建冲突')
     },
   })
   try {
     const response = await app.inject({
       method: 'POST', url: '/api/v1/workspaces/', headers: auth,
-      payload: { name: 'Synthetic workspace', folderId: 44 },
+      payload: { name: 'Synthetic workspace' },
     })
     assert.equal(response.statusCode, 409)
-    assert.deepEqual(response.json(), { detail: '文件夹不存在' })
-    assert.deepEqual(calls, [{ id: ownerId, input: { name: 'Synthetic workspace', folderId: 44 } }])
+    assert.deepEqual(response.json(), { detail: '工作区创建冲突' })
+    assert.deepEqual(calls, [{ id: ownerId, input: { name: 'Synthetic workspace' } }])
   } finally {
     await app.close()
   }

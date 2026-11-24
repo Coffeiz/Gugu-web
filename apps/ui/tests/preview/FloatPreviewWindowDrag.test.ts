@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, reactive } from 'vue'
 import { createPinia } from 'pinia'
 import { i18n } from '@/i18n'
+import { pathFileAccessKey } from '@/services/pathFileAccess'
+import { desktopPathFileAccess } from '@desktop/files/pathFileAccess'
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/stores/live', () => ({ useLiveStore: () => reactive({ resourceEvent: null, rev: { files: 0 } }) }))
@@ -73,5 +75,25 @@ describe('浮动预览窗保留实际拖动边界', () => {
     await nextTick()
     await drag(title, -100000, -100000)
     expect(parseFloat(root.style.left)).toBe(-window.innerWidth * 0.25)
+  })
+})
+
+it('桌面图片使用本地文件身份读取，读取失败仍显示预览窗口和错误', async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 404 }))
+  vi.stubGlobal('fetch', fetchMock)
+  const win = {
+    id: 7, file: { displayName: 'sample.png', ext: 'PNG', workspaceFile: {
+      directoryId: 'personal', relativePath: 'sample.png', identity: 'sample-identity',
+    } },
+    x: 0, y: 0, w: 480, h: 320, zIndex: 1, _idx: 0, reloadToken: 0, siblings: [],
+  }
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  app = createApp({ render: () => h(FloatPreviewWindow, { win, nativeWindow: true }) })
+  app.provide(pathFileAccessKey, desktopPathFileAccess)
+  app.use(createPinia()).use(i18n).mount(host)
+  await vi.waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('identity=sample-identity'), expect.anything())
+    expect(host?.querySelector('.fpw-native.fpw-ready .fpw-error')?.textContent).toContain('HTTP 404')
   })
 })

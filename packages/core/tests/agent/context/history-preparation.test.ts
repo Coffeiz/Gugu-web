@@ -31,7 +31,7 @@ describe('历史加载的水位、所有权与顺序', () => {
     const text = (message: CanonicalMessage) => typeof message.content === 'string' ? message.content
       : (message.content as Block[]).filter(block => block.type === 'text').map(block => block.text).join('\n')
     expect(messages.filter(message => message.role === 'assistant' && text(message) === fallback)).toHaveLength(3)
-    expect(messages.filter(message => typeof message.content === 'string' && message.content.endsWith('【消息正文】\n继续'))).toHaveLength(2)
+    expect(messages.filter(message => typeof message.content === 'string' && message.content === '继续')).toHaveLength(2)
     expect(messages.filter(message => typeof message.content === 'string' && message.content.endsWith('换句话说明后继续'))).toHaveLength(1)
     const blocks = messages.flatMap(message => Array.isArray(message.content) ? message.content as Block[] : [])
     expect(blocks.filter(block => block.type === 'tool_call').map(block => block.id)).toEqual(['event-call', 'note-call'])
@@ -66,14 +66,15 @@ describe('历史加载的水位、所有权与顺序', () => {
     const files = members.map((_, index): Block[] => [{ type: 'attachment_ref', attach_id: `file-${index + 1}`, kind: 'text', name: `合成附件${index + 1}`, ext: 'txt' }])
     const currentUsers = members.map((member, index) => ({
       rawText: member.body, persistedMessageId: String(index + 1), messageTime: member.time,
+      groupSpeaker: { id: member.id, name: member.name, owner: index === 0 },
       message: user(formatGroupMessage({
-        body: member.body, senderId: member.id, senderName: member.name, quote: member.quote,
+        body: member.body, quote: member.quote,
         attachmentIds: files[index]!.map(file => String(file.attach_id)), attachmentContext: formatAttachmentReferences(files[index]!)
       }))
     }))
     const first = await prepareContext({ ...identity, groupChat: true, fixedPrefix: [], history: [], currentUsers, preparedRag: { tail: [] } }, port)
     const rows = members.map((member, index) => row(index + 1, {
-      content: member.body, chatType: 'group', senderId: member.id, senderName: member.name,
+      content: member.body, chatType: 'group', senderId: member.id, senderName: member.name, ownerSpeaker: index === 0,
       quote: member.quote, files: files[index], createdAt: `2026-08-25T00:0${index + 1}:00Z`
     }))
     port.formatMessageTime = timestamp => String(timestamp).includes('00:01') ? '10:01' : '10:02'
@@ -95,7 +96,7 @@ describe('历史加载的水位、所有权与顺序', () => {
       ]
     }, port)
     expect(prepared.area.messages.map(message => message.role)).toEqual(['user', 'user', 'user', 'user'])
-    expect(prepared.area.messages.map(message => message.content)).toEqual(['【消息时间】2026-08-25 08:26\n【消息正文】\n今天天气如何', [knowledge], [skill], '【消息正文】\n好潮湿'])
+    expect(prepared.area.messages.map(message => message.content)).toEqual(['[2026-08-25 08:26]: 今天天气如何', [knowledge], [skill], '好潮湿'])
     expect(calls).toEqual([[timestamp, 'Asia/Shanghai']])
   })
   it('保留窗口以完整batch计数：keep2只保留最后两单元，超过单位数量则保留全部', () => {
@@ -176,11 +177,11 @@ describe('历史加载的水位、所有权与顺序', () => {
   it('群sender/quote/附件属于模型上下文分区，不改数据库原文，不注入runtime权限', () => {
     const envelope = normalizeHistoryMessage({ role: 'user', content: '继续', quoted_text: '合成引用', platform_user_id: 'member', platform_user_name: '小北', files: [{ attach_id: 'file', kind: 'text', ext: 'md' }] })
     const original = structuredClone(envelope), rendered = formatHistoricalText(envelope, true)
-    expect(rendered).toContain('平台 ID：member\n显示名：小北\n【消息正文】\n继续')
-    expect(rendered).toContain('【引用消息】\n合成引用'); expect(rendered).toContain('【附件 ID】\nfile')
+    expect(rendered).toMatch(/^继续/)
+    expect(rendered).toContain('[引用消息]\n合成引用\n[/引用消息END]'); expect(rendered).toContain('【附件 ID】\nfile')
     expect(envelope).toEqual(original)
     const privateText = formatHistoricalText(envelope, false)
-    expect(privateText).toContain('💬 用户引用/回复了一条历史消息'); expect(privateText).not.toContain('【发言人元数据】')
+    expect(privateText).toBe('继续\n\n[引用消息]\n合成引用\n[/引用消息END]' + formatAttachmentReferences(envelope.attachments)); expect(privateText).not.toContain('【发言人元数据】')
   })
   it.each([[0, 5, 5], [3, 5, 5], [7, 5, 7], [5, 0, 5]])('baseline=%i与summary覆盖=%i取有效水位%i', (baseline, covers, expected) => {
     const rows = [row(20, { role: 'summary', content: '摘要', coversUntilSeq: covers }), ...Array.from({ length: 10 }, (_, index) => row(index + 1))]
@@ -311,18 +312,17 @@ describe('统一当前轮组装', () => {
     const prepared = await prepareContext({
       ...identity, groupChat: true, userTimezone: 'Asia/Shanghai', fixedPrefix: [], history: [row(1, {
         content: '继续', quote: '合成引用',
-        chatType: 'group', source: 'qq', platformSentMs: 1000, senderId: 'member', senderName: '小北', files: [{ attach_id: 'att-1', kind: 'text', ext: 'md' }]
+        chatType: 'group', source: 'qq', platformSentMs: 1000, senderId: 'member', senderName: '小北', ownerSpeaker: true, files: [{ attach_id: 'att-1', kind: 'text', ext: 'md' }]
       })]
     }, port)
     const content = String(prepared.area.messages[0]!.content)
-    expect(content).toContain('【消息时间】2026-11-13 08:00')
-    expect(content).toContain('平台 ID：member\n显示名：小北'); expect(content).toContain('【引用消息】\n合成引用')
+    expect(content).toMatch(/^\[2026-11-13 08:00 \/ 小北 \(member, owner\)\]: 继续/); expect(content).toContain('[引用消息]\n合成引用\n[/引用消息END]')
     expect(content).toContain('save_attachment'); expect(times).toEqual([[1000, 'Asia/Shanghai']])
   })
   it.each(['qq', 'feishu', 'wechat', 'web'])('主准备链的%s历史引用重建相同且不修改原文', async source => {
     const original = row(1, { content: '继续', quote: '引用原文', source })
     const prepared = await prepareContext({ ...identity, history: [original], fixedPrefix: [] }, ports())
-    expect(String(prepared.area.messages[0]!.content)).toContain('💬 用户引用/回复了一条历史消息（原文：「引用原文」）')
+    expect(String(prepared.area.messages[0]!.content)).toContain('继续\n\n[引用消息]\n引用原文\n[/引用消息END]')
     expect(original.content).toBe('继续')
   })
   it('主准备链摘要排首位且包装一致，空展示assistant跳过；旧role tool块不嵌套且error保留', async () => {
@@ -356,7 +356,7 @@ describe('统一当前轮组装', () => {
       fixedPrefix: [], currentUser: { message: user('相同'), persistedMessageId: '2' }, extraReminder: '请求提醒'
     }, port)
     expect(beforeId).toBe('2'); expect(historyIds).toEqual(['1'])
-    expect(prepared.area.messages.map(item => item.content)).toEqual(['【消息正文】\n相同', 'RAG', '【消息正文】\n相同'])
+    expect(prepared.area.messages.map(item => item.content)).toEqual(['相同', 'RAG', '相同'])
     expect(prepared.area.persistenceDelta('success').entries.map(item => item.message)).toEqual([user('RAG')])
     expect(prepared.area.dynamicTail).toEqual([user('[system-reminder]\n请求提醒\n[/system-reminder]')])
   })
@@ -441,7 +441,7 @@ describe('统一当前轮组装', () => {
     const first = await prepare('执行', '一', '10:01')
     expect(first.area.entries.map(entry => entry.source)).toEqual(['stance', 'user'])
     expect(first.area.messages[0]!.content).toEqual([{ type: 'stance-context', digest: port.digest('执行'), text: '[system-reminder]\n执行\n[/system-reminder]' }])
-    expect(first.area.messages[1]!.content).toBe('【消息时间】10:01\n【消息正文】\n一')
+    expect(first.area.messages[1]!.content).toBe('[10:01]: 一')
     expect(first.stanceToPersist).toBe('执行'); persistNew(first)
     const second = await prepare('执行', '二', '10:02')
     expect(second.area.entries.filter(entry => entry.source === 'stance')).toEqual([]); expect(second.stanceToPersist).toBeNull()
@@ -450,7 +450,7 @@ describe('统一当前轮组装', () => {
     expect(projection(third.area.messages.slice(0, 3))).toEqual(projection(second.area.messages))
     expect(third.area.entries.slice(-2).map(entry => entry.source)).toEqual(['stance', 'user']); expect(third.stanceToPersist).toBe('记录')
     expect(third.area.messages.at(-2)!.content).toEqual([{ type: 'stance-context', digest: port.digest('记录'), text: '[system-reminder]\n记录\n[/system-reminder]' }])
-    expect(third.area.messages.at(-1)!.content).toBe('【消息时间】10:03\n【消息正文】\n三')
+    expect(third.area.messages.at(-1)!.content).toBe('[10:03]: 三')
     expect(stableJson(third.area.messages)).toContain('执行')
   })
   it('preparedRag主prepare直接使用已召回结果，不二次召回且保持stance→RAG→用户时间正文顺序', async () => {
@@ -460,7 +460,7 @@ describe('统一当前轮组装', () => {
     const prepared = await prepareContext({ ...identity, fixedPrefix: [], history: [], preparedRag: rag, stance: '执行', currentUser: { message: user('问题'), messageTime: '10:20' } }, port)
     expect(recalls).toBe(0); expect(prepared.area.entries.map(entry => entry.source)).toEqual(['stance', 'rag', 'user'])
     expect(prepared.area.messages[1]!.content).toEqual(rag.tail[0]!.content)
-    expect(prepared.area.messages[2]!.content).toBe('【消息时间】10:20\n【消息正文】\n问题')
+    expect(prepared.area.messages[2]!.content).toBe('[10:20]: 问题')
     await prepareContext({ ...identity, fixedPrefix: [], history: [], preparedRag: { tail: [] }, currentUser: { message: user('空召回也不能重查') } }, port)
     expect(recalls).toBe(0)
   })
@@ -490,7 +490,7 @@ describe('统一当前轮组装', () => {
     }, port)
     expect(seen).toEqual([{ before: '3', ids: ['1', '4'] }])
     const texts = prepared.area.messages.map(message => String(message.content))
-    expect(texts.filter(text => text.includes('批次'))).toEqual(['【消息正文】\n批次B', '【消息正文】\n批次A'])
+    expect(texts.filter(text => text.includes('批次'))).toEqual(['批次B', '批次A'])
     expect(texts.join('\n')).not.toMatch(/旧渲染|不应另拼/)
     expect(prepared.area.persistenceDelta('success').entries).toEqual([])
   })
@@ -525,8 +525,11 @@ describe('统一当前轮组装', () => {
     expect(prepared.area.persistenceDelta('success').entries.every(entry => entry.source === 'rag')).toBe(true)
     expect(prepared.area.persistenceDelta('success').userAnchorSequence).toBe(2)
   })
-  it('时间封套不重复正文标签，已包装text block只前插时间', () => {
-    expect(inlineMessageTime('【消息正文】\n原文', '10:00')).toBe('【消息时间】10:00\n【消息正文】\n原文')
+  it('单行前缀保留多行正文和独立图片块', () => {
+    expect(inlineMessageTime('原文\n第二行', '10:00')).toBe('[10:00]: 原文\n第二行')
+    expect(inlineMessageTime([{ type: 'text', text: '原文' }, { type: 'image', source: '测试' }], '10:00',
+      { id: 'u42', name: '小北', owner: true })).toEqual([{ type: 'text', text: '[10:00 / 小北 (u42, owner)]: 原文' },
+      { type: 'image', source: '测试' }])
     expect(inlineMessageTime([{ type: 'text', text: '【消息正文】\n原文' }], null)).toEqual([{ type: 'text', text: '【消息正文】\n原文' }])
   })
 })

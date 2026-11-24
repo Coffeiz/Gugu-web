@@ -19,8 +19,8 @@ afterEach(async () => {
 async function makeApp(content: Buffer) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'gugu-file-content-'))
   directories.push(directory)
-  const filePath = path.join(directory, '合成文件.txt')
-  await writeFile(filePath, content)
+  const diskFilePath = path.join(directory, '合成文件.txt')
+  await writeFile(diskFilePath, content)
   const calls: unknown[] = []
   const app = createApp({
     appName: '合成测试应用',
@@ -44,17 +44,17 @@ async function makeApp(content: Buffer) {
       },
     },
     fileReads: {
-      async getFile(owner, fileId) { calls.push(['file', owner, fileId]); return { id: fileId } },
+      async getFile(owner, filePath) { calls.push(['file', owner, filePath]); return { filePath } },
       async getFileLocation() { return null },
       async getSummary() { return {} },
       async getLibraryCounts() { return {} },
       async getStorage() { return {} },
-      async openContent(owner, fileId) {
-        calls.push(['content', owner, fileId])
-        if (owner !== ownerId || fileId !== 23) return null
-        const handle = await open(filePath, 'r')
+      async openContent(owner, requestedPath) {
+        calls.push(['content', owner, requestedPath])
+        if (owner !== ownerId || requestedPath !== `${ownerId}/personal/合成文件.txt`) return null
+        const handle = await open(diskFilePath, 'r')
         return {
-          file: { id: fileId },
+          file: { filePath: requestedPath },
           handle,
           size: (await handle.stat()).size,
           fileName: '合成 文件.txt',
@@ -71,7 +71,7 @@ test('Local file download streams the exact bytes with a safe filename and physi
   const { app, token, calls } = await makeApp(Buffer.from('file-body'))
 
   const response = await app.inject({
-    url: '/api/v1/files/23/download',
+    url: `/api/v1/files/by-path/download?${new URLSearchParams({ path: `${ownerId}/personal/合成文件.txt` })}`,
     headers: { authorization: `Bearer ${token}` },
   })
 
@@ -79,16 +79,16 @@ test('Local file download streams the exact bytes with a safe filename and physi
   assert.equal(response.payload, 'file-body')
   assert.equal(response.headers['content-length'], '9')
   assert.equal(response.headers['content-disposition'], "attachment; filename*=UTF-8''%E5%90%88%E6%88%90%20%E6%96%87%E4%BB%B6.txt")
-  assert.deepEqual(calls, [['content', ownerId, 23]])
+  assert.deepEqual(calls, [['content', ownerId, `${ownerId}/personal/合成文件.txt`]])
 })
 
 test('Local file preview supports byte ranges and rejects an unsatisfiable range', async () => {
   const { app, token } = await makeApp(Buffer.from('0123456789'))
   const headers = { authorization: `Bearer ${token}`, range: 'bytes=2-5' }
 
-  const partial = await app.inject({ url: '/api/v1/files/23/stream', headers })
+  const partial = await app.inject({ url: `/api/v1/files/by-path/stream?${new URLSearchParams({ path: `${ownerId}/personal/合成文件.txt` })}`, headers })
   const invalid = await app.inject({
-    url: '/api/v1/files/23/stream',
+    url: `/api/v1/files/by-path/stream?${new URLSearchParams({ path: `${ownerId}/personal/合成文件.txt` })}`,
     headers: { authorization: `Bearer ${token}`, range: 'bytes=20-' },
   })
 
@@ -105,7 +105,7 @@ test('empty Local file download returns an empty body without inventing a byte r
   const { app, token } = await makeApp(Buffer.alloc(0))
 
   const response = await app.inject({
-    url: '/api/v1/files/23/download',
+    url: `/api/v1/files/by-path/download?${new URLSearchParams({ path: `${ownerId}/personal/合成文件.txt` })}`,
     headers: { authorization: `Bearer ${token}` },
   })
 

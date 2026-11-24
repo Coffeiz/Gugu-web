@@ -4,7 +4,6 @@
     <span>{{ t('workspaceUi.workspaceLoadFailed') }}</span>
     <ActionButton variant="secondary" fit @click="refresh">{{ t('common.actions.retry') }}</ActionButton>
   </div>
-  <div v-else-if="!items.length" class="workspace-state">{{ t('workspaceUi.noWorkspaces') }}</div>
   <template v-else v-for="item in rootItems" :key="item.id">
     <FolderCard
       v-if="mode === 'grid'"

@@ -100,3 +100,30 @@ test('view_image 对无视觉模型、混用输入和重定向分别拒绝', asy
   assert.equal(redirected.kind === 'completed' && !redirected.successful, true)
   assert.equal(requests, 1)
 })
+
+test('view_image 已授权 owner 可凭精确 ID 跨会话查看附件，其他 owner 无法打开', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-view-history-'))
+  const attachId = 'a'.repeat(16)
+  const path = join(root, 'image.png')
+  try {
+    await writeFile(path, png)
+    let opened = 0
+    const registry = createToolRegistry({ authorize: async () => true, tools: [createViewImageTool({
+      authorize: async () => true, supportsImage: async () => true, mount: async () => null,
+      async open() { throw new Error('历史附件不请求网络') },
+      attachments: {
+        pool: { async query(_sql: string, [owner, session, ids]: [string, number | null, string[]]) {
+          return { rows: owner === identity.ownerId && session === null && ids.includes(attachId)
+            ? [{ attach_id: attachId, kind: 'image', size: png.length }] : [] }
+        } } as never,
+        async download() { opened++; return { handle: await open(path, 'r') } },
+      },
+    })] })
+    const call = { id: 'history-image', name: 'view_image', input: { attach_id: attachId } }
+    const valid = await registry.tools.dispatch(call, { ...scope, identity: { ...identity, sessionId: '2' } })
+    assert.equal(valid.kind === 'completed' && valid.successful, true)
+    const denied = await registry.tools.dispatch(call, { ...scope, identity: { ...identity, ownerId: 'other-owner' } })
+    assert.equal(denied.kind === 'completed' && !denied.successful, true)
+    assert.equal(opened, 1)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})

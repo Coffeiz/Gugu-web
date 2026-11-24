@@ -6,15 +6,17 @@ import {ExecutionError,type ExecutionBackend,type HarnessExecutorPorts,type Harn
 import {classifyShellCommandRisk} from '@gugu/core/agent/security/shell-command-risk'
 import type {RunIdentity} from '@gugu/core/agent'
 import type {ImActor} from '@gugu/core/im/access'
+import {createSessionWorkspaceTargetReader} from '@gugu/core/workspaces/shell-target'
 import {createTerminalWorkspaceMounts} from '../../../terminals/sandbox/mounts.js'
 
 /** 正式Harness ports，始终通过实际Executor/MXC；未配置危险执行确认时拒绝。 */
 export function createImHarnessExecutorPorts<DB>(options:{pool:Pick<Pool,'connect'|'query'>;db:Kysely<DB>;storageRoot:string;
- identity:RunIdentity;actor:ImActor;authorize(signal?:AbortSignal):Promise<boolean>;
+ enabled?():boolean;identity:RunIdentity;actor:ImActor;authorize(signal?:AbortSignal):Promise<boolean>;
  confirmed?(scope:HarnessExecutionScope,request:Readonly<ExecutionRequest>,signal?:AbortSignal):Promise<boolean>;
  /** 测试可控原生进程适配；生产默认实际MXC SDK。 */
  backend?():Promise<ExecutionBackend>
 }):HarnessExecutorPorts{
+ const readWorkspace=createSessionWorkspaceTargetReader(options.db,'postgres')
  const mounts=createTerminalWorkspaceMounts(options.pool,options.db,options.storageRoot)
  let backend:Promise<Executor>|undefined
  type Mounts=Awaited<ReturnType<typeof mounts>>
@@ -22,7 +24,7 @@ export function createImHarnessExecutorPorts<DB>(options:{pool:Pick<Pool,'connec
  const denied=()=>new ExecutionError('denied',messages.denied)
  async function authorized(scope:HarnessExecutionScope,signal?:AbortSignal){
   signal?.throwIfAborted()
-  if(scope.ownerId!==options.identity.ownerId||scope.sessionId!==options.identity.sessionId||scope.runId!==options.identity.runId
+  if(options.enabled?.()===false||scope.ownerId!==options.identity.ownerId||scope.sessionId!==options.identity.sessionId||scope.runId!==options.identity.runId
    ||options.actor.ownerId!==scope.ownerId||options.actor.role!=='owner'||options.actor.chatType!=='c2c'||!await options.authorize(signal))throw denied()
   const rows=await options.pool.query(`SELECT 1 FROM filesystem_authorization_grants g JOIN conversation_sessions s ON s.id::text=g.subject_id AND s.user_id=g.user_id
    WHERE g.user_id=$1 AND s.id=$2 AND g.subject_type='session' AND g.scope='user_sandbox' AND g.permission='read_write'
@@ -41,7 +43,8 @@ export function createImHarnessExecutorPorts<DB>(options:{pool:Pick<Pool,'connec
     const dangerous=request.destructive||classifyShellCommandRisk(request.command)==='dangerous'
     const confirmed=!dangerous||!!options.confirmed&&await options.confirmed(scope,request,signal)
     if(!confirmed)throw denied()
-    pinned=await mounts(scope.ownerId,null,true,request.cwd)
+    const target=await readWorkspace(scope.ownerId,Number(scope.sessionId),{explicitOnly:true})
+    pinned=await mounts(scope.ownerId,target?.workspaceId??null,true,request.cwd)
     await authorized(scope,signal)
     const grant:ExecutionGrant={requestId:request.id,backend:'mxc',command:request.command,cwd:pinned.cwd,confirmed,
      readonlyPaths:pinned.readonlyPaths,readwritePaths:pinned.readwritePaths,environment:pinned.environment,timeoutMs:request.timeoutMs,maxOutputBytes:1_048_576}

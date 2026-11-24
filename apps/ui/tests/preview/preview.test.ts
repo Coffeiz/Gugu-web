@@ -96,30 +96,30 @@ describe('预览窗口复用', () => {
     expect(isPreviewReloadRequested(0, 1)).toBe(true)
   })
 
-  it('聊天文件再次打开时更新同 ID 窗口并递增强制重载标记', () => {
+  it('聊天附件再次打开时按暂存附件 ID 更新窗口并递增强制重载标记', () => {
     const store = usePreviewStore()
-    store.open({ id: 321, ext: 'TXT', displayName: '旧内容' })
+    store.open({ attach_id: 'attach-321', ext: 'TXT', displayName: '旧内容' })
 
-    store.open({ id: 321, ext: 'TXT', displayName: '最新内容' }, null, true)
+    store.open({ attach_id: 'attach-321', ext: 'TXT', displayName: '最新内容' }, null, true)
 
     expect(store.windows).toHaveLength(1)
     expect(store.windows[0].file.displayName).toBe('最新内容')
     expect(store.windows[0].reloadToken).toBe(1)
 
-    store.open({ id: 321, ext: 'TXT', displayName: '再打开' }, null, true)
+    store.open({ attach_id: 'attach-321', ext: 'TXT', displayName: '再打开' }, null, true)
     expect(store.windows[0].reloadToken).toBe(2)
 
     // 普通入口只更新元数据，token 不变；watch 不应继续把历史强刷当成新请求。
-    store.open({ id: 321, ext: 'TXT', displayName: '普通更新' })
+    store.open({ attach_id: 'attach-321', ext: 'TXT', displayName: '普通更新' })
     expect(store.windows[0].file.displayName).toBe('普通更新')
     expect(store.windows[0].reloadToken).toBe(2)
   })
 
   it('普通入口复用窗口时不强制绕过缓存', () => {
     const store = usePreviewStore()
-    store.open({ id: 654, ext: 'TXT', displayName: '旧名称' })
+    store.open({ filePath: '/personal/文件.txt', ext: 'TXT', displayName: '旧名称' })
 
-    store.open({ id: 654, ext: 'TXT', displayName: '新名称' })
+    store.open({ filePath: '/personal/文件.txt', ext: 'TXT', displayName: '新名称' })
 
     expect(store.windows).toHaveLength(1)
     expect(store.windows[0].file.displayName).toBe('新名称')
@@ -128,8 +128,8 @@ describe('预览窗口复用', () => {
 
   it('账号切换重置关闭所有文件窗口与抽屉', () => {
     const store = usePreviewStore()
-    store.open({ id: 1, ext: 'PNG', displayName: '旧账号文件' })
-    store.open({ id: 2, ext: 'PDF', displayName: '旧账号文档' })
+    store.open({ filePath: '/personal/旧账号文件.png', ext: 'PNG', displayName: '旧账号文件' })
+    store.open({ filePath: '/personal/旧账号文档.pdf', ext: 'PDF', displayName: '旧账号文档' })
 
     store.resetAccountState()
 
@@ -150,10 +150,11 @@ describe('预览窗口复用', () => {
       ...overrides,
     })
 
-    expect(isPreviewAffectedByFileEvent(17, event({ entity_id: 18 }))).toBe(false)
-    expect(isPreviewAffectedByFileEvent(17, event({ entity_id: '17' }))).toBe(true)
-    expect(isPreviewAffectedByFileEvent(17, event({ entity_ids: [18, 17] }))).toBe(true)
-    expect(isPreviewAffectedByFileEvent(17, event({ entity_id: 17, payload: { kind: 'folder' } }))).toBe(false)
-    expect(isPreviewAffectedByFileEvent(17, event({ operation: 'refresh' }))).toBe(false)
+    const path = '/personal/笔记.md'
+    expect(isPreviewAffectedByFileEvent(path, event({ entity_id: '/personal/另一篇.md' }))).toBe(false)
+    expect(isPreviewAffectedByFileEvent(path, event({ entity_id: path }))).toBe(true)
+    expect(isPreviewAffectedByFileEvent(path, event({ entity_ids: ['/personal/另一篇.md', path] }))).toBe(true)
+    expect(isPreviewAffectedByFileEvent(path, event({ entity_id: path, payload: { kind: 'folder' } }))).toBe(false)
+    expect(isPreviewAffectedByFileEvent(path, event({ operation: 'refresh' }))).toBe(false)
   })
 })

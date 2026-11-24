@@ -7,8 +7,8 @@ const cache   = new Map<string, string>() // `${id}_${size}` 或 `${id}_${size}_
 const pending = new Map<string, Promise<string | null>>()
 
 type ThumbRevision = number | string
-function thumbKey(id: number | string, size: string, revision?: ThumbRevision): string {
-  return revision == null ? `${id}_${size}` : `${id}_${size}_${revision}`
+function thumbKey(filePath: string, size: string, revision?: ThumbRevision): string {
+  return revision == null ? `${filePath}_${size}` : `${filePath}_${size}_${revision}`
 }
 
 // 并发限流：浏览器 HTTP/1.1 单域名约 6 连接，批量加载几十张缩略图会导致尾部超时；
@@ -20,9 +20,9 @@ export const thumbLoadedIds   = reactive(new Set())
 // 二次访问同一文件时 fc-loaded 直接就绪，跳过渐进动画直接显示
 export const cardBlobReadyIds = reactive(new Set())
 
-export function getCachedThumb(id: number | string, size = 'card', revision?: ThumbRevision) {
-  const url = cache.get(thumbKey(id, size, revision))
-  if (url && size === 'card') thumbLoadedIds.add(id)
+export function getCachedThumb(filePath: string, size = 'card', revision?: ThumbRevision) {
+  const url = cache.get(thumbKey(filePath, size, revision))
+  if (url && size === 'card') thumbLoadedIds.add(filePath)
   return url ?? null
 }
 
@@ -66,12 +66,13 @@ function loadThumb(key: string, url: string, onReady?: () => void) {
   return p
 }
 
-export function getThumb(id: number | string, size = 'card', revision?: ThumbRevision) {
+export function getThumb(filePath: string, size = 'card', revision?: ThumbRevision) {
   const revisionQuery = revision == null ? '' : `&revision=${encodeURIComponent(String(revision))}`
+  const pathQuery = new URLSearchParams({ path: filePath })
   return loadThumb(
-    thumbKey(id, size, revision),
-    `${BASE}/files/${id}/thumb?size=${size}${revisionQuery}`,
-    size === 'card' ? () => { thumbLoadedIds.add(id) } : undefined,
+    thumbKey(filePath, size, revision),
+    `${BASE}/files/by-path/thumb?${pathQuery}&size=${size}${revisionQuery}`,
+    size === 'card' ? () => { thumbLoadedIds.add(filePath) } : undefined,
   )
 }
 
@@ -86,23 +87,23 @@ export function getThumbUrl(key: string, url: string) {
 
 const _IMG_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','heic','heif','svg'])
 
-export function preloadTinyThumbs(files: Array<{ id: number | string; ext?: string | null; version?: ThumbRevision }>) {
+export function preloadTinyThumbs(files: Array<{ filePath: string; ext?: string | null; version?: ThumbRevision }>) {
   for (const f of files) {
-    const key = thumbKey(f.id, 'tiny', f.version)
+    const key = thumbKey(f.filePath, 'tiny', f.version)
     if (_IMG_EXTS.has((f.ext || '').toLowerCase()) && !cache.has(key)) {
-      getThumb(f.id, 'tiny', f.version).catch(() => {})
+      getThumb(f.filePath, 'tiny', f.version).catch(() => {})
     }
   }
 }
 
-export function clearThumbCache(id: number | string) {
-  const prefix = `${id}_`
+export function clearThumbCache(filePath: string) {
+  const prefix = `${filePath}_`
   for (const [key, url] of cache) {
     if (key.startsWith(prefix)) {
       URL.revokeObjectURL(url)
       cache.delete(key)
     }
   }
-  thumbLoadedIds.delete(id)
-  cardBlobReadyIds.delete(id)
+  thumbLoadedIds.delete(filePath)
+  cardBlobReadyIds.delete(filePath)
 }

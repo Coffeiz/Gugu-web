@@ -1,5 +1,5 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
-import { useAudioStore } from '@/stores/audio'
+import { audioTrackKey, useAudioStore } from '@/stores/audio'
 import { API_BASE } from '../chatConstants'
 import type { ChatFile } from '../chatTypes'
 import { i18n } from '@/i18n'
@@ -111,11 +111,11 @@ export function useChatAudio(options: {
   function onAudioDurationChange() {
     const duration = audioEl.value?.duration || 0
     audioDuration.value = duration
-    const fileId = audioStore.file?.id
-    if (fileId != null) audioStore.updateDuration(fileId, duration)
+    const key = audioTrackKey(audioStore.file)
+    if (key) audioStore.updateDuration(key, duration)
   }
 
-  function progKey() { return audioStore.file ? `audio_prog_${audioStore.file.id}` : null }
+  function progKey() { const key = audioTrackKey(audioStore.file); return key ? `audio_prog_${key}` : null }
   function saveProgress() {
     const key = progKey()
     if (!key || !audioEl.value?.duration) return
@@ -132,7 +132,7 @@ export function useChatAudio(options: {
   }
 
   const needsRestore = ref(false)
-  watch(() => audioStore.file?.id, () => {
+  watch(() => audioTrackKey(audioStore.file), () => {
     needsRestore.value = true
     audioCurrent.value = 0
     audioDuration.value = 0

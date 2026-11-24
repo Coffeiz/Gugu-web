@@ -67,7 +67,7 @@ export function describeQqMedia(item: Readonly<Record<string, unknown>>, bytes: 
   return { ...file, mime: validMime, ...(format ?? {}), voice, qqFace: item.qq_face === true }
 }
 
-/** 直传与表情补图共用下载规则。引用附件由宿主从当前会话存储读取。 */
+/** 直传、引用图片与表情补图共用下载规则。 */
 export async function materializeQqMedia(
   item: Readonly<Record<string, unknown>>,
   budget: { readonly remaining: number; consume(size: number): boolean },
@@ -96,19 +96,27 @@ export async function processQqMedia(
   signal: AbortSignal,
   options: Parameters<typeof downloadQqMedia>[3] & {
     authorize?: () => Promise<boolean>
-    quote: (media: QqMediaRequirement, sourceId: string) => Promise<void>
+    quote: (media: QqMediaRequirement, sourceId: string) => Promise<boolean>
     file: (media: QqMediaRequirement, file: NonNullable<Awaited<ReturnType<typeof materializeQqMedia>>>, index: number) => Promise<void>
   },
 ): Promise<boolean> {
   for (const [index, media] of items.entries()) {
     signal.throwIfAborted()
     if (options.authorize && !await options.authorize()) return false
-    if (media.source === 'quote') {
-      if (media.sourcePlatformMessageId) await options.quote(media, media.sourcePlatformMessageId)
-      continue
+    const quoted = media.source === 'quote'
+    if (quoted) {
+      if (media.sourcePlatformMessageId && await options.quote(media, media.sourcePlatformMessageId)) continue
+      const mime = String(media.item.content_type || media.item.type || '').split(';', 1)[0]!.trim().toLowerCase()
+      if (mime.includes('/') && mime !== 'application/octet-stream' && !mime.startsWith('image/')) continue
+      if (!media.item.url && !media.item.file_url && !media.item.download_url) continue
+      signal.throwIfAborted()
+      if (options.authorize && !await options.authorize()) return false
     }
     const file = await materializeQqMedia(media.item, budget, signal, options)
-    if (file) await options.file(media, file, index)
+    // 引用语音必须走同会话附件复用，保留原消息证明。
+    if (!file) continue
+    if (!quoted) await options.file(media, file, index)
+    else if (imImageFormat(file.bytes)) await options.file(media, { ...file, voice: false }, index)
   }
   signal.throwIfAborted()
   return true

@@ -1,5 +1,7 @@
+import { immediateImCommandReply, normalizeImWorkspaceArgument } from '@gugu/core/im/shortcut'
+import { runDesktopWorkspaceExtra, type DesktopWorkspaceCommands } from './workspace-command.js'
 import { cleanGreeting } from '@gugu/core/agent'
-import { parseAgentCommand } from '@gugu/core/agent/commands/menu'
+import { parseAgentCommand, parseDesktopWorkspaceCommand, desktopWorkspaceReply } from '@gugu/core/agent/commands/menu'
 import { isAgentCommandHelpArgument } from '@gugu/core/agent/commands/help'
 import { setTimeout as delay } from 'node:timers/promises'
 import { DESKTOP_CHANNELS, type DesktopAgentChatEvent, type DesktopAgentEventPage } from '@gugu/core/desktop'
@@ -8,32 +10,11 @@ import { DesktopError } from '../core-host.js'
 import type { createDesktopAgentModelService } from './model.js'
 import type { IpcHandlers, IpcHost } from '../ipc/types.js'
 
-function desktopWorkspaceCommand(argument: string): { action: 'list' | 'show' | 'bind' | 'unlink'; directoryId?: string } | null {
-  const value = argument.trim()
-  if (!value || value === 'list' || value === '列表') return { action: 'list' }
-  if (value === 'show' || value === '查看' || value === '当前') return { action: 'show' }
-  if (value === 'unlink' || value === '解除绑定' || value === '取消绑定') return { action: 'unlink' }
-  const directoryId = value.startsWith('bind ') ? value.slice(5).trim() : value
-  return /^desktop:[a-f0-9-]{36}$/u.test(directoryId) ? { action: 'bind', directoryId } : null
-}
-
-function desktopWorkspaceReply(action: 'list' | 'show' | 'bind' | 'unlink', result: unknown): string {
-  const value = result && typeof result === 'object' && !Array.isArray(result) ? result as Record<string, unknown> : {}
-  if (action === 'list') {
-    const workspaces = Array.isArray(value.workspaces) ? value.workspaces as Array<Record<string, unknown>> : []
-    return workspaces.length ? `可绑定的工作区：\n${workspaces.map(row => `- ${String(row.name)}（${String(row.id)}）`).join('\n')}` : '当前没有可绑定的工作区。'
-  }
-  if (action === 'unlink') return '已解除当前会话的工作区绑定。'
-  const workspace = value.workspace && typeof value.workspace === 'object' ? value.workspace as Record<string, unknown> : null
-  if (!workspace) return action === 'show' ? '当前会话未绑定工作区。' : '工作区绑定失败。'
-  return action === 'show' ? `当前会话绑定的工作区：${String(workspace.workspace_name)}（${String(workspace.workspace_id)}）`
-    : `已将当前会话绑定到工作区「${String(workspace.workspace_name)}」。`
-}
-
 export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof createDesktopAgentModelService>,
   publish?: (event: DesktopAgentChatEvent) => void,
   resolveEmbedding?: () => Promise<RagQueryEmbeddingSettings | undefined>,
   cleanupAttachments?: (attachIds: readonly string[]) => Promise<void>,
+  workspaceCommands?: DesktopWorkspaceCommands,
 ): IpcHandlers {
   const sending = new Map<number, { operationId: string; controller: AbortController; runId?: string }>()
   const opening = new Map<string, AbortController>()
@@ -78,7 +59,7 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
             if (event.type === 'content' && typeof event.text === 'string')
               streaming({ type: 'content', operationId, text: event.text })
           }
-          if (streaming && !signal.aborted && ['round_start', 'display_event', 'tool_done', 'interaction_required',
+          if (streaming && !signal.aborted && ['round_start', 'run_waiting', 'display_event', 'tool_done', 'interaction_required',
             'interaction_resolved', '_context_compaction', 'retry', 'notice', 'error', 'done', 'session_title', 'session_goal']
             .includes(event.type)) streaming({ type: 'projected', operationId, event })
           if (event.type !== 'display_event' || !event.item || typeof event.item !== 'object') continue
@@ -159,22 +140,26 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
           try {
             const slash = parseAgentCommand(text)
             if (slash?.recognized && slash.name === 'workspace' && !attachments.length && !references.length) {
-              const workspaceCommand = desktopWorkspaceCommand(slash.argument)
-              if (workspaceCommand) {
+              const workspaceCommand = parseDesktopWorkspaceCommand(slash.argument ? normalizeImWorkspaceArgument(slash.argument) : '')
+              let reply = immediateImCommandReply(text, ['workspace']) ?? await runDesktopWorkspaceExtra(slash.argument, workspaceCommands, undefined,
+                  async () => desktopWorkspaceReply('show', await host.request('agent.sessions.workspace', { id, action: 'show' })))
+              if (reply === null && workspaceCommand) {
                 const params = { id, action: workspaceCommand.action, ...(workspaceCommand.directoryId ? { directoryId: workspaceCommand.directoryId } : {}) }
                 const result = workspaceCommand.action === 'bind' || workspaceCommand.action === 'unlink'
                   ? await host.request('agent.sessions.setWorkspace', params)
                   : await host.request('agent.sessions.workspace', params)
-                const reply = desktopWorkspaceReply(workspaceCommand.action, result)
-                const appended = await host.request<{ userMessageId?: number }>('agent.sessions.append', { id, text, reply }, operationId)
-                if (streaming && !deliverySignal.aborted) {
-                  streaming({ type: 'session_id', operationId, session_id: id,
-                    ...(Number.isSafeInteger(appended.userMessageId) ? { user_message_id: appended.userMessageId } : {}) })
-                  streaming({ type: 'content', operationId, text: reply })
-                  streaming({ type: 'projected', operationId, event: { type: 'done' } })
-                }
-                return host.request('agent.sessions.messages', { id })
+                reply = desktopWorkspaceReply(workspaceCommand.action, result)
               }
+              reply ??= '请使用 /workspace help 查看可用操作。'
+              const appended = await host.request<{ userMessageId?: number }>('agent.sessions.append', { id, text, reply, ...(clientMessageId ? { clientId: clientMessageId } : {}) }, operationId)
+              if (streaming && !deliverySignal.aborted) {
+                streaming({ type: 'session_id', operationId, session_id: id,
+                  ...(Number.isSafeInteger(appended.userMessageId) ? { user_message_id: appended.userMessageId } : {}),
+                  ...(clientMessageId ? { client_message_id: clientMessageId } : {}) })
+                streaming({ type: 'content', operationId, text: reply })
+                streaming({ type: 'projected', operationId, event: { type: 'done', command_reply: true } })
+              }
+              return host.request('agent.sessions.messages', { id })
             }
             if (slash?.recognized && slash.name === 'compact' && !isAgentCommandHelpArgument(slash.argument)
               && !attachments.length && !references.length) {
@@ -286,6 +271,8 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
           return host.request('agent.sessions.history', { id: command.id, ...('before' in command ? { before: command.before } : {}) })
         if (command.action === 'toolDetails' && 'id' in command && 'messageId' in command && 'index' in command)
           return host.request('agent.sessions.toolDetails', { id: command.id, messageId: command.messageId, index: command.index })
+        if (command.action === 'subagentSnapshot' && 'id' in command && 'runId' in command && 'childId' in command)
+          return host.request('agent.sessions.subagentSnapshot', { id: command.id, runId: command.runId, childId: command.childId })
         if (command.action === 'messages' && 'id' in command)
           return host.request('agent.sessions.messages', { id: command.id })
         if (command.action === 'create' && 'title' in command && 'operationId' in command && typeof command.operationId === 'string')

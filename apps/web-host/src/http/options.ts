@@ -53,7 +53,6 @@ import { type MemoryClearOptions } from '../modules/agent/memory.js'
 import { type AgentSessionDeleteOperations } from '../modules/agent/sessions/delete.js'
 import { type UserBotBindingCodeOptions } from '../modules/im/connect/code.js'
 import { type LoopScopeProxyOptions } from '../modules/loopscope/proxy.js'
-import { type StorageQuotaStatusOptions } from '../modules/admin/storage.js'
 import type { NotificationBroadcastInput } from '@gugu/core/notifications/broadcast'
 import { type McpStatusOptions } from '../modules/mcp/status.js'
 import { type McpServerCreateRouteOptions, type McpServerRoutesOptions } from '../modules/mcp/servers.js'
@@ -136,16 +135,11 @@ import { type ScheduledTaskList, type ScheduledTaskTestNotifier, type ScheduledT
 import { type createScheduledTaskDeliveryTargets } from '../modules/scheduled-tasks/delivery/targets.js'
 import type { createPostgresTaskWrites } from '../modules/scheduled-tasks/store.js'
 import { type AdminFeedbackOperations } from '../modules/feedback/feedback.js'
-import { type FileBrowserOperations, type FileReadOperations, type FolderReadOperations } from '../modules/files/browse.js'
-import { type FolderWriteOperations } from '../modules/files/folders/write.js'
-import { type FolderCopyOperations } from '../modules/files/folders/copy.js'
-import { type FolderDeleteOperations } from '../modules/files/folders/delete.js'
-import { type FileDeleteOperations, type FileRestoreOperations, type TrashOperations } from '../modules/files/trash/service.js'
+import { type FileReadOperations } from '../modules/files/browse.js'
+import { type FileDeleteOperations, type FileRestoreOperations } from '../modules/files/trash/service.js'
 import { type FileContentOperations } from '../modules/files/content.js'
 import { type FileUpdateOperations, type FileCopyOperations } from '../modules/files/store.js'
-import { type FileConflictOperations, type FileUploadOperations } from '../modules/files/upload.js'
-import { type FileBatchDownloadOperations, type FolderDownloadOperations } from '../modules/files/download.js'
-import { type FileArchiveOperations } from '../modules/files/archive/service.js'
+import { type FileUploadOperations } from '../modules/files/upload.js'
 import type { GlobalSearchOperations } from '@gugu/core'
 import type { AdminAuthAdapter } from '../modules/admin/auth.js'
 import { type AdminUsersOptions, type AdminUserRiskOptions } from '../modules/admin/users.js'
@@ -315,24 +309,14 @@ export interface WebUiOptions {
   ) => Promise<unknown | null>
   agentFilesystemAuthorization?: Omit<AgentFilesystemAuthorizationRouteOptions, 'requireUser' | 'userIdFromRequest'>
   agentMisc?: Omit<AgentMiscRoutesOptions, 'requireUser'>
-  fileBrowser?: FileBrowserOperations
-  folderWrites?: FolderWriteOperations
-  folderCopy?: FolderCopyOperations
-  folderDelete?: FolderDeleteOperations
   fileReads?: FileReadOperations
-  folderReads?: FolderReadOperations
   fileUploads?: FileUploadOperations
   fileDeletes?: FileDeleteOperations
   fileRestores?: FileRestoreOperations
-  trash?: TrashOperations
   fileContents?: FileContentOperations
   fileUpdates?: FileUpdateOperations
   fileCopies?: FileCopyOperations
-  fileConflicts?: FileConflictOperations
-  fileBatchDownloads?: FileBatchDownloadOperations
-  fileArchives?: FileArchiveOperations
   globalSearch?: GlobalSearchOperations
-  folderDownloads?: FolderDownloadOperations
   adminAuth?: AdminAuthAdapter
   adminUpdateMode?: AdminUpdateMode
   adminConfig?: Omit<AdminConfigOptions, 'requireAdmin'>
@@ -453,7 +437,6 @@ export interface WebUiOptions {
   sandboxEnable?: Omit<SandboxEnableRouteOptions, 'requireAdmin'>
   sandboxDisable?: Omit<SandboxDisableRouteOptions, 'requireAdmin'>
   emailRecipientCount?: { read(): Promise<{ count: number; locale_counts: Record<string, number> }> }
-  storageQuotaStatus?: Omit<StorageQuotaStatusOptions, 'requireAdmin'>
   serviceStatus?: { read: ReturnType<typeof createServiceStatusReader> }
   serviceRestart?: ServiceRestartOperations
   adminMaintenanceStatus?: { available(): boolean; read: ReturnType<typeof createAdminMaintenanceStatus> }

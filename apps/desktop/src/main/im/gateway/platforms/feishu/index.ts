@@ -1,7 +1,10 @@
+import { classifyGatewayGroupMessage } from '@gugu/gateway'
+import { readImAddressedCommand } from '@gugu/gateway'
+import { desktopImGroupToolAllowed } from '@gugu/core/agent/scenes/im'
 import { redactToolError } from '@gugu/core/agent'
 import { attentionSourceKind } from '@gugu/core/im/attention/directive'
-import { classifyImGroupInbound, resolveImActor } from '@gugu/core/im/access'
-import { userBotGroupFileToolsAllowed, userBotGroupToolAllowed } from '@gugu/core/im/user-bots'
+import { resolveImActor } from '@gugu/core/im/access'
+import { userBotGroupFileToolsAllowed } from '@gugu/core/im/user-bots'
 import { createDesktopImChartRenderer, createDesktopImProjectionReceipts } from '../../delivery/projection.js'
 import type { IpcHost } from '../../../../ipc/types.js'
 import type { safeStorage } from 'electron'
@@ -14,7 +17,7 @@ import { createGatewaySupervisor, createImGroupAttentionGate, readImReceivedMess
 import { createPersistentFeishuProjection, createFeishuClient, createFeishuConnection, createFeishuSender, createFeishuWsNetwork } from '@gugu/gateway/feishu'
 import type { createDesktopFeishuPairing } from '../../../connect/platforms/feishu/index.js'
 import type { createDesktopImCallback } from '../../interactions/callback.js'
-import type { createDesktopImDispatch } from '../../delivery/dispatch.js'
+import { readDesktopImRunStatus, stopDesktopImRun, type createDesktopImDispatch } from '../../delivery/dispatch.js'
 import { MAX_DESKTOP_ATTACHMENT_BYTES } from '../../../../agent/attachments.js'
 import { desktopImEventKey, type DesktopImFile, type createDesktopImInbox } from '../../inbound/inbox.js'
 import { parseImReceivedMessage } from '@gugu/gateway'
@@ -75,6 +78,11 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
         if (!groupDeliveries.has(groupConnection)) {
           const work = dispatch({ connection, connectionId: groupConnection, signal: active, authorize: allow,
             group: { id: groupId, ownerPlatformUserId, authorizeMessage: allowMessage, authorizeFile: allowFile },
+            async sendOwnerPrivate(text) {
+              const authorized = async () => (await readActive())?.userId === ownerPlatformUserId && await allow()
+              if (!await authorized()) return 'rejected'
+              return (await sender.text(ownerPlatformUserId, text, active, authorized)).outcome
+            },
             async send(reply) {
               if (reply.recipient !== groupId || !reply.originalMessageId || !await allow()) return 'rejected'
               return await sender.text(groupId, reply.text, active, allow)
@@ -132,9 +140,9 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             if (isGroup) {
               const current = await readActive()
               if (!current?.userId || !current.groupChatEnabled || !parsed.payload.chat_id) return
-              const decision = classifyImGroupInbound({ platform: 'feishu', chatType: 'group', chatId: parsed.payload.chat_id,
+              const decision = classifyGatewayGroupMessage({ platform: 'feishu', chatType: 'group', chatId: parsed.payload.chat_id,
                 groupMentioned: parsed.payload.bot_mentioned, mentionsOtherBot: parsed.payload.mentions_other_bot === true },
-              { requiresAt: current.groupReplyMode !== 'reply_all', readOnly: false })
+              current.groupReplyMode)
               if (current.groupReplyMode !== 'record_only' && decision !== 'reply') return
             } else if (parsed.payload.platform_user_id !== bot.userId) return
             const mediaSignal = AbortSignal.any([active, messageSignal, AbortSignal.timeout(60_000)])
@@ -147,7 +155,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             let recordOnly = isGroup && current.groupReplyMode === 'record_only'
             let pendingAsk = false
             let sourceAttentionKind = isGroup && event.botMentioned ? attentionSourceKind('DIRECT') : null
-            if (isGroup && !recordOnly && current.groupReplyMode === 'reply_all') {
+            if (isGroup && !recordOnly && current.groupReplyMode === 'reply_all' && !readImAddressedCommand(event).command) {
               const pendingScope = { ownerId: 'desktop', botId: bot.appId, platform: 'feishu' as const, groupId: parsed.payload.chat_id }
               await pendingAsks?.observe(pendingScope, { eventMs: Date.now(), senderId: event.scope.platformUserId,
                 ownBotId: botOpenId, replyTo: typeof parsed.payload.reply_to_platform_message_id === 'string'
@@ -167,6 +175,12 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             const targetConnection = isGroup
               ? groupConnectionId(bot.appId, parsed.payload.chat_id, current.userId!) : connectionId
             const eventAuthorize = isGroup ? () => authorizeGroup(parsed.payload.chat_id) : authorize
+            const command = readImAddressedCommand(event).command
+            if (!recordOnly && projection && (command?.name === 'stop' || command?.name === 'status') && !command.argument && await eventAuthorize()) {
+              const reply = await (command.name === 'status' ? readDesktopImRunStatus : stopDesktopImRun)(projection.host, event, targetConnection, isGroup ? current.userId! : undefined)
+              await sender.text(isGroup ? parsed.payload.chat_id : event.scope.platformUserId, reply, mediaSignal, eventAuthorize)
+              return
+            }
             if (!parsed.mediaItems.length) {
               if (recordOnly) {
                 const recorded = await admit(targetConnection, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
@@ -265,7 +279,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
                   identity: event.identity, receiveId: bot.userId, policyVersion: 'desktop-feishu-v1',
                   receipts, client, authorize, signal: active,
                   toolSummary: target.preferences?.imToolDisplayMode === 'all'
-                    ? { chatType: 'p2p', includeDetails: false, sanitize: redactToolError } : undefined,
+                    ? { chatType: 'p2p', includeDetails: false, sanitize: redactToolError, locale: target.preferences?.locale } : undefined,
                   renderCharts: createDesktopImChartRenderer(projection.host, authorize),
                 })
                 const result = await stream.project({ identity: event.identity, deliveryId: event.id, event })
@@ -326,7 +340,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
       const authorized = await readAuthorizedGroupMessage(params, signal)
       if (!authorized || typeof params.name !== 'string') return false
       const name = params.name
-      return userBotGroupToolAllowed(authorized.current.groupAllowedTools, name) && !signal.aborted
+      return desktopImGroupToolAllowed('feishu', authorized.message.scope.platformUserId === authorized.current.userId, authorized.current.groupAllowedTools, name) && !signal.aborted
     },
     async readGroupMemoryContext(params: Record<string, unknown>, signal: AbortSignal) {
       const authorized = await readAuthorizedGroupMessage(params, signal)

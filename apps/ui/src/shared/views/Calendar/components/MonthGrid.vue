@@ -109,6 +109,23 @@ import { canResize } from '../domain/calendarRules'
 import type { DayLayoutResult } from '../utils/calendarLayout'
 import type { CalendarDateRange } from '../domain/calendarContext'
 
+function daysBetween(isoA: string, isoB: string) {
+  return (Date.parse(isoB) - Date.parse(isoA)) / 86_400_000
+}
+
+function barSegFill(bar: CalendarRenderItem) {
+  if (!bar.progress || !bar.startDate || !bar.endDate || !bar.segStartIso || !bar.segEndIso) return 0
+  // 项目和周段的天数都包含结束日期。
+  const total = daysBetween(bar.startDate, bar.endDate) + 1
+  if (total <= 0) return bar.progress
+  const progressDays  = total * bar.progress / 100
+  const segStartOff   = daysBetween(bar.startDate, bar.segStartIso)
+  const segEndOff     = daysBetween(bar.startDate, bar.segEndIso) + 1
+  if (progressDays <= segStartOff) return 0
+  if (progressDays >= segEndOff)   return 100
+  return Math.round((progressDays - segStartOff) / (segEndOff - segStartOff) * 100)
+}
+
 interface Props {
   weekdays: string[]
   monthWeeks: CalendarMonthDay[][]
@@ -124,7 +141,6 @@ interface Props {
   dayLayout: (iso: string, week: CalendarMonthDay[], wi: number) => DayLayoutResult
   weekBarsCapped: (week: CalendarMonthDay[], wi: number) => { bars: CalendarRenderItem[] }
   deadlineWarnLayer: (bar: CalendarRenderItem) => string | null
-  barSegFill: (bar: CalendarRenderItem) => number
   darkenHex: (color: string) => string
   setWeekRef: (el: Element | { $el?: Element } | null, wi: number) => void
 }
@@ -133,7 +149,7 @@ const props = defineProps<Props>()
 const {
   weekdays, monthWeeks, selectedDate, activeRange, hoveredDateIso, hoveredBarId,
   drag, headerHeight, barHeight, hdayType, isInActiveRange, dayLayout,
-  weekBarsCapped, deadlineWarnLayer, barSegFill, darkenHex, setWeekRef,
+  weekBarsCapped, deadlineWarnLayer, darkenHex, setWeekRef,
 } = toRefs(props)
 const emit = defineEmits<{
   (event: 'week-mousemove', e: MouseEvent, week: CalendarMonthDay[]): void

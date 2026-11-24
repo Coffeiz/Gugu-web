@@ -5,7 +5,18 @@ import type { RequestMeta } from '@/api/client'
 type Schemas = components['schemas']
 type ProjectResponse = Schemas['ProjectResponse']
 
+export interface ProjectWorkspaceBinding {
+  id: `desktop:${string}`
+  name: string
+  bound: boolean
+  active?: boolean
+  available: boolean
+}
+
 export interface ProjectAccess {
+  listWorkspaceBindings?(id: number): Promise<ProjectWorkspaceBinding[]>
+  pickWorkspace?(): Promise<ProjectWorkspaceBinding['id'] | null>
+  selectWorkspace?(id: number, directoryId: `project:${number}` | ProjectWorkspaceBinding['id']): Promise<unknown>
   storesProjectsLocally: boolean
   list(archived?: boolean, deleted?: boolean): Promise<ProjectResponse[]>
   fileCounts?(): Promise<{ projectId: number; fileCount: number }[]>

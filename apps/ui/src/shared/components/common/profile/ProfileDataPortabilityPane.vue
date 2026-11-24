@@ -6,7 +6,7 @@
     <div v-if="preview || inventory" class="data-summary">
       <div v-for="category in visibleCategories" :key="category" class="data-summary-row">
         <span>{{ t(`profileDataUi.category_${category}`) }}</span>
-        <span>{{ t('profileDataUi.records', { count: inventory?.[category] ?? preview?.categories[category]?.records ?? 0 }) }}</span>
+        <span>{{ t(desktop && category === 'owner_memory' ? 'profileDataUi.desktopMemoryFiles' : 'profileDataUi.records', { count: inventory?.[category] ?? preview?.categories[category]?.records ?? 0 }) }}</span>
       </div>
       <div v-if="preview" class="data-summary-total">{{ t('profileDataUi.estimatedBytes', { size: formatBytes(totalBytes) }) }}</div>
     </div>
@@ -31,7 +31,7 @@
       <h4>{{ t('profileDataUi.importTitle') }}</h4>
       <p class="data-muted">{{ t(desktop ? 'profileDataUi.desktopImportHint' : 'profileDataUi.importHint') }}</p>
       <div class="data-import-actions">
-        <input ref="archiveInput" type="file" accept=".zip,application/zip" :disabled="desktop || importing" @change="selectArchive" />
+        <input v-if="!desktop" ref="archiveInput" type="file" accept=".zip,application/zip" :disabled="importing" @change="selectArchive" />
         <button class="pm-style-chip" :disabled="importing || (desktop && applying) || (desktop ? !local?.preflightBusinessArchive : !selectedArchive)" @click="preflightImport">
           {{ importing ? t('profileDataUi.importing') : t('profileDataUi.preflight') }}
         </button>

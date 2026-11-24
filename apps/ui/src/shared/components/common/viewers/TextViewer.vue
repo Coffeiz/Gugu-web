@@ -146,7 +146,7 @@ const props = defineProps({
   ext:      { type: String, default: null },
   fontSize: { type: Number, default: 13 },
   // 文件标识：滚动位置按它存进 localStorage，刷新（重载/组件重建）后据此还原
-  fileKey:  { type: [String, Number], default: null },
+  fileKey:  { type: String, default: null },
   // 文件库预览时用于解析 Markdown 相对链接；聊天附件等非文件库内容不传此值。
   fileContext: { type: Object as PropType<(Partial<FileMeta> & { workspaceFile?: Parameters<typeof pathFilesApi.contentUrl>[0] }) | null>, default: null },
   // 虚拟文档（例如用户人格文件）不属于文件库，但复用同一套 Markdown 预览/编辑器。
@@ -156,32 +156,32 @@ const props = defineProps({
 })
 
 const emit = defineEmits<{
-  'content-saved': [content: string, fileKey: string | number | null, version?: number]
+  'content-saved': [content: string, fileKey: string | null, version?: number]
   refresh: []
 }>()
 
-const contentVersions = new Map<number, number>()
-const contentSaveQueues = new Map<number, Promise<void>>()
-function initialContentVersion(id: number): number {
-  const cached = contentVersions.get(id)
+const contentVersions = new Map<string, number>()
+const contentSaveQueues = new Map<string, Promise<void>>()
+function initialContentVersion(filePath: string): number {
+  const cached = contentVersions.get(filePath)
   if (cached != null) return cached
-  if (Number(props.fileContext?.id) === id && props.fileContext?.version != null) {
-    contentVersions.set(id, props.fileContext.version)
+  if (props.fileContext?.filePath === filePath && props.fileContext?.version != null) {
+    contentVersions.set(filePath, props.fileContext.version)
     return props.fileContext.version
   }
   throw new Error('缺少文件版本，请重新打开文件后再保存')
 }
-function saveFileContent(id: number, content: string) {
-  initialContentVersion(id)
-  const previous = contentSaveQueues.get(id) ?? Promise.resolve()
+function saveFileContent(filePath: string, content: string) {
+  initialContentVersion(filePath)
+  const previous = contentSaveQueues.get(filePath) ?? Promise.resolve()
   const request = previous.then(async () => {
-    const saved = await filesApi.saveContent(id, content, initialContentVersion(id))
-    contentVersions.set(id, saved.version)
-    filesCache.updateFile(id, saved)
-    emit('content-saved', content, id, saved.version)
+    const saved = await filesApi.saveContent(filePath, content, initialContentVersion(filePath))
+    contentVersions.set(filePath, saved.version)
+    filesCache.updateFile(filePath, saved)
+    emit('content-saved', content, filePath, saved.version)
     return saved
   })
-  contentSaveQueues.set(id, request.then(() => undefined, () => undefined))
+  contentSaveQueues.set(filePath, request.then(() => undefined, () => undefined))
   return request
 }
 
@@ -308,9 +308,8 @@ const CM_LANG_LOADERS: Record<string, (source?: string) => Promise<any>> = {
 const mdHtml      = ref<string | null>(null)
 const rawText     = ref('')   // 源文本（md 勾选任务框改写 [ ]↔[x]、md 编辑模式的保存基于这个）
 let markdownBodyStartLine = 0
-// 真实文件（纯数字 id）才能存——聊天附件是 16 位 hex，PUT /files/{id}/content 存不了。
-// 虚拟文档通过 saveSource 保存，不需要文件库 id。
-const isRealFile = computed(() => /^\d+$/.test(String(props.fileKey ?? '')))
+// 文件库正文按 filePath 保存；聊天附件和虚拟文档使用各自的内容入口。
+const isRealFile = computed(() => typeof props.fileContext?.filePath === 'string' && !!props.fileContext.filePath)
 const isVirtualDocument = computed(() => props.sourceText !== null && !!props.saveSource)
 const pathFile = computed(() => props.fileContext?.workspaceFile)
 const isStoredFile = computed(() => isRealFile.value || !!pathFile.value)
@@ -444,8 +443,11 @@ function scheduleAutoSave(content = editText.value) {
 let pathSaveQueue = Promise.resolve()
 function captureStoredFileSave(): (content: string) => Promise<unknown> {
   const target = pathFile.value
-  const id = Number(props.fileKey)
-  if (!target) return content => saveFileContent(id, content)
+  const filePath = props.fileContext?.filePath ?? ''
+  if (!target) {
+    if (!filePath) throw new Error('文件路径不可用')
+    return content => saveFileContent(filePath, content)
+  }
   const epoch = getAccountBoundaryEpoch()
   return content => {
     const request = pathSaveQueue.then(() => {
@@ -760,24 +762,34 @@ async function onMdClick(e: MouseEvent) {
   }
 
   const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null
-  if (!anchor || !props.fileContext?.id) return
+  if (!anchor) return
   const href = anchor.getAttribute('href')
   if (!href || !isRelativeFileLink(href)) return
-  let resolved: Awaited<ReturnType<typeof filesApi.resolvePaths>>[number] | undefined
-  try { resolved = (await filesApi.resolvePaths(props.fileContext.id, [href]))[0] } catch { return }
-  if (!resolved) return
-
-  e.preventDefault()
-  if (resolved.file && isPreviewable(resolved.file.ext, resolved.file.mimeType)) {
-    previewStore.open(resolved.file as FileMeta)
+  const fileContext = props.fileContext
+  let source = fileContext?.workspaceFile
+  if (!source && typeof fileContext?.filePath === 'string' && pathFilesApi.resolveRelative) {
+    e.preventDefault()
+    source = (await filesApi.location(fileContext.filePath).catch(() => null))?.pathFile
+  }
+  if (source && pathFilesApi.resolveRelative) {
+    e.preventDefault()
+    const resolved = await pathFilesApi.resolveRelative(source, [href]).catch(() => [])
+    const folder = resolved[0]?.folder
+    if (folder) {
+      e.preventDefault()
+      uiStore.pendingFileTarget = { kind: 'folder', pathFile: { directoryId: source.directoryId, relativePath: folder.relativePath, directoryName: '' } }
+      await router.push('/files')
+      return
+    }
+    const file = resolved[0]?.file
+    if (!file) return
+    const ext = file.name.split('.').pop() || ''
+    const target = { directoryId: source.directoryId, relativePath: file.relativePath }
+    if (!isPreviewable(ext, null)) { await pathFilesApi.download(target); return }
+    previewStore.open({ displayName: file.name, ext, workspaceFile: target }, null, true)
     return
   }
-  const target = resolved.file
-    ? { kind: 'file' as const, id: resolved.file.id }
-    : resolved.folder ? { kind: 'folder' as const, id: resolved.folder.id } : null
-  if (!target) return
-  uiStore.pendingFileTarget = target
-  await router.push('/files')
+  return
 }
 
 // 把一段文本渲染成 mdHtml（首次加载、md 编辑保存后重渲都走这条）。txt/代码类扩展名不在这里
@@ -800,7 +812,7 @@ async function processText(text: string, ext: string) {
 
 // ── md 相对路径图片 → 文件库 blob ─────────────────────────────
 // md 文件经 API 读出，`./docs/assets/x.png` 这类相对 src 只能对着页面 URL 解析
-// （/files/docs/assets/...），必然裂图。这里复用链接解析（resolveRelativeFileLink）
+// （/files/docs/assets/...），必然裂图。这里复用授权路径解析
 // 把相对 src 定位到同库兄弟文件，换成 download 端点的 blob URL。
 // 外链（http/https）、协议链接和绝对路径不碰，交给浏览器原行为。
 const mdObjectUrls = new Set<string>()
@@ -813,7 +825,7 @@ function releaseMdObjectUrls() {
 async function resolveMdRelativeImages() {
   const root = mdRoot.value
   const fileContext = props.fileContext
-  if (!root || !fileContext?.id || !isRealFile.value) return
+  if (!root || !fileContext || (!fileContext.filePath && !fileContext.workspaceFile)) return
   const localImages = [...root.querySelectorAll<HTMLImageElement>('img[src]')].filter(img => {
     const src = img.getAttribute('src') || ''
     return Boolean(src) && !src.startsWith('#') && !src.startsWith('/') && !src.startsWith('//')
@@ -821,32 +833,29 @@ async function resolveMdRelativeImages() {
   })
   // 普通 Markdown 文档不需要文件路径索引，避免预览一篇文档就拉全量文件/文件夹。
   if (!localImages.length) return
-  if (mdRoot.value !== root) return   // 等待期间文件已切走
-  const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
-  const headers: Record<string, string> = {}
-  releaseMdObjectUrls()
-  let resolved: Awaited<ReturnType<typeof filesApi.resolvePaths>> = []
-  try {
-    resolved = await filesApi.resolvePaths(fileContext.id, localImages.map(image => image.getAttribute('src') || ''))
-  } catch { return }
-  if (mdRoot.value !== root) return
-  const byPath = new Map(resolved.map(item => [item.path, item.file]))
-  for (const img of localImages) {
-    const src = img.getAttribute('src') || ''
-    if (!src || src.startsWith('#') || src.startsWith('/') || src.startsWith('//')) continue
-    if (/^[a-z][a-z\d+.-]*:/i.test(src)) continue
-    const file = byPath.get(src)
-    if (!file || !isImageExt(file.ext)) continue
+  let source = fileContext.workspaceFile
+  if (!source && typeof fileContext.filePath === 'string' && pathFilesApi.resolveRelative)
+    source = (await filesApi.location(fileContext.filePath).catch(() => null))?.pathFile
+  if (source && pathFilesApi.resolveRelative) {
+    const paths = localImages.map(image => image.getAttribute('src') || '')
     try {
-      const res = await fetch(`${BASE_URL}/files/${file.id}/download`, {
-        headers, credentials: 'include', cache: 'no-cache',
-      })
-      if (!res.ok) continue
-      const url = URL.createObjectURL(await res.blob())
-      mdObjectUrls.add(url)
-      if (img.isConnected) img.src = url
-    } catch { /* 单图加载失败不裂整个预览，也无需提示 */ }
+      const resolved = await pathFilesApi.resolveRelative(source, paths)
+      if (mdRoot.value !== root) return
+      releaseMdObjectUrls()
+      const byPath = new Map(resolved.map(item => [item.path, item.file]))
+      for (const img of localImages) {
+        const file = byPath.get(img.getAttribute('src') || '')
+        if (!file || !isImageExt(file.name.split('.').pop() || '')) continue
+        const response = await fetch(pathFilesApi.contentUrl({ directoryId: source.directoryId, relativePath: file.relativePath }), { credentials: 'include', cache: 'no-cache' })
+        if (!response.ok || mdRoot.value !== root) continue
+        const url = URL.createObjectURL(await response.blob())
+        mdObjectUrls.add(url)
+        if (img.isConnected) img.src = url
+      }
+    } catch { /* 图片解析失败时保留原始内容 */ }
+    return
   }
+  return
 }
 
 watch(() => [props.blobUrl, props.ext, props.sourceText], async ([url, ext, sourceText]) => {

@@ -1,7 +1,7 @@
 <template>
   <div
     class="fpw-root"
-    :class="{ 'fpw-native': nativeWindow, 'fpw-native-fullscreen': nativeState?.fullscreen, 'fpw-ready': ready && (!isImg || imageReady || placeholderReady || imageWasPresented) }"
+    :class="{ 'fpw-native': nativeWindow, 'fpw-native-fullscreen': nativeState?.fullscreen, 'fpw-ready': nativeWindow || (ready && (!isImg || imageReady || placeholderReady || imageWasPresented || error)) }"
     :style="nativeWindow ? { zIndex: win.zIndex } : maximized
       ? { left: 0, top: 0, width: '100vw', height: '100vh', zIndex: win.zIndex, borderRadius: 0, transition: animating ? 'left .18s ease, top .18s ease, width .18s ease, height .18s ease, border-radius .18s ease' : 'none' }
       : { left: x+'px', top: y+'px', width: w+'px', height: h+'px', zIndex: win.zIndex, transition: animating ? 'left .18s ease, top .18s ease, width .18s ease, height .18s ease, border-radius .18s ease' : 'none' }"
@@ -31,7 +31,7 @@
         <button ref="infoBtnRef" class="fpw-btn" :class="{ active: showInfo }" :title="t('files.info')" @click.stop="openInfo">
           <Icon name="status.info" :size="13" />
         </button>
-        <button v-if="nativeWindow" type="button" class="fpw-btn"
+        <button v-if="nativeWindow && !hideNativeReveal" type="button" class="fpw-btn"
           :title="t('filesUi.revealPreviewFolder')" :aria-label="t('filesUi.revealPreviewFolder')" @click.stop="emit('reveal')">
           <Icon name="file.folder-open" :size="13" />
         </button>
@@ -63,15 +63,15 @@
     <!-- 内容区 -->
     <div class="fpw-body">
       <!-- 真实内容（在下层） -->
-      <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
+      <ImageViewer v-if="isImg" v-show="!error" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" :refresh-src="!win.file.attach_id ? refreshVideoSource : undefined" />
-      <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.id === 'number'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-id="typeof win.file.id === 'number' ? win.file.id : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
-      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback || !!win.file.workspaceFile?.identity || !!win.file.contentUrl" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.workspaceFile ? JSON.stringify(win.file.workspaceFile) : win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
+      <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.filePath === 'string'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-path="typeof win.file.filePath === 'string' ? win.file.filePath : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
+      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback || !!win.file.workspaceFile?.identity || !!win.file.contentUrl" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.workspaceFile ? JSON.stringify(win.file.workspaceFile) : win.file.filePath ?? (win.file.attach_id == null ? undefined : String(win.file.attach_id))" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
       <div v-if="loading && !placeholderReady" class="fpw-status fpw-loading">
         <div class="fpw-spinner"></div>
         <span>{{ t('viewerUi.loading') }}</span>
       </div>
-      <div v-if="!loading && error" class="fpw-status fpw-error">
+      <div v-if="!loading && error" class="fpw-status fpw-error" role="alert">
         <Icon name="status.warning" :size="28" style="opacity:.5" />
         <span>{{ error }}</span>
       </div>
@@ -154,6 +154,7 @@ const pathFilesApi = usePathFileAccess()
 const props = defineProps({
   win: { type: Object as PropType<PreviewWindow>, required: true },
   nativeWindow: Boolean,
+  hideNativeReveal: Boolean,
   nativeState: Object as PropType<{ fullscreen: boolean; pinned: boolean }>,
 })
 const emit = defineEmits<{ close: []; reveal: []; toggleFullscreen: []; togglePin: [] }>()
@@ -171,7 +172,7 @@ const filesCache = useFilesCacheStore()
 const uiStore = useUiStore()
 const previewBlobCache = usePreviewBlobCache()
 const mountAccountEpoch = getAccountBoundaryEpoch()
-let recentlySavedText: { fileId: string; content: string; savedAt: number } | null = null
+let recentlySavedText: { filePath: string; content: string; savedAt: number } | null = null
 let checkingLocalDirectoryEcho = false
 watch(accountBoundaryEpoch, () => {
   loadSequence += 1
@@ -215,7 +216,7 @@ const isOffice = computed(() => isOfficeExt(props.win.file.ext) || isCsv.value)
 const isXlsx = computed(() => (props.win.file.ext ?? '').toLowerCase() === 'xlsx')
 const isSpreadsheet = computed(() => isXlsx.value || isCsv.value)
 const csvTextMode = ref(false)
-watch(() => [props.win.file.id, props.win.file.ext, props.win.reloadToken], () => { csvTextMode.value = false })
+watch(() => [props.win.file.filePath, props.win.file.ext, props.win.reloadToken], () => { csvTextMode.value = false })
 const isVirtual = computed(() => props.win.sourceText !== undefined && !!props.win.saveSource)
 const _SVG_EXTS = new Set(['SVG'])
 // 矢量图放大无损：开窗尺寸与内部适配都允许超过折算 natural 尺寸
@@ -264,14 +265,18 @@ const currentCacheKey = ref('')
 let loadSequence = 0
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+function requireFilePath(filePath: string | undefined): string {
+  if (typeof filePath !== 'string' || !filePath) throw new Error('文件路径不可用')
+  return filePath
+}
 async function refreshVideoSource(): Promise<string> {
   if (props.win.file.contentUrl) return props.win.file.contentUrl
   const workspaceFile = props.win.file.workspaceFile
   if (workspaceFile) return pathFilesApi.contentUrl(workspaceFile)
-  const fileId = props.win.file.id
-  if (typeof fileId !== 'number') throw new Error('无法刷新视频地址')
-  const { url } = await filesApi.getStreamUrl(fileId)
-  if (props.win.file.id !== fileId || getAccountBoundaryEpoch() !== mountAccountEpoch) {
+  const filePath = props.win.file.filePath
+  if (typeof filePath !== 'string') throw new Error('无法刷新视频地址')
+  const { url } = await filesApi.getStreamUrl(filePath)
+  if (props.win.file.filePath !== filePath || getAccountBoundaryEpoch() !== mountAccountEpoch) {
     throw new DOMException('预览已切换', 'AbortError')
   }
   return url
@@ -323,13 +328,11 @@ function openInfo() {
   showInfo.value = opening
 }
 
-function navigateToFileDirectory(file?: Partial<FileMeta>) {
-  const fileId = Number(file?.id)
-  if (!Number.isSafeInteger(fileId) || fileId <= 0 || file?.attach_id) return
+function navigateToFileDirectory(file?: PreviewFile) {
+  if (!file?.workspaceFile || file.attach_id) return
   uiStore.pendingFileTarget = {
     kind: 'file',
-    id: fileId,
-    ...(file.workspaceDirectoryId != null ? { workspaceDirectoryId: file.workspaceDirectoryId } : {}),
+    pathFile: { ...file.workspaceFile, directoryName: '' },
   }
   void router.push('/files')
 }
@@ -477,7 +480,7 @@ async function load(f: PreviewFile, refresh = false) {
   error.value          = null
   // XLSX 的窗口尺寸要等后端表格结构渲染完成后才能确定，先隐藏窗口，
   // 避免先按默认尺寸显示再突然跳到自然尺寸。
-  if (isSpreadsheet.value && f.id != null && !f.attach_id) ready.value = false
+  if (isSpreadsheet.value && f.filePath && !f.attach_id) ready.value = false
   placeholderReady.value = false
   imageReady.value       = false
   placeholderSrc.value   = null
@@ -498,7 +501,7 @@ async function load(f: PreviewFile, refresh = false) {
   const headers: Record<string, string> = {}
   let initialStreamUrl = props.win.streamUrl
   props.win.streamUrl = undefined
-  const getStreamUrl = async (id: number) => {
+  const getStreamUrl = async () => {
     if (f.contentUrl) return { url: f.contentUrl }
     if (f.workspaceFile) return { url: pathFilesApi.contentUrl(f.workspaceFile) }
     if (initialStreamUrl) {
@@ -506,15 +509,23 @@ async function load(f: PreviewFile, refresh = false) {
       initialStreamUrl = undefined
       return { url }
     }
-    return filesApi.getStreamUrl(id)
+    return filesApi.getStreamUrl(requireFilePath(f.filePath))
+  }
+
+  const reportImageLoadError = () => {
+    if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
+    error.value = t('viewerUi.imageLoadFailed')
+    placeholderSrc.value = null
+    placeholderReady.value = false
+    if (!ready.value) fitWindow(480, 300)
   }
 
   try {
-    // 聊天消息里的文件通常只有 file_id 和展示信息，没有版本号。文本文件必须先
+    // 聊天文件若带有文件库路径但没有版本号，先从权威文件记录读取版本。
     // 从同一份权威文件记录拿到版本，再计算预览缓存键并允许编辑，保存时才能正确做乐观锁。
-    if (typeof f.id === 'number' && f.version == null
+    if (typeof f.filePath === 'string' && f.version == null
       && (isTextExt(f.ext, f.mimeType) || isTextFallbackCandidate(f.ext, f.mimeType))) {
-      const stream = await filesApi.getStreamUrl(f.id)
+      const stream = await filesApi.getStreamUrl(requireFilePath(f.filePath))
       if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
       f.version = stream.file.version
       filesCache.addFile(stream.file as FileMeta)
@@ -535,7 +546,7 @@ async function load(f: PreviewFile, refresh = false) {
         url = URL.createObjectURL(blob)
         videoSrc.value = url
       } else {
-        const stream = await getStreamUrl(f.id!)
+        const stream = await getStreamUrl()
         if (sequence !== loadSequence || accountEpoch !== getAccountBoundaryEpoch()) return
         url = withCacheBust(stream.url, refresh)
         videoSrc.value = url
@@ -586,7 +597,7 @@ async function load(f: PreviewFile, refresh = false) {
           return
         }
       }
-      if (isXlsx.value && f.id != null && !f.attach_id) {
+      if (isXlsx.value && f.filePath && !f.attach_id) {
         // XLSX 表格正文和图片都由后端按需提供，不再先下载整个压缩包。
         blobUrl.value = null
         currentCacheKey.value = ''
@@ -598,7 +609,7 @@ async function load(f: PreviewFile, refresh = false) {
       } else {
         let stream: { url: string }
         try {
-          stream = await getStreamUrl(f.id!)
+          stream = await getStreamUrl()
         } catch (error) {
           throw new Error(`获取流地址失败：${error instanceof Error ? error.message : error}`)
         }
@@ -643,6 +654,7 @@ async function load(f: PreviewFile, refresh = false) {
             else fitWindow(img.naturalWidth, img.naturalHeight)
           }
         }
+        if (isImg.value) img.onerror = reportImageLoadError
         img.src = cached
         return
       }
@@ -659,12 +671,14 @@ async function load(f: PreviewFile, refresh = false) {
             }).then(b => {
               if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch() && b && !imageReady.value) placeholderSrc.value = URL.createObjectURL(b)
             }).catch(() => {})
+        } else if (f.workspaceFile) {
+          if (!refresh) placeholderSrc.value = pathFilesApi.thumbnailUrl(f.workspaceFile)
         } else {
-          const cachedThumb = refresh ? null : getCachedThumb(f.id!, 'card', f.version)
+          const cachedThumb = refresh ? null : getCachedThumb(requireFilePath(f.filePath), 'card', f.version)
           if (cachedThumb) {
             placeholderSrc.value = cachedThumb
           } else {
-            getThumb(f.id!, 'card', f.version).then((url: string | null | undefined) => {
+            getThumb(requireFilePath(f.filePath), 'card', f.version).then((url: string | null | undefined) => {
               if (sequence === loadSequence && accountEpoch === getAccountBoundaryEpoch() && url && !imageReady.value) placeholderSrc.value = url
             })
           }
@@ -674,7 +688,7 @@ async function load(f: PreviewFile, refresh = false) {
       if (f.attach_id) {
         dlUrl = `${BASE_URL}/agent/attachment/${f.attach_id}/download${bust}`
       } else {
-        const stream = await getStreamUrl(f.id!)
+        const stream = await getStreamUrl()
         dlUrl = withCacheBust(stream.url, refresh)
       }
       const res = f.readContent ? new Response(await f.readContent())
@@ -701,6 +715,7 @@ async function load(f: PreviewFile, refresh = false) {
           else fitWindow(img.naturalWidth, img.naturalHeight)
         }
       }
+      if (isImg.value) img.onerror = reportImageLoadError
       img.src = url
     }
   } catch (e) {
@@ -725,26 +740,24 @@ function onTextContentSaved(content: string, fileKey: string | number | null, ve
   // 保存成功后当前 TextViewer 已经持有最新文本；这里只替换会话 cache，避免把新的
   // blobUrl 回传给编辑器，导致每次自动保存都重新加载并打断光标/撤销栈。
   if (getAccountBoundaryEpoch() !== mountAccountEpoch) return
-  const currentFileKey = props.win.file.id ?? props.win.file.attach_id ?? null
+  const currentFileKey = props.win.file.filePath ?? props.win.file.attach_id ?? null
   if (fileKey == null || currentFileKey == null || String(fileKey) !== String(currentFileKey)) return
   const staleKey = previewBlobCache.keyOf(props.win.file)
   if (staleKey) previewBlobCache.discard(staleKey)
-  if (version != null && typeof props.win.file.id === 'number') {
+  if (version != null && typeof props.win.file.filePath === 'string') {
     props.win.file.version = version
-    filesCache.updateFile(props.win.file.id, { version })
+    filesCache.updateFile(props.win.file.filePath, { version })
   }
   const key = previewBlobCache.keyOf(props.win.file)
   if (!key || props.win.file.attach_id) return
-  recentlySavedText = { fileId: String(currentFileKey), content, savedAt: Date.now() }
+  recentlySavedText = { filePath: String(currentFileKey), content, savedAt: Date.now() }
   const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
   previewBlobCache.put(key, url)
 }
 
-async function matchesRecentlySavedText(fileId: string, content: string): Promise<boolean> {
-  const id = Number(fileId)
-  if (!Number.isSafeInteger(id) || id <= 0) return false
+async function matchesRecentlySavedText(filePath: string, content: string): Promise<boolean> {
   try {
-    const stream = await filesApi.getStreamUrl(id)
+    const stream = await filesApi.getStreamUrl(filePath)
     const headers: Record<string, string> = {}
     const response = await fetch(stream.url, { headers, credentials: 'include', cache: 'no-store' })
     if (!response.ok || isUnauthorizedResponse(response)) return false
@@ -757,14 +770,14 @@ async function matchesRecentlySavedText(fileId: string, content: string): Promis
 
 const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, async (event) => {
-  if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.win.file.id, event)) return
-  const currentFileId = props.win.file.id == null ? '' : String(props.win.file.id)
+  if (event?.origin === CLIENT_ID || !isPreviewAffectedByFileEvent(props.win.file.filePath, event)) return
+  const currentFilePath = props.win.file.filePath ?? ''
   const savedText = recentlySavedText
-  if (event?.source === 'local_directory' && savedText?.fileId === currentFileId
+  if (event?.source === 'local_directory' && savedText?.filePath === currentFilePath
     && Date.now() - savedText.savedAt < 5_000) {
     if (checkingLocalDirectoryEcho) return
     checkingLocalDirectoryEcho = true
-    const unchanged = await matchesRecentlySavedText(savedText.fileId, savedText.content)
+    const unchanged = await matchesRecentlySavedText(savedText.filePath, savedText.content)
     checkingLocalDirectoryEcho = false
     if (savedText !== recentlySavedText) return
     if (unchanged) return
@@ -792,8 +805,8 @@ async function handleDownload() {
       anchor.click()
       anchor.remove()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
-    } else if (file.id != null) {
-      await filesApi.download(file.id, filename)
+    } else if (typeof file.filePath === 'string') {
+      await filesApi.download(file.filePath, filename)
     }
   } catch (e) { console.error('[FloatPreview] 下载失败:', e) }
 }

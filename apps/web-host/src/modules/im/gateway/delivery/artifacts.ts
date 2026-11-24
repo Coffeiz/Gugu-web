@@ -1,21 +1,22 @@
 import { sendImMedia, validateImOutboundFile } from '@gugu/gateway'
 import type { FileHandle } from 'node:fs/promises'
+import { extname } from 'node:path'
 import type { Pool } from 'pg'
 import { openLocalFile } from '@gugu/fs/node'
 import { normalizePersistentArtifact, type RunIdentity } from '@gugu/core/agent'
-import { imCanUseTool, type ImActor } from '@gugu/core/im/access'
+import { type ImActor } from '@gugu/core/im/access'
+import { imCanUseTool } from '@gugu/core/agent/scenes/im'
 import type { ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
-import type { FileReadOperations } from '../../../files/browse.js'
 import { isOwnedFileStorageKey } from '../../../files/store.js'
+import { createWorkspaceFileReads } from '../../../workspaces/files.js'
 import { imAttachmentScopeKey, type ImAttachmentScope } from '../inbound/attachments.js'
 import type { GatewayPlatformSender } from '../connections.js'
 import type { NodeImBotBinding } from '../inbound/inbox.js'
 import { createImRunScope } from '../agent/scope.js'
 import { imAcceptedEvidence, type ImAcceptedSource } from '../agent/evidence.js'
 
-type Metadata = { name: string; ext: string; mime: string; size: number; storageKey?: string; version?: number }
+type Metadata = { name: string; ext: string; mime: string; size: number; storageKey?: string; identity?: string }
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
-const positive = (value: unknown): value is string => typeof value === 'string' && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) <= 2147483647
 const same = (a: RunIdentity, b: RunIdentity) => a.ownerId === b.ownerId && a.sessionId === b.sessionId && a.runId === b.runId
 class Rejected extends Error { constructor() { super('IM 制品投递未完成') } }
 
@@ -23,17 +24,16 @@ class Rejected extends Error { constructor() { super('IM 制品投递未完成')
 export function createImRunArtifactSender(options: {
   pool: Pick<Pool, 'query'>; secretKey: string; storageRoot: string; identity: RunIdentity; actor: ImActor
   scope: ImAttachmentScope; messageIds: readonly string[]; payload: Readonly<Record<string, unknown>>
-  /** 必须复用现有owned文件读取服务；仅owner允许读取兼容file_id。 */
-  files: Pick<FileReadOperations, 'openContent' | 'getFile'>
   sender(binding: NodeImBotBinding): GatewayPlatformSender | null
   /** 实时校验Bot、actor及冻结出站权限版本；不要求已终态Run仍持有活动执行租约。 */
   authorize(): Promise<boolean>
 }): (input: Parameters<ImRunDeliveryPorts<unknown>['sender']['artifact']>[0], signal?: AbortSignal) => ReturnType<ImRunDeliveryPorts<unknown>['sender']['artifact']> {
   const proof = createImRunScope(options), { identity, actor, scope, payload, binding } = proof
+  const pathFiles = createWorkspaceFileReads(options.pool, options.storageRoot)
   const scopeKey = imAttachmentScopeKey(scope)
   let source: ImAcceptedSource | undefined
   async function authorized() {
-    if (!imCanUseTool(actor, 'send_file')) throw new Rejected()
+    if (!imCanUseTool(actor, 'send_item')) throw new Rejected()
     try { const read = await proof.read(); source = read; return read.watermark } catch { throw new Rejected() }
   }
   function metadata(name: unknown, ext: unknown, mime: unknown, size: unknown): Metadata {
@@ -77,10 +77,10 @@ export function createImRunArtifactSender(options: {
       signal?.throwIfAborted()
       const artifact = normalizePersistentArtifact(input.artifact)
       if (!object(artifact) || ['rootId', 'root_id', 'relativePath', 'relative_path'].some(key => key in artifact) || artifact.kind === 'link_buttons') throw new Rejected()
-      const attachId = artifact.attach_id, fileId = artifact.file_id ?? artifact.id
-      if (['attach_id', 'file_id', 'id'].filter(key => artifact[key] !== undefined).length !== 1
-        || !!attachId === !!fileId || attachId !== undefined && (typeof attachId !== 'string' || !attachId || attachId.length > 256)
-        || fileId !== undefined && !positive(String(fileId))) throw new Rejected()
+      const attachId = artifact.attach_id, filePath = artifact.file_path
+      if (['attach_id', 'file_path'].filter(key => artifact[key] !== undefined).length !== 1
+        || !!attachId === !!filePath || attachId !== undefined && (typeof attachId !== 'string' || !attachId || attachId.length > 256)
+        || filePath !== undefined && (typeof filePath !== 'string' || !filePath.startsWith('/'))) throw new Rejected()
       const watermark = await authorized()
       let resolved: Metadata, data: Buffer, readAllowed: () => Promise<boolean>
       if (typeof attachId === 'string') {
@@ -91,17 +91,18 @@ export function createImRunArtifactSender(options: {
         readAllowed = async () => { const current = await attached(attachId, await authorized()); return current.storageKey === resolved.storageKey && current.size === resolved.size }
       } else {
         if (actor.role !== 'owner' || scope.chatType !== 'c2c') throw new Rejected()
-        const opened = await options.files.openContent(identity.ownerId, Number(fileId))
-        if (!opened) throw new Rejected()
-        try {
-          if (!object(opened.file) || Number(opened.file.id) !== Number(fileId)) throw new Rejected()
-          const ext = opened.file.ext, name = opened.file.displayName
-          resolved = { ...metadata(name, ext, opened.mimeType, opened.size), version: Number(opened.file.version) }
-          if (!Number.isSafeInteger(resolved.version) || resolved.version! < 1) throw new Rejected()
-        } catch (error) { await opened.handle.close(); throw error }
+        const opened = await pathFiles.openSandboxPath(identity.ownerId, filePath as string)
+        const suffix = extname(opened.fileName).slice(1)
+        resolved = { ...metadata(suffix ? opened.fileName.slice(0, -suffix.length - 1) : opened.fileName,
+          suffix, opened.mimeType, opened.size), identity: opened.identity }
         data = await bytes(opened.handle, resolved, signal)
-        readAllowed = async () => { await authorized(); const current = await options.files.getFile(identity.ownerId, Number(fileId));
-          return object(current) && Number(current.id) === Number(fileId) && Number(current.version) === resolved.version }
+        readAllowed = async () => {
+          await authorized()
+          const current = await pathFiles.openSandboxPath(identity.ownerId, filePath as string).catch(() => null)
+          if (!current) return false
+          try { return current.identity === resolved.identity && current.size === resolved.size }
+          finally { await current.handle.close() }
+        }
       }
       const guard = async () => { try { return !signal?.aborted && await readAllowed() && await options.authorize() === true } catch { return false } }
       const sender = options.sender(binding)

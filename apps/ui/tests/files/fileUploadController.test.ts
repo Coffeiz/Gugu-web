@@ -1,36 +1,11 @@
 // @vitest-environment node
-import { describe, expect, it, vi } from 'vitest'
-import { resolveFolderTree, uploadWorkspaceFile, uploadFilesWithFolders, uploadFileWithProgress } from '@/composables/files/useFileUploadCore'
-import { getTopLevelUploadGroups, prepareUploadBatch } from '@/composables/files/useFileUploadController'
-import { filesApi, foldersApi, pathFilesApi, uploadWithProgress } from '@/services/api'
+import { expect, it, vi } from 'vitest'
+import { uploadWorkspaceFile } from '@/composables/files/useFileUploadCore'
+import { pathFilesApi } from '@/services/api'
 
 vi.mock('@/services/api', () => ({
-  filesApi: { checkConflicts: vi.fn() },
-  foldersApi: { list: vi.fn(), resolvePaths: vi.fn(), create: vi.fn() },
   pathFilesApi: { entries: vi.fn(), upload: vi.fn() },
-  uploadWithProgress: vi.fn(),
 }))
-
-vi.mock('@/composables/files/useFileUploadCore', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/composables/files/useFileUploadCore')>()
-  return { ...actual, uploadFilesWithFolders: vi.fn() }
-})
-
-it('上传先发送位置和覆盖字段，最后才发送文件内容', async () => {
-  const file = new File(['body'], 'note.txt')
-  const onProgress = vi.fn()
-  await uploadFileWithProgress(file, {
-    space: 'project', projectId: 42, folderId: 7, stageName: '初稿', overwriteId: 16,
-  }, onProgress)
-
-  const [path, body, progress] = vi.mocked(uploadWithProgress).mock.lastCall!
-  expect(path).toBe('/files')
-  expect([...body.entries()]).toEqual([
-    ['space', 'project'], ['project_id', '42'], ['folder_id', '7'],
-    ['stage_name', '初稿'], ['on_conflict', 'overwrite'], ['overwrite_file_id', '16'], ['file', file],
-  ])
-  expect(progress).toBe(onProgress)
-})
 
 it('路径上传先等待同名选择，保留两者会避开已占用后缀，取消不会写入', async () => {
   const file = new File(['新内容'], '方案.txt')
@@ -52,98 +27,4 @@ it('路径上传先等待同名选择，保留两者会避开已占用后缀，�
   upload.mockClear()
   await expect(uploadWorkspaceFile(target, item, progress, async () => new Map(), () => true)).resolves.toBe(false)
   expect(upload).not.toHaveBeenCalled()
-})
-
-describe('getTopLevelUploadGroups', () => {
-  it('按顶层目录聚合文件数量，不修改上传列表', () => {
-    const items = [
-      { file: new File([''], 'a.md'), relativePath: 'docs/a.md' },
-      { file: new File([''], 'b.md'), relativePath: 'docs/sub/b.md' },
-      { file: new File([''], 'c.md'), relativePath: 'notes/c.md' },
-      { file: new File([''], 'root.md'), relativePath: 'root.md' },
-    ]
-    expect(getTopLevelUploadGroups(items)).toEqual([
-      { name: 'docs', total: 2 },
-      { name: 'notes', total: 1 },
-    ])
-    expect(items).toHaveLength(4)
-  })
-})
-
-describe('nested upload folder index', () => {
-  it('冲突检查与目录创建解析复用同一份目标空间目录快照', async () => {
-    vi.mocked(foldersApi.resolvePaths).mockResolvedValue([{
-      id: 44, name: 'docs', projectId: null, workspaceDirectoryId: null,
-      parentId: null, fileCount: 0, version: 1,
-    }] as never)
-    vi.mocked(filesApi.checkConflicts).mockResolvedValue([] as never)
-    const items = [{ file: new File(['body'], 'note.txt'), relativePath: 'docs/note.txt' }]
-
-    const prepared = await prepareUploadBatch(items, { space: 'personal', projectId: null, folderId: null }, async () => new Map())
-    const resolved = await resolveFolderTree(items, { existingFolders: prepared.existingFolders })
-
-    expect(foldersApi.resolvePaths).toHaveBeenCalledOnce()
-    expect(foldersApi.resolvePaths).toHaveBeenCalledWith({
-      projectId: null, workspaceDirectoryId: undefined, parentId: null, paths: ['docs'],
-    })
-    expect(resolved[0].folderId).toBe(44)
-  })
-})
-
-describe('executeUploadLifecycle', () => {
-  it('上传成功后移除文件 ghost，并完成顶层文件夹 ghost', async () => {
-    const { executeUploadLifecycle } = await import('@/composables/files/useFileUploadController')
-    vi.mocked(uploadFilesWithFolders).mockImplementationOnce(async (_items, options) => {
-      await options.uploadOne(new File([''], 'a.txt'), null, 'docs/a.txt')
-      options.onFolderCreated?.({ id: 1, name: 'docs', parentId: null, projectId: null })
-      return []
-    })
-
-    const events: string[] = []
-    const folderGhost = { name: 'docs' }
-    await executeUploadLifecycle([{ file: new File([''], 'a.txt'), relativePath: 'docs/a.txt' }], {
-      projectId: null,
-      baseFolderId: null,
-      folderGroups: [{ name: 'docs', total: 1 }],
-      decisions: new Map(),
-      createGhost: () => ({ name: 'file' }),
-      updateGhostProgress: () => undefined,
-      removeGhost: () => events.push('remove-file'),
-      failGhost: () => events.push('fail-file'),
-      createFolderGhost: () => folderGhost,
-      bumpFolderGhost: () => events.push('bump-folder'),
-      onFolderCreated: () => events.push('folder-created'),
-      onTopFolderReady: () => events.push('folder-ready'),
-      uploadOne: async () => undefined,
-    })
-
-    expect(events).toEqual(['bump-folder', 'folder-ready', 'folder-created'])
-  })
-
-  it('上传失败后标记文件 ghost，不会把失败吞成成功移除', async () => {
-    const { executeUploadLifecycle } = await import('@/composables/files/useFileUploadController')
-    vi.mocked(uploadFilesWithFolders).mockImplementationOnce(async (_items, options) => {
-      await options.uploadOne(new File([''], 'broken.txt'), null, 'broken.txt')
-      return []
-    })
-
-    const events: string[] = []
-    await executeUploadLifecycle([{ file: new File([''], 'broken.txt'), relativePath: 'broken.txt' }], {
-      projectId: null,
-      baseFolderId: null,
-      folderGroups: [],
-      decisions: new Map(),
-      createGhost: () => ({ name: 'file' }),
-      updateGhostProgress: () => undefined,
-      removeGhost: () => events.push('remove'),
-      failGhost: () => events.push('fail'),
-      createFolderGhost: () => ({ name: 'folder' }),
-      bumpFolderGhost: () => undefined,
-      onFolderCreated: () => undefined,
-      onTopFolderReady: () => undefined,
-      uploadOne: async () => { throw new Error('upload failed') },
-    })
-
-    expect(events).toEqual(['fail'])
-  })
 })

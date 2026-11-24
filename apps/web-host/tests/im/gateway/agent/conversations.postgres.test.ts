@@ -520,12 +520,13 @@ test('隔离PG：注意力门的持久被动/等待、重放与事务复核', { 
     }, async () => {
       await reset();
       await db.query(`ALTER TABLE users ADD account_status text DEFAULT 'active';
-        ALTER TABLE user_bots ADD owner_platform_user_id text DEFAULT '8181',ADD group_allowed_tools json DEFAULT '["read_file","send_file"]',
+        ALTER TABLE user_bots ADD owner_platform_user_id text DEFAULT '8181',ADD group_allowed_tools json DEFAULT '["read_file","send_item"]',
           ADD group_owner_memory_enabled boolean DEFAULT true,ADD group_chat_enabled boolean DEFAULT true,ADD feishu_group_chat_enabled boolean,
           ADD group_requires_at boolean DEFAULT false,ADD group_read_enabled boolean DEFAULT false,ADD group_attention_mode text DEFAULT 'natural',
           ADD group_attention_config_version integer DEFAULT 3,ADD name text DEFAULT '合成咕咕';
         CREATE TABLE agent_run_startups(user_id uuid,session_id integer,run_id text,status text,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,session_id,run_id));
         CREATE TABLE agent_run_dispatch(sequence bigserial PRIMARY KEY,user_id uuid,session_id integer,run_id text,state text,nonce bytea,payload bytea,request_expires_at timestamptz,message_id integer,UNIQUE(user_id,session_id,run_id));`);
+      await db.query('ALTER TABLE conversation_sessions ADD session_context jsonb');
       await db.query(imGatewaySql.delivery);
       await db.query(imGatewaySql.attentionLedger);
       const commands = createRedisStreamCommands(process.env.GUGU_IM_GATEWAY_TEST_REDIS_URL!), touched = new Set<string>(), index = 'im:node:{pending-ask}:due:v1';
@@ -548,7 +549,7 @@ test('隔离PG：注意力门的持久被动/等待、重放与事务复核', { 
           // 唯一业务替身为模型scope版本读取；不调用Provider或启动Harness。
           model: { async accessVersion(_identity, actor) {
             bindings++; assert.equal(actor.role, 'member'); assert.equal(actor.verifiedOwner, false);
-            assert.equal(actor.platformUserId, '8181'); assert.deepEqual(actor.allowedToolNames, ['send_file']);
+            assert.equal(actor.platformUserId, '8181'); assert.deepEqual(actor.allowedToolNames, ['send_item']);
             assert.deepEqual(actor.speakerRoles?.map(s => s.role), ['member', 'member']); return 'a'.repeat(64);
           } }, memoryEnabled: async () => true, async notify() {}, diagnose() {},
         });
@@ -581,6 +582,26 @@ test('隔离PG：注意力门的持久被动/等待、重放与事务复核', { 
         assert.equal(await ingress.prepareAdmitted(binding, quiet.payload, `${now + 2}-1`, signal), false);
         assert.equal(await ingress.prepareAdmitted(binding, batch[0]!.payload, `${now + 2}-2`, signal), false);
         assert.equal((await db.query('SELECT count(*)::int AS n FROM agent_run_dispatch')).rows[0].n, 1); assert.equal(bindings, 1);
+        const goals = createPostgresImIngress({ pool: db, secretKey, supportedPlatforms: () => ['telegram'],
+          attachments: { mode: 'text-only' }, preflight: async () => 'enqueue',
+          attention: { async evaluate() { assert.fail('明确的所有者命令不应经过群注意力模型') } },
+          model: { async accessVersion(_identity, actor) {
+            assert.equal(actor.role, 'owner')
+            return 'a'.repeat(64)
+          } }, memoryEnabled: async () => true, async notify() {}, diagnose() {},
+        })
+        const goal = { eventId: `${now + 3}-1`, payload: { ...batch[1]!.payload, chat_id: 'synthetic-goal-room',
+          message_id: '904', platform_message_id: '904', bot_mentioned: true, native_bot_mentioned: true,
+          text: '@咕咕 /goal 整理测试材料' } }
+        const memberGoal = { eventId: `${now + 3}-2`, payload: { ...goal.payload, platform_user_id: '9191',
+          message_id: '905', platform_message_id: '905', text: '@咕咕 /goal 替换目标' } }
+        assert.equal(await goals.prepareAdmitted(binding, memberGoal.payload, memberGoal.eventId, signal), false)
+        assert.equal(await goals.prepareAdmitted(binding, goal.payload, goal.eventId, signal), true)
+        const goalResult = await goals.handleBatch(binding, [goal, memberGoal], signal)
+        assert.ok(goalResult[0]?.segments[0]?.runId)
+        const goalState = (await db.query('SELECT session_context FROM conversation_sessions WHERE chat_id=$1', [goal.payload.chat_id])).rows[0]
+        assert.deepEqual(goalState.session_context, { goal_text: '整理测试材料', goal_mode: true, goal_status: 'active' })
+
       } finally {
         await commands.sendCommand(['EVAL', "for i=1,#KEYS-1 do redis.call('DEL',KEYS[i]); local id=string.match(KEYS[i],':v1:([a-f0-9]+)$'); if id then redis.call('ZREM',KEYS[#KEYS],id) end end; return 1", String(touched.size + 1), ...touched, index]);
         await commands.close();

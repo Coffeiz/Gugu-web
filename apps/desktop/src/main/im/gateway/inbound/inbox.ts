@@ -54,6 +54,8 @@ export function createDesktopImInbox(host: IpcHost, encryption: Pick<typeof safe
       const accepted = sealedEvent
         ? await host.request<boolean | null>('im.inbox.admit', { ...scope, sealedEvent: sealedEvent.toString('base64'), ...files, ...(media?.sourceMessageId ? { sourceMessageId: media.sourceMessageId } : {}) })
         : await host.request<boolean>('im.inbox.recordGroup', { ...scope, text: event.text, platformUserId: event.scope.platformUserId, platformUserName: event.platformUserName,
+          quotedText: event.quotedText ?? undefined, platformBotUserId: event.platformBotUserId, otherBotNames: event.otherBotNames,
+          platformSentMs: event.platformSentMs, eventReceivedMs: event.eventReceivedMs,
           ownerPlatformUserId: media?.ownerPlatformUserId, ...files })
       committed = accepted === true
       acceptedRecord = accepted === true

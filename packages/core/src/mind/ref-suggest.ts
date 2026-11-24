@@ -78,7 +78,7 @@ export function createMindReferenceSuggester(ports: MindReferenceSuggestionPorts
         queries: [query],
         mode: 'OR',
         perType: limit,
-        types: MIND_REFERENCE_SUGGESTION_TYPES.filter(type => !ports.matchingFileReferences || (type !== 'file' && type !== 'folder')),
+        types: MIND_REFERENCE_SUGGESTION_TYPES.filter(type => ports.globalSearch.availableTypes.includes(type) && (!ports.matchingFileReferences || (type !== 'file' && type !== 'folder'))),
       })
       const items = searchItems(result)
       const [messages, fileReferences] = await Promise.all([

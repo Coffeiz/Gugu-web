@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { CoreError } from '../contracts/index.js'
 import type { ErrorCode, Fields } from '../contracts/index.js'
 
-const retryableChatReads = new Set(['agent.sessions.events', 'agent.sessions.history', 'agent.sessions.messages'])
+const retryableCommands = new Set(['agent.sessions.events', 'agent.sessions.history', 'agent.sessions.messages', 'im.inbox.prepare'])
 
 type WorkerExitReason = 'out_of_memory' | 'uncaught_exception' | 'unexpected_exit' | 'watchdog_timeout'
 
@@ -39,7 +39,7 @@ export interface LocalHostRequest {
 }
 type LocalHostRequestHandler = (request: LocalHostRequest) => Promise<unknown>
 export class LocalRuntime {
-  private agentRunListeners = new Set<(sessionId: number, runId: string, interactionChanged?: true) => void>()
+  private agentRunListeners = new Set<(sessionId: number, runId: string | undefined, interactionChanged?: true) => void>()
   private hostControllers = new Map<number, AbortController>()
   private hostRequestListeners = new Set<LocalHostRequestHandler>()
   private pending = new Map<number, Pending>()
@@ -71,7 +71,7 @@ export class LocalRuntime {
         result?: unknown
         error?: { code: ErrorCode; message: string }
       }) => {
-        if (frame.event === 'agent_run_changed' && typeof frame.sessionId === 'number' && typeof frame.runId === 'string') {
+        if (frame.event === 'agent_run_changed' && typeof frame.sessionId === 'number' && (frame.runId === undefined || typeof frame.runId === 'string')) {
           for (const listener of this.agentRunListeners) listener(frame.sessionId, frame.runId, frame.interactionChanged === true ? true : undefined)
           return
         }
@@ -194,7 +194,7 @@ export class LocalRuntime {
   ): Promise<LocalRuntime> {
     return this.start(database, false, options)
   }
-  onAgentRunChanged(listener: (sessionId: number, runId: string, interactionChanged?: true) => void): () => void {
+  onAgentRunChanged(listener: (sessionId: number, runId: string | undefined, interactionChanged?: true) => void): () => void {
     this.agentRunListeners.add(listener)
     return () => { this.agentRunListeners.delete(listener) }
   }
@@ -223,7 +223,7 @@ export class LocalRuntime {
     if (options.signal?.aborted)
       return Promise.reject(new CoreError('cancelled', '操作已取消'))
     const id = ++this.sequence,
-      flag = new Int32Array(new SharedArrayBuffer(4)),
+      flag = new Int32Array(new SharedArrayBuffer(8)),
       timeoutMs = options.timeoutMs ?? 12_000
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000)
       return Promise.reject(new CoreError('invalid_request', '请求时限无效'))
@@ -233,11 +233,19 @@ export class LocalRuntime {
       }
       const timer = setTimeout(() => {
         cancel()
-        if (retryableChatReads.has(method)) {
+        // 尚未开始的请求可原子地从队列撤销，不应终止正在执行其他请求的 Worker。
+        if (Atomics.compareExchange(flag, 1, 0, 2) === 0) {
           const request = this.pending.get(id)
           this.pending.delete(id)
           request?.dispose()
-          reject(new CoreError('busy', '聊天读取暂时超时，请重试'))
+          reject(new CoreError('busy', '本地数据队列等待超时，请重试'))
+          return
+        }
+        if (retryableCommands.has(method)) {
+          const request = this.pending.get(id)
+          this.pending.delete(id)
+          request?.dispose()
+          reject(new CoreError('busy', '本地请求暂时超时，请重试'))
           return
         }
         this.healthy = false

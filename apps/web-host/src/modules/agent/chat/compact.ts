@@ -3,10 +3,10 @@ import { buildCompactionReflectionTask } from '@gugu/core/agent/memory/reflectio
 import { createHash, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import {
-  contentText, deterministicSummary, formatCompactedSummary, isCompactedSummaryMessage,
-  protectedMessageIds, stableJson, unwrapCompactedSummary, updateBaselineSnapshot, validateCompactSummary,
+  contentText, emergencyHistorySummary, formatCompactedSummary, historyCompactionMessages,
+  reusableHistorySummary, selectHistoryCompactionPrefix, stableJson, updateBaselineSnapshot, validateCompactSummary,
 } from '@gugu/core/agent'
-import type { CanonicalMessage, CanonicalRunContext, CompactionPort, Json, RunIdentity } from '@gugu/core/agent'
+import type { CanonicalRunContext, CompactionPort, Json, RunIdentity } from '@gugu/core/agent'
 import { lockCanonicalHistoryBaseline } from './baseline.js'
 import { canonicalBaselineHash } from './write.js'
 import { enqueuePostgresAgentRagRebuild } from '../rag/jobs.js'
@@ -20,6 +20,7 @@ type HistoryRow = {
   runId: string | null
   roundId: string | null
   canonicalBatchId: string | null
+  coversUntilSeq: string | null
 }
 
 async function readHistory(db: Pick<Pool, 'query'> | PoolClient, context: CanonicalRunContext, anchorId: number) {
@@ -27,7 +28,7 @@ async function readHistory(db: Pick<Pool, 'query'> | PoolClient, context: Canoni
   return (await db.query<HistoryRow>(`
     SELECT m.id::text, m.role, m.content, m.content_json,
       coalesce(m.history_anchor_seq, m.conversation_seq)::text AS effective,
-      m.run_id AS "runId", m.round_id AS "roundId", m.canonical_batch_id::text AS "canonicalBatchId"
+      m.run_id AS "runId", m.round_id AS "roundId", m.canonical_batch_id::text AS "canonicalBatchId", m.covers_until_seq::text AS "coversUntilSeq"
     FROM conversation_sessions s JOIN conversation_messages m ON m.session_id=s.id
     WHERE s.id=$1 AND s.user_id=$2 AND s.baseline_message_seq=$3 AND (
       m.role='summary' OR (
@@ -66,31 +67,16 @@ export async function persistRunCompaction<Wire>(pool: Pick<Pool, 'query' | 'con
   if (!context.historyBaseline || !originalSnapshot || (!latest?.result.changed && !context.overflowTrimmed) || !await authorize()) return false
   const { identity } = context
   const rows = await readHistory(pool, context, anchorId)
-  const previous = rows.find(row => row.role === 'summary')?.content ?? null
-  const history = rows.filter(row => row.role !== 'summary')
-  const protectedIds = protectedMessageIds(history)
-  const split = history.findIndex(row => protectedIds.has(row.id))
-  let end = split < 0 ? history.length : split
-  // 同一有效序号可能包含用户消息与它的前置材料，水位只能跨过完整分组。
-  while (end > 0 && history[end - 1]?.effective === history[end]?.effective) end--
-  const covered = history.slice(0, end)
-  const baseline = Number(covered.at(-1)?.effective)
-  if (!Number.isSafeInteger(baseline) || baseline <= context.historyBaseline.baselineSeq) return false
-
-  const proof = new Set(context.compactions.flatMap(item => item.result.coversUntilMessageIds))
-  const candidate = latest?.result.messages.find(isCompactedSummaryMessage)
-  let summary = context.compactions.every(item => item.result.changed && !item.result.coversUnpersisted)
-    && proof.size === covered.length && covered.every(row => proof.has(row.id))
-    && typeof candidate?.content === 'string' ? unwrapCompactedSummary(candidate.content) : ''
+  const plan = selectHistoryCompactionPrefix(rows, context.historyBaseline.baselineSeq, { runId: identity.runId })
+  if (!plan) return false
+  const { covered, baseline, previous } = plan
+  let summary = reusableHistorySummary(context, covered)
   const anchors = coveredReflectionAnchors(covered)
   const reflection = await prepareReflection?.(identity, anchors)
   let evidence = ''
   let memoryCandidate: { [key: string]: Json } | undefined
   if (!validateCompactSummary(summary) || reflection) {
-    const messages: CanonicalMessage[] = covered.flatMap(row => {
-      const content = contentText(row.content_json ?? row.content).trim()
-      return content ? [{ role: row.role === 'user' ? 'user' : 'assistant', content }] : []
-    })
+    const messages = historyCompactionMessages(covered)
     if (!messages.length) return false
     const signal = AbortSignal.timeout(90_000)
     const byId = new Map(covered.map(row => [row.id, row]))
@@ -111,8 +97,7 @@ export async function persistRunCompaction<Wire>(pool: Pick<Pool, 'query' | 'con
     }, signal)
     if (!validateCompactSummary(summary) && validateCompactSummary(generated)) summary = generated
     if (!validateCompactSummary(summary)) {
-      summary = deterministicSummary(messages.map(message => `${message.role === 'user' ? '用户' : '咕咕'}：${message.content}`),
-        previous ? formatCompactedSummary(previous) : null)
+      summary = emergencyHistorySummary(messages, previous)
     }
   }
   if (!validateCompactSummary(summary) || !await authorize()) return false

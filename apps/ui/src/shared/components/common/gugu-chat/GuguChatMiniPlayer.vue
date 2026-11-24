@@ -84,10 +84,10 @@
           <div class="mp-playlist-items">
             <button
               v-for="track in playlist"
-              :key="track.id"
+              :key="audioTrackKey(track)"
               class="mp-playlist-item"
-              :class="{ 'mp-playlist-item--current': track.id === currentTrackId }"
-              :aria-current="track.id === currentTrackId ? 'true' : undefined"
+              :class="{ 'mp-playlist-item--current': audioTrackKey(track) === currentTrackId }"
+              :aria-current="audioTrackKey(track) === currentTrackId ? 'true' : undefined"
               :title="trackName(track)"
               @click="onSelectTrack(track)"
             >
@@ -105,7 +105,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
-import type { AudioPlaybackMode, AudioTrack } from '@/stores/audio'
+import { audioTrackKey, type AudioPlaybackMode, type AudioTrack } from '@/stores/audio'
 /**
  * 迷你播放器卡片：纯展示 + 交互转发。真正的 <audio> 元素和播放机制仍在
  * GuguChat.vue（useChatAudio 的 audioEl 需要在同一处声明模板 ref 才能绑定
@@ -143,7 +143,7 @@ const {
   waveBars: number[]
   fileName: string
   playlist: AudioTrack[]
-  currentTrackId: number | null
+  currentTrackId: string | null
   pinned: boolean
   current: number
   duration: number

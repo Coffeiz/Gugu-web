@@ -228,7 +228,7 @@ let nextElementKey = 1
 function stableElementKey(element: HTMLElement): string | number {
   if (element.dataset.layoutKey) return `layout:${element.dataset.layoutKey}`
   if (element.dataset.projectId) return `project:${element.dataset.projectId}`
-  if (element.dataset.fileId) return `file:${element.dataset.fileId}`
+  if (element.dataset.filePath) return `file:${element.dataset.filePath}`
   if (element.dataset.folderKey) return `folder:${element.dataset.folderKey}`
   let value = elementKeys.get(element)
   if (!value) {
@@ -265,7 +265,7 @@ export function measureWithoutTransform(element: HTMLElement): DOMRect {
  * 更新紧跟着触发第二次渲染）。按元素引用登记的话，旧引用一旦失效，`retargetWithin`
  * 就再也找不到它，飞行中的克隆永远收不到目标已经挪动的通知，表现为落地卡在原地不动、
  * 直到别的卡片的动画结束才瞬间归位。按业务身份登记后，即使元素被换了，只要新元素
- * 携带同一个 data-project-id/data-file-id/data-folder-key/data-layout-key，
+ * 携带同一个 data-project-id/data-file-path/data-folder-key/data-layout-key，
  * `retargetWithin` 就能在 container 里重新查到它、继续把新位置通知给回调。
  * key 会带上 layout/project/file/folder 命名空间，避免不同对象类型使用同值 id 时碰撞。
  * 没有这几个业务属性的元素（没有稳定身份）退回旧行为——只能按当时的元素引用匹配，
@@ -283,9 +283,9 @@ export function createFlipRetargetRegistry(): FlipRetargetRegistry {
     const value = key.slice(separator + 1)
     const attribute = kind === 'layout' ? 'layoutKey'
       : kind === 'project' ? 'projectId'
-        : kind === 'file' ? 'fileId' : kind === 'folder' ? 'folderKey' : null
+        : kind === 'file' ? 'filePath' : kind === 'folder' ? 'folderKey' : null
     if (!attribute) return null
-    return Array.from(container.querySelectorAll<HTMLElement>('[data-layout-key], [data-project-id], [data-file-id], [data-folder-key]'))
+    return Array.from(container.querySelectorAll<HTMLElement>('[data-layout-key], [data-project-id], [data-file-path], [data-folder-key]'))
       .find(element => element.dataset[attribute] === value) ?? null
   }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DesktopBackdropDefinitions from '../shared/components/DesktopBackdropDefinitions.vue'
 import { syncDesktopFileOpenPreference } from '../files/fileOpen'
 import DesktopFiles from '../files/index.vue'
 import FilePreviewModal from '@/components/common/file-browser/FilePreviewModal.vue'
@@ -241,15 +242,7 @@ onMounted(() => perform(async () => {
 
 <template>
   <div class="desktop-shell" :style="{ '--desktop-sidebar-width': `${sidebarWidth}px` }">
-    <svg width="0" height="0" aria-hidden="true" class="desktop-backdrop-definitions">
-      <defs>
-        <filter id="desktop-backdrop-alpha" color-interpolation-filters="sRGB">
-          <feComponentTransfer>
-            <feFuncA type="linear" slope="2" />
-          </feComponentTransfer>
-        </filter>
-      </defs>
-    </svg>
+    <DesktopBackdropDefinitions />
     <div class="desktop-window-drag-region" aria-hidden="true"></div>
     <DesktopSidebar
       :active-section="visibleSection"
@@ -329,7 +322,6 @@ onMounted(() => perform(async () => {
 </template>
 
 <style scoped>
-.desktop-backdrop-definitions { position: absolute; pointer-events: none; }
 .desktop-shell { --desktop-topbar-height: 52px; --desktop-workspace-edge: var(--space-xs); --desktop-workspace-inset: var(--space-sm); position: relative; isolation: isolate; height: 100vh; width: 100vw; overflow: hidden; display: grid; grid-template-columns: var(--desktop-sidebar-width, 204px) minmax(0, 1fr); grid-template-rows: var(--desktop-topbar-height) minmax(0, 1fr); color: var(--text-primary); background: var(--desktop-l0-surface); }
 .desktop-window-drag-region {
   position: absolute;

@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import test from 'node:test'
@@ -7,6 +10,7 @@ import type { UserFromRequest } from '../../src/app.js'
 import { createProjectTrashService, ProjectTrashExpiredError } from '@gugu/core/project-trash'
 import {
   createLocalProjectTrashStorage,
+  projectTrashDirectoryKey,
   createProjectTrashOriginalStorageKeyResolver,
 } from '../../src/modules/projects/lifecycle/storage.js'
 import { registerProjectRoutes } from '../../src/modules/projects/routes.js'
@@ -30,16 +34,14 @@ function project(overrides: Record<string, unknown> = {}) {
 function baseState() {
   return {
     project: project(),
-    folders: [{ id: 31, user_id: ownerId, project_id: 17, workspace_directory_id: null,
-      parent_id: null, name: '文档', version: 2, deleted_at: null }],
-    files: [{ id: 41, user_id: ownerId, display_name: '计划', ext: 'md', space: 'project',
-      project_id: 17, folder_id: 31, workspace_directory_id: null, stage_name: null,
-      mind_map_id: null, storage_key: `${ownerId}/项目文件/2026/11/回归项目 #17/文档/计划.md`,
+    files: [{ user_id: ownerId, display_name: '计划', ext: 'md', space: 'project',
+      project_id: 17, workspace_directory_id: null, stage_name: null,
+      mind_map_id: null, path: `${ownerId}/项目文件/2026/11/回归项目 #17/文档/计划.md`,
       version: 4, size: 8, size_bytes: 8, mime_type: 'text/markdown', img_width: null,
       img_height: null, deleted_at: null }, {
-      id: 42, user_id: ownerId, display_name: '上次删除', ext: 'txt', space: 'project',
-      project_id: 17, folder_id: null, workspace_directory_id: null, stage_name: null,
-      mind_map_id: null, storage_key: `${ownerId}/trash/2026/10/上次删除.txt`,
+      user_id: ownerId, display_name: '上次删除', ext: 'txt', space: 'project',
+      project_id: 17, workspace_directory_id: null, stage_name: null,
+      mind_map_id: null, path: `${ownerId}/trash/2026/10/上次删除.txt`,
       version: 2, size: 4, size_bytes: 4, mime_type: 'text/plain', img_width: null,
       img_height: null, deleted_at: '2026-10-01T00:00:00.000Z',
     }],
@@ -73,8 +75,7 @@ function makeHarness(initial = baseState()) {
           const active = (row: any) => row.deleted_at == null
           const deletedInThisOperation = (row: any) => row.deleted_at === stamp
           return {
-            folders: state.folders.filter((row: any) => same(row) && row.project_id === id && (stamp ? deletedInThisOperation(row) : active(row))),
-            files: state.files.filter((row: any) => same(row) && (row.project_id === id || state.folders.some((folder: any) => folder.id === row.folder_id && folder.project_id === id)) && (stamp ? deletedInThisOperation(row) : active(row))),
+            files: state.files.filter((row: any) => same(row) && row.project_id === id && (stamp ? deletedInThisOperation(row) : active(row))),
             events: state.events.filter((row: any) => same(row) && row.project_id === id && (stamp ? deletedInThisOperation(row) : active(row))),
             tasks: state.tasks.filter((row: any) => same(row) && state.events.some((event: any) => event.id === row.event_id && event.project_id === id)),
           }
@@ -83,8 +84,7 @@ function makeHarness(initial = baseState()) {
           Object.assign(state.project, fields)
           return state.project
         },
-        async updateFile(_owner: string, row: any) { Object.assign(state.files.find((item: any) => item.id === row.id)!, row) },
-        async updateFolder(_owner: string, row: any) { Object.assign(state.folders.find((item: any) => item.id === row.id)!, row) },
+        async updateFile(_owner: string, row: any) { Object.assign(state.files.find((item: any) => item.user_id === row.user_id && item.display_name === row.display_name)!, row) },
         async updateEvent(_owner: string, row: any) { Object.assign(state.events.find((item: any) => item.id === row.id)!, row) },
         async updateTask(_owner: string, row: any) { Object.assign(state.tasks.find((item: any) => item.id === row.id)!, row) },
         async recordUndo(record: unknown) { undo.push(record) },
@@ -108,11 +108,11 @@ function makeHarness(initial = baseState()) {
   }
   const fileStorage = {
     async moveToTrash(owner: string, file: any) {
-      storage.push(['trash', owner, file.id, file.storage_key])
+      storage.push(['trash', owner, file.id, file.path])
       return { storageKey: `${owner}/trash/2026/11/回归项目 #17/文档/计划.md` }
     },
     async restoreFromTrash(owner: string, file: any) {
-      storage.push(['restore', owner, file.id, file.storage_key])
+      storage.push(['restore', owner, file.id, file.path])
       return { storageKey: `${owner}/项目文件/2026/11/回归项目 #17/文档/计划.md`, displayName: file.display_name }
     },
   }
@@ -165,12 +165,11 @@ test('DELETE 项目按 owner 软删同一批资源、停用提醒、事务内写
   const stamp = harness.state.project.deleted_at
   assert.ok(stamp)
   assert.equal(harness.state.project.version, 4)
-  for (const row of [...harness.state.folders, harness.state.files[0]!, ...harness.state.events]) {
+  for (const row of [harness.state.files[0]!, ...harness.state.events]) {
     assert.equal(row.deleted_at, stamp, '所有关联墓碑使用同一删除时间')
   }
-  assert.equal(harness.state.files[0].storage_key, `${ownerId}/trash/2026/11/回归项目 #17/文档/计划.md`)
+  assert.equal(harness.state.files[0].path, `${ownerId}/trash/2026/11/回归项目 #17/文档/计划.md`)
   assert.equal(harness.state.files[0].version, 5)
-  assert.equal(harness.state.folders[0].version, 3)
   assert.equal(harness.state.events[0].version, 6)
   assert.equal(harness.state.tasks[0].enabled, false)
   assert.equal(harness.undo.length, 1)
@@ -179,12 +178,12 @@ test('DELETE 项目按 owner 软删同一批资源、停用提醒、事务内写
   assert.equal(undo.action, 'delete')
   assert.equal(undo.userId, ownerId)
   assert.equal(undo.contextId, 'tab-delete')
-  assert.deepEqual(undo.targetRefs.map(({ kind, id }: any) => `${kind}:${id}`).sort(),
-    ['event:51', 'file:41', 'folder:31', 'project:17', 'task:61'])
+  assert.deepEqual(undo.targetRefs.map(({ kind, path, id }: any) => `${kind}:${kind === 'file' ? path : id}`).sort(),
+    [`event:51`, `file:${harness.state.files[0]!.path}`, 'project:17', 'task:61'])
   assert.deepEqual(harness.published.map((event: any) => [event.resource, event.operation]), [
     ['projects', 'delete'], ['files', 'delete'], ['calendar', 'delete'], ['scheduled_tasks', 'update'],
   ])
-  assert.deepEqual(harness.published.map((event: any) => event.entityIds ?? event.entityId), [17, [41, 31], [51], [61]])
+  assert.deepEqual(harness.published.map((event: any) => event.entityIds ?? event.entityId), [17, [harness.state.files[0]!.path], [51], [61]])
 })
 
 test('DELETE 只接受当前 owner 的活动项目，重复删除和越权都按 404 隐藏资源', async () => {
@@ -204,7 +203,7 @@ test('RESTORE 仅恢复相同删除批次、保留物理路径冲突策略并重
   assert.equal(harness.state.project.version, 5)
   assert.equal(harness.state.files[0].deleted_at, null)
   assert.equal(harness.state.files[0].version, 6)
-  assert.equal(harness.state.files[0].storage_key, `${ownerId}/项目文件/2026/11/回归项目 #17/文档/计划.md`)
+  assert.equal(harness.state.files[0].path, `${ownerId}/项目文件/2026/11/回归项目 #17/文档/计划.md`)
   assert.equal(harness.state.files[1].deleted_at, '2026-10-01T00:00:00.000Z', '旧删除批次的文件不能被恢复')
   assert.equal(harness.state.events[0].deleted_at, null)
   assert.equal(harness.state.tasks[0].enabled, true)
@@ -242,14 +241,12 @@ test('缺失 owner WorkspaceDirectory 使项目 restore 事务回滚并保留全
     async getOwnedProject() { return null },
     async getOwnedWorkspaceDirectory() { return null },
     async getOwnedMindMap() { return null },
-    async resolveOwnedFolderPath() { return null },
   })
   const storage = createLocalProjectTrashStorage('/tmp/project-trash-metadata-test', resolver)
   const restore = createProjectTrashService(harness.runtime as never, storage)
   await assert.rejects(restore.restoreProject(ownerId, 17), /工作区目录不存在/)
 
   assert.equal(harness.state.project.deleted_at, stamp)
-  assert.equal(harness.state.folders[0]!.deleted_at, stamp)
   assert.equal(harness.state.files[0]!.deleted_at, stamp)
   assert.equal(harness.state.events[0]!.deleted_at, stamp)
   assert.equal(harness.state.tasks[0]!.enabled, false)
@@ -320,5 +317,49 @@ test('项目 DELETE/restore HTTP 错误沿用 owner-scoped 404 和保留期 410'
     assert.equal((await app.inject({ method: 'POST', url: '/api/v1/projects/18/restore' })).statusCode, 410)
   } finally {
     await app.close()
+  }
+})
+
+test('磁盘化项目删除和恢复移动完整目录，数据库失败时补偿', async () => {
+  const harness = makeHarness({ ...baseState(), files: [] })
+  let location = 'active'
+  const service = createProjectTrashService(harness.runtime as never, {
+    ...harness.fileStorage,
+    async moveProjectDirectory(_owner, _project, deleted) {
+      const previous = location
+      location = deleted ? 'trash' : 'active'
+      return async () => { location = previous }
+    },
+  } as Parameters<typeof createProjectTrashService>[1])
+
+  harness.failNextCommit()
+  await assert.rejects(service.deleteProject(ownerId, 17), /simulated transaction commit failure/)
+  assert.equal(location, 'active')
+  await service.deleteProject(ownerId, 17)
+  assert.equal(location, 'trash')
+  harness.failNextCommit()
+  await assert.rejects(service.restoreProject(ownerId, 17), /simulated transaction commit failure/)
+  assert.equal(location, 'trash')
+  await service.restoreProject(ownerId, 17)
+  assert.equal(location, 'active')
+})
+
+test('Linux 项目目录软删和恢复保留完整子目录', { skip: process.platform !== 'linux' }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-project-trash-'))
+  try {
+    const harness = makeHarness({ ...baseState(), files: [] })
+    const original = join(root, ownerId, '项目文件', '2026', '11', '回归项目 #17', '文档', '图稿.md')
+    const parked = join(root, projectTrashDirectoryKey(ownerId, 17), '文档', '图稿.md')
+    await mkdir(dirname(original), { recursive: true })
+    await writeFile(original, '测试内容')
+    const service = createProjectTrashService(harness.runtime as never, createLocalProjectTrashStorage(root))
+    await service.deleteProject(ownerId, 17)
+    await assert.rejects(readFile(original), { code: 'ENOENT' })
+    assert.equal(await readFile(parked, 'utf8'), '测试内容')
+    await service.restoreProject(ownerId, 17)
+    assert.equal(await readFile(original, 'utf8'), '测试内容')
+    await assert.rejects(readFile(parked), { code: 'ENOENT' })
+  } finally {
+    await rm(root, { recursive: true, force: true })
   }
 })

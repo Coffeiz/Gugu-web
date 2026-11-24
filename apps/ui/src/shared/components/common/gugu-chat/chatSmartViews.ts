@@ -28,7 +28,27 @@ export function renderSmartView(source: string) {
   const unavailable = `<p class="chat-smart-view-notice">${t('unavailable')}</p>`
   if (source.length > 24_000) return unavailable
   let view: Fields
-  try { view = object(JSON.parse(source)) } catch { return unavailable }
+  try {
+    view = object(JSON.parse(source))
+  } catch {
+    // 兼容模型漏写 detail 的起始引号。完整字符串原样保留，修复后仍走 JSON 和组件校验。
+    let repaired = source.replace(/("detail"\s*:\s*)(\p{Script=Han}[^"\\\r\n{}\[\],]{0,239})"(?=\s*[,}])|"(?:\\.|[^"\\])*"/gu,
+      (match, key: string | undefined, detail: string | undefined) =>
+        key && detail ? key + JSON.stringify(detail) : match)
+    // 模型偶尔在 section 同级节点前提前关闭外层 children 和布局对象。
+    // 跳过字符串内容，只尝试删除一处多余的闭合符，随后仍需通过完整校验。
+    let removed = false
+    if (/^\s*\{\s*"version"\s*:\s*1\s*,\s*"layout"\s*:/u.test(repaired)) {
+      repaired = repaired.replace(/"(?:\\.|[^"\\])*"|\]\}(\]\})(?=\s*,\s*\{\s*"type"\s*:\s*"section")/gu,
+        (match, extra: string | undefined) => {
+          if (!extra || removed) return match
+          removed = true
+          return match.slice(0, -extra.length)
+        })
+    }
+    if (repaired === source) return unavailable
+    try { view = object(JSON.parse(repaired)) } catch { return unavailable }
+  }
   if (view.version === 1 && view.layout !== undefined) {
     try { return renderSmartLayout(view.layout, t, view.state) } catch { return unavailable }
   }

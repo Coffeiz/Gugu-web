@@ -229,7 +229,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 32px;
-  background: rgba(230, 232, 240, 0.5);
+  background: var(--surface-image-viewer);
   user-select: none;
   overflow: visible;
 }

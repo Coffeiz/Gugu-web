@@ -53,7 +53,7 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 可增删改画布�
         is_active boolean NOT NULL, account_status text, security_version integer,
         avatar text, created_at timestamptz, timezone text, email_subscribed boolean,
         is_developer boolean NOT NULL DEFAULT FALSE, last_active_at timestamptz,
-        storage_limit_bytes bigint, hashed_password text
+        hashed_password text
       );
       CREATE TABLE user_bots (
         id serial PRIMARY KEY, user_id uuid NOT NULL, platform text NOT NULL, enabled boolean NOT NULL
@@ -80,15 +80,8 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 可增删改画布�
       CREATE TABLE files (
         id serial PRIMARY KEY, user_id uuid NOT NULL, display_name varchar(300) NOT NULL,
         ext varchar(50) NOT NULL, space varchar(32) NOT NULL DEFAULT 'mind', size bigint NOT NULL DEFAULT 0,
-        folder_id bigint, workspace_directory_id bigint, project_id integer,
+        workspace_directory_id bigint, project_id integer,
         search_romaji text, updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, deleted_at timestamptz
-      );
-      CREATE TABLE folders (
-        id bigserial PRIMARY KEY, user_id uuid NOT NULL, name varchar(300) NOT NULL,
-        project_id integer, workspace_directory_id bigint, parent_id bigint,
-        created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        search_romaji text, updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        deleted_at timestamptz
       );
       CREATE TABLE calendar_events (
         id serial PRIMARY KEY, user_id uuid NOT NULL, title varchar(300) NOT NULL, date varchar(10) NOT NULL,

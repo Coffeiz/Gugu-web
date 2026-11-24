@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import { createMainContextBuilder, createWebAgentContextBuilder, type AgentContextBuilderPorts, type ContextDataPorts, type ContextSourcePorts } from '@gugu/core/agent'
+import { createWebAgentContextBuilder, type AgentContextBuilderPorts, type ContextDataPorts, type ContextSourcePorts } from '@gugu/core/agent'
 import type { PreferenceTextFiles } from '@gugu/core'
 import { createAgentPreferenceContextSources } from './preferences.js'
 import { createAgentOverviewSources } from './overview.js'
@@ -29,12 +29,12 @@ export function createAgentContextSources(options: Omit<AgentContextAssemblyOpti
     if (typeof fn !== 'function') throw new TypeError('Agent 上下文服务未完整配置')
   if (!options.memoryStorageRoot.trim()) throw new TypeError('Agent 记忆存储根目录未配置')
   const preference = createAgentPreferenceContextSources(options.pool, options.files, options.redis, options.serverTimezone)
-  const overview = createAgentOverviewSources(options.pool, () => new Date(options.now()))
+  const overview = createAgentOverviewSources(options.pool, options.memoryStorageRoot, () => new Date(options.now()))
   return {
     now: options.now, currentRevision: preference.currentRevision,
     data: { ...overview, loadTimezone: preference.loadTimezone, loadStylePreferences: preference.loadStylePreferences,
       ...options.external, loadMemory: createAgentMemoryContextLoader(options.memoryStorageRoot, options.now, options.memoryVectorSearch) },
-    builder: createMainContextBuilder(createWebAgentContextBuilder(options.builder)),
+    builder: createWebAgentContextBuilder(options.builder),
   }
 }
 

@@ -110,6 +110,13 @@ export function desktopCorePreview(desktopRoot) {
         host.setHostRequestHandler(async ({ method, params, signal }) => {
           if (method === 'agent.tools.policy' && Object.keys(params).length === 0) return { disabledTools: [] }
           if (method.startsWith('agent.schedules.im.')) return desktopScheduledImRequest(method, params, signal) ?? scheduledIm(method, params, signal)
+          if (method === 'agent.im.authorizeGroupTool' || method === 'agent.im.readGroupMemoryContext') {
+            const gateway = params.platform === 'qq' ? qq : params.platform === 'feishu' ? feishu
+              : params.platform === 'telegram' ? telegram : undefined
+            return method === 'agent.im.authorizeGroupTool'
+              ? await gateway?.authorizeGroupTool(params, signal) ?? false
+              : await gateway?.readGroupMemoryContext(params, signal) ?? null
+          }
           if (method === 'agent.im.snapshot') {
             const channels = await Promise.all(['feishu', 'qq', 'wechat', 'telegram'].map(async platform =>
               [platform, Boolean(await (desktopScheduledImRequest('agent.schedules.im.privateTarget', { platform }, signal)
@@ -124,8 +131,21 @@ export function desktopCorePreview(desktopRoot) {
           if (method === 'agent.email.accounts' && Object.keys(params).length === 0) return desktopMail.listAccounts()
           if (method === 'agent.email.attachments') return desktopMail.inspectAgentAttachments(params, signal)
           if (method === 'agent.email.send') return desktopMail.sendForAgent(params, signal)
+          if (Object.keys(params).length === 1 && Number.isSafeInteger(params.projectId) && params.projectId > 0) {
+            if (method === 'agent.files.workspaceList') return files.agentWorkspaceList()
+            if (method === 'agent.files.projectWorkspaceBinding') return files.handlers[DESKTOP_CHANNELS.files]({
+              action: 'project-workspace-binding', projectId: params.projectId, directoryId: params.directoryId, bound: params.bound,
+            })
+            if (method === 'agent.files.projectOverview') return files.agentProjectFileOverview(params.projectId, signal)
+            if (method === 'agent.files.projectPath') return files.agentProjectFilePath(params.projectId)
+          }
           if (method === 'agent.files.globalSearch') return files.globalFileSearch(params.queries, params.mode, params.perType, signal)
-          if (method === 'agent.files.resolveDroppedReference' || method === 'agent.files.resolveWorkspaceReference') return null
+          if (method === 'agent.files.searchReferences' && Object.keys(params).length === 1
+            && typeof params.query === 'string' && params.query.length <= 4096)
+            return files.handlers[DESKTOP_CHANNELS.files]({ action: 'search', query: params.query })
+          if (method === 'agent.files.resolveWorkspaceReference' && Object.keys(params).length === 1 && typeof params.id === 'string')
+            return files.resolveWorkspaceReference(params.id)
+          if (method === 'agent.files.resolveDroppedReference') return null
           if (method === 'network.resolveProxy') return previewProxy(new URL(params.origin)) ?? null
           throw new DesktopError('unsupported', '浏览器预览未配置此宿主能力')
         })
@@ -157,7 +177,7 @@ export function desktopCorePreview(desktopRoot) {
         }).finally(() => { starting = undefined })
         return starting
       }
-      const files = desktopFiles(filesRoot, undefined, undefined, undefined,
+      const files = desktopFiles(filesRoot, undefined, join(directory, 'file-workspaces.json'), directory,
         async id => {
           await startCore()
           return lifecycle.request('projects.board.get', { id })

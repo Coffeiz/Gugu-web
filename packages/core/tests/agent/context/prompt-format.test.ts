@@ -18,9 +18,24 @@ describe('共享 Agent 提示词和上下文格式', () => {
     expect(web).toContain(base.smartView.trim())
     expect(web).not.toContain('当前会话是即时通讯')
     for (const groupChat of [false, true]) {
-      const im = buildAgentStaticPrompt({ ...base, imChat: true, groupChat })
+      const im = buildAgentStaticPrompt({ ...base, scene: 'im', groupChat })
       expect(im).toContain('不输出 gugu-ui 围栏')
       expect(im).not.toContain('## 输出格式')
+    }
+  })
+
+  it('IM 私聊与群聊都裁剪应用卡片指令并保留文件路径规则', () => {
+    const input = { base: '基础', persona: '', skills: readAgentPrompt('skills.md'), policy: '规则',
+      skillIndex: '', timezone: 'UTC', now: new Date() }
+    const app = buildAgentStaticPrompt(input)
+    expect(app).toContain('**文件夹卡片**')
+    expect(app).toContain('gugu://open-object')
+    expect(app).not.toContain('<!-- scene:')
+    for (const groupChat of [false, true]) {
+      const im = buildAgentStaticPrompt({ ...input, scene: 'im', groupChat })
+      expect(im).not.toMatch(/\*\*(卡片展示|文件夹卡片|链接取值|文件引用)\*\*|gugu:\/\/open-object/u)
+      expect(im).toContain('location.value')
+      expect(im).toContain('原生附件')
     }
   })
 

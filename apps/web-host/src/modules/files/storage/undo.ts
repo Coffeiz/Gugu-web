@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { isPathWithin } from '../../../shared/path-safety.js'
 import type { FileUndoStorage } from '../../undo/service.js'
@@ -26,6 +26,29 @@ export function createLocalFileUndoStorage(storageRoot: string): FileUndoStorage
       const target = await safePath(storageRoot, key)
       try { return new Uint8Array(await readFile(target)) }
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
+    },
+    async move(fromKey, toKey) {
+      const source = await safePath(storageRoot, fromKey)
+      const target = await safePath(storageRoot, toKey)
+      const sourceBytes = await readFile(source).catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      })
+      const targetBytes = await readFile(target).catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      })
+      if (sourceBytes === null) {
+        if (targetBytes !== null) return
+        throw new Error('文件撤销正文不存在，无法迁移')
+      }
+      if (targetBytes !== null) {
+        if (!sourceBytes.equals(targetBytes)) throw new Error('文件撤销正文迁移目标冲突')
+        await rm(source)
+        return
+      }
+      await mkdir(path.dirname(target), { recursive: true, mode: 0o700 })
+      await rename(source, target)
     },
     async replace(key, bytes) {
       const target = await safePath(storageRoot, key)

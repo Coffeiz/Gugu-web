@@ -1,3 +1,4 @@
+import { createWorkspaceFileReads } from '../../../workspaces/files.js'
 import { createHash } from 'node:crypto'
 import { lstat, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -57,8 +58,8 @@ function receipt(identity: RunIdentity & { roundId: string }, call: ToolCall) {
 }
 
 type UploadFile = {
-  id: number; displayName: string; ext: string; size: string; sizeBytes: number; mimeType: string;
-  space: string; projectId: number | null; folderId: number | null
+  displayName: string; ext: string; size: string; sizeBytes: number; mimeType: string;
+  space: string; projectId: number | null; logicalPath: string
 }
 
 function result(value: unknown, mutated: boolean, call: ToolCall): ToolResult {
@@ -67,8 +68,8 @@ function result(value: unknown, mutated: boolean, call: ToolCall): ToolResult {
   const source = new URL(/^https?:\/\//iu.test(rawUrl) ? rawUrl : `https://${rawUrl}`)
   source.username = ''; source.password = ''; source.search = ''; source.hash = ''
   return { kind: 'completed', successful: true, mutated, value: {
-    success: true, file_id: file.id, name: `${file.displayName}.${file.ext}`, size: file.size, size_bytes: file.sizeBytes,
-    mime_type: file.mimeType, space: file.space, project_id: file.projectId, folder_id: file.folderId, source_url: source.href,
+    success: true, file_path: file.logicalPath, name: `${file.displayName}.${file.ext}`, size: file.size, size_bytes: file.sizeBytes,
+    mime_type: file.mimeType, space: file.space, project_id: file.projectId, source_url: source.href,
   } }
 }
 
@@ -97,16 +98,8 @@ export function createWebAgentDownloadTool(options: {
         return {
           space: selected.space, workspaceId: selected.workspaceId,
           projectId: selected.kind === 'directory' ? null : selected.projectId,
-          folderId: selected.kind === 'directory' ? null : selected.folderId,
           workspaceDirectoryId: selected.kind === 'directory' ? selected.directoryId : null,
         }
-      },
-      async folder(id) {
-        const result = await (client ?? options.pool).query<{ project_id: number | null; workspace_directory_id: number | null }>(
-          'SELECT project_id,workspace_directory_id FROM folders WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL', [id, owner],
-        )
-        const row = result.rows[0]
-        return row ? { projectId: row.project_id, workspaceDirectoryId: row.workspace_directory_id } : null
       },
     })
   }
@@ -131,10 +124,10 @@ export function createWebAgentDownloadTool(options: {
       if ('error' in resolved) return resolved
       const { workspaceId: _workspaceId, ...coordinates } = resolved
       const target: FileUploadInput = {
-        ...coordinates, stageName: '', mindMapId: null, onConflict: 'keep_both', overwriteFileId: null,
+        ...coordinates, stageName: '', mindMapId: null, onConflict: 'keep_both', overwriteFilePath: null,
       }
-      let capacity: number | null
-      try { capacity = await options.upload.getUploadCapacity(owner, target) }
+      const capacity = null
+      try { await options.upload.validateUploadTarget(owner, target) }
       catch (error) {
         if (error instanceof CoreError && (error.code === 'not_found' || error.code === 'invalid_request')) return { error: error.message }
         throw error
@@ -144,7 +137,7 @@ export function createWebAgentDownloadTool(options: {
         async store(file, _scope, call) {
           const directory = await mkdtemp(path.join(tmpdir(), 'gugu-web-download-'))
           try {
-            const staged = await stageFile(Readable.from(file.data, { objectMode: false }), directory, capacity, file.mimeType, signal)
+            const staged = await stageFile(Readable.from(file.data, { objectMode: false }), directory, file.mimeType, signal)
             signal.throwIfAborted()
             try {
               const placed = await options.upload.store(owner, {
@@ -183,14 +176,25 @@ export function createWebAgentDiskDownloadTool(options: {
   const authority = createWebAgentRagRunAuthorization(options.pool, options.lease, { enabledWebDownload: true })
   return createWebDownloadTool({
     fixedDestination: true,
+    allowFolderPath: true,
     open: options.open,
     extension: mime => extension(mime) || null,
-    async prepare(_location, scope) {
-      if (!await authority.authorize(scope.identity, 'web_download', scope.signal)) return { error: '下载运行授权已失效' }
+    async prepare({ folderPath }, scope) {
+      const { ownerId } = scope.identity
+      const files = createWorkspaceFileReads(options.pool, options.storageRoot)
+      const authorized = () => authority.authorize(scope.identity, 'web_download', scope.signal)
+      if (!await authorized()) return { error: '下载运行授权已失效' }
+      const readFolder = async () => folderPath === undefined ? null
+        : (await files.reference(ownerId, 'personal', folderPath, undefined, 'folder').catch(error => {
+          if (error instanceof CoreError && error.code === 'not_found') return null
+          throw error
+        }))?.id ?? null
+      const folder = await readFolder()
+      if (folderPath !== undefined && !folder) return { error: '下载目标子目录不存在' }
       return {
         capacity: agentDownloadsLimit,
         store: (file, scope, call) => saveAgentDownload(options.storageRoot, file.name, file.data, scope, call,
-          () => authority.authorize(scope.identity, 'web_download', scope.signal)),
+          async () => await authorized() && await readFolder() === folder, folderPath),
       }
     },
   })

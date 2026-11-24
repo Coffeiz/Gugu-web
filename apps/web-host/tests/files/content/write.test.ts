@@ -46,12 +46,12 @@ test('正文保存 Host 只接受认证 owner 并向 Local adapter 传递版本�
 
   const denied = await app.inject({
     method: 'PUT',
-    url: '/api/v1/files/23/content',
+    url: '/api/v1/files/by-path/content?path=owner%2Fpersonal%2Fnote.txt',
     payload: { content: '不应写入', version: 4 },
   })
   const saved = await app.inject({
     method: 'PUT',
-    url: '/api/v1/files/23/content',
+    url: '/api/v1/files/by-path/content?path=owner%2Fpersonal%2Fnote.txt',
     headers: {
       authorization: `Bearer ${token}`,
       'x-undo-context-id': 'editor-tab',
@@ -64,7 +64,7 @@ test('正文保存 Host 只接受认证 owner 并向 Local adapter 传递版本�
   assert.equal(saved.statusCode, 200)
   assert.deepEqual(saved.json(), { id: 23, version: 5 })
   assert.equal(calls.length, 1)
-  assert.deepEqual(calls[0], [ownerId, 23, '更新正文', 4, {
+  assert.deepEqual(calls[0], [ownerId, 'owner/personal/note.txt', '更新正文', 4, {
     idempotencyKey: null,
     undoContextId: 'editor-tab',
     clientId: 'web-client',

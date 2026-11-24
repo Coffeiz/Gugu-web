@@ -746,6 +746,7 @@ it('旧版持久索引读取隔离 owner、排除文件索引并用微秒游标�
    expect((await reader.snapshotForScope(ownerId,{scope_type:'group',scope_id:'g1',platform:'qq',bot_id:'bot',group_id:'g1'})).documents.map(row=>row.content)).toEqual(['同一时刻'])
    expect((await reader.snapshotForScope(ownerId,{scope_type:'group',scope_id:'g2',platform:'qq',bot_id:'bot',group_id:'g2'})).documents).toEqual([])
    await expect(reader.snapshotForScope(ownerId,{scope_type:'group'})).rejects.toThrow('范围不完整')
+   await expect(reader.snapshotForScope(ownerId,{scope_type:'folder',scope_id:'1'})).rejects.toThrow('授权范围无效')
    const aborted=new AbortController();aborted.abort();await expect(reader.snapshot(ownerId,aborted.signal)).rejects.toThrow()
    await expect(reader.delta(ownerId,{timestamp:'invalid',id:0})).rejects.toThrow('游标无效')
   }finally{await runtime.close()}

@@ -18,3 +18,4 @@ export { createSqlImPushWriter, type ImPushPeer } from './im-push.js'
 export { createSqlConversationHistoryTrimmer } from './retention.js'
 
 export { createAgentConversationSearchPort, createCoreAgentConversationSearchPort } from './tool-search.js'
+export { createPostgresSubagentRetention } from '../subagent/retention.js'

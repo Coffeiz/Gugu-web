@@ -1,3 +1,10 @@
+import { projectWorkspaces } from './migrations/0037_project_workspaces.js'
+import { removeFolderIds } from './migrations/0038_remove_folder_ids.js'
+import { scheduledTaskFilePaths } from './migrations/0039_scheduled_task_file_paths.js'
+import { projectUndoPaths } from './migrations/0040_project_undo_paths.js'
+import { chatFilePaths } from './migrations/0041_chat_file_paths.js'
+import { filePathsAsKey } from './migrations/0042_file_paths_as_key.js'
+import { filesPathColumn } from './migrations/0043_files_path_column.js'
 import { subagentSessionInbox } from './migrations/0036_subagent_session_inbox.js'
 import { subagentExecutions } from './migrations/0035_subagent_executions.js'
 import { subagentContinuations } from './migrations/0034_subagent_continuations.js'
@@ -41,7 +48,7 @@ import { runPostgresMigrations } from './runner.js'
 const catalog = [
   initialize, webDomain, agentRun, agentSnapshots, filesystemAuthorization, securityEvents,
   terminalSessions, interactionActions, trashPurge, searchUsage, ragIndex,
-  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings, scheduledTaskMode, calendarReminderMode, webPush, webReflection, reflectionCompaction, imPrivateStreaming, subagentDeliveries, subagentSessions, subagentLaunches, subagentWaits, agentInbox, subagentConversations, subagentContinuations, subagentExecutions, subagentSessionInbox,
+  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings, scheduledTaskMode, calendarReminderMode, webPush, webReflection, reflectionCompaction, imPrivateStreaming, subagentDeliveries, subagentSessions, subagentLaunches, subagentWaits, agentInbox, subagentConversations, subagentContinuations, subagentExecutions, subagentSessionInbox, projectWorkspaces, removeFolderIds, scheduledTaskFilePaths, projectUndoPaths, chatFilePaths, filePathsAsKey, filesPathColumn,
 ]
 
 export function migratePostgres(pool: Pick<Pool, 'connect'>, action: MigrationAction) {

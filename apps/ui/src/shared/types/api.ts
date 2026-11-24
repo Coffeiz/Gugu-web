@@ -603,66 +603,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/files/check-conflicts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Check Conflicts */
-        post: operations["check_conflicts_api_v1_files_check_conflicts_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/files/presign": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Presign Upload
-         * @description 检查存储后端：OSS 时签发 presigned PUT URL；本地时返回 {mode:'proxy'}。
-         */
-        post: operations["presign_upload_api_v1_files_presign_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/files/confirm": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Confirm Upload
-         * @description OSS 直传完成后，注册 DB 记录（或覆盖已有文件时，原地更新那条记录）。
-         *
-         *     body.storage_key 是 presign 阶段签发的临时 key，不是最终位置——confirm_oss_upload
-         *     校验通过后会把它 copy 到最终 key，真实内容全程不经过未经校验的直接覆盖。
-         */
-        post: operations["confirm_upload_api_v1_files_confirm_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/files/{fid}/content": {
         parameters: {
             query?: never;
@@ -839,134 +779,11 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/folders": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Folder Page
-         * @description 分页读取当前逻辑目录的直属文件夹；不提供全空间树下载模式。
-         */
-        get: operations["list_folder_page_api_v1_folders_get"];
-        put?: never;
-        /** Create Folder */
-        post: operations["create_folder_api_v1_folders_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/folders/resolve-paths": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Resolve Folder Paths
-         * @description 只返回上传批次所请求路径上的已有目录节点。
-         */
-        post: operations["resolve_folder_paths_api_v1_folders_resolve_paths_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/folders/{fid}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Folder */
-        get: operations["get_folder_api_v1_folders__fid__get"];
-        put?: never;
-        post?: never;
-        /** Delete Folder */
-        delete: operations["delete_folder_api_v1_folders__fid__delete"];
-        options?: never;
-        head?: never;
-        /** Rename Folder */
-        patch: operations["rename_folder_api_v1_folders__fid__patch"];
-        trace?: never;
-    };
-    "/api/v1/folders/{fid}/location": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Folder Location */
-        get: operations["get_folder_location_api_v1_folders__fid__location_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/folders/{fid}/download": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Download Folder */
-        get: operations["download_folder_api_v1_folders__fid__download_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/folders/{fid}/parent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Move Folder */
-        patch: operations["move_folder_api_v1_folders__fid__parent_patch"];
-        trace?: never;
-    };
-    "/api/v1/folders/{fid}/copy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Copy Folder */
-        post: operations["copy_folder_api_v1_folders__fid__copy_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
+
+
+
+
+
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -1059,213 +876,18 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/trash/page": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Trash Page */
-        get: operations["list_trash_page_api_v1_trash_page_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/folders/page": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Trash Folders Page */
-        get: operations["list_trash_folders_page_api_v1_trash_folders_page_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/folders/{fid}/contents/page": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Trash Folder Contents Page */
-        get: operations["list_trash_folder_contents_page_api_v1_trash_folders__fid__contents_page_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/folders/{fid}/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Restore Folder */
-        post: operations["restore_folder_api_v1_trash_folders__fid__restore_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/folders/{fid}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Hard Delete Folder */
-        delete: operations["hard_delete_folder_api_v1_trash_folders__fid__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/{fid}/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Restore File */
-        post: operations["restore_file_api_v1_trash__fid__restore_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/batch-restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Batch Restore */
-        post: operations["batch_restore_api_v1_trash_batch_restore_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/{fid}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Hard Delete File */
-        delete: operations["hard_delete_file_api_v1_trash__fid__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/empty": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Start Empty Trash */
-        post: operations["start_empty_trash_api_v1_trash_empty_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/empty/active": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Active Empty Trash */
-        get: operations["active_empty_trash_api_v1_trash_empty_active_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/empty/{job_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Empty Trash Job */
-        get: operations["get_empty_trash_job_api_v1_trash_empty__job_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Empty Trash
-         * @description 兼容旧客户端，但同样进入后台队列，避免长时间占用 HTTP 请求。
-         */
-        delete: operations["empty_trash_api_v1_trash_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
+
+
+
+
+
+
+
+
+
+
+
+
     "/api/v1/agent/sandbox/restart": {
         parameters: {
             query?: never;
@@ -4957,40 +4579,8 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/folder-doctor/scan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Scan Dirs */
-        get: operations["scan_dirs_api_v1_admin_folder_doctor_scan_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/admin/folder-doctor/repair": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Repair Dirs */
-        post: operations["repair_dirs_api_v1_admin_folder_doctor_repair_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
+
+
     "/api/v1/admin/workspace-migration/scan": {
         parameters: {
             query?: never;
@@ -5531,24 +5121,6 @@ export interface paths {
         put?: never;
         /** Test Safe Egress */
         post: operations["test_safe_egress_api_v1_admin_safe_egress_test_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/admin/storage-quota/reconcile": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Full Reconcile Status */
-        get: operations["get_full_reconcile_status_api_v1_admin_storage_quota_reconcile_get"];
-        put?: never;
-        /** Start Full Reconcile */
-        post: operations["start_full_reconcile_api_v1_admin_storage_quota_reconcile_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6365,9 +5937,9 @@ export interface components {
             /** Fileids */
             fileIds?: number[];
             /** Folderids */
-            folderIds?: number[];
+
             /** Folderid */
-            folderId?: number | null;
+
             /** Name */
             name?: string | null;
         };
@@ -6387,7 +5959,7 @@ export interface components {
              * Folderids
              * @default []
              */
-            folderIds: number[];
+
         };
         /** BindingActionRequest */
         BindingActionRequest: {
@@ -6429,7 +6001,7 @@ export interface components {
             /** Project Id */
             project_id?: number | null;
             /** Folder Id */
-            folder_id?: number | null;
+
             /** Workspace Directory Id */
             workspace_directory_id?: number | null;
             /**
@@ -6444,8 +6016,8 @@ export interface components {
              * @default keep_both
              */
             on_conflict: string;
-            /** Overwrite File Id */
-            overwrite_file_id?: number | null;
+            /** Overwrite File Path */
+            overwrite_file_path?: string | null;
         };
         /** Body_upload_personality_api_v1_preferences_personality_upload_post */
         Body_upload_personality_api_v1_preferences_personality_upload_post: {
@@ -6647,7 +6219,7 @@ export interface components {
             /** Project Id */
             project_id?: number | null;
             /** Folder Id */
-            folder_id?: number | null;
+
             /** Workspace Directory Id */
             workspace_directory_id?: number | null;
             /**
@@ -6655,8 +6227,8 @@ export interface components {
              * @default
              */
             stage_name: string;
-            /** Overwrite File Id */
-            overwrite_file_id?: number | null;
+            /** Overwrite File Path */
+            overwrite_file_path?: string | null;
         };
         /** ConfirmationRequest */
         ConfirmationRequest: {
@@ -6690,7 +6262,7 @@ export interface components {
             /** Project Id */
             project_id?: number | null;
             /** Folder Id */
-            folder_id?: number | null;
+
             /** Workspace Directory Id */
             workspace_directory_id?: number | null;
         };
@@ -7176,7 +6748,7 @@ export interface components {
         /** FileCopyBody */
         FileCopyBody: {
             /** Folderid */
-            folderId?: number | null;
+
             /** Projectid */
             projectId?: number | null;
             /** Workspacedirectoryid */
@@ -7186,8 +6758,8 @@ export interface components {
              * @default keep_both
              */
             onConflict: string;
-            /** Overwritefileid */
-            overwriteFileId?: number | null;
+            /** Overwritefilepath */
+            overwriteFilePath?: string | null;
         };
         /** FileLibraryCountsResponse */
         FileLibraryCountsResponse: {
@@ -7208,12 +6780,14 @@ export interface components {
         FileLocationResponse: {
             file: components["schemas"]["FileResponse"];
             /** Folderpath */
-            folderPath?: components["schemas"]["FolderResponse"][];
+
         };
         /** FileResponse */
         FileResponse: {
-            /** Id */
-            id: number;
+            /** Filepath */
+            filePath: string;
+            /** Folderpath */
+            folderPath?: string | null;
             /** Displayname */
             displayName: string;
             /** Ext */
@@ -7231,9 +6805,9 @@ export interface components {
             /** Stagename */
             stageName: string;
             /** Folderid */
-            folderId: number | null;
+
             /** Foldername */
-            folderName: string | null;
+
             /** Mindmapid */
             mindMapId: number | null;
             /** Size */
@@ -7278,83 +6852,11 @@ export interface components {
             /** Stagename */
             stageName?: string | null;
             /** Folderid */
-            folderId?: number | null;
+
             /** Projectid */
             projectId?: number | null;
             /** Workspacedirectoryid */
             workspaceDirectoryId?: number | null;
-        };
-        /** FolderCopy */
-        FolderCopy: {
-            /** Parentid */
-            parentId?: number | null;
-            /** Projectid */
-            projectId?: number | null;
-            /** Workspacedirectoryid */
-            workspaceDirectoryId?: number | null;
-        };
-        /** FolderCreate */
-        FolderCreate: {
-            /** Projectid */
-            projectId?: number | null;
-            /** Workspacedirectoryid */
-            workspaceDirectoryId?: number | null;
-            /** Parentid */
-            parentId?: number | null;
-            /** Name */
-            name: string;
-        };
-        /** FolderLocationResponse */
-        FolderLocationResponse: {
-            folder: components["schemas"]["FolderResponse"];
-            /** Ancestors */
-            ancestors?: components["schemas"]["FolderResponse"][];
-        };
-        /** FolderMove */
-        FolderMove: {
-            /** Parentid */
-            parentId?: number | null;
-            /** Projectid */
-            projectId?: number | null;
-            /** Workspacedirectoryid */
-            workspaceDirectoryId?: number | null;
-            /** Version */
-            version: number;
-        };
-        /** FolderRename */
-        FolderRename: {
-            /** Name */
-            name: string;
-            /** Version */
-            version: number;
-        };
-        /** FolderResponse */
-        FolderResponse: {
-            /** Id */
-            id: number;
-            /** Projectid */
-            projectId: number | null;
-            /** Workspacedirectoryid */
-            workspaceDirectoryId?: number | null;
-            /** Parentid */
-            parentId?: number | null;
-            /** Name */
-            name: string;
-            /**
-             * Filecount
-             * @default 0
-             */
-            fileCount: number;
-            /**
-             * Foldercount
-             * @default 0
-             */
-            folderCount: number;
-            /**
-             * Version
-             * @default 1
-             */
-            version: number;
         };
         /** ForgotPassword */
         ForgotPassword: {
@@ -7982,30 +7484,6 @@ export interface components {
              */
             hasMore: boolean;
         };
-        /** PageResponse[FolderResponse] */
-        PageResponse_FolderResponse_: {
-            /** Items */
-            items: components["schemas"]["FolderResponse"][];
-            /** Nextcursor */
-            nextCursor?: string | null;
-            /**
-             * Hasmore
-             * @default false
-             */
-            hasMore: boolean;
-        };
-        /** PageResponse[TrashFolderResponse] */
-        PageResponse_TrashFolderResponse_: {
-            /** Items */
-            items: components["schemas"]["TrashFolderResponse"][];
-            /** Nextcursor */
-            nextCursor?: string | null;
-            /**
-             * Hasmore
-             * @default false
-             */
-            hasMore: boolean;
-        };
         /** PathMigrationItem */
         PathMigrationItem: {
             /** File Id */
@@ -8459,7 +7937,7 @@ export interface components {
             /** Project Id */
             project_id?: number | null;
             /** Folder Id */
-            folder_id?: number | null;
+
             /** Workspace Directory Id */
             workspace_directory_id?: number | null;
             /**
@@ -8472,8 +7950,8 @@ export interface components {
              * @default keep_both
              */
             on_conflict: string;
-            /** Overwrite File Id */
-            overwrite_file_id?: number | null;
+            /** Overwrite File Path */
+            overwrite_file_path?: string | null;
         };
         /** ProjectCreate */
         ProjectCreate: {
@@ -8681,22 +8159,13 @@ export interface components {
             paths: string[];
         };
         /** ResolveFolderPathsRequest */
-        ResolveFolderPathsRequest: {
-            /** Projectid */
-            projectId?: number | null;
-            /** Workspacedirectoryid */
-            workspaceDirectoryId?: number | null;
-            /** Parentid */
-            parentId?: number | null;
-            /** Paths */
-            paths: string[];
-        };
+
         /** ResolvedFilePath */
         ResolvedFilePath: {
             /** Path */
             path: string;
             file?: components["schemas"]["FileResponse"] | null;
-            folder?: components["schemas"]["FolderResponse"] | null;
+
         };
         /** SafeEgressPatch */
         SafeEgressPatch: {
@@ -8908,7 +8377,7 @@ export interface components {
             /** Workspace Id */
             workspace_id?: number | null;
             /** Email Attachment File Ids */
-            email_attachment_file_ids?: number[];
+            email_attachment_file_paths?: string[];
         };
         /** TaskFilesystemAuthorizationConfirm */
         TaskFilesystemAuthorizationConfirm: {
@@ -8950,7 +8419,7 @@ export interface components {
             /** Workspace Id */
             workspace_id?: number | null;
             /** Email Attachment File Ids */
-            email_attachment_file_ids?: number[] | null;
+            email_attachment_file_paths?: string[] | null;
         };
         /** TelegramTokenIn */
         TelegramTokenIn: {
@@ -9067,47 +8536,6 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
-        /**
-         * TrashFolderContentsPageResponse
-         * @description 回收站文件夹内容分别分页，避免一个列表拖垮另一个列表。
-         */
-        TrashFolderContentsPageResponse: {
-            folders: components["schemas"]["PageResponse_TrashFolderResponse_"];
-            files: components["schemas"]["PageResponse_FileResponse_"];
-        };
-        /**
-         * TrashFolderResponse
-         * @description 回收站里的顶层已删文件夹（P2.3）：deleted_at 供前端显示删除时间/30 天过期倒计时。
-         */
-        TrashFolderResponse: {
-            /** Id */
-            id: number;
-            /** Projectid */
-            projectId: number | null;
-            /** Workspacedirectoryid */
-            workspaceDirectoryId?: number | null;
-            /** Parentid */
-            parentId?: number | null;
-            /** Name */
-            name: string;
-            /**
-             * Filecount
-             * @default 0
-             */
-            fileCount: number;
-            /**
-             * Foldercount
-             * @default 0
-             */
-            folderCount: number;
-            /**
-             * Version
-             * @default 1
-             */
-            version: number;
-            /** Deletedat */
-            deletedAt: string;
-        };
         /** TrashPurgeJobResponse */
         TrashPurgeJobResponse: {
             /** Id */
@@ -9131,9 +8559,9 @@ export interface components {
             /** Fileid */
             fileId: number;
             /** Folderid */
-            folderId?: number | null;
+
             /** Foldername */
-            folderName?: string | null;
+
             /** Format */
             format?: string | null;
         };
@@ -9582,7 +9010,7 @@ export interface components {
              */
             kind: "folder" | "project" | "directory";
             /** Folderid */
-            folderId?: number | null;
+
             /** Projectid */
             projectId?: number | null;
             /** Directoryid */
@@ -9645,7 +9073,7 @@ export interface components {
             /** Kind */
             kind: string;
             /** Folderid */
-            folderId?: number | null;
+
             /** Projectid */
             projectId?: number | null;
             /** Directoryid */
@@ -9690,20 +9118,7 @@ export interface components {
             confirm: boolean;
         };
         /** RepairRequest */
-        app__api__v1__folder_doctor_admin__RepairRequest: {
-            /** User Id */
-            user_id?: string | null;
-            /**
-             * Remove Orphans
-             * @default false
-             */
-            remove_orphans: boolean;
-            /**
-             * Relocate Files
-             * @default false
-             */
-            relocate_files: boolean;
-        };
+
     };
     responses: never;
     parameters: never;
@@ -10502,7 +9917,7 @@ export interface operations {
                 sort_order?: "asc" | "desc";
                 space?: string | null;
                 project_id?: number | null;
-                folder_id?: number | null;
+
                 workspace_directory_id?: number | null;
                 mind_map_id?: number | null;
                 ext?: string | null;
@@ -10875,107 +10290,6 @@ export interface operations {
             };
         };
     };
-    check_conflicts_api_v1_files_check_conflicts_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConflictCheckRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    presign_upload_api_v1_files_presign_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PresignRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    confirm_upload_api_v1_files_confirm_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConfirmRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FileResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     update_file_content_api_v1_files__fid__content_put: {
         parameters: {
             query?: never;
@@ -11308,346 +10622,11 @@ export interface operations {
             };
         };
     };
-    list_folder_page_api_v1_folders_get: {
-        parameters: {
-            query?: {
-                project_id?: number | null;
-                workspace_directory_id?: number | null;
-                parent_id?: number | null;
-                limit?: number;
-                cursor?: string | null;
-                sort_by?: "name" | "type" | "stage" | "createdAt" | "size" | "id";
-                sort_order?: "asc" | "desc";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PageResponse_FolderResponse_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_folder_api_v1_folders_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FolderCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FolderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    resolve_folder_paths_api_v1_folders_resolve_paths_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResolveFolderPathsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FolderResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_folder_api_v1_folders__fid__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FolderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_folder_api_v1_folders__fid__delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rename_folder_api_v1_folders__fid__patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FolderRename"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FolderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_folder_location_api_v1_folders__fid__location_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FolderLocationResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    download_folder_api_v1_folders__fid__download_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    move_folder_api_v1_folders__fid__parent_patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FolderMove"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FolderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    copy_folder_api_v1_folders__fid__copy_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FolderCopy"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FolderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
+
+
+
+
+
     list_events_api_v1_events_get: {
         parameters: {
             query?: {
@@ -11914,355 +10893,18 @@ export interface operations {
             };
         };
     };
-    list_trash_page_api_v1_trash_page_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                cursor?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PageResponse_FileResponse_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_trash_folders_page_api_v1_trash_folders_page_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                cursor?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PageResponse_TrashFolderResponse_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_trash_folder_contents_page_api_v1_trash_folders__fid__contents_page_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                folder_cursor?: string | null;
-                file_cursor?: string | null;
-            };
-            header?: never;
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrashFolderContentsPageResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    restore_folder_api_v1_trash_folders__fid__restore_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FolderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    hard_delete_folder_api_v1_trash_folders__fid__delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    restore_file_api_v1_trash__fid__restore_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    batch_restore_api_v1_trash_batch_restore_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BatchDeleteBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    hard_delete_file_api_v1_trash__fid__delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-client-id"?: string | null;
-            };
-            path: {
-                fid: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    start_empty_trash_api_v1_trash_empty_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrashPurgeJobResponse"];
-                };
-            };
-        };
-    };
-    active_empty_trash_api_v1_trash_empty_active_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrashPurgeJobResponse"] | null;
-                };
-            };
-        };
-    };
-    get_empty_trash_job_api_v1_trash_empty__job_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                job_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrashPurgeJobResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    empty_trash_api_v1_trash_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrashPurgeJobResponse"];
-                };
-            };
-        };
-    };
+
+
+
+
+
+
+
+
+
+
+
+
     restart_my_sandbox_api_v1_agent_sandbox_restart_post: {
         parameters: {
             query?: never;
@@ -18890,71 +17532,8 @@ export interface operations {
             };
         };
     };
-    scan_dirs_api_v1_admin_folder_doctor_scan_get: {
-        parameters: {
-            query?: {
-                /** @description 限定某用户；省略=全量对账 */
-                user_id?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    repair_dirs_api_v1_admin_folder_doctor_repair_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["app__api__v1__folder_doctor_admin__RepairRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
+
+
     scan_legacy_shell_directories_view_api_v1_admin_workspace_migration_scan_post: {
         parameters: {
             query?: {
@@ -19902,46 +18481,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_full_reconcile_status_api_v1_admin_storage_quota_reconcile_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    start_full_reconcile_api_v1_admin_storage_quota_reconcile_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };

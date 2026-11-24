@@ -2,25 +2,15 @@ import type { Pool } from 'pg'
 import { CoreError, normalizeThemePalette } from '@gugu/core'
 import { createEmailAttachmentResolver, EmailAttachmentError, renderSmtpDraftMessage, SmtpDeliveryFailure,
   type EmailAttachmentReferences, type SmtpTestDelivery } from '@gugu/core/email/smtp-test'
-import { openLocalFile } from '@gugu/fs/node'
 import { lookup as lookupMimeType } from 'mime-types'
 import type { FileHandle } from 'node:fs/promises'
 import type { ScheduledTaskTestNotificationPlan } from '@gugu/core/scheduled-task-test-notify'
 import { decryptEncryptedString } from '../../../adapters/security/encrypted-string.js'
-import { isOwnedFileStorageKey } from '../../files/store.js'
 
 type OpenFile = { handle: FileHandle; size: number }
 type GeneratedFile = OpenFile & { fileName: string; mimeType: string }
-type FileRow = {
-  id: number
-  storage_key: string
-  storage_backend: string
-  size_bytes: string | number | null
-  display_name: string
-  ext: string
-  mime_type: string | null
-}
-
+type OpenPath = (ownerId: string, path: string, signal: AbortSignal) =>
+  Promise<(OpenFile & { fileName: string; ext: string }) | null>
 function attachmentSource(file: OpenFile) {
   return {
     size: file.size,
@@ -130,20 +120,14 @@ function reminderMessage(plan: ScheduledTaskTestNotificationPlan, value: unknown
 
 export function createPostgresEmailAttachmentResolver(
   pool: Pick<Pool, 'query'>,
-  options: { storageRoot?: string; downloadGenerated?(ownerId: string, id: string): Promise<GeneratedFile> },
+  options: { storageRoot?: string; openPath?: OpenPath; downloadGenerated?(ownerId: string, id: string): Promise<GeneratedFile> },
 ): ReturnType<typeof createEmailAttachmentResolver> {
   return createEmailAttachmentResolver({
-    async files(ownerId, ids) {
-      const { rows } = await pool.query<FileRow>(
-        `SELECT id,storage_key,storage_backend,size_bytes,display_name,ext,mime_type
-         FROM files WHERE user_id=$1 AND id=ANY($2::int[]) AND deleted_at IS NULL`, [ownerId, ids])
-      return rows.map(row => ({ id: row.id, storageKey: row.storage_backend === 'local' ? row.storage_key : '',
-        size: Number(row.size_bytes ?? 0), name: row.display_name, ext: row.ext, mimeType: row.mime_type }))
-    },
-    async openFile(ownerId, file) {
-      if (!options.storageRoot || !isOwnedFileStorageKey(ownerId, file.storageKey)) return null
-      const opened = await openLocalFile(options.storageRoot, file.storageKey)
-      return opened ? attachmentSource(opened) : null
+    async openPath(ownerId, path) {
+      const file = await options.openPath?.(ownerId, path, new AbortController().signal)
+      if (!file) return null
+      const filename = file.ext ? `${file.fileName}.${file.ext}` : file.fileName
+      return { ...attachmentSource(file), filename, mimeType: lookupMimeType(filename) || 'application/octet-stream' }
     },
     async openGenerated(ownerId, id) {
       try {
@@ -166,6 +150,7 @@ export function createPostgresScheduledTaskTestEmailDelivery(
     globalSmtp: SmtpFallback
     send(delivery: SmtpTestDelivery): Promise<void>
     storageRoot?: string
+    openPath?: OpenPath
     downloadGenerated?(ownerId: string, id: string): Promise<GeneratedFile>
   },
 ) {

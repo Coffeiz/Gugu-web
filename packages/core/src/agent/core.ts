@@ -19,7 +19,7 @@ import { rejectAdapterCall } from './tools/call-adapter.js'
 
 /** 模型增量的分块提交阈值：达到任一条件即落一次事件与 checkpoint。 */
 const TOKEN_FLUSH_CHARS = 256
-const TOKEN_FLUSH_MS = 60
+const TOKEN_FLUSH_MS = 200
 
 
 
@@ -266,7 +266,18 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       if (type === 'tool_done' && payload.artifact !== undefined) {
         const artifact = portableSnapshot(payload.artifact)
         const buttons = artifact !== null && typeof artifact === 'object' && !Array.isArray(artifact) && 'kind' in artifact && artifact.kind === 'link_buttons'
-        displayTimeline = updateDisplayItem(displayTimeline, { kind: 'assistant', runId: identity.runId, roundId, text: '', ...(buttons ? { linkButtons: artifact } : { files: [artifact] }) }, { anchorMessageId: state.anchorMessageId, now })
+        const cards = artifact && typeof artifact === 'object' && !Array.isArray(artifact) && 'kind' in artifact
+          ? artifact.kind === 'object_card' ? [artifact]
+            : artifact.kind === 'object_cards' && 'cards' in artifact && Array.isArray(artifact.cards) ? artifact.cards : null
+          : null
+        const text = cards?.flatMap(card => {
+          if (!card || typeof card !== 'object' || Array.isArray(card) || !('name' in card)
+            || typeof card.name !== 'string' || !('link' in card) || typeof card.link !== 'string') return []
+          const label = Array.from(String(card.name)).map(ch => /[\p{P}\p{S}\s]/u.test(ch) ? `&#${ch.codePointAt(0)};` : ch).join('')
+          return [`[${label || '文件库卡片'}](${card.link})`]
+        }).join('\n\n') ?? ''
+        displayTimeline = updateDisplayItem(displayTimeline, { kind: 'assistant', runId: identity.runId, roundId, text,
+          ...(cards ? {} : buttons ? { linkButtons: artifact } : { files: [artifact] }) }, { anchorMessageId: state.anchorMessageId, now })
         artifactDisplay = displayTimeline.at(-1)
       }
       const next = {
@@ -477,7 +488,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       catch {
         throw new ToolResultCheckpointUnavailable({ callId: call.id, successful: result.successful, mutated: result.mutated })
       }
-      const isButtons = artifact !== undefined && artifact !== null && typeof artifact === 'object' && !Array.isArray(artifact) && 'kind' in artifact && artifact.kind === 'link_buttons'
+      const isDisplayOnlyArtifact = artifact !== undefined && artifact !== null && typeof artifact === 'object' && !Array.isArray(artifact) && 'kind' in artifact && (artifact.kind === 'link_buttons' || artifact.kind === 'object_card' || artifact.kind === 'object_cards')
       const resultStatus = result.value && typeof result.value === 'object' && 'status' in result.value && ['cancelled', 'deferred'].includes(String(result.value.status)) ? String(result.value.status) : result.successful ? 'success' : 'error'
       if (!result.successful && result.value && typeof result.value === 'object' && !Array.isArray(result.value)
         && '_schema_recovery' in result.value) {
@@ -507,7 +518,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
       })
       const startedSubagent = result.successful && call.name === 'agent_message' && call.input
         && typeof call.input === 'object' && 'action' in call.input
-        && (call.input.action === 'start' || Boolean(result.value && typeof result.value === 'object'
+        && (call.input.action === 'spawn' || Boolean(result.value && typeof result.value === 'object'
           && 'started' in result.value && result.value.started === true))
       const childId = result.successful && call.name === 'agent_wait' && result.value
         && typeof result.value === 'object' && 'childId' in result.value && typeof result.value.childId === 'string'
@@ -527,7 +538,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         resolution: null,
         completedToolCount: state.completedToolCount + (result.executed === false || resultStatus === 'cancelled' || resultStatus === 'deferred' ? 0 : 1),
         mutated: state.mutated || result.mutated,
-        files: artifact === undefined || isButtons ? state.files : [...state.files, artifact],
+        files: artifact === undefined || isDisplayOnlyArtifact ? state.files : [...state.files, artifact],
         emptyRetries: result.successful ? 0 : state.emptyRetries,
         replyState: toolReplyProgress(state.replyState, result.successful),
       }, 'tool_done', { toolCallId: call.id, name: call.name, status: resultStatus, result: presented, ...(artifact === undefined ? {} : { artifact }) }, null, null, consumedSubagent ? [consumedSubagent] : undefined))!
@@ -781,8 +792,10 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           await checkCancellation()
           if (resolution || !ports.store.readAgentInbox)
             throw new AgentRunError('conflict', '收件箱等待状态不匹配')
-          if (state.phase === 'decision' && await ports.store.hasPendingSubagents?.(identity)) return state
-          if (!await agentInboxReady()) return state
+          if (state.phase === 'decision') {
+            // 子任务已结束时，即使回执已被同会话后续运行读走，也要继续收尾。
+            if (await ports.store.hasPendingSubagents?.(identity)) return state
+          } else if (!await agentInboxReady()) return state
           yield (await commit({ status: 'running', agentInboxWaiting: false }, 'run_resumed'))!
         } else if (state.status === 'waiting' && state.subagentWaitChildId) {
           await checkCancellation()
@@ -1100,13 +1113,29 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
         else
           stream = ports.provider.stream(request)
         const iterator = stream[Symbol.asyncIterator]()
+        let pendingRead: ReturnType<typeof iterator.next> | undefined
+        let pendingTokenCursor: ProviderCursor | null = null
         let complete = false
         let overflow = false
         try {
           while (true) {
-            const next = await cancellable(iterator.next(), controller.signal)
-            if (next.done)
+            pendingRead ??= cancellable(iterator.next(), controller.signal)
+            let timer: ReturnType<typeof setTimeout> | undefined
+            const next = await (pendingToken ? Promise.race([
+              pendingRead,
+              new Promise<null>(resolve => {
+                timer = setTimeout(() => resolve(null), Math.max(0, TOKEN_FLUSH_MS - (observedAt() - pendingTokenSince)))
+              }),
+            ]) : pendingRead).finally(() => clearTimeout(timer))
+            if (next === null) {
+              yield* flushPendingToken(pendingTokenCursor)
+              continue
+            }
+            pendingRead = undefined
+            if (next.done) {
+              yield* flushPendingToken(pendingTokenCursor)
               break
+            }
             const item = next.value
             const cursor = item.cursor ? snapshotCursor(item.cursor) : null
             if (cursor && streamCursorSequence > 0) {
@@ -1125,6 +1154,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             if (item.type === 'token') {
               sanitizerTouched = true
               const text = sanitizer.feed(item.text)
+              pendingTokenCursor = cursor
               if (text) {
                 pendingToken += text
                 const now = observedAt()
@@ -1207,6 +1237,20 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
                 yield await finish('failed', 'provider_incomplete', item.calls.length ? '模型响应不完整，未执行其中的工具调用。请缩短请求或调高输出 Token 预算后重试。' : '模型输出未完整结束；当前内容可能被截断，请继续追问或调高输出 Token 预算。')
                 return state
               }
+              // 整轮游标由工具计划提交确认；提前提交正文时保留可恢复的文本游标。
+              yield* flushPendingToken(pendingTokenCursor)
+              const tail = sanitizer.flush()
+              sanitizerFlushed = true
+              const text = ports.sanitizeText(item.text).trim()
+              const visibleText = !state.goalMode && !state.replyState.guardPending && state.replyChoice === 'disabled'
+              if (tail) {
+                if (state.goalMode || state.replyState.guardPending || state.replyChoice === 'pending')
+                  await commit({ text: state.text + tail, sanitizerCheckpoint: captureSanitizer() })
+                else
+                  yield (await commit({ text: state.text + tail, sanitizerCheckpoint: captureSanitizer() }, 'token', { text: tail }))!
+              }
+              if (visibleText && text && item.calls.length)
+                yield (await commit({}, 'text_end', { text }))!
               const wireCalls = Object.freeze(item.calls.map(snapshotToolCall))
               const ids = new Set<string>()
               for (const call of wireCalls) {
@@ -1221,26 +1265,16 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
                 if (unavailableIds.has(call.id)) {
                   adapterResults.push({ callId: call.id, result: {
                     kind: 'completed', successful: false, mutated: false, executed: false,
-                    value: { error: '工具不存在或未开放', next_action: '请从当前工具目录选择已开放的工具，勿重复调用此工具。' },
+                    value: { ...(ports.tools.unavailableTool?.(call.name) ?? { error: '工具不存在或未开放' }), next_action: '请从当前工具目录选择已开放的工具，勿重复调用此工具。' },
                   } })
                   return call
                 }
                 if (call.name !== 'call_tool' || !ports.tools.resolveCall) return call
                 const target = await ports.tools.resolveCall(call, identity, controller.signal)
                 if ('call' in target) return snapshotToolCall(target.call)
-                adapterResults.push({ callId: call.id, result: rejectAdapterCall(target.error) })
+                adapterResults.push({ callId: call.id, result: rejectAdapterCall(target.error, target.error_code) })
                 return call
               })))
-              yield* flushPendingToken(cursor)
-              const tail = sanitizer.flush()
-              sanitizerFlushed = true
-              if (tail) {
-                if (state.goalMode || state.replyState.guardPending || state.replyChoice === 'pending')
-                  await commit({ text: state.text + tail, sanitizerCheckpoint: captureSanitizer() })
-                else
-                  yield (await commit({ text: state.text + tail, sanitizerCheckpoint: captureSanitizer() }, 'token', { text: tail }))!
-              }
-              const text = ports.sanitizeText(item.text).trim()
               let gate: { choice: ReplyChoice; blocked: readonly { readonly id: string; readonly code: string }[] } = { choice: state.replyChoice, blocked: [] }
               let gateCalls: { id: string; kind: ReplyGateCall }[] = []
               if (state.replyChoice !== 'disabled') {
@@ -1306,6 +1340,11 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
               break
             }
           }
+        }
+        catch (error) {
+          if (controller.signal.aborted || error instanceof AgentRunError && error.code === 'cancelled')
+            yield* flushPendingToken(pendingTokenCursor)
+          throw error
         }
         finally {
           // 先中止本轮网络再等待回收。它与Run取消信号分离，清理异常不会冒充用户取消。
@@ -1400,7 +1439,7 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
                 before_summary_count: before.summary_count, after_summary_count: after.summary_count,
                 before_summary_chars: before.summary_chars, after_summary_chars: after.summary_chars,
               })
-            if (!adjusted.applied) {
+            if (!adjusted.applied && adjusted.reason !== 'below_threshold') {
               const failed = adjusted.reason === 'failed'
               logRun(identity, failed ? 'error' : 'info', failed ? 'agent.context.compaction_failed' : 'agent.context.compaction_skipped', state.round,
                 { reason: failed ? 'summary_failed' : adjusted.reason ?? 'not_applied' })

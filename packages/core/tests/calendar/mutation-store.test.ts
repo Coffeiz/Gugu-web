@@ -27,7 +27,7 @@ describe.each(['sqlite', 'postgres'] as const)('日历更新和删除事务 %s',
       const stored = backend === 'sqlite' ? owner.replaceAll('-', '') : owner
       await sql`INSERT INTO calendar_events(id,user_id,title,date,time,type,version,created_at) VALUES(1,${stored},'原活动','2099-11-14','10:00','event',1,'2026-11-14 00:00:00')`.execute(db)
       for (const [id, lead, cron] of [[1, 5, '@once:original-a'], [2, 10, '@once:original-b']] as const)
-        await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,reminder_lead_minutes,name,payload,cron,schedule_kind,start_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,created_at,updated_at) VALUES(${id},${stored},1,${lead},'原提醒','原内容',${cron},'once','2099-11-14 01:55:00','web',${backend === 'sqlite' ? 1 : true},NULL,'[]','[]','2026-11-14 00:00:00','2026-11-14 00:00:00')`.execute(db)
+        await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,reminder_lead_minutes,name,payload,cron,schedule_kind,start_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_paths,created_at,updated_at) VALUES(${id},${stored},1,${lead},'原提醒','原内容',${cron},'once','2099-11-14 01:55:00','web',${backend === 'sqlite' ? 1 : true},NULL,'[]','[]','2026-11-14 00:00:00','2026-11-14 00:00:00')`.execute(db)
       const publications: unknown[] = []
       const stores = createKyselyCalendarMutationStores(db, backend, async event => { publications.push(event) }, () => '2026-11-14T12:34:56.123Z')
       await expect(updateCalendarEvent(stores.update, { ownerId: other, eventId: 1, body: { version: 1, title: '越权' } })).rejects.toMatchObject({ statusCode: 404 })
@@ -97,7 +97,7 @@ describe.each(['sqlite', 'postgres'] as const)('日历更新和删除事务 %s',
       const owner = randomUUID(), stored = backend === 'sqlite' ? owner.replaceAll('-', '') : owner
       await sql`INSERT INTO calendar_events(id,user_id,title,date,time,type,version,created_at) VALUES(1,${stored},'原活动','2099-11-14','10:00','event',1,'2026-11-14 00:00:00')`.execute(db)
       for (const [id, lead, cron] of [[1, 5, '@once:old-a'], [2, 10, '@once:old-b']] as const)
-        await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,reminder_lead_minutes,name,payload,cron,schedule_kind,start_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,created_at,updated_at)
+        await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,reminder_lead_minutes,name,payload,cron,schedule_kind,start_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_paths,created_at,updated_at)
           VALUES(${id},${stored},1,${lead},'旧提醒','旧正文',${cron},'once','2099-11-14 01:55:00','web',${backend === 'sqlite' ? 1 : true},NULL,'[]','[]','2026-11-14 00:00:00','2026-11-14 00:00:00')`.execute(db)
       const publications: unknown[] = []
       const stores = createKyselyCalendarMutationStores(db, backend, async event => { publications.push(event) })

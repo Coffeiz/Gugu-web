@@ -13,8 +13,8 @@ export function createContextFragmentPlan<Scope, Value>(
 ) {
   const registry = new Map<string, ContextModule<Scope, Value>>()
   for (const module of modules) {
-    if (!module.id.trim() || registry.has(module.id) || !Number.isSafeInteger(module.version) || module.version < 1)
-      throw new TypeError('上下文模块标识或版本无效')
+    if (!module.id.trim() || registry.has(module.id))
+      throw new TypeError('上下文模块标识无效')
     if (module.region === 'system' ? module.kind !== 'instruction'
       : !['snapshot', 'turn'].includes(module.region) || module.kind !== 'data')
       throw new TypeError('上下文片段的区域与内容类型不匹配')
@@ -58,8 +58,8 @@ export function createContextFragmentPlan<Scope, Value>(
         if (cost > remaining) continue
         remaining -= cost
       }
-      const { id, version, region, kind } = module
-      const fragment = { id, version, region, kind, value }
+      const { id, region, kind } = module
+      const fragment = { id, region, kind, value }
       ordered.push(fragment)
     }
     return compileContextFragments(ordered)

@@ -1,10 +1,12 @@
+import { sceneAllowsPrompt, sceneChannelPrompt, type AgentScene } from '../scenes/index.js'
 import type { ContextData, ContextLoadPolicy, Json } from '../models.js'
 
 /** 提示词字段由可信 Host 提供，不从用户正文推导工具权限。 */
 export interface AgentStaticPromptInput {
   base: string; persona: string; skills: string; policy: string; skillIndex: string
   smartView?: string
-  afterBasePrompt?: string; locale?: string; groupChat?: boolean; imChat?: boolean
+  chatFileWorkspace?: { name: string; space: string; projectId?: number } | null
+  afterBasePrompt?: string; locale?: string; groupChat?: boolean; scene?: AgentScene
   personalityPreferenceEnabled?: boolean; personalityPreference?: string
   groupPersonalityPreferenceEnabled?: boolean; groupPersonalityPreference?: string
   customReplyStyleEnabled?: boolean; customReplyStyle?: string; timezone: string; now: Date
@@ -53,8 +55,18 @@ export function buildAgentStaticPrompt(input: AgentStaticPromptInput): string {
   const preference = input.groupChat ? (input.groupPersonalityPreferenceEnabled ? input.groupPersonalityPreference : '') : (input.personalityPreferenceEnabled ? input.personalityPreference : '')
   const persona = preference?.trim() || input.persona.trim()
   const custom = input.customReplyStyleEnabled && input.customReplyStyle?.trim() ? `## 用户自定义回复风格\n\n只调整表达方式，不改变人格设定、事实、安全规则或权限。当前用户的明确表达要求优先。\n\n${input.customReplyStyle.trim()}` : ''
-  const channel = input.imChat ? '## 当前渠道\n当前会话是即时通讯。只用文字摘要和普通列表呈现信息，不输出 gugu-ui 围栏、gugu-ui-dsl 围栏或 gugu-ui-stream 围栏。' : input.smartView?.trim()
-  const prompt = [base, input.afterBasePrompt?.trim(), channel, lang, persona, input.skills.trim(), input.policy.trim(), custom, input.skillIndex.trim()].filter(Boolean).join('\n\n---\n\n')
+  const scene = input.scene ?? 'default'
+  const skills = input.skills.replace(/<!-- scene:([a-z_]+) -->\s*([\s\S]*?)\s*<!-- \/scene -->/gu,
+    (_, block: string, body: string) => sceneAllowsPrompt(scene, block)
+      && (block !== 'skill_loading' || input.skillIndex.trim()) ? body : '').replace(/\n{3,}/gu, '\n\n').trim()
+  const channel = sceneChannelPrompt(scene, input.smartView)
+  const workspace = input.chatFileWorkspace
+  const fileScope = workspace === undefined ? '' : workspace === null
+    ? '## 当前文件工作区\n默认工作区是个人文件库。未指定目标的文件操作使用 personal。'
+    : '## 当前文件工作区\n会话已绑定工作区：' + JSON.stringify(workspace.name)
+      + '。未指定目标的文件操作优先使用此工作区，space=' + workspace.space
+      + (workspace.projectId === undefined ? '' : '，project_id=' + workspace.projectId) + '。'
+  const prompt = [base, input.afterBasePrompt?.trim(), channel, fileScope, lang, persona, skills, input.policy.trim(), custom, input.skillIndex.trim()].filter(Boolean).join('\n\n---\n\n')
   // 限制单条大小，避免用户偏好或技能内容长期占用过多内存。
   if (key.length <= 128 * 1024) {
     staticPrompts.set(key, prompt)

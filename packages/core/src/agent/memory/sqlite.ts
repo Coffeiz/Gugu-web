@@ -19,7 +19,7 @@ import { embedRagQuery } from '../rag/query-embedding.js'
 import { createNodeProviderTransport, desktopTransportOptions, type NodeProviderTransportOptions } from '../providers/transport/node.js'
 import type { ProviderTransport } from '../providers/contracts.js'
 import { getAgentRagJieba } from '../rag/node-jieba.js'
-import { applyRememberEdit, type MemoryRow } from './remember.js'
+import { forgetMemoryEdit, type MemoryRow } from './remember.js'
 
 type CallIdentity = Parameters<RememberMemoryPort['mutate']>[0]
 type MemoryInput = Parameters<RememberMemoryPort['mutate']>[1]
@@ -350,7 +350,7 @@ export async function forgetSqliteAgentMemory(db: Kysely<Database>, ownerId: str
       throw new CoreError('conflict', '记忆已变更，请重新发起删除')
     const updates = (['profile', 'pattern'] as const).map(target => {
       const before = parseRows(files[target])
-      const { rows } = applyRememberEdit(before, { target, text: '', remove: [query] }, 0, () => '')
+      const { rows } = forgetMemoryEdit(before, target, query)
       return { target, rows, removed: before.length - rows.length }
     }).filter(({ removed }) => removed > 0)
     const count = updates.reduce((sum, item) => sum + item.removed, 0)

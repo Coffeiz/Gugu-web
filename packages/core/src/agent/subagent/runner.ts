@@ -5,6 +5,7 @@ import type { DelegatedAgentLaunch, DelegatedAgentOutcome } from './contracts.js
 type RunnerOptions = Parameters<typeof createCanonicalRunner>[0]
 
 export interface DelegatedAgentPreset {
+  readonly agentId: string
   readonly toolNames: readonly string[]
   prepareContext(launch: DelegatedAgentLaunch, signal: AbortSignal): Promise<PrepareContextInput>
 }
@@ -22,6 +23,7 @@ export function delegatedTerminalOutcome(state: Pick<RunCheckpoint<unknown>, 'st
 export function createDelegatedAgentHarness(preset: DelegatedAgentPreset, launch: DelegatedAgentLaunch, options: RunnerOptions,
   onPrepared: (tools: readonly string[]) => void = () => {}) {
   const { identity } = launch
+  const observation = options.runtime.observation
   return createCanonicalRunner({
     ...options,
     context: {
@@ -68,6 +70,22 @@ export function createDelegatedAgentHarness(preset: DelegatedAgentPreset, launch
     runPreparation: undefined,
     runtime: {
       ...options.runtime,
+      observation: observation ? {
+        record(event) {
+          observation.record({
+            ...event,
+            attributes: {
+              ...event.attributes,
+              subagent_trace: {
+                agent_id: preset.agentId,
+                child_id: launch.childId,
+                parent_session_id: launch.parent.sessionId,
+                parent_run_id: launch.parent.runId,
+              },
+            },
+          })
+        },
+      } : undefined,
       acceptsAgentInbox: true,
       subagentTerminalDelivery(checkpoint) {
         const outcome = delegatedTerminalOutcome(checkpoint)

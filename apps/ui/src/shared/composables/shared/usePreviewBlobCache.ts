@@ -3,7 +3,7 @@ import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 
 const PREVIEW_CACHE_MAX = 20
 const previewCache = new Map<string, { url: string; accountEpoch: number }>()
-const previewFileMeta = new Map<number, { file: Partial<FileMeta>; filesRevision: number | null; accountEpoch: number }>()
+const previewFileMeta = new Map<string, { file: Partial<FileMeta>; filesRevision: number | null; accountEpoch: number }>()
 
 /** 仅显式刷新预览时追加缓存版本，普通打开保留原 URL。 */
 export function withPreviewCacheBust(url: string, refresh: boolean): string {
@@ -20,7 +20,7 @@ function clearPreviewBlobCache(): void {
 export function previewBlobCacheKey(file: Partial<FileMeta>): string {
   const accountEpoch = getAccountBoundaryEpoch()
   if (file.attach_id) return `account:${accountEpoch}:attach:${file.attach_id}`
-  if (file.id != null) return `account:${accountEpoch}:file:${file.id}:${file.version ?? 0}`
+  if (file.filePath) return `account:${accountEpoch}:file:${file.filePath}:${file.version ?? 0}`
   return ''
 }
 
@@ -53,23 +53,24 @@ function putCachedPreview(key: string, url: string, accountEpoch = getAccountBou
 }
 
 function rememberPreviewFile(file: Partial<FileMeta>, filesRevision?: number, accountEpoch = getAccountBoundaryEpoch()): void {
-  if (file.id == null || accountEpoch !== getAccountBoundaryEpoch()) return
-  const previousRevision = previewFileMeta.get(file.id)?.filesRevision
-  previewFileMeta.delete(file.id)
-  previewFileMeta.set(file.id, { file, filesRevision: filesRevision ?? previousRevision ?? null, accountEpoch })
+  const key = file.filePath ?? file.attach_id ?? null
+  if (key == null || accountEpoch !== getAccountBoundaryEpoch()) return
+  const previousRevision = previewFileMeta.get(key)?.filesRevision
+  previewFileMeta.delete(key)
+  previewFileMeta.set(key, { file, filesRevision: filesRevision ?? previousRevision ?? null, accountEpoch })
   while (previewFileMeta.size > PREVIEW_CACHE_MAX * 2) {
-    const oldestId = previewFileMeta.keys().next().value as number | undefined
+    const oldestId = previewFileMeta.keys().next().value
     if (oldestId == null) break
     previewFileMeta.delete(oldestId)
   }
 }
 
-function getRememberedPreviewFile(id: number, filesRevision?: number): Partial<FileMeta> | null {
-  const entry = previewFileMeta.get(id)
+function getRememberedPreviewFile(pathOrAttachId: string, filesRevision?: number): Partial<FileMeta> | null {
+  const entry = previewFileMeta.get(pathOrAttachId)
   if (!entry || entry.accountEpoch !== getAccountBoundaryEpoch()
     || (filesRevision !== undefined && entry.filesRevision !== filesRevision)) return null
-  previewFileMeta.delete(id)
-  previewFileMeta.set(id, entry)
+  previewFileMeta.delete(pathOrAttachId)
+  previewFileMeta.set(pathOrAttachId, entry)
   return entry.file
 }
 

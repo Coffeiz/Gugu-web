@@ -326,7 +326,7 @@ test('隔离PG/Redis：真实Core预检组合绑定、凭据、选择及冻结�
         const native=createPostgresImNativeInteractions({pool,secretKey,supportedPlatforms:()=>['wechat'],controls,readRoute:conversation.readRoute,sender:()=>wire.sender})
         try{
           const sender=await createImRunSender({...senderContext('wechat'),secretKey,identity,scope:wxScope,actor,payload:route.payload,pool,
-            storageRoot:root,messageIds:['1'],files:createPostgresFileReadOperations(pool,null,root),sender:()=>wire.sender,
+            storageRoot:root,messageIds:['1'],files:createPostgresFileReadOperations(pool, root),sender:()=>wire.sender,
             authorize:()=>access.authorizeDelivery(actor),controls,nativeInteraction:native.interaction,publicAppUrl:'https://app.example'})
           const store=createPostgresAgentRunStore<string[]>(pool,secretKey,{async writeHistory(){throw new Error('等待Run不得终结历史')}})
           const event=(await store.readEventsAfter(identity,0)).find(e=>e.type==='interaction_required')!

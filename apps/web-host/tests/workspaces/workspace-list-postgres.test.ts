@@ -26,7 +26,6 @@ test('PostgreSQL workspace list returns owner rows, disabled items, per-owner se
         user_id uuid NOT NULL,
         name varchar(200) NOT NULL,
         kind varchar(20) NOT NULL,
-        folder_id integer,
         project_id integer,
         directory_id integer,
         enabled boolean NOT NULL,
@@ -45,10 +44,10 @@ test('PostgreSQL workspace list returns owner rows, disabled items, per-owner se
     await pool.query('CREATE TABLE user_preferences (user_id uuid PRIMARY KEY, data_json text NOT NULL)')
     await pool.query(
       `INSERT INTO workspaces
-         (id, user_id, name, kind, folder_id, project_id, directory_id, enabled, is_default, created_at, updated_at)
-       VALUES (1, $1, '停用文件夹', 'folder', 11, NULL, NULL, false, false, $3, $3),
-              (2, $1, '默认目录', 'directory', NULL, NULL, 31, true, true, $3, $4),
-              (3, $2, '他人项目', 'project', NULL, 55, NULL, true, false, $3, $4)`,
+         (id, user_id, name, kind, project_id, directory_id, enabled, is_default, created_at, updated_at)
+       VALUES (1, $1, '停用项目', 'project', 11, NULL, false, false, $3, $3),
+              (2, $1, '默认目录', 'directory', NULL, 31, true, true, $3, $4),
+              (3, $2, '他人项目', 'project', 55, NULL, true, false, $3, $4)`,
       [ownerId, otherOwnerId, '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z'],
     )
     await pool.query(
@@ -95,11 +94,11 @@ test('PostgreSQL workspace list returns owner rows, disabled items, per-owner se
       ptyEnabled: false,
       items: [
         {
-          id: 2, name: '默认目录', kind: 'directory', folderId: null, projectId: null,
+          id: 2, name: '默认目录', kind: 'directory', projectId: null,
           directoryId: 31, enabled: true, isDefault: true, boundSessionCount: 2,
         },
         {
-          id: 1, name: '停用文件夹', kind: 'folder', folderId: 11, projectId: null,
+          id: 1, name: '停用项目', kind: 'project', projectId: 11,
           directoryId: null, enabled: false, isDefault: false, boundSessionCount: 1,
         },
       ],

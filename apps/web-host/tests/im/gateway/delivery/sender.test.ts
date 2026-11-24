@@ -16,7 +16,7 @@ const controls = { async authorizeNativeTarget(): Promise<boolean> { assert.fail
 const nativeInteraction = async () => 'unknown' as const
 const body = (value: unknown) => JSON.parse(typeof value === 'string' ? value : Buffer.from(value as Uint8Array).toString())
 function resources(c: ReturnType<typeof context>, pool: Pool, root: string, wire: ReturnType<typeof platform>, authorize = async () => true) {
-  return { ...c, pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(pool, null, root),
+  return { ...c, pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(pool, root),
     sender: () => wire.sender, authorize, controls, nativeInteraction, publicAppUrl: 'https://app.example' }
 }
 

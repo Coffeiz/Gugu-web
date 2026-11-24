@@ -232,6 +232,8 @@ export const initialize = definePostgresMigration({
   sql: agentBaseSql,
   tables: agentBaseTables,
   downstreamIndexes: agentRunPrerequisiteIndexes,
+  downstreamRemovedFields: ['users.storage_limit_bytes'],
+  downstreamRemovedBy: '0038_remove_folder_ids',
 })
 
 export const { check: checkAgentBaseMigration, apply: applyAgentBaseMigration } = initialize

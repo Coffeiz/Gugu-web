@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="apps/ui/public/Gugu-logo-colored.png" width="180" alt="Gugu Logo">
+<img src="apps/ui/public/brand/logo-colored.svg" width="180" alt="Gugu Logo">
 
 # Gugu
 

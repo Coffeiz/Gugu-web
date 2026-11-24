@@ -3,40 +3,45 @@ import { sql, type Kysely, type Transaction } from 'kysely'
 import { CoreError, dataContext, DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '../contracts/index.js'
 import type { Database } from '../data/schema.js'
 import { databaseTime, nowUtc } from '../data/codec.js'
-import { compactContext } from '../agent/context/compaction.js'
 import { createAgentCompactionPort } from '../agent/context/compaction-runtime.js'
-import { MessageArea, stableJson } from '../agent/context/history/canonical-history.js'
-import { loadSessionHistory, restoreHistoryForRequest } from '../agent/context/history/ordering.js'
-import { formatAgentHistoryMessageTime } from '../agent/context/history/time.js'
+import { stableJson } from '../agent/context/history/canonical-history.js'
 import { readAgentPrompt } from '../agent/context/prompts.js'
 import { updateBaselineSnapshot } from '../agent/context/prepare.js'
 import { createSqliteAgentSessionSource, preserveSqliteSessionGoal } from '../agent/context/sqlite-source.js'
-import { projectManualHistoryCompaction, type HistoryCompactionRow } from '../agent/run/history-compaction.js'
+import { projectManualHistoryCompaction, selectHistoryCompactionPrefix, summarizeHistoryPrefix, type HistoryCompactionRow } from '../agent/run/history-compaction.js'
 import { enqueueAgentRagRebuildInTransaction } from '../agent/rag/rebuild-worker.js'
 import { ProviderRuntime } from '../agent/providers/runtime.js'
 import type { ProviderConfig } from '../agent/providers/contracts.js'
 import { createNodeProviderTransportFactory, desktopModelTransportOptions, type NodeProviderTransportOptions } from '../agent/providers/transport/node.js'
 import { appendDesktopAgentTurn } from '../agent/sessions/desktop.js'
 import { createSqlAgentPendingQueue } from '../agent/sessions/pending-queue.js'
-import { isValidTimezone } from '../shared/date-time.js'
 
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
 
 /** 摘要请求和命令回执共用会话锁，摘要提交与聊天回执原子写入。 */
 export async function compactDesktopConversation(db: Kysely<Database>, ownerId: string, id: number, config: ProviderConfig,
-  command: { text: string; clientId: string; queueClaim?: { key: number; token: string } },
+  command: { text: string; clientId: string; queueClaim?: { key: number; token: string }; im?: { platform: string; connectionId: string; groupSenderId?: string } },
   operation: string, cancellation: AbortSignal, resolveProxy?: NodeProviderTransportOptions['resolveProxy']) {
   const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
   const identity = { ownerId, sessionId: String(id), runId: operation }
-  const target = sql`user_id=${owner} AND id=${id} AND (source IS NULL OR source='web')`
+  const im = command.im
+  const imChat = im?.groupSenderId
+    ? sql`conversation_sessions.chat_type='group' AND conversation_sessions.platform_user_id=${im.groupSenderId}`
+    : sql`COALESCE(conversation_sessions.chat_type,'c2c')='c2c'`
+  const scope = im
+    ? sql`${imChat} AND EXISTS (
+      SELECT 1 FROM desktop_im_sessions im WHERE im.owner_id=${owner} AND im.session_id=${id}
+        AND im.platform=${im.platform} AND im.connection_id=${im.connectionId})`
+    : sql`(conversation_sessions.source IS NULL OR conversation_sessions.source='web')`
+  const target = sql`user_id=${owner} AND id=${id} AND ${scope}`
   const claim = sql`${target} AND active_run_id=${operation} AND execution_state='baseline_updating'`
   const previous = await sql<{ id: number; command: string; text: string | null }>`
     SELECT m.id, m.content AS command, reply.content AS text
-    FROM conversation_sessions s JOIN conversation_messages m ON m.session_id=s.id
-    LEFT JOIN conversation_messages reply ON reply.session_id=s.id AND reply.conversation_seq=m.conversation_seq+1 AND reply.role='assistant'
-    WHERE s.user_id=${owner} AND s.id=${id} AND (s.source IS NULL OR s.source='web')
+    FROM conversation_sessions JOIN conversation_messages m ON m.session_id=conversation_sessions.id
+    LEFT JOIN conversation_messages reply ON reply.session_id=conversation_sessions.id AND reply.conversation_seq=m.conversation_seq+1 AND reply.role='assistant'
+    WHERE conversation_sessions.user_id=${owner} AND conversation_sessions.id=${id} AND ${scope}
       AND m.client_message_id=${command.clientId} AND m.run_id IS NULL
-      AND NOT EXISTS (SELECT 1 FROM agent_run_admissions a WHERE a.session_id=s.id AND a.user_message_id=m.id)`.execute(db)
+      AND NOT EXISTS (SELECT 1 FROM agent_run_admissions a WHERE a.session_id=conversation_sessions.id AND a.user_message_id=m.id)`.execute(db)
   if (previous.rows[0]) {
     if (previous.rows[0].command !== command.text || previous.rows[0].text === null)
       throw new CoreError('conflict', '消息标识已被使用')
@@ -47,7 +52,7 @@ export async function compactDesktopConversation(db: Kysely<Database>, ownerId: 
     if (!held.rows.length) throw new CoreError('conflict', '会话历史已变化')
     if (command.queueClaim)
       await createSqlAgentPendingQueue(db, 'sqlite', {}).consumeClaim(tx, ownerId, id, command.queueClaim.key, command.queueClaim.token)
-    const saved = await appendDesktopAgentTurn(tx, ownerId, id, command.text, text, command.clientId)
+    const saved = await appendDesktopAgentTurn(tx, ownerId, id, command.text, text, command.clientId, Boolean(command.im))
     return { text, userMessageId: saved.userMessageId! }
   }
   const held = await sql`UPDATE conversation_sessions SET active_run_id=${operation},execution_state='baseline_updating'
@@ -65,19 +70,19 @@ export async function compactDesktopConversation(db: Kysely<Database>, ownerId: 
     const baselineSeq = snapshot.baselineMessageSeq ?? 0
     async function rows(connection: Kysely<Database>) {
       const result = await sql<HistoryCompactionRow>`SELECT CAST(id AS TEXT) AS id,role,content,content_json,
-        coalesce(history_anchor_seq,conversation_seq) AS effective FROM conversation_messages
-        WHERE session_id=${id} AND role<>'summary' AND coalesce(history_anchor_seq,conversation_seq)>${baselineSeq}
+        coalesce(history_anchor_seq,conversation_seq) AS effective,run_id AS runId,round_id AS roundId,
+        CAST(canonical_batch_id AS TEXT) AS canonicalBatchId,covers_until_seq AS coversUntilSeq FROM conversation_messages
+        WHERE session_id=${id} AND (role='summary' OR coalesce(history_anchor_seq,conversation_seq)>${baselineSeq})
+          AND EXISTS (SELECT 1 FROM conversation_sessions WHERE ${claim})
+          AND (run_id IS NULL OR run_id NOT LIKE 'im-pending:%')
+          AND NOT (role='assistant' AND canonical_batch_id IS NULL AND display_timeline IS NOT NULL
+            AND trim(coalesce(content,''))='' AND content_json IS NULL AND (files IS NULL OR files='[]') AND coalesce(quoted_text,'')='')
         ORDER BY effective,(history_anchor_seq IS NULL),conversation_seq`.execute(connection)
       return result.rows.map(row => ({ ...row, content_json: typeof row.content_json === 'string' ? JSON.parse(row.content_json) : row.content_json }))
     }
     const before = await rows(db)
-    const history = await loadSessionHistory(identity, source.historyReader, signal, { loadImages: false })
-    const zone = snapshot.context?.user_tz
-    const userTimezone = typeof zone === 'string' && isValidTimezone(zone) ? zone : Intl.DateTimeFormat().resolvedOptions().timeZone
-    const area = new MessageArea({ digest, nextId: randomUUID }, history.rows.flatMap(row => {
-      const value = restoreHistoryForRequest(row, { groupChat: false, userTimezone, formatMessageTime: formatAgentHistoryMessageTime })
-      return value ? [value] : []
-    }))
+    const plan = selectHistoryCompactionPrefix(before, baselineSeq)
+    const historyBaseline = await source.historyReader.read(identity, signal)
     provider = new ProviderRuntime({ digest, nextId: randomUUID,
       resolve: async () => ({ modelIdentity, accessScopeHash, config, systemPrompt }),
       references: { dehydrate: async entry => entry.message, hydrate: async entry => entry.message },
@@ -89,16 +94,16 @@ export async function compactDesktopConversation(db: Kysely<Database>, ownerId: 
       maxOutputTokens: config.max_tokens ?? DEFAULT_LLM_OUTPUT_TOKENS, instruction: readAgentPrompt('compress_conv.md'),
       digest, nextId: randomUUID, async loadTools() { return [] }, diagnostic() {},
     })
-    const result = await compactContext(area, port, { modelIdentity, signal })
-    const text = result.changed ? '上下文已经整理好了，旧对话已压缩为摘要。' : '当前历史还不够长，暂时无需整理上下文。'
+    const candidate = plan ? await summarizeHistoryPrefix(plan, port, signal) : ''
+    const text = candidate ? '上下文已经整理好了，旧对话已压缩为摘要。' : '当前历史还不够长，暂时无需整理上下文。'
     return await db.transaction().execute(async tx => {
       signal.throwIfAborted()
       const { rows: [session] } = await sql<{ last_message_seq: number }>`SELECT last_message_seq FROM conversation_sessions
         WHERE ${claim} AND baseline_message_seq=${baselineSeq} AND context_epoch=${snapshot.contextEpoch}
-          AND snapshot_hash IS ${snapshot.snapshotHash} AND baseline_message_hash IS ${history.baselineIdentity?.baselineHash ?? null}`.execute(tx)
+          AND snapshot_hash IS ${snapshot.snapshotHash} AND baseline_message_hash IS ${historyBaseline.baselineIdentity?.baselineHash ?? null}`.execute(tx)
       if (!session || !Number.isSafeInteger(session.last_message_seq + 1)) throw new CoreError('conflict', '会话历史已变化')
-      if (!result.changed) return record(tx, text)
-      const { summary, baseline, hash } = projectManualHistoryCompaction(result, before, await rows(tx), baselineSeq)!
+      if (!candidate) return record(tx, text)
+      const { summary, baseline, hash } = projectManualHistoryCompaction(candidate, before, await rows(tx), baselineSeq)
       const next = snapshot.context?.system_prompt ? updateBaselineSnapshot(snapshot, [{ role: 'summary', content: summary }],
         { digest, nextId: randomUUID, now: Date.now }, { baselineMessageSeq: baseline }) : null
       const context = next ? await preserveSqliteSessionGoal(tx, owner, id, next.context) : snapshot.context

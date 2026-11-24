@@ -76,12 +76,22 @@ const { t } = useI18n()
 .app-toast--success .app-toast__close:hover { background: rgba(57, 113, 81, 0.1); }
 
 .app-toast--info {
-  border-color: rgba(104, 109, 153, 0.28);
-  background: rgba(248, 249, 255, 0.96);
-  box-shadow: 0 8px 24px rgba(63, 68, 105, 0.12);
-  color: #5f6595;
+  border-color: rgba(0, 0, 0, 0.18);
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  color: #1a1a1a;
 }
-.app-toast--info .app-toast__close:hover { background: rgba(95, 101, 149, 0.1); }
+.app-toast--info .app-toast__close:hover { background: rgba(0, 0, 0, 0.08); }
+
+:global(html[data-theme='dark'] .app-toast--info) {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: #1a1a1a;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+  color: #fff;
+}
+:global(html[data-theme='dark'] .app-toast--info .app-toast__close:hover) {
+  background: rgba(255, 255, 255, 0.12);
+}
 
 .app-toast-enter-active,
 .app-toast-leave-active { transition: opacity 0.2s, transform 0.2s; }

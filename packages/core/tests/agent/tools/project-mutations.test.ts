@@ -147,7 +147,7 @@ function updaterFixture(overrides: Partial<ProjectRecord> = {}, hooks: { beforeW
         hooks.afterUpdate?.()
         return structuredClone(draft)
       },
-      updateFileStoragePrefixes: async () => {}, recordUndo: undo,
+      recordUndo: undo,
     }
     const result = await work(tx)
     current = draft

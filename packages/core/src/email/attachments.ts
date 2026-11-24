@@ -13,17 +13,8 @@ export interface EmailAttachment {
 }
 
 export interface EmailAttachmentReferences {
-  fileIds: readonly number[]
+  filePaths: readonly string[]
   generated: readonly unknown[]
-}
-
-type Metadata = {
-  id: number
-  storageKey: string
-  name: string
-  ext: string
-  mimeType: string | null
-  size: number
 }
 
 type Source = {
@@ -33,19 +24,9 @@ type Source = {
 }
 
 export interface EmailAttachmentSources {
-  files(ownerId: string, ids: readonly number[]): Promise<readonly Metadata[]>
-  openFile(ownerId: string, file: Metadata): Promise<Source | null>
+  openPath(ownerId: string, path: string): Promise<(Source & { filename: string; mimeType: string }) | null>
   openGenerated(ownerId: string, id: string): Promise<(Source & { filename: string; mimeType: string }) | null>
   guessMimeType(filename: string): string | false
-}
-
-function normalizeIds(ids: readonly unknown[]): number[] {
-  if (ids.length > maxCount) throw new EmailAttachmentError('附件最多 5 个')
-  return [...new Set(ids.map(id => {
-    if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0)
-      throw new EmailAttachmentError('file_ids 只能包含正整数 file_id')
-    return id
-  }))]
 }
 
 function filename(name: string, ext: string, fallback: string): string {
@@ -60,25 +41,23 @@ function checkSize(size: number, total: number): void {
   if (total + size > maxTotal) throw new EmailAttachmentError('附件总大小不能超过 25MB')
 }
 
-/** 仅从当前 owner 的文件记录和本轮产物引用取附件，并同时校验申报大小和实际字节。 */
+/** 仅从当前 owner 的逻辑路径和本轮产物引用取附件，并同时校验申报大小和实际字节。 */
 export function createEmailAttachmentResolver(sources: EmailAttachmentSources) {
   return async (rawOwnerId: string, references: EmailAttachmentReferences): Promise<EmailAttachment[]> => {
     const ownerId = dataContext(rawOwnerId).ownerId
     const generated = references.generated.filter((value): value is Record<string, unknown> =>
       value != null && typeof value === 'object' && !Array.isArray(value))
-    const savedIds = normalizeIds(references.fileIds)
-    const generatedFileIds = normalizeIds(generated.flatMap(item => item.file_id == null ? [] : [item.file_id]))
-    const fileIds = [...new Set([...savedIds, ...generatedFileIds])]
-    const attachIds = [...new Set(generated.flatMap(item => typeof item.attach_id === 'string' && item.file_id == null
+    const paths = [...new Set([...references.filePaths, ...generated.flatMap(item => typeof item.file_path === 'string' && item.file_path.trim()
+      ? [item.file_path] : [])])]
+    if (references.filePaths.length > maxCount || references.filePaths.some(path => typeof path !== 'string' || !path.startsWith('/')))
+      throw new EmailAttachmentError('邮件附件路径无效')
+    const attachIds = [...new Set(generated.flatMap(item => typeof item.attach_id === 'string' && item.file_path == null
       && item.attach_id.trim() ? [item.attach_id.trim()] : []))]
-    if (fileIds.length + attachIds.length > maxCount) throw new EmailAttachmentError('附件最多 5 个')
+    if (paths.length + attachIds.length > maxCount) throw new EmailAttachmentError('附件最多 5 个')
     if (generated.length !== references.generated.length || generated.some(item =>
-      item.file_id == null && (typeof item.attach_id !== 'string' || !item.attach_id.trim())))
+      [typeof item.file_path === 'string' && Boolean(item.file_path.trim()),
+        typeof item.attach_id === 'string' && Boolean(item.attach_id.trim())].filter(Boolean).length !== 1))
       throw new EmailAttachmentError('本轮生成的附件已过期，无法添加到邮件')
-
-    const files = new Map((fileIds.length ? await sources.files(ownerId, fileIds) : []).map(file => [file.id, file]))
-    if (fileIds.some(id => !files.has(id)))
-      throw new EmailAttachmentError('附件不存在、已删除或不属于当前用户')
 
     let total = 0
     const result: EmailAttachment[] = []
@@ -96,13 +75,11 @@ export function createEmailAttachmentResolver(sources: EmailAttachmentSources) {
       result.push({ filename: name, content, mimeType })
     }
 
-    for (const id of fileIds) {
-      const file = files.get(id)!
-      checkSize(file.size, total)
-      const readError = '附件内容读取失败，文件可能已丢失'
-      const source = await sources.openFile(ownerId, file).catch(() => null)
-      if (!source) throw new EmailAttachmentError(readError)
-      await add(source, filename(file.name, file.ext, `attachment-${id}`), file.mimeType, readError)
+    for (const path of paths) {
+      const error = '路径附件不存在或不可读取'
+      const source = await sources.openPath(ownerId, path)
+      if (!source) throw new EmailAttachmentError(error)
+      await add(source, filename(source.filename, '', 'attachment'), source.mimeType, error)
     }
     for (const id of attachIds) {
       const source = await sources.openGenerated(ownerId, id)

@@ -7,7 +7,6 @@ import {
   createRedisAgentRunRecoveryState,
   createRedisEventPublisher,
   createRedisRateLimitCommands,
-  createRedisTrashPurgeNotifier,
 } from '../../src/adapters/cache/redis-events.js'
 
 function decodeCommand(buffer: Buffer): string[] | null {
@@ -184,25 +183,6 @@ test('resource event increments shared revision and publishes the committed resp
   })
 })
 
-test('trash purge progress uses the user live channel and the Python task.progress protocol', async () => {
-  const redis = await fakeRedis(() => undefined)
-  try {
-    const publisher = createRedisEventPublisher(redis.url, () => new Date('2026-11-18T00:00:00.000Z'), () => 'evt-purge')
-    assert.equal(await publisher.publishTrashPurgeProgress({
-      ownerId: '9e51a4bf-07e1-4db8-9050-54a8c7356e8d', jobId: 23,
-      status: 'running', progressCurrent: 4, progressTotal: 9, failedCount: 0,
-    }), true)
-  } finally {
-    await redis.close()
-  }
-  assert.deepEqual(redis.commands.map(command => command[0]), ['AUTH', 'SELECT', 'PUBLISH'])
-  assert.equal(redis.commands[2]?.[1], 'events:9e51a4bf-07e1-4db8-9050-54a8c7356e8d')
-  assert.deepEqual(JSON.parse(redis.commands[2]?.[2] ?? ''), {
-    protocol_version: 'live-event-v1', event_id: 'evt-purge', type: 'task.progress', task_type: 'trash_purge',
-    task_id: 23, status: 'running', progress_current: 4, progress_total: 9, failed_count: 0,
-    created_at: '2026-11-18T00:00:00.000Z',
-  })
-})
 
 test('rate-limit Redis adapter increments a counter and applies its TTL', async () => {
   const redis = await fakeRedis(() => undefined)
@@ -241,16 +221,6 @@ test('Agent cancellation Redis commands persist a run marker with TTL before pub
   ])
 })
 
-test('回收站 Worker 唤醒使用 Python 共享频道，通知不携带用户或资源数据', async () => {
-  const redis = await fakeRedis(() => undefined)
-  try {
-    await createRedisTrashPurgeNotifier(redis.url)()
-  } finally {
-    await redis.close()
-  }
-  assert.deepEqual(redis.commands.map((command) => command[0]), ['AUTH', 'SELECT', 'PUBLISH'])
-  assert.deepEqual(redis.commands[2], ['PUBLISH', 'jobs:trash-purge:wakeup', '1'])
-})
 
 test('Agent 会话运行态读取复用 genstream 状态键并按 done 区分活动快照', async () => {
   const redis = await fakeRedis(() => undefined, {

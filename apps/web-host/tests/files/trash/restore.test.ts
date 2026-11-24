@@ -14,14 +14,14 @@ test('文件恢复路由传递 Host owner 与变化来源并保持 204 响应', 
     operations: { async restore(...args) { calls.push(args) } },
   })
   try {
-    const response = await app.inject({ method: 'POST', url: '/api/v1/trash/7/restore', headers: { 'x-client-id': 'synthetic-client' } })
+    const response = await app.inject({ method: 'POST', url: '/api/v1/trash/by-path/restore?path=11111111-1111-4111-8111-111111111111%2Ftrash%2Fnote.txt', headers: { 'x-client-id': 'synthetic-client' } })
     assert.equal(response.statusCode, 204)
     assert.equal(response.body, '')
-    assert.deepEqual(calls, [['11111111-1111-4111-8111-111111111111', 7, 'synthetic-client']])
+    assert.deepEqual(calls, [['11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111111/trash/note.txt', 'synthetic-client']])
   } finally { await app.close() }
 })
 
-test('文件恢复路由拒绝无效 ID 且不触发存储操作', async () => {
+test('文件恢复路由拒绝无效路径且不触发存储操作', async () => {
   const app = Fastify()
   installHttpErrorHandler(app)
   let calls = 0
@@ -31,7 +31,7 @@ test('文件恢复路由拒绝无效 ID 且不触发存储操作', async () => {
     operations: { async restore() { calls++ } },
   })
   try {
-    const response = await app.inject({ method: 'POST', url: '/api/v1/trash/0/restore' })
+    const response = await app.inject({ method: 'POST', url: '/api/v1/trash/by-path/restore?path=../private.txt' })
     assert.equal(response.statusCode, 422)
     assert.equal(calls, 0)
   } finally { await app.close() }

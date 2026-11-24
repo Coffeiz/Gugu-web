@@ -2,7 +2,6 @@ export type ContextRegion = 'system' | 'snapshot' | 'turn'
 
 export interface ContextModule<Scope, Value> {
   readonly id: string
-  readonly version: number
   readonly region: ContextRegion
   readonly kind: 'instruction' | 'data'
   load(scope: Scope, signal: AbortSignal): Value | undefined | Promise<Value | undefined>
@@ -12,7 +11,6 @@ export interface ContextModule<Scope, Value> {
 
 export interface ContextFragment<Value> {
   readonly id: string
-  readonly version: number
   readonly region: ContextRegion
   readonly kind: 'instruction' | 'data'
   readonly value: Value

@@ -86,7 +86,7 @@ export async function startDesktopPreviewAgent(socket: string, secret: string, h
       const handler = channel && handlers[channel]
       if (!handler || !Array.isArray(call.args)) throw new DesktopError('invalid_request', '预览请求无效')
       const command = call.args[0]
-      if (channel === DESKTOP_CHANNELS.files && (!files || ['open', 'reveal', 'download', 'trash', 'workspace-add', 'workspace-relink'].includes(command?.action)))
+      if (channel === DESKTOP_CHANNELS.files && (!files || ['open', 'reveal', 'download', 'trash', 'move-dropped', 'workspace-add', 'workspace-relink'].includes(command?.action)))
         throw new DesktopError('unsupported', '请在桌面应用中执行此文件操作')
       if (streaming && command?.action === 'watchRuns' && subscribeRunChanges) {
         await streamPreviewRunChanges(res, subscribeRunChanges)

@@ -7,17 +7,18 @@ import { accountBoundaryEpoch } from '@/utils/accountBoundary'
 import { parseUtc } from '@/utils/dateAttribution'
 import { sanitizeChatHtml } from '@/utils/markdown'
 import { mindPreviewText } from '@/utils/mindReferences'
-import { objectCardLoading } from './chatObjectCards'
+import { objectCardFact, objectCardLoading } from './chatObjectCards'
 
 function noteCards(root: HTMLElement) {
   return [...root.querySelectorAll<HTMLAnchorElement>('a.chat-object-card')].flatMap(card => {
     const href = card.getAttribute('href') ?? ''
     const note = /^gugu:\/\/open-object\/note\/([1-9]\d*)$/i.exec(href)
     const canvas = /^gugu:\/\/focus-canvas\/([1-9]\d*)\/([1-9]\d*)$/i.exec(href)
-    const id = Number(note?.[1] ?? canvas?.[2])
+    const wholeCanvas = /^gugu:\/\/open-object\/canvas\/([1-9]\d*)$/i.exec(href)
+    const id = Number(note?.[1] ?? canvas?.[2] ?? wholeCanvas?.[1])
     const canvasId = canvas ? Number(canvas[1]) : undefined
     return Number.isSafeInteger(id) && (canvasId === undefined || Number.isSafeInteger(canvasId))
-      ? [{ card, href, id, canvasId }] : []
+      ? [{ card, href, id, canvasId, wholeCanvas: Boolean(wholeCanvas) }] : []
   })
 }
 
@@ -25,7 +26,7 @@ export function useChatNoteCards(html: () => string, enabled: () => boolean) {
   const access = inject(mindAccessKey, null)
   const { t, locale } = useI18n()
   // 键不存在时表示读取中，空值表示无法访问。
-  const notes = shallowRef(new Map<string, { title: string; excerpt: string; recordedAt?: string; canvasTitle?: string } | null>())
+  const notes = shallowRef(new Map<string, { title: string; excerpt: string; recordedAt?: string; canvasTitle?: string; canvasSummary?: { nodes: number; relations: number } } | null>())
   const dateFormat = computed(() => new Intl.DateTimeFormat(locale.value, {
     year: 'numeric', month: 'short', day: 'numeric',
   }))
@@ -45,19 +46,32 @@ export function useChatNoteCards(html: () => string, enabled: () => boolean) {
     const targets = new Map(noteCards(root.value).map(item => [item.href, item]))
     let canvases: Promise<MindCanvas[]> | undefined
     const canvasItems = new Map<number, Promise<MindCanvasItem[]>>()
-    for (const [href, { id, canvasId }] of targets) {
+    const readItems = (id: number) => {
+      let items = canvasItems.get(id)
+      if (!items) {
+        items = access.listCanvasItems(id)
+        canvasItems.set(id, items)
+      }
+      return items
+    }
+    for (const [href, { id, canvasId, wholeCanvas }] of targets) {
       void (async () => {
+        if (wholeCanvas) {
+          canvases ??= access.listCanvases().catch(() => [])
+          const canvas = (await canvases).find(canvas => canvas.id === id)
+          if (!canvas || !current) return null
+          const [items, relations] = await Promise.all([readItems(id), access.listCanvasRelations(id)])
+          return {
+            title: canvas.title, excerpt: '', recordedAt: canvas.updatedAt,
+            canvasSummary: { nodes: items.length, relations: relations.length },
+          }
+        }
         let note
         let canvasTitle
         if (canvasId === undefined) {
           note = await access.getNote(id)
         } else {
-          let items = canvasItems.get(canvasId)
-          if (!items) {
-            items = access.listCanvasItems(canvasId)
-            canvasItems.set(canvasId, items)
-          }
-          note = (await items).find(item => item.canvasId === canvasId && item.nodeId === id)?.node
+          note = (await readItems(canvasId)).find(item => item.canvasId === canvasId && item.nodeId === id)?.node
           if (note) {
             canvases ??= access.listCanvases().catch(() => [])
             canvasTitle = (await canvases).find(canvas => canvas.id === canvasId)?.title
@@ -90,7 +104,7 @@ export function useChatNoteCards(html: () => string, enabled: () => boolean) {
       if (note === undefined) card.append(objectCardLoading(t('viewerUi.loading')))
       if (!note) continue
       card.dataset.chatCardLoaded = ''
-      const title = note.title || t(note.excerpt ? 'mindUi.untitled' : 'mindUi.emptyNote')
+      const title = note.title || t(note.canvasSummary || note.excerpt ? 'mindUi.untitled' : 'mindUi.emptyNote')
       const heading = card.querySelector('.chat-object-card-title')
       if (heading) heading.textContent = title
       card.setAttribute('aria-label', title)
@@ -101,6 +115,16 @@ export function useChatNoteCards(html: () => string, enabled: () => boolean) {
         recordedAt.dateTime = date.toISOString()
         recordedAt.textContent = dateFormat.value.format(date)
         card.querySelector('.chat-object-card-heading')?.append(recordedAt)
+      }
+      if (note.canvasSummary) {
+        const details = document.createElement('span')
+        details.className = 'chat-object-card-details'
+        const numberFormat = new Intl.NumberFormat(locale.value)
+        details.append(
+          objectCardFact(t('chatUi.canvasCardNodes'), numberFormat.format(note.canvasSummary.nodes)),
+          objectCardFact(t('chatUi.canvasCardRelations'), numberFormat.format(note.canvasSummary.relations)),
+        )
+        card.append(details)
       }
       card.querySelector('.chat-object-card-description')?.remove()
       if (note.excerpt) {

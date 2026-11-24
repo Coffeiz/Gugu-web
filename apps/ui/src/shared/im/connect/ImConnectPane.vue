@@ -11,9 +11,7 @@
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.showIntermediateReplies') }}</span><span class="pm-field-hint">{{ t('profileImUi.showIntermediateRepliesHint') }}</span></div>
       <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="intermediateReplies" :aria-label="t('profileImUi.toggleIntermediateReplies')" @update:model-value="setIntermediateReplies" /><span class="pm-switch-label" :class="{ on: intermediateReplies }">{{ intermediateReplies ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
     </div>
-  </div>
-  <div v-if="desktop && desktopImAdapter" class="pm-section">
-    <div class="pm-bot-group-row pm-interaction-preference-row">
+    <div v-if="desktop && desktopImAdapter" class="pm-bot-group-row pm-interaction-preference-row">
       <div class="pm-field-desc">
         <span class="pm-field-name">{{ t('profileImUi.keepGatewayOnline') }}</span>
         <span class="pm-field-hint">{{ t('profileImUi.keepGatewayOnlineHint') }}</span>

@@ -10,13 +10,14 @@ import { createImRunScope } from './scope.js'
 const schema = z.object({ attach_id: z.string().min(1).max(128) }).strict()
 const unavailable = () => ({ kind: 'completed', successful: false, mutated: false, value: { error: '此附件不在当前私聊的可保存范围内或已失效' } } as const)
 
-export function createImSaveAttachmentTool(options: Parameters<typeof createImRunScope>[0] & { storageRoot: string }): ToolDefinition {
+export function createImSaveAttachmentTool(options: Parameters<typeof createImRunScope>[0] & { storageRoot: string; ownerAttachment?: ToolDefinition }): ToolDefinition {
   const proof = createImRunScope(options)
   const scopeHash = imConversationScopeHash(options.secretKey, proof.binding, proof.payload)
   const attachmentScope = imAttachmentScopeKey(proof.scope)
   return {
     definition: { name: 'save_attachment', schema: { type: 'function', function: {
-      name: 'save_attachment', description: '按 attach_id 把当前 IM 私聊里仍有效的附件保存到个人文件的下载目录，支持当前消息和同一私聊的历史消息。',
+      name: 'save_attachment', description: '按 attach_id 把当前 IM 私聊里仍有效的附件保存到个人文件的下载目录，支持当前消息和同一私聊的历史消息。'
+        + (options.ownerAttachment ? ' 已验证 owner 可凭精确 ID 保存其他会话的附件。' : ''),
       parameters: { type: 'object', additionalProperties: false, required: ['attach_id'], properties: {
         attach_id: { type: 'string', minLength: 1, maxLength: 128 },
       } },
@@ -48,6 +49,8 @@ export function createImSaveAttachmentTool(options: Parameters<typeof createImRu
           attachmentScope, scopeHash, proof.scope.botId, watermark],
       )
       signal.throwIfAborted()
+      if (!row && options.ownerAttachment && options.actor.verifiedOwner)
+        return options.ownerAttachment.execute({ attach_id: (input as z.infer<typeof schema>).attach_id }, scope, call)
       if (!row || !isOwnedFileStorageKey(identity.ownerId, row.storage_key)) return unavailable()
       const source = await openAnchoredLocalFile(options.storageRoot, row.storage_key)
       if (!source) return unavailable()

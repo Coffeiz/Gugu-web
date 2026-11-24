@@ -200,7 +200,7 @@ it('模型列表支持旧版迁移、并发新增、密钥隔离、默认切换�
         const createReminder = lastUser.includes('合成提醒创建')
         const updateReminder = lastUser.includes('合成提醒更新')
         const deleteReminder = lastUser.includes('合成提醒删除')
-        const name = deleteReminder ? 'delete_scheduled_task' : updateReminder ? 'update_scheduled_task' : createReminder ? 'create_scheduled_task' : createSkill ? 'create_skill' : project ? 'create_project' : calendar ? 'create_event' : canvas ? (canvasId ? 'canvas_create_note' : 'canvas_create') : note ? 'note_create' : forwarded ? 'call_tool' : skill ? 'use_skill' : presentFile ? 'present_file' : recentAttachments ? 'list_recent_attachments' : schedules ? 'list_scheduled_tasks' : placeable ? 'canvas_search_placeable' : clients ? 'list_clients' : read ? 'read_conversation' : 'search_conversations'
+        const name = deleteReminder ? 'delete_scheduled_task' : updateReminder ? 'update_scheduled_task' : createReminder ? 'create_scheduled_task' : createSkill ? 'create_skill' : project ? 'create_project' : calendar ? 'create_event' : canvas ? (canvasId ? 'canvas_create_note' : 'canvas_create') : note ? 'note_create' : forwarded ? 'call_tool' : skill ? 'use_skill' : presentFile ? 'open_item' : recentAttachments ? 'list_recent_attachments' : schedules ? 'list_scheduled_tasks' : placeable ? 'canvas_search_placeable' : clients ? 'list_clients' : read ? 'read_conversation' : 'search_conversations'
         const result = currentTurn.findLast((message: { role: string; tool_call_id?: string }) =>
           message.role === 'tool' && message.tool_call_id === `synthetic-${name}`)
         if (result) conversationResults.push(result.content)
@@ -220,7 +220,7 @@ it('模型列表支持旧版迁移、并发新增、密钥隔离、默认切换�
                 project_name: '合成 Agent 项目', start_date: '2099-09-10', deadline: '2099-09-13',
               } : calendar
                 ? { title: '合成 Agent 日历活动', date: '2099-09-10', all_day: true, reminders: [{ lead_minutes: 10 }] }
-                : presentFile ? { file: '/personal/合成预览.png' } : canvas ? (canvasId
+                : presentFile ? { kind: 'file', item: '/personal/合成预览.png' } : canvas ? (canvasId
                 ? { canvas_id: canvasId, content: '合成画布便签正文' }
                 : { title: '合成 Agent 画布' }) : note ? { markdown: '# 合成 Agent 笔记\n\n合成笔记正文' } : forwarded ? { tool_name: denied ? 'synthetic_unavailable_tool' : 'get_current_time', arguments: {} } : skill ? { id: builtin ? 'S2' : skillId } : placeable ? { query: '合成上下文项目', types: ['project'] } : clients || schedules || recentAttachments ? {} : read ? { session_id: conversationId } : { query: '待摘要历史问题' }) } }] }, finish_reason: 'tool_calls' }] }
         response.end(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`)

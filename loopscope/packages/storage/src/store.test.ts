@@ -100,3 +100,24 @@ test('TraceStore 保留用户已有的会话标题并按 before 分页', () => {
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test('同一桌面会话的反思与对话分开查询，子代理保留父 Run 关系', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loopscope-reflections-'))
+  const store = new TraceStore(path.join(directory, 'trace.db'))
+  const base = { source: 'desktop', status: 'success', spans: [] }
+  try {
+    store.ingestRun({ ...base, id: 'main', session_key: 'desktop:1', started_at: 1 })
+    store.ingestRun({ ...base, id: 'child', session_key: 'desktop:2', started_at: 2,
+      attributes: { subagent_trace: { parent_session_id: '1', parent_run_id: 'main', child_id: 'aabbccdd', agent_id: 'builtin:searcher' } } })
+    store.ingestRun({ ...base, id: 'reflection', session_key: 'desktop:2', started_at: 3,
+      attributes: { scenario: 'reflection' } })
+    store.ingestRun({ ...base, id: 'legacy', session_key: 'reflection:3', started_at: 4, source: 'reflection' })
+    assert.deepEqual(store.listSessions().map(row => [row.session_key, row.run_count, row.parent_session_id, row.agent_id, row.child_id]),
+      [['desktop:2', 1, '1', 'builtin:searcher', 'aabbccdd'], ['desktop:1', 1, undefined, undefined, undefined]])
+    assert.deepEqual(store.listRuns('desktop:2').map(run => run.id), ['child'])
+    assert.deepEqual(store.listReflectionRuns().map(run => run.id), ['legacy', 'reflection'])
+  } finally {
+    store.close()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})

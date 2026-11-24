@@ -80,13 +80,10 @@
     </div>
     <div v-if="submitting" class="interaction-resolved">{{ t(isMultiple ? 'chatUi.multiSubmitting' : 'chatUi.confirmationSubmitting') }}</div>
     <div v-else-if="expired" class="interaction-resolved">{{ t('chatUi.expired') }}</div>
-    <div v-else-if="resolved && isPausedConfirmation && msg.interaction?.selectedOptionId === 'confirm'" class="interaction-resolved">
-      {{ t('chatUi.confirmationConfirmed') }}
-    </div>
     <div v-else-if="resolved && isPausedConfirmation && msg.interaction?.selectedOptionId === 'cancel'" class="interaction-resolved">
       {{ t('chatUi.confirmationCancelled') }}
     </div>
-    <div v-else-if="resolved && !msg.interaction?.submissionRejected" class="interaction-resolved">{{ t('chatUi.submitted') }}</div>
+    <div v-else-if="resolved && !msg.interaction?.submissionRejected && !(isPausedConfirmation && msg.interaction?.selectedOptionId === 'confirm')" class="interaction-resolved">{{ t('chatUi.submitted') }}</div>
   </div>
 </template>
 
@@ -204,29 +201,21 @@ const emit = defineEmits<{
 }>()
 function submitSecrets() {
   if (!secretsReady.value || resolved.value || submitting.value || expired.value) return
-  submitting.value = true
-  if (props.msg.interaction) props.msg.interaction.submitting = true
   emit('secretSubmit', props.msg, Object.fromEntries(
     secretFields.value.map(field => [field.name, secretValues.value[field.name] || '']),
   ))
 }
 function cancelSecrets() {
   if (resolved.value || submitting.value || expired.value) return
-  submitting.value = true
-  if (props.msg.interaction) props.msg.interaction.submitting = true
   emit('secretCancel', props.msg)
 }
 function selectOption(option: { id: string; label: string; token: string; selectedOptionIds?: string[]; customAnswer?: string }) {
   if (resolved.value || submitting.value || expired.value) return
-  submitting.value = true
-  if (props.msg.interaction) props.msg.interaction.submitting = true
   emit('select', props.msg, option)
 }
 function submitText() {
   const text = answerText.value.trim()
   if (!text || resolved.value || submitting.value || expired.value) return
-  submitting.value = true
-  if (props.msg.interaction) props.msg.interaction.submitting = true
   emit('textSubmit', props.msg, text)
 }
 function submitAnswer() {
@@ -332,10 +321,7 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 .interaction-bubble.is-choice {
   padding: 15px;
   border-color: var(--action-outline);
-  background: linear-gradient(155deg, var(--action-soft), transparent 68%), var(--surface-card-solid);
-}
-:global(html[data-theme='light'] .interaction-bubble.is-choice) {
-  background-image: linear-gradient(335deg, var(--action-soft), transparent 68%);
+  background: var(--surface-card-solid);
 }
 .is-choice .interaction-title { display: flex; align-items: center; gap: 9px; overflow-wrap: anywhere; }
 .interaction-choice-icon {

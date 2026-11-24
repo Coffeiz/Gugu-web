@@ -5,7 +5,7 @@ import { createHash,randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
 import { MessageArea,buildOwnerReflectionInput,runReflection,stableJson,
   type CanonicalRunContext,type RunIdentity } from '@gugu/core/agent'
-import { imContextPolicy } from '@gugu/core/im/access'
+import { imContextPolicy } from '@gugu/core/agent/scenes/im'
 import { ownerMemoryLockKey } from '../../../../shared/owner-memory-lock.js'
 import { normalizeOwnerId } from '../../../../shared/owner-context.js'
 import { decryptAgentDispatchInput } from '../../../agent/run/dispatch.js'

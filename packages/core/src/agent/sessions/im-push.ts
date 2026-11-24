@@ -30,7 +30,7 @@ export function createSqlImPushWriter<DB>(db: Kysely<DB>, backend: 'postgres' | 
       || (chatType !== 'group' && chatType !== 'c2c')) throw new TypeError('IM 推送作用域无效')
     const group = chatType === 'group'
     const files = artifacts.flatMap(artifact => {
-      if (!artifact || typeof artifact !== 'object' || (!('file_id' in artifact) && !('attach_id' in artifact))) return []
+      if (!artifact || typeof artifact !== 'object' || (!('file_path' in artifact) && !('attach_id' in artifact))) return []
       try { return [normalizePersistentArtifact(artifact)] } catch { return [] }
     })
     const scope = sql`source=${platform} AND bot_id=${botId} AND

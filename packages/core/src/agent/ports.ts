@@ -389,7 +389,8 @@ export interface ExecutionPort {
 
 export interface ToolPort {
   /** 固定 Adapter 只有在 Run 授权且最终工具可用时才解析到业务调用。 */
-  resolveCall?(call: ToolCall, identity: RunIdentity, signal: AbortSignal): Promise<{ call: ToolCall } | { error: string }>
+  unavailableTool?(name: string): { error: string; error_code: string }
+  resolveCall?(call: ToolCall, identity: RunIdentity, signal: AbortSignal): Promise<{ call: ToolCall } | { error: string; error_code?: string }>
   /** 可信注册表逐项区分交互/审批；普通同轮调用并行，isolated结果不进入dispatch。 */
   plan?(calls: readonly ToolCall[], identity: RunIdentity): Promise<ToolPlan>
   /** 注册表、权限与 confirm 在调用前检查；通过该参数使用共用 Executor。signal取消后须等待已启动资源清理再settle。提交/远端结果未知必须return unknown，不能抛普通工具错误。 */

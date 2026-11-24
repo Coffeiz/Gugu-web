@@ -49,6 +49,8 @@ export interface ChatMessage {
     completedAt?: string
   }
   subagentOutput?: boolean
+  /** 子 Agent 从派单到结果返回的实际墙钟用时。 */
+  subagentElapsedMs?: number
   toolCallId?: string
   toolName?: string
   toolLabel?: string
@@ -111,11 +113,12 @@ export function findPendingTextInteractionId(
   return null
 }
 
-// 聊天附件（暂存上传 attach_id / 已落库 file_id 两种来源共用的松散形状，字段来自不同
+// 聊天附件（暂存上传 attach_id / 文件库路径 file_path 两种来源共用的松散形状，字段来自不同
 // 代码路径按需附加，参见 ChatMessage 顶部注释同理）
 export interface ChatFile {
-  file_id?: number
   attach_id?: string
+  file_path?: string
+  unavailable?: boolean
   name?: string
   ext?: string
   size?: number

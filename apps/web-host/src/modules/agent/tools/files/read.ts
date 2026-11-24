@@ -16,9 +16,8 @@ export function webAgentFileTextType(ext: string) {
 }
 
 type FileRow = QueryResultRow & {
-  id: number | string
   user_id: string
-  storage_key: string
+  path: string
   display_name: string
   ext: string
 }
@@ -32,7 +31,7 @@ type ChatAttachmentRow = QueryResultRow & {
   size: number | string
 }
 
-/** File ID 始终由 owner-scoped PostgreSQL 行解析；磁盘读取只使用 packages/fs 授权根。 */
+/** 路径先经 owner 文件列表确认，再只通过 packages/fs 的授权根读取。 */
 export function createWebAgentFileReadPort(
   pool: Pick<Pool, 'query'>,
   storageRoot: string,
@@ -43,23 +42,7 @@ export function createWebAgentFileReadPort(
   const matchesLease = (identity: RunIdentity) => identity.ownerId === expected.ownerId
     && identity.sessionId === expected.sessionId && identity.runId === expected.runId
 
-  const resolveOwnedFile: ReadFilePorts['resolveOwnedFile'] = async (identity, id, signal) => {
-      signal.throwIfAborted()
-      if (!matchesLease(identity) || !Number.isSafeInteger(id) || id < 1) return null
-      const result = await pool.query<FileRow>(`SELECT id,user_id,storage_key,display_name,ext
-        FROM files WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, [id, expected.ownerId])
-      signal.throwIfAborted()
-      const row = result.rows[0]
-      if (!row || String(row.user_id).toLowerCase() !== expected.ownerId.toLowerCase()
-        || !isOwnedFileStorageKey(expected.ownerId, row.storage_key)) return null
-      const type = webAgentFileTextType(String(row.ext ?? ''))
-      const base = String(row.display_name ?? '')
-      const name = type.extensionless ? base : `${base}.${type.extension}`
-      return { id: Number(row.id), name, root: storageRoot, relativePath: row.storage_key, ...type }
-  }
-
   return {
-    resolveOwnedFile,
     async resolveOwnedAttachment(identity, attachId, signal) {
       signal.throwIfAborted()
       if (!matchesLease(identity) || !attachId.trim() || attachId.length > 256) return null
@@ -90,7 +73,16 @@ export function createWebAgentFileReadPort(
       const matched = (await files.list(identity, signal)).filter(file => file.path === path)
       signal.throwIfAborted()
       if (matched.length !== 1) return null
-      return resolveOwnedFile(identity, matched[0]!.file_id, signal)
+      const result = await pool.query<FileRow>(`SELECT user_id,path,display_name,ext
+        FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL`, [matched[0]!.storageKey, expected.ownerId])
+      signal.throwIfAborted()
+      const row = result.rows[0]
+      if (!row || String(row.user_id).toLowerCase() !== expected.ownerId.toLowerCase()
+        || !isOwnedFileStorageKey(expected.ownerId, row.path)) return null
+      const type = webAgentFileTextType(String(row.ext ?? ''))
+      const base = String(row.display_name ?? '')
+      const name = type.extensionless ? base : `${base}.${type.extension}`
+      return { name, root: storageRoot, relativePath: row.path, ...type }
     },
     async openFile(root, relativePath) {
       return openLocalFile(root, relativePath)

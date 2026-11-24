@@ -22,7 +22,8 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
   const identity = { ownerId: randomUUID(), sessionId: '1', runId: 'synthetic-run' }
   try {
     await pool.query(`CREATE TABLE users (id uuid PRIMARY KEY, token_limit_6h integer, quota_window_started_at timestamptz);
-      CREATE TABLE conversation_sessions (id integer PRIMARY KEY,user_id uuid,last_message_seq bigint NOT NULL,session_context jsonb, baseline_message_seq bigint DEFAULT 0, baseline_message_hash text, snapshot_hash text, context_epoch integer DEFAULT 1, session_info_hash text, snapshot_expires_at timestamptz, source text);
+      CREATE TABLE conversation_sessions (id integer PRIMARY KEY,user_id uuid,last_message_seq bigint NOT NULL,session_context jsonb, baseline_message_seq bigint DEFAULT 0, baseline_message_hash text, snapshot_hash text, context_epoch integer DEFAULT 1, session_info_hash text, snapshot_expires_at timestamptz, source text, bot_id text);
+      CREATE TABLE user_bots (id bigint, user_id uuid, platform text, owner_platform_user_id text);
       CREATE TABLE conversation_batches (id bigserial PRIMARY KEY,session_id integer,version text,run_id text,round_id text,digest text,created_at timestamptz,UNIQUE(session_id,digest));
       CREATE TABLE conversation_messages (id bigserial PRIMARY KEY,session_id integer,conversation_seq bigint,history_anchor_seq bigint,
         role text,content text,content_json jsonb,canonical_batch_id bigint,run_id text,round_id text,created_at timestamptz,
@@ -38,7 +39,7 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
     const prepared = await prepareContext({ ...identity, ...first, history: [], fixedPrefix: [], userTimezone: 'Asia/Shanghai' },
       { digest, nextId: randomUUID, buildRag: async () => ({ tail: [] }), formatMessageTime: formatAgentHistoryMessageTime })
     const firstUserContent = prepared.area.messages[0]?.content
-    assert.match(String(firstUserContent), /^【消息时间】/)
+    assert.match(String(firstUserContent), /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]: /)
     const area = new MessageArea({ digest, nextId: randomUUID })
     area.append({ role: 'user', content: '上下文' }, { source: 'rag', persistencePolicy: 'commit_on_success' })
     area.append({ role: 'user', content: '问题' }, { source: 'user', persistencePolicy: 'already_persisted', persistedMessageId: anchor.rows[0]!.id })
@@ -92,11 +93,17 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
       // 界面时间线没有模型正文：落在同一锚点中也不能让合法摘要失效。
       await pool.query(`INSERT INTO conversation_messages (session_id,conversation_seq,history_anchor_seq,role,content,display_timeline)
         VALUES (1,5,1,'assistant','','[]'::jsonb)`)
-      await pool.query('UPDATE conversation_sessions SET last_message_seq=5 WHERE id=1')
+      await pool.query(`UPDATE conversation_messages SET run_id='older-run' WHERE id=ANY($1::bigint[])`,
+        [covered.rows.map(row => row.id)])
+      const secondAnchor = await pool.query<{ id: string }>(`INSERT INTO conversation_messages(session_id,conversation_seq,role,content,created_at)
+        VALUES(1,6,'user','下一轮',clock_timestamp()) RETURNING id::text`)
+      await pool.query('UPDATE conversation_sessions SET last_message_seq=6 WHERE id=1')
       const nextIdentity = { ...identity, runId: 'second-run' }
       const snapshot = { ownerId: identity.ownerId, sessionId: '1', contextEpoch: 1, context: {}, snapshotHash: 'snapshot',
         sessionInfoHash: null, snapshotExpiresAt: null, baselineMessageSeq: 0 }
       const emptyArea = new MessageArea({ digest, nextId: randomUUID })
+      emptyArea.append({ role: 'user', content: '下一轮' },
+        { source: 'user', persistencePolicy: 'already_persisted', persistedMessageId: secondAnchor.rows[0]!.id })
       const compactContext = { ...context, identity: nextIdentity, continuationRef: null, prepared: { area: emptyArea.snapshot() },
         historyBaseline: { baselineSeq: 0, baselineHash: null, snapshotHash: 'snapshot' },
         sourceEffects: { sessionSnapshot: { state: snapshot } }, compactions: [
@@ -121,10 +128,10 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
       // 十个最近单元保留原文，前缀不吻合时对已提交历史单独生成摘要。
       const inserted = await client.query<{ id: string; conversation_seq: string }>(`
         INSERT INTO conversation_messages (session_id,conversation_seq,role,content)
-        SELECT 1, n, 'user', '历史-' || n FROM generate_series(7,22) AS n RETURNING id::text,conversation_seq::text`)
-      await client.query('UPDATE conversation_sessions SET last_message_seq=22 WHERE id=1')
+        SELECT 1, n, 'user', '历史-' || n FROM generate_series(8,23) AS n RETURNING id::text,conversation_seq::text`)
+      await client.query('UPDATE conversation_sessions SET last_message_seq=23 WHERE id=1')
       const snapshotRow = (await client.query('SELECT * FROM conversation_sessions WHERE id=1')).rows[0]
-      const postCommitContext = { ...compactContext, historyBaseline: {
+      const postCommitContext = { ...compactContext, identity: { ...identity, runId: 'post-commit-run' }, historyBaseline: {
         baselineSeq: 1, baselineHash: snapshotRow.baseline_message_hash, snapshotHash: snapshotRow.snapshot_hash,
       }, sourceEffects: { sessionSnapshot: { state: {
         ...snapshot, baselineMessageSeq: 1, context: snapshotRow.session_context, snapshotHash: snapshotRow.snapshot_hash,
@@ -134,38 +141,38 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
       const port = { async summarize(input: { history: readonly { content: unknown }[] }) {
         requests++
         const texts = input.history.map(message => message.content)
-        assert.ok(texts.includes('历史-11'))
-        assert.ok(!texts.includes('历史-12'))
+        assert.ok(texts.includes('历史-12'))
+        assert.ok(!texts.includes('历史-13'))
         return '重新生成的合成摘要'
       } }
-      const anchorId = Number(inserted.rows.find(row => row.conversation_seq === '22')!.id)
+      const anchorId = Number(inserted.rows.find(row => row.conversation_seq === '23')!.id)
       assert.equal(await persistRunCompaction(pool, postCommitContext, port, anchorId), true)
       assert.equal(await persistRunCompaction(pool, postCommitContext, port, anchorId), false)
       assert.equal(requests, 1)
-      assert.equal(Number((await pool.query('SELECT baseline_message_seq FROM conversation_sessions WHERE id=1')).rows[0].baseline_message_seq), 11)
+      assert.equal(Number((await pool.query('SELECT baseline_message_seq FROM conversation_sessions WHERE id=1')).rows[0].baseline_message_seq), 12)
       const refreshed = (await pool.query("SELECT content,covers_until_seq FROM conversation_messages WHERE session_id=1 AND role='summary'")).rows[0]
       assert.equal(refreshed.content, '重新生成的合成摘要')
-      assert.equal(Number(refreshed.covers_until_seq), 11)
-      assert.equal((await pool.query('SELECT 1 FROM conversation_messages WHERE session_id=1 AND conversation_seq BETWEEN 12 AND 22')).rowCount, 11)
+      assert.equal(Number(refreshed.covers_until_seq), 12)
+      assert.equal((await pool.query('SELECT 1 FROM conversation_messages WHERE session_id=1 AND conversation_seq BETWEEN 13 AND 23')).rowCount, 11)
       const latestSnapshot = (await client.query('SELECT * FROM conversation_sessions WHERE id=1')).rows[0]
       const reuseContext = { ...postCommitContext, historyBaseline: {
-        baselineSeq: 11, baselineHash: latestSnapshot.baseline_message_hash, snapshotHash: latestSnapshot.snapshot_hash,
+        baselineSeq: 12, baselineHash: latestSnapshot.baseline_message_hash, snapshotHash: latestSnapshot.snapshot_hash,
       }, sourceEffects: { sessionSnapshot: { state: {
-        ...snapshot, baselineMessageSeq: 11, context: latestSnapshot.session_context, snapshotHash: latestSnapshot.snapshot_hash,
+        ...snapshot, baselineMessageSeq: 12, context: latestSnapshot.session_context, snapshotHash: latestSnapshot.snapshot_hash,
         contextEpoch: latestSnapshot.context_epoch, snapshotExpiresAt: new Date(latestSnapshot.snapshot_expires_at).getTime(),
       } } }, compactions: [{ id: 'reuse', result: { changed: true, coversUnpersisted: false,
-        coversUntilMessageIds: [inserted.rows.find(row => row.conversation_seq === '12')!.id],
+        coversUntilMessageIds: [inserted.rows.find(row => row.conversation_seq === '13')!.id],
         messages: [{ role: 'user', content: formatCompactedSummary('精确复用摘要') }],
       } }] } as unknown as CanonicalRunContext
       const laterAnchor = await client.query<{ id: string }>(`INSERT INTO conversation_messages (session_id,conversation_seq,role,content)
-        VALUES (1,24,'user','下一轮问题') RETURNING id::text`)
-      await client.query('UPDATE conversation_sessions SET last_message_seq=24 WHERE id=1')
+        VALUES (1,25,'user','下一轮问题') RETURNING id::text`)
+      await client.query('UPDATE conversation_sessions SET last_message_seq=25 WHERE id=1')
       assert.equal(await persistRunCompaction(pool, reuseContext, { async summarize() {
         assert.fail('同一前缀应直接复用摘要')
       } }, Number(laterAnchor.rows[0]!.id)), true)
       const reused = (await pool.query("SELECT content,covers_until_seq FROM conversation_messages WHERE session_id=1 AND role='summary'")).rows[0]
       assert.equal(reused.content, '精确复用摘要')
-      assert.equal(Number(reused.covers_until_seq), 12)
+      assert.equal(Number(reused.covers_until_seq), 13)
       const privateWriter=createCanonicalHistoryWriter(async()=>({defaultLimit6h:null,byokEnabled:false,localDeployment:false,model:'model',provider:'provider',isByok:false}),
         {async commitContinuation(){throw new Error('成功私有状态发布钩子')}})
       for(const outcome of ['interruption','silent'] as const){
@@ -185,6 +192,8 @@ test('历史增量与展示顺序同事务提交，回滚与重放不产生重�
 test('基线或覆盖范围变化时保留旧历史并提交最终回复', async () => {
   const identity = { ownerId: 'owner', sessionId: '1', runId: 'run' }
   const area = new MessageArea({ digest, nextId: randomUUID })
+  area.append({ role: 'user', content: '当前问题' },
+    { source: 'user', persistencePolicy: 'already_persisted', persistedMessageId: '4' })
   const context = { identity, modelIdentity: 'model', continuationRef: null, prepared: { area: area.snapshot() },
     historyBaseline: { baselineSeq: 1, baselineHash: 'old', snapshotHash: 'snapshot' },
     sourceEffects: { sessionSnapshot: { state: { snapshotHash: 'snapshot', contextEpoch: 2 } } },
@@ -198,6 +207,7 @@ test('基线或覆盖范围变化时保留旧历史并提交最终回复', async
     const client = { query: async (sql: string, args: unknown[] = []) => {
       queries.push({ sql, args })
       if (sql.includes('last_message_seq::text')) return { rows: [{ last_message_seq: '3' }] }
+      if (sql.includes("AND role = 'user'")) return { rows: [{ conversation_seq: conflict === 'anchor' ? '2' : '4' }] }
       if (sql.includes('AS baseline')) return { rows: [{ baseline: conflict === 'baseline' ? '3' : '1',
         baseline_hash: 'old', snapshot_hash: 'snapshot', context_epoch: 2 }] }
       if (sql.includes('AS effective')) {
@@ -218,7 +228,7 @@ test('基线或覆盖范围变化时保留旧历史并提交最终回复', async
     assert.equal(queries.filter(({ sql, args }) => sql.includes('INSERT INTO conversation_messages') && args.includes('最终回复')).length, 1)
     assert.equal(queries.filter(({ sql }) => sql.includes("'finalize-v1'")).length, 1)
     assert.equal(queries.filter(({ sql }) => sql.includes('INSERT INTO agent_usage')).length, 1)
-    assert.equal(queries.some(({ sql }) => /DELETE FROM conversation_messages|SET baseline_message_seq|provider_cache_anchor|covers_until_seq/.test(sql)), false)
+    assert.equal(queries.some(({ sql }) => /DELETE FROM conversation_messages|SET baseline_message_seq|provider_cache_anchor|INSERT INTO conversation_messages[^\n]*covers_until_seq/.test(sql)), false)
   }
 })
 

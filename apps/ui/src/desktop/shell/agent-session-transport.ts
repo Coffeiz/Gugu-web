@@ -14,6 +14,7 @@ export function requestDesktopAgentSessions(command: { action: 'readMemory' }): 
 export function requestDesktopAgentSessions(command: { action: 'messageLocation'; messageId: number }): Promise<{ id: number; sessionId: number }>
 export function requestDesktopAgentSessions(command: { action: 'history'; id: number; before?: number }): Promise<import('@gugu/core/desktop').DesktopAgentHistoryPage>
 export function requestDesktopAgentSessions(command: { action: 'toolDetails'; id: number; messageId: number; index: number }): Promise<Record<string, unknown>>
+export function requestDesktopAgentSessions(command: { action: 'subagentSnapshot'; id: number; runId: string; childId: string }): Promise<Record<string, unknown>>
 export function requestDesktopAgentSessions(command: Extract<import('@gugu/core/desktop').DesktopAgentSessionCommand, { action: 'respond' }>): Promise<import('@gugu/core/desktop').DesktopAgentInteractionReply>
 export function requestDesktopAgentSessions(command: { action: 'cancelRun'; id: number; runId: string }): Promise<import('@gugu/core/desktop').DesktopAgentRunCancellation>
 export function requestDesktopAgentSessions(command: { action: 'events'; id: number; runId?: string; after?: number; stateOnly?: true }): Promise<import('@gugu/core/desktop').DesktopAgentEventPage>

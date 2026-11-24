@@ -1,3 +1,6 @@
+import { classifyGatewayGroupMessage } from '@gugu/gateway'
+import { readImAddressedCommand } from '@gugu/gateway'
+import { desktopImGroupToolAllowed } from '@gugu/core/agent/scenes/im'
 import { redactToolError } from '@gugu/core/agent'
 import { attentionSourceKind } from '@gugu/core/im/attention/directive'
 import { createDesktopImChartRenderer, createDesktopImProjectionReceipts } from '../../delivery/projection.js'
@@ -5,8 +8,8 @@ import { readDesktopAgentAttachmentContent } from '../../../../agent/attachments
 import type { IpcHost } from '../../../../ipc/types.js'
 import { transcribeDesktopImFile, type DesktopImVoice } from '../../inbound/voice.js'
 import { IM_BINDING_TTL_SECONDS, IM_BINDING_MAX_ATTEMPTS } from '@gugu/core/im/binding-code'
-import { updateUserBotGroupTools, userBotGroupFileToolsAllowed, userBotGroupToolAllowed, userBotGroupToolFlags } from '@gugu/core/im/user-bots'
-import { classifyImGroupInbound, resolveImActor } from '@gugu/core/im/access'
+import { updateUserBotGroupTools, userBotGroupFileToolsAllowed, userBotGroupToolFlags } from '@gugu/core/im/user-bots'
+import { resolveImActor } from '@gugu/core/im/access'
 import { createHash, randomInt, randomUUID } from 'node:crypto'
 import { createGatewaySupervisor, createImGroupAttentionGate, parseImReceivedMessage, readImReceivedMessage, type ImGroupAttentionHistory,
   type ImPendingAskResume, type ImPendingAskStore, type ImReceivedMessage } from '@gugu/gateway'
@@ -19,7 +22,7 @@ import { createDesktopTelegramConfig, parseDesktopTelegramBot, validTelegramPriv
 
 import type { createDesktopImCallback } from '../../interactions/callback.js'
 import { desktopImEventKey, type DesktopImFile, type createDesktopImInbox } from '../../inbound/inbox.js'
-import type { createDesktopImDispatch } from '../../delivery/dispatch.js'
+import { readDesktopImRunStatus, stopDesktopImRun, type createDesktopImDispatch } from '../../delivery/dispatch.js'
 import { startDesktopImPendingAskPump } from '../../inbound/pending-asks.js'
 
 type Inbox = { cursor: number | null; messages: DesktopTelegramMessage[] }
@@ -103,6 +106,13 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
           const work = dispatch({ connection, connectionId: id, signal: dispatchSignal, authorize: allow,
             group: { id: groupId, ownerPlatformUserId: bot.chatId!, authorizeMessage: allowMessage, authorizeFile: allowFile },
             media: { platform: 'telegram', sender: adapter.sender },
+            async sendOwnerPrivate(text) {
+              const ownerId = bot.chatId!
+              const authorized = async () => (await store.read())?.chatId === ownerId && await allow()
+              if (!await authorized()) return 'rejected'
+              return (await adapter.sender.text({ chatId: ownerId, chatType: 'c2c' }, text,
+                { signal: dispatchSignal, authorize: authorized })).outcome
+            },
             async send(reply) {
               if (reply.recipient !== groupId || !reply.originalMessageId || !await allow()) return 'rejected'
               return await adapter.sender.text({ chatId: groupId, chatType: 'group', replyToMessageId: reply.originalMessageId },
@@ -188,9 +198,9 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
           const latest = await store.read()
           if (event.scope.chatType !== 'group' || !latest?.enabled || !latest.chatId
             || !latest.groupChatEnabled || !event.scope.chatId) return 'consumed'
-          const decision = classifyImGroupInbound({ platform: 'telegram', chatType: 'group', chatId: event.scope.chatId,
+          const decision = classifyGatewayGroupMessage({ platform: 'telegram', chatType: 'group', chatId: event.scope.chatId,
             groupMentioned: event.botMentioned, mentionsOtherBot: false },
-          { requiresAt: latest.groupReplyMode !== 'reply_all', readOnly: false })
+          latest.groupReplyMode)
           return latest.groupReplyMode === 'record_only' || decision === 'reply' ? 'enqueue' : 'consumed'
         },
         async materialize(payload, signal) {
@@ -236,8 +246,15 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
           if (!payload.text.trim() && !files.length) return null
           const ready = { ...payload, attachments: [], quoted_attachments: [] }
           const event = readImReceivedMessage(connection, ready)
+          const command = readImAddressedCommand(event).command
+          if (!recordOnly && attachmentHost && (command?.name === 'stop' || command?.name === 'status') && !command.argument && await eventAuthorize()) {
+            const text = await (command.name === 'status' ? readDesktopImRunStatus : stopDesktopImRun)(attachmentHost, event, eventConnectionId, isGroup ? bot.chatId! : undefined)
+            await adapter.sender.text({ chatId: groupId ?? event.scope.platformUserId, chatType: event.scope.chatType,
+              replyToMessageId: event.platformMessageId ?? undefined }, text, { signal, authorize: eventAuthorize })
+            return null
+          }
           let pendingAsk = false
-          if (isGroup && groupId && latest && !recordOnly && latest.groupReplyMode === 'reply_all') {
+          if (isGroup && groupId && latest && !recordOnly && latest.groupReplyMode === 'reply_all' && !readImAddressedCommand(event).command) {
             const pendingScope = { ownerId: 'desktop', botId: botId(bot), platform: 'telegram' as const, groupId }
             await pendingAsks?.observe(pendingScope, { eventMs: Date.now(), senderId: event.scope.platformUserId,
               replyTo: typeof payload.reply_to_platform_message_id === 'string' ? payload.reply_to_platform_message_id : undefined,
@@ -363,7 +380,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
                 authorize, signal: dispatchSignal, policyVersion: 'desktop-telegram-v1',
                 showIntermediateReplies: target.preferences?.showIntermediateReplies,
                 toolSummary: target.preferences?.imToolDisplayMode === 'all'
-                  ? { chatType: 'p2p', includeDetails: false, sanitize: redactToolError } : undefined,
+                  ? { chatType: 'p2p', includeDetails: false, sanitize: redactToolError, locale: target.preferences?.locale } : undefined,
                 renderCharts: createDesktopImChartRenderer(attachmentHost, authorize),
               })
               const result = await stream.project({ identity: event.identity, deliveryId: event.id, event })
@@ -446,6 +463,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
   let stopping: Promise<void> | undefined
   return {
     async start() { await gateway.start() },
+    suspend: gateway.suspend,
     resume: gateway.resume,
     health: gateway.health,
     onConfigurationChanged: gateway.onConfigurationChanged,
@@ -521,7 +539,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
     async authorizeGroupTool(params: Record<string, unknown>, signal: AbortSignal) {
       const authorized = await readAuthorizedGroupMessage(params, signal)
       if (!authorized || typeof params.name !== 'string') return false
-      return userBotGroupToolAllowed(authorized.current.groupAllowedTools, params.name) && !signal.aborted
+      return desktopImGroupToolAllowed('telegram', authorized.message.scope.platformUserId === authorized.current.chatId, authorized.current.groupAllowedTools, params.name) && !signal.aborted
     },
     async readGroupMemoryContext(params: Record<string, unknown>, signal: AbortSignal) {
       const authorized = await readAuthorizedGroupMessage(params, signal)

@@ -10,7 +10,7 @@ import { isIsolatedWorkspaceWrite } from '../../../terminals/shell/workspace-wri
 
 type Confirmation = ReturnType<typeof createWebAgentToolConfirmation>
 type Snapshot = {
-  workspaceId: number
+  workspaceId: number | null
   workspaceTarget: string
   isolatedWorkspace?: string
   securityVersion?: number
@@ -29,7 +29,7 @@ export function createWebAgentShell(options: {
   log?: RuntimeLog
   rootfs: string
   read(identity: RunIdentity, signal: AbortSignal): Promise<Snapshot | null>
-  mounts(owner: string, workspaceId: number, fullWrite: boolean, cwd: string): Promise<ShellMountPlan>
+  mounts(owner: string, workspaceId: number | null, fullWrite: boolean, cwd: string): Promise<ShellMountPlan>
   confirmation: Confirmation
   claim(reference: Parameters<Confirmation['claim']>[1], signal: AbortSignal): Promise<boolean>
 }) {
@@ -65,7 +65,7 @@ export function createWebAgentShell(options: {
       const digest = (value: string) => createHash('sha256').update(value).digest('hex')
       const argsDigest = digest(stableJson(input))
       const snapshot = {
-        targetIds: { workspace_id: [initial.workspaceId] },
+        targetIds: { workspace_id: initial.workspaceId === null ? [] : [initial.workspaceId] },
         targetsDigest: digest(initial.workspaceTarget), versionsDigest: digest(snapshotKey),
         displaySummary: `${system ? '允许此会话在未来 30 分钟以 Web Host 服务账号执行宿主机命令' : parseShellTrash(input.command) ? '将授权路径移入回收站（可恢复）' : '在沙箱内执行命令'}：${Array.from(input.command).slice(0, 240).join('')}`,
       }

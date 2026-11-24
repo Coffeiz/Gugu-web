@@ -164,3 +164,22 @@ describe('统一交互文本匹配不改变声明序号及确认门', () => {
     assert.deepEqual(selectImTextChoice({ ...prompt, allowTextInput: true, options: [{ id: '__custom_reply__', label: '自定义', token: 'opaque' }] }, '任意回复'), { action: 'text' })
   })
 })
+
+it('可信 @Bot 后的斜杠命令提取命令正文，未确认的 @ 保留原文', () => {
+  assert.equal(imSemanticText('@咕咕 助手 /workspace 1', true), '/workspace 1')
+  assert.equal(imSemanticText('<@123>/help', true), '/help')
+  assert.equal(imSemanticText('@咕咕 /workspace 1', false), '@咕咕 /workspace 1')
+})
+
+it('群里只有可信 @Bot 的命令进入命令端口', async () => {
+  const seen: string[] = []
+  const f = fixture({ decideShortcut: async (_scope, text) => {
+    seen.push(text)
+    return { action: 'reply', reply: '命令帮助' }
+  } })
+  const input = message({ scope: { ...message().scope, chatType: 'group', chatId: 'group-a' }, text: '@咕咕 助手 /help' })
+  assert.equal(await createImInboundPreflight(f.ports)({ ...input, text: '/help' }, signal), 'enqueue')
+  assert.equal(await createImInboundPreflight(f.ports)({ ...input, botMentioned: true }, signal), 'consumed')
+  assert.equal(await createImInboundPreflight(f.ports)({ ...input, botMentioned: true, hasPendingMedia: true }, signal), 'consumed')
+  assert.deepEqual(seen, ['/help', '/help'])
+})

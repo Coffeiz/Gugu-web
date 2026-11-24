@@ -15,7 +15,7 @@ import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 import type { PropType } from 'vue'
-import type { EmptyTrashProgress } from '@/composables/files/useFileLibraryTrashActions'
+import type { EmptyTrashProgress } from '@/composables/files/useDiskTrash'
 const { t } = useI18n()
 defineProps({
   hasItems: Boolean,

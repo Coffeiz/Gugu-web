@@ -515,7 +515,7 @@ test('SMTP style preview is available without saved SMTP settings and validates 
     assert.match(html, /#a9c2b5/)
     assert.match(html, /SECURITY/)
     assert.match(html, /当前模板：security/)
-    assert.match(html, /logo-large2\.png/)
+    assert.match(html, /bird-login\.svg/)
 
     const invalid = await app.inject({
       method: 'POST', url: '/api/v1/preferences/smtp/preview',

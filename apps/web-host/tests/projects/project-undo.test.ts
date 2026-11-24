@@ -37,7 +37,7 @@ test('项目改名撤销保留目录反向补偿并更新项目文件路径', as
   const rollback: Array<() => Promise<void>> = []
   const result = await applyProjectUndo(client, 'owner', { id: 'op', action: 'update', before_state: { items: { 'project:1': { name: '旧', stages: [] } } }, after_state: { items: { 'project:1': { version: 2, name: '新' } } } }, 'undo', storage, rollback)
   assert.equal(result.versions['project:1'], 3)
-  assert.ok(calls.some(sql => sql.startsWith('UPDATE files SET storage_key=')))
+  assert.ok(calls.some(sql => sql.startsWith('UPDATE files SET path=')))
   assert.match(moves[0]!, /新 #1 -> .*旧 #1/)
   await rollback[0]!()
   assert.match(moves[1]!, /旧 #1 -> .*新 #1/)

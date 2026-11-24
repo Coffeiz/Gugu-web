@@ -316,15 +316,24 @@ it('画布级联删除批量共享快照确认和原子收据，复用Mind级联
 it('批处理复用既有放置、连接和移除领域行为并按输入顺序返回结果',async()=>{
  const project=await core.transaction({ownerId:owner},data=>data.projects.create({name:'批处理来源'}))
  const result=await send('canvas_batch',{canvas_id:1,request_id:'batch-placement-relation-remove',operations:[
-  {kind:'add_node',ref_type:'project',ref_id:project.id,position:{x:240,y:80}},
+  {kind:'add_node',ref_type:'project',ref_id:String(project.id),position:{x:'240.5',y:80}},
   {kind:'connect',source_node_id:1,target_node_id:2},
   {kind:'remove_item',item_id:3},
  ]})
  expect(result).toMatchObject({successful:true,mutated:true,value:{atomic:true,operations:[
-  {index:0,kind:'add_node',created:true,node:{ref_type:'project',ref_id:project.id}},
+  {index:0,kind:'add_node',created:true,node:{ref_type:'project',ref_id:project.id,position:{x:240.5,y:80}}},
   {index:1,kind:'connect',created_or_reused:true},
   {index:2,kind:'remove_item',removed_item_id:3,node_preserved:true},
  ]}})
  expect((await rows('mind_canvas_items')).find(row=>row.id===3)?.deleted_at).not.toBeNull()
  expect((await rows('mind_nodes')).find(row=>row.id===3)?.deleted_at).toBeNull()
+})
+
+it('批处理可按已保存的视口锚点移动已有节点',async()=>{
+ await sql`UPDATE mind_maps SET data_json='{"x":0,"y":0,"scale":1,"viewport":{"width":1000,"height":800}}' WHERE id=1`.execute(core.db)
+ const result=await send('canvas_batch',{canvas_id:'1',request_id:'move-to-center',operations:[
+  {kind:'update_item',item_id:'1',position:{anchor:'viewport_center'}},
+ ]})
+ expect(result).toMatchObject({successful:true,value:{operations:[{node:{position:{x:390,y:340}}}]}})
+ expect((await rows('mind_canvas_items')).find(row=>row.id===1)).toMatchObject({x:390,y:340})
 })

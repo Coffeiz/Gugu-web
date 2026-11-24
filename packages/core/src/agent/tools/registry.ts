@@ -110,6 +110,10 @@ export function createToolRegistry(options: ToolRegistryOptions): {
   async function authorized(identity: RunIdentity, name: string): Promise<boolean> {
     try { return await options.authorize(identity, name) === true } catch { return false }
   }
+  function unavailable(name: string, fallback: string): ToolResult {
+    const value = options.unavailableTool?.(name) ?? { error: fallback }
+    return { kind: 'completed', value, successful: false, mutated: false, executed: false }
+  }
   const tools: ToolPort = {
     async plan(calls) {
       const serialCallIds = calls.filter(call => {
@@ -130,10 +134,10 @@ export function createToolRegistry(options: ToolRegistryOptions): {
       catch { invalidSnapshot = true; call = Object.freeze({ ...call, input: null }) }
       scope.signal.throwIfAborted()
       const tool = entries.get(canonicalAgentToolName(call.name))
-      if (!tool || blocked(tool) || !enabled(canonicalAgentToolName(call.name))) return rejected('工具不存在或未开放')
-      if (!await authorized(scope.identity, tool.definition.name)) return rejected('没有权限使用此工具')
+      if (!tool || blocked(tool) || !enabled(canonicalAgentToolName(call.name))) return unavailable(call.name, '工具不存在或未开放')
+      if (!await authorized(scope.identity, tool.definition.name)) return unavailable(call.name, '没有权限使用此工具')
       scope.signal.throwIfAborted()
-      if (!enabled(canonicalAgentToolName(call.name))) return rejected('工具不存在或未开放')
+      if (!enabled(canonicalAgentToolName(call.name))) return unavailable(call.name, '工具不存在或未开放')
       if (invalidSnapshot || call.parseError) return invalidInputResult(tool.definition, null)
       let parsed: ReturnType<ToolDefinition['validate']>
       let normalized: unknown
@@ -167,7 +171,7 @@ export function createToolRegistry(options: ToolRegistryOptions): {
       const tool = entries.get(canonicalAgentToolName(call.name))
       if (!tool?.reconcile || blocked(tool) || !enabled(canonicalAgentToolName(call.name))) return { kind: 'unknown' }
       identity = Object.freeze({ ...identity })
-      if (!await authorized(identity, tool.definition.name) || !enabled(canonicalAgentToolName(call.name))) return rejected('没有权限使用此工具')
+      if (!await authorized(identity, tool.definition.name) || !enabled(canonicalAgentToolName(call.name))) return unavailable(call.name, '没有权限使用此工具')
       try {
         call = Object.freeze({ ...call, input: portableSnapshot(call.input) })
         if (call.parseError) return { kind: 'unknown' }

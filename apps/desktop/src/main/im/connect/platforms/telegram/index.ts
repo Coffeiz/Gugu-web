@@ -30,7 +30,7 @@ export function parseDesktopTelegramBot(value: unknown): DesktopTelegramBot {
   if (typeof groupChatEnabled !== 'boolean' || !['reply_mentions', 'reply_all', 'record_only'].includes(String(groupReplyMode))
     || !['quiet', 'natural', 'active', 'autonomous'].includes(String(groupAttentionMode))
     || !Array.isArray(groupAllowedTools) || !groupAllowedTools.every(tool => typeof tool === 'string'
-      && ['web_search', 'http_get', 'similar_image_search', 'send_file', 'group_context_search'].includes(tool))
+      && ['web_search', 'http_get', 'similar_image_search', 'send_item', 'group_context_search'].includes(tool))
     || typeof groupOwnerMemoryEnabled !== 'boolean' || typeof groupMemoryEnabled !== 'boolean' || typeof memberMemoryEnabled !== 'boolean'
     || typeof privateStreamingEnabled !== 'boolean')
     throw new DesktopError('invalid_request', 'Telegram 群聊设置无效')

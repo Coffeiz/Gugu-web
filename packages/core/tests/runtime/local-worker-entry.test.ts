@@ -39,3 +39,28 @@ it('LocalRuntime 通过调用方注入的 Worker 入口处理请求', async () =
     await runtime.close()
   }
 })
+
+it('已开始的 IM 收件准备超时可重试，Core 仍能处理后续请求', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-worker-entry-'))
+  directories.push(directory)
+  const workerEntry = join(directory, 'worker.mjs')
+  await writeFile(workerEntry, `
+    import { parentPort } from 'node:worker_threads'
+    parentPort.postMessage({ event: 'ready', ownerId: '00000000-0000-4000-8000-000000000001', schemaVersion: 'injected' })
+    let prepares = 0
+    parentPort.on('message', frame => {
+      if (frame.method === 'im.inbox.prepare' && ++prepares === 1) {
+        Atomics.store(new Int32Array(frame.cancel), 1, 1)
+        return
+      }
+      parentPort.postMessage({ id: frame.id, result: null })
+    })
+  `)
+  const runtime = await LocalRuntime.initialize(join(directory, 'unused.db'), { workerEntry })
+  try {
+    await expect(runtime.call('im.inbox.prepare', {}, { timeoutMs: 100 })).rejects.toMatchObject({ code: 'busy' })
+    await expect(runtime.call('im.inbox.prepare')).resolves.toBeNull()
+  } finally {
+    await runtime.close()
+  }
+})

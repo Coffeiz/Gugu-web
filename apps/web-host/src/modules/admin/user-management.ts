@@ -30,24 +30,18 @@ export function createAdminUserListReader(db: Kysely<any>, now: () => Date = () 
   return async (search?: string) => {
     const users = await db.selectFrom('users').select([
       'id', 'username', 'email', 'display_name', 'is_active', 'account_status', 'suspended_until',
-      'is_developer', 'created_at', 'token_limit_6h', 'token_limit_weekly', 'storage_limit_bytes', 'search_limit_daily',
+      'is_developer', 'created_at', 'token_limit_6h', 'token_limit_weekly', 'search_limit_daily',
     ]).orderBy('created_at', 'desc').execute()
     const current = now()
-    const [weekRows, sixHourRows, fileRows, libraryRows] = await Promise.all([
+    const [weekRows, sixHourRows] = await Promise.all([
       db.selectFrom('agent_usage').select(['user_id', sql<number>`sum(tokens_in + tokens_out)`.as('tokens')])
         .where('created_at', '>=', mondayUtc(current).toISOString()).where(sql<boolean>`is_byok is false`).groupBy('user_id').execute(),
       db.selectFrom('agent_usage').select(['user_id', sql<number>`sum(tokens_in + tokens_out)`.as('tokens')])
         .where('created_at', '>=', sixHourWindowUtc(current).toISOString()).where(sql<boolean>`is_byok is false`).groupBy('user_id').execute(),
-      db.selectFrom('files').select(['user_id', db.fn.sum<number>('size_bytes').as('storage_used')])
-        .groupBy('user_id').execute(),
-      db.selectFrom('storage_quota_ledgers').select(['user_id', 'used_bytes as storage_used'])
-        .where('category', '=', 'file_library').execute(),
     ])
     const tokenMap = (rows: Array<{ user_id: string; tokens: unknown }>) => new Map(rows.map(row => [String(row.user_id), numeric(row.tokens)]))
     const week = tokenMap(weekRows)
     const sixHour = tokenMap(sixHourRows)
-    const storage = new Map(fileRows.map(row => [String(row.user_id), numeric(row.storage_used)]))
-    for (const row of libraryRows) storage.set(String(row.user_id), numeric(row.storage_used))
     const needle = search ? search.toLowerCase() : null
     const visible = needle
       ? users.filter(user => String(user.username ?? '').toLowerCase().includes(needle)
@@ -60,9 +54,9 @@ export function createAdminUserListReader(db: Kysely<any>, now: () => Date = () 
         is_active: Boolean(user.is_active), account_status: user.account_status ?? 'active',
         suspended_until: isoTime(user.suspended_until as TimeValue), is_developer: Boolean(user.is_developer ?? false),
         created_at: isoTime(user.created_at as TimeValue), tokens_week: week.get(id) ?? 0,
-        tokens_6h: sixHour.get(id) ?? 0, storage_used: storage.get(id) ?? 0,
+        tokens_6h: sixHour.get(id) ?? 0,
         token_limit_6h: nullableNumber(user.token_limit_6h), token_limit_weekly: nullableNumber(user.token_limit_weekly),
-        storage_limit_bytes: nullableNumber(user.storage_limit_bytes), search_limit_daily: nullableNumber(user.search_limit_daily),
+        search_limit_daily: nullableNumber(user.search_limit_daily),
       }
     })
     return { items, total: items.length }
@@ -112,7 +106,7 @@ export function createAdminUserRiskReader(db: Kysely<any>, now: () => Date = () 
 
 import { asciiDecimalDigits } from '@gugu/core/shared/unicode-decimal'
 
-const fields = ['token_limit_6h', 'token_limit_weekly', 'storage_limit_bytes', 'search_limit_daily'] as const
+const fields = ['token_limit_6h', 'token_limit_weekly', 'search_limit_daily'] as const
 type QuotaField = typeof fields[number]
 export type QuotaPatch = Partial<Record<QuotaField, number | null>>
 function failure(statusCode: number, message: string): Error & {statusCode: number} {

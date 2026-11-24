@@ -58,21 +58,6 @@ function isLiveEvent(value: unknown): value is Record<string, unknown> {
     && typeof value.created_at === 'string'
 }
 
-function isTrashPurgeProgressEvent(value: unknown): value is Record<string, unknown> {
-  return isRecord(value)
-    && value.protocol_version === 'live-event-v1'
-    && typeof value.event_id === 'string' && value.event_id.length > 0
-    && value.type === 'task.progress'
-    && value.task_type === 'trash_purge'
-    && isInteger(value.task_id) && value.task_id > 0
-    && typeof value.status === 'string'
-    && ['queued', 'running', 'completed', 'failed'].includes(value.status)
-    && isInteger(value.progress_current) && value.progress_current >= 0
-    && isInteger(value.progress_total) && value.progress_total >= 0
-    && isInteger(value.failed_count) && value.failed_count >= 0
-    && typeof value.created_at === 'string'
-}
-
 function isAgentRunChangedEvent(value: unknown): value is Record<string, unknown> {
   return isRecord(value)
     && value.protocol_version === 'live-event-v1'
@@ -108,7 +93,7 @@ function sanitizeFilesyncEvent(value: Record<string, unknown>): Record<string, u
   return Object.fromEntries(fields.filter((key) => key in value).map((key) => [key, value[key]]))
 }
 
-/** 接受与 Python live stream 相同的业务 envelope，并裁剪 filesync/agent 事件字段。 */
+/** 校验实时业务 envelope，并裁剪 filesync/agent 事件字段。 */
 export function serializeLiveMessage(raw: unknown): string | null {
   if (typeof raw !== 'string') return null
   let value: unknown
@@ -120,10 +105,7 @@ export function serializeLiveMessage(raw: unknown): string | null {
 
   if (isFilesyncEvent(value)) value = sanitizeFilesyncEvent(value)
   else if (isAgentRunChangedEvent(value)) value = sanitizeAgentRunChangedEvent(value)
-  else if (!(isLiveEvent(value) || isTrashPurgeProgressEvent(value)
-    || (isRecord(value) && isRecord(value.notification))
-    || (isRecord(value) && isRecord(value.present)
-      && isInteger(value.present.file_id)))) return null
+  else if (!(isLiveEvent(value) || (isRecord(value) && isRecord(value.notification)))) return null
 
   return `data: ${JSON.stringify(value)}\n\n`
 }

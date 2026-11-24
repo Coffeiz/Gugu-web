@@ -35,6 +35,14 @@ export function similarRememberText(left: string, right: string): boolean {
   return overlap / (aa.size + bb.size - overlap) >= 0.7
 }
 
+/** /forget 沿用旧命令的单向子串匹配，最少需要两个有效字符。 */
+export function forgetMemoryEdit(before: readonly MemoryRow[], target: MemoryTarget, query: string) {
+  const needle = normalizedText(query)
+  const rows = Array.from(needle).length < 2 ? [...before]
+    : before.filter(row => !normalizedText(row.text).includes(needle) && !similarRememberText(row.text, query))
+  return { rows, value: { success: true, target, added: 0, removed: before.length - rows.length } }
+}
+
 export function applyRememberEdit(before: readonly MemoryRow[], input: RememberInput, now: number, patternId: () => string,
   patternKind: 'observed' | 'inferred' = 'observed') {
   const after = before.filter(row => !input.remove.some(text => similarRememberText(row.text, text))).map(row => ({ ...row }))

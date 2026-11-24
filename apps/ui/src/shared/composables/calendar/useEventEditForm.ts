@@ -71,7 +71,8 @@ export function useEventEditForm() {
   const liveStore = useLiveStore()
   const schedules = requireScheduleAccess()
   const desktop = schedules.storesSchedulesLocally
-  const imChannels = computed(() => desktop ? [] : authStore.user?.imChannels ?? [])   // 用户已绑的 IM 平台
+  const desktopImChannels = ref<string[]>([])
+  const imChannels = computed(() => desktop ? desktopImChannels.value : authStore.user?.imChannels ?? [])
 
   const reminders          = ref<Reminder[]>([])       // [{ id?, leadMin }]，可多个
   const reminderChannels   = ref<string[]>(['web'])    // 渠道（web + 已绑 IM），该活动的提醒共用
@@ -125,7 +126,8 @@ export function useEventEditForm() {
       const targets = tasks[0].delivery_targets as Record<string, any> | undefined
       for (const platform of IM_DELIVERY_PLATFORMS) {
         const target = targets?.[platform]
-        deliveryTargets.value[platform] = target?.chat_type === 'group' && target.chat_id ? String(target.chat_id) : 'private'
+        deliveryTargets.value[platform] = target?.chat_type === 'group' && target.chat_id ? String(target.chat_id)
+          : target?.chatType === 'group' && target.recipient ? String(target.recipient) : 'private'
       }
       initialDeliveryTargets.value = { ...deliveryTargets.value }
       reminders.value = tasks.map(t => {
@@ -141,10 +143,15 @@ export function useEventEditForm() {
   }
 
   async function loadImTargets() {
+    if (desktop) {
+      const result = await schedules.channels?.()
+      desktopImChannels.value = (result?.channels ?? []).filter(channel => channel !== 'web')
+    }
     const platforms = IM_DELIVERY_PLATFORMS.filter(platform => imChannels.value.includes(platform))
     await Promise.all(platforms.map(async platform => {
       try {
-        const result = await scheduledTasksApi.listDeliveryTargets(platform)
+        if (!schedules.listDeliveryTargets) throw new Error('提醒投递目标不可用')
+        const result = await schedules.listDeliveryTargets(platform)
         deliveryGroups.value[platform] = result.groups
         privateAvailable.value[platform] = result.private_available
       } catch {

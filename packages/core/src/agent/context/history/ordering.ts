@@ -1,6 +1,6 @@
 
 import { contentText,formatCompactedSummary } from '../compaction.js'
-import type { Block,CanonicalMessage,HistoryEnvelope,HistoryIdentity,HistoryRenderOptions,Json,PersistedHistoryRow } from '../../models.js'
+import type { Block,CanonicalMessage,CurrentUser,HistoryEnvelope,HistoryIdentity,HistoryRenderOptions,Json,PersistedHistoryRow } from '../../models.js'
 import type { HistoryReaderPort } from '../../ports.js'
 import { blocks,copy,normalizeHistoryMessage } from './canonical-history.js'
 
@@ -189,7 +189,7 @@ export function restoreHistoryForRequest(row: PersistedHistoryRow, options: Hist
     const quote = row.quote ? formatQuotedContext('', row.quote) : ''
     const refs = formatAttachmentReferences(envelope.attachments)
     const parts = Array.isArray(content) ? content : [{ type: 'text', text: String(content ?? '') }]
-    content = [...(quote ? [{ type: 'text', text: quote }] : []), ...parts, ...(refs ? [{ type: 'text', text: refs }] : [])]
+    content = [...parts, ...(quote ? [{ type: 'text', text: quote }] : []), ...(refs ? [{ type: 'text', text: refs }] : [])]
   }
   if (actualUser) {
     const timestamp = row.platformSentMs != null && row.platformSentMs > 0 ? row.platformSentMs
@@ -200,29 +200,13 @@ export function restoreHistoryForRequest(row: PersistedHistoryRow, options: Hist
         throw new Error('恢复消息时间需要可信时区和格式化端口')
       time = options.formatMessageTime(timestamp, options.userTimezone)
     }
-    content = wrapMessageTime(content, time)
+    content = wrapMessageTime(content, time,
+      options.groupChat && row.chatType === 'group' ? { id: row.senderId, name: row.senderName, owner: row.ownerSpeaker } : undefined)
   }
   return { ...message, content }
 }
 
-export function protectedMessageIds(rows: readonly Pick<PersistedHistoryRow, 'id' | 'runId' | 'roundId' | 'canonicalBatchId'>[], keepRounds = 10): Set<string> {
-  const keep = Math.max(1, Math.trunc(keepRounds))
-  const latestRun = [...rows].reverse().find(row => row.runId)?.runId
-  if (!latestRun || !rows.at(-1)?.runId) {
-    const units: (typeof rows[number])[][] = []
-    for (const row of rows) {
-      const previous = units.at(-1)
-      if (row.canonicalBatchId != null && previous?.[0]?.canonicalBatchId === row.canonicalBatchId)
-        previous.push(row)
-      else
-        units.push([row])
-    }
-    return new Set(units.slice(-keep).flat().map(row => row.id))
-  }
-  const latest = rows.filter(row => row.runId === latestRun)
-  const rounds = [...new Set(latest.flatMap(row => /^round-(\d+)$/.exec(row.roundId ?? '')?.[1] ? [Number(row.roundId!.slice(6))] : []))].sort((a, b) => a - b).slice(-keep)
-  return new Set(latest.filter(row => rounds.includes(Number(row.roundId?.slice(6)))).map(row => row.id))
-}
+export { protectedMessageIds } from './retention.js'
 
 /** 历史媒体载荷有独立预算；正文始终完整加载，不按字符或条数截断。 */
 export function selectImageSnapshots(rows: readonly PersistedHistoryRow[], sizes: ReadonlyMap<string, number>): {
@@ -303,20 +287,18 @@ export function formatAttachmentReferences(attachments: readonly Block[]): strin
 }
 
 export function formatQuotedContext(content: string, quote?: string | null): string {
-  return quote ? `💬 用户引用/回复了一条历史消息（原文：「${quote}」），针对这条消息说：\n\n${content}` : content
+  if (!quote) return content
+  const quoted = quote.replace(/\[(\/?引用消息(?:END)?)\]/gu, '［$1］')
+  return `${content ? `${content}\n\n` : ''}[引用消息]\n${quoted}\n[/引用消息END]`
 }
 
 export function formatGroupMessage(input: {
   body: string
-  senderId?: string | null
-  senderName?: string | null
   quote?: string | null
   attachmentIds?: readonly string[]
   attachmentContext?: string | null
 }): string {
-  const lines = ['【群消息】', '【发言人元数据】', `平台 ID：${input.senderId || '未提供'}`, `显示名：${input.senderName || '未提供'}`, '【消息正文】', input.body]
-  if (input.quote)
-    lines.push('【引用消息】', input.quote)
+  const lines = [formatQuotedContext(input.body, input.quote)]
   if (input.attachmentIds?.length)
     lines.push('【附件 ID】', input.attachmentIds.join(', '))
   if (input.attachmentContext)
@@ -340,28 +322,27 @@ export function formatHistoricalText(envelope: HistoryEnvelope, groupChat: boole
   const attachmentContext = formatAttachmentReferences(envelope.attachments)
   if (groupChat && envelope.role === 'user')
     return formatGroupMessage({
-      body, senderId: envelope.sender?.id,
-      senderName: envelope.sender?.name, quote, attachmentIds: envelope.attachments.map(ref => String(ref.attach_id)), attachmentContext
+      body, quote, attachmentIds: envelope.attachments.map(ref => String(ref.attach_id)), attachmentContext
     })
   return formatQuotedContext(body, quote) + attachmentContext
 }
 
-export function wrapMessageTime(content: Json, time?: string | null): Json {
+export function wrapMessageTime(content: Json, time?: string | null, speaker?: CurrentUser['groupSpeaker']): Json {
   const value = (time ?? '').trim().replace(/^\[system-reminder\]\s*|\s*\[\/system-reminder\]$/g, '').replace(/^消息时间：/, '').trim()
-  const prefix = value ? `【消息时间】${value}\n` : ''
-  const wrapped = (text: string): boolean => text.trimStart().startsWith('【消息正文】')
-    || (text.includes('【消息正文】') && (text.trimStart().startsWith('【消息时间】') || text.includes('【群消息】')))
-  if (typeof content === 'string')
-    return wrapped(content) ? prefix + content : `${prefix}【消息正文】\n${content}`
-  if (Array.isArray(content)) {
-    const first = content.find(block => !!block && typeof block === 'object' && !Array.isArray(block) && block.type === 'text')
-    const firstText = first && typeof first === 'object' && !Array.isArray(first) ? String(first.text ?? '') : ''
-    if (wrapped(firstText))
-      return [...(prefix ? [{ type: 'text', text: prefix }] : []), ...copy(content)]
-    return [{ type: 'text', text: `${prefix}【消息正文】\n` }, ...copy(content)]
-  }
-  return content && typeof content === 'object'
-    ? [{ type: 'text', text: `${prefix}【消息正文】\n` }, copy(content)] : `${prefix}【消息正文】\n${content ?? ''}`
+  const safe = (field?: string | null) => (field ?? '').replace(/[\r\n\[\]()/:]/gu, ' ').trim()
+  const id = safe(speaker?.id)
+  const name = safe(speaker?.name)
+  const details = [id, ...(speaker?.owner && id ? ['owner'] : [])].filter(Boolean).join(', ')
+  const sender = name && details ? `${name} (${details})` : name || details
+  const header = [value, sender].filter(Boolean).join(' / ')
+  if (!header) return copy(content)
+  const prefix = `[${header}]: `
+  if (typeof content === 'string') return prefix + content
+  const parts = Array.isArray(content) ? copy(content) : content && typeof content === 'object' ? [copy(content)] : []
+  const first = parts[0]
+  if (first && typeof first === 'object' && !Array.isArray(first) && first.type === 'text' && typeof first.text === 'string')
+    return [{ ...first, text: prefix + first.text }, ...parts.slice(1)]
+  return [{ type: 'text', text: prefix }, ...parts]
 }
 
 /** 仅用于已持久化历史的恢复，不清理当前Run仍需发送给模型的媒体。 */

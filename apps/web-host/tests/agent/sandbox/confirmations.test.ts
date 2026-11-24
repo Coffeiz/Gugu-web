@@ -30,13 +30,14 @@ class MemoryConfirmationRedis implements FilesystemAuthorizationRedisCommands {
       this.values.set(codeKey!, record!)
       return code!
     }
-    const [codeKey, ownerId] = args
+    const [codeKey, ownerId, expectedSummary, expectedIdentity] = args
     assert.equal(keyCount, 1)
     const raw = this.values.get(codeKey!)
     if (!raw) return ''
     const record = JSON.parse(raw) as { s?: unknown; i?: unknown; ttl_minutes?: unknown }
     if (typeof record.s !== 'string' || !record.s) return ''
     const identity = typeof record.i === 'string' ? record.i : ''
+    if (expectedSummary && (record.s !== expectedSummary || identity !== expectedIdentity)) return ''
     this.values.set(`agent:confirm-grant:${ownerId}:${record.s}:${identity}`, '1')
     this.values.delete(codeKey!)
     return '1'
@@ -81,7 +82,10 @@ test('Redis 确认码与 Python 键协议兼容、按 owner 和会话身份隔�
   assert.equal(await store.hasGrant(owner, summary, identity), false)
 
   assert.equal(await store.redeem(otherOwner, code!), false)
-  assert.equal(await store.redeem(owner, code!), true)
+  assert.equal(await store.redeem(owner, code!, { summary, identity: 'session:filesystem:43' }), false)
+  assert.equal(await store.redeem(owner, code!, { summary: '另一项授权', identity }), false)
+  assert.equal(await redis.get(codeKey) !== null, true)
+  assert.equal(await store.redeem(owner, code!, { summary, identity }), true)
   assert.equal(await store.hasGrant(owner, summary, identity), true)
   assert.equal(await store.hasGrant(otherOwner, summary, identity), false)
   assert.equal(await store.hasGrant(owner, summary, 'session:filesystem:43'), false)

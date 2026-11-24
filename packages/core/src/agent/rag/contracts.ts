@@ -1,9 +1,5 @@
 /** TypeScript RAG Worker 与业务桥接层共用的 canonical contract。 */
 
-export const RAG_CONTRACT_VERSION = "rag-v1" as const;
-// 0.5.0：数据读取与 Memory/向量准备统一在 TS worker 中执行。
-export const RAG_WORKER_VERSION = "0.6.1" as const;
-
 export type RagSourceType =
   | "memory"
   | "project"
@@ -15,7 +11,7 @@ export type RagSourceType =
   | "calendar"
   | "scheduled_task";
 
-export type RagScopeType = "owner" | "workspace" | "project" | "folder" | "group" | "member" | "system";
+export type RagScopeType = "owner" | "workspace" | "project" | "group" | "member" | "system";
 
 export type RagDocument = {
   id: string;

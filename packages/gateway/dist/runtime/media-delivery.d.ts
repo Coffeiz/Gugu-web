@@ -1,6 +1,6 @@
 import type { ImConversationScope } from '../ir/inbound.js';
 import type { createFeishuSender } from '../platforms/feishu/sender.js';
-import type { createQqMediaUploader } from '../platforms/qq/media-upload.js';
+import { QqMediaUploadError, type createQqMediaUploader } from '../platforms/qq/media-upload.js';
 import type { createQqSender } from '../platforms/qq/sender.js';
 import type { createTelegramSender } from '../platforms/telegram/sender.js';
 import type { createWechatSender } from '../platforms/wechat/sender.js';
@@ -35,8 +35,7 @@ export declare function validateImOutboundFile(platform: ImConversationScope['pl
     mime: string;
     size: number;
 };
-/** 宿主验证文件和会话归属后，按平台协议上传并投递。 */
-export declare function sendImMedia(input: {
+type ImMediaInput = {
     platform: MediaSender;
     scope: Pick<ImConversationScope, 'platform' | 'chatId' | 'chatType' | 'platformUserId'>;
     file: {
@@ -49,8 +48,22 @@ export declare function sendImMedia(input: {
     wechatContextToken?: unknown;
     authorize(): Promise<boolean>;
     signal?: AbortSignal;
-}): Promise<{
+    onQqMessageFailure?: (httpStatus?: number, upstreamCode?: number) => void;
+    onQqUploadFailure?: (error: QqMediaUploadError) => void;
+};
+/** 宿主验证文件和会话归属后，按平台协议上传并投递。 */
+export declare function sendImMedia(input: ImMediaInput): Promise<{
     recipient: string;
     receipt: import("../platforms/wechat/sender.js").WechatSendReceipt;
 } | null>;
+type QqMediaInput = ImMediaInput & {
+    platform: Extract<MediaSender, {
+        platform: 'qq';
+    }>;
+};
+/** 上传最多预取一张，发送顺序及单件回执仍由原发送器决定。 */
+export declare function sendQqImageBatch(inputs: readonly QqMediaInput[]): AsyncGenerator<{
+    index: number;
+    outcome: "unknown" | "rejected" | "accepted";
+}, void, unknown>;
 export {};

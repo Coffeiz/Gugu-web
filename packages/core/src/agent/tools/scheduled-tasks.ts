@@ -223,7 +223,7 @@ const taskInput = {
   channels: z.array(z.enum(['web', 'email', 'feishu', 'qq', 'telegram', 'wechat'])).min(1).refine(unique).optional(),
   enabled: z.boolean().optional(), delivery_mode: deliveryMode.optional(),
   authorized_tools: z.array(z.literal('send_email')).max(1).optional(),
-  email_attachment_file_ids: z.array(taskId.positive()).max(5).refine(unique).optional(),
+  email_attachment_file_paths: z.array(z.string().max(4096).regex(/^\/(personal|project|workspace)\/[^\\\p{Cc}]+$/u)).max(5).refine(unique).optional(),
   workspace_id: taskId.nullable().optional(), filesystem_authorized: z.boolean().optional(),
 }
 const createTaskSchema = z.object(taskInput).strict()
@@ -264,7 +264,7 @@ class ScheduledTaskWriteRejected extends Error {
 function taskWriteFields(input: TaskInput): ScheduledTaskPatch {
   const fields: ScheduledTaskPatch = {}
   for (const key of ['schedule_kind', 'cron', 'interval_minutes', 'start_at', 'end_at', 'channels', 'enabled',
-    'authorized_tools', 'email_attachment_file_ids', 'workspace_id', 'execution_mode'] as const) {
+    'authorized_tools', 'email_attachment_file_paths', 'workspace_id', 'execution_mode'] as const) {
     if (input[key] !== undefined) Object.assign(fields, { [key]: input[key] })
   }
   if (input.schedule_name !== undefined) fields.name = strip(input.schedule_name)
@@ -444,7 +444,7 @@ export function createScheduledTaskWriteTools(core: SqlDataRuntime, runtime: Sch
       definition: { name, schema: { type: 'function', function: {
         name, description: descriptions[name] + (runtime.emailAuthorization?.[name] ? '预授权 send_email 需要用户确认。' : ''), parameters: z.toJSONSchema(schema) as Record<string, Json>,
       } } },
-      effect: 'write', strictArrayFields: ['channels', 'authorized_tools', 'email_attachment_file_ids', 'task_ids'],
+      effect: 'write', strictArrayFields: ['channels', 'authorized_tools', 'email_attachment_file_paths', 'task_ids'],
       validate: input => schema.safeParse(input),
       ...(runtime.emailAuthorization?.[name] ? { requiresInteraction: true, confirmationReplay: true } : {}),
       execute: (args, scope, call) => apply({ args, name, identity: scope.identity, roundId: scope.roundId, toolCallId: call.id } as TaskWriteRequest, scope, call),

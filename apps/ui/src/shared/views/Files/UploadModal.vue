@@ -159,44 +159,12 @@
             </span>
           </div>
 
-          <div class="field" v-if="effectiveProjectId && lockedFolderId === null">
-            <label>
-              {{ t('filesUi.putInFolder') }}
-              <span class="label-hint">{{ t('filesUi.optional') }}</span>
-            </label>
-            <div v-if="projectFolders.length" class="proj-group-chips">
-              <button class="select-btn" :class="{ active: selectedFolderId === null }" @click="selectedFolderId = null">{{ t('filesUi.root') }}</button>
-              <button v-for="f in projectFolders" :key="f.id" class="select-btn" :class="{ active: selectedFolderId === f.id }" @click="selectedFolderId = f.id">
-                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                  <path d="M1 3.5a1 1 0 011-1h2l1 1.5h5a1 1 0 011 1V9a1 1 0 01-1 1H2a1 1 0 01-1-1V3.5z"/>
-                </svg>
-                {{ f.name }}
-              </button>
-              <button v-if="projectFoldersHasMore" class="select-btn" :disabled="projectFoldersLoading" @click="loadMoreFolders">
-                {{ projectFoldersLoading ? t('filesUi.loading') : t('filesUi.loadMoreFolders') }}
-              </button>
-              <small v-else-if="projectFoldersLimited">{{ t('filesViewUi.pageLimitReached') }}</small>
-            </div>
-            <span v-else class="no-proj-hint">{{ t('filesUi.noFolders') }}</span>
-          </div>
-          <div class="field locked-hint" v-else-if="lockedFolderId !== null">
-            <label>{{ t('filesUi.currentFolder') }}</label>
-            <span class="locked-tag">
-              <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                <path d="M1 3.5a1 1 0 011-1h2l1 1.5h5a1 1 0 011 1V9a1 1 0 01-1 1H2a1 1 0 01-1-1V3.5z"/>
-              </svg>
-              {{ projectFolders.find(f => f.id === lockedFolderId)?.name ?? t('filesUi.currentFolder') }}
-            </span>
-          </div>
-
-          <div class="field" v-if="effectiveProjectId && currentProjectStages.length">
-            <label>
-              {{ t('filesUi.stage') }}
-              <span class="label-hint">{{ t('filesUi.optional') }}</span>
-            </label>
+          <div v-if="effectiveProjectId && !workspaceTarget" class="field">
+            <label>{{ t('filesUi.putInFolder') }}</label>
             <div class="proj-group-chips">
-              <button class="select-btn" :class="{ active: selectedStage === '' }" @click="selectedStage = ''">{{ t('filesUi.unmarked') }}</button>
-              <button v-for="s in currentProjectStages" :key="s.key" class="select-btn stage-tag-btn" :class="{ active: selectedStage === s.label }" @click="selectedStage = s.label">{{ s.label }}</button>
+              <button class="select-btn" :class="{ active: !selectedFolderPath }" @click="selectedFolderPath = ''">{{ t('filesUi.root') }}</button>
+              <button v-for="folder in projectFolders" :key="folder.relativePath" class="select-btn"
+                :class="{ active: selectedFolderPath === folder.relativePath }" @click="selectedFolderPath = folder.relativePath">{{ folder.name }}</button>
             </div>
           </div>
         </div>
@@ -216,8 +184,8 @@
 import UploadConflictDialog from '@/components/common/overlays/UploadConflictDialog.vue'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import { ref, computed, watch, type PropType } from 'vue'
-import { uploadDirectWithProgress, filesApi, foldersApi, type PathFileRef } from '@/services/api'
-import { readDroppedEntries, filesToItems, resolveFolderTree, uploadFileWithProgress, uploadWorkspaceFile } from '@/composables/files/useFileUploadCore'
+import { type PathFileRef, type PathFileEntry } from '@/services/api'
+import { readDroppedEntries, filesToItems, uploadWorkspaceFile } from '@/composables/files/useFileUploadCore'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
@@ -234,7 +202,6 @@ const props = defineProps({
   lockedProjectId:   { type: Number, default: null },
   lockedProjectName: { type: String, default: '' },
   lockedColor:       { type: String, default: '' },
-  lockedFolderId:    { type: Number, default: null },
   initialFiles:      { type: Array as PropType<File[]>, default: () => [] },
   workspaceTarget:   { type: Object as PropType<PathFileRef | null>, default: null },
 })
@@ -244,8 +211,7 @@ const fileInputRef    = ref<HTMLInputElement | null>(null)
 const pendingFiles    = ref<any[]>([])
 const pendingPaths    = ref<any[]>([])
 const selectedId      = ref<number | string | null>(null)
-const selectedFolderId = ref<number | string | null>(null)
-const selectedStage   = ref('')
+const selectedFolderPath = ref('')
 const isDragging      = ref(false)
 const fileProgresses  = ref<any[]>([])
 let   dragCounter     = 0
@@ -254,89 +220,38 @@ const uploadedCount   = ref(0)
 const doneExpanded    = ref(false)
 const openYears       = ref(new Set())
 const openMonths      = ref(new Set())
-const projectFolders  = ref<any[]>([])
-const projectFoldersCursor = ref<string | null>(null)
-const projectFoldersHasMore = ref(false)
-const projectFoldersLimited = ref(false)
-const projectFoldersLoading = ref(false)
-
+const projectFolders = ref<PathFileEntry[]>([])
 const effectiveProjectId = computed(() => props.lockedProjectId ?? selectedId.value)
-const currentProjectStages = computed(() => {
-  if (!effectiveProjectId.value) return []
-  const proj = props.projects.find(p => p.id === effectiveProjectId.value)
-  return proj?.stages ?? []
-})
-
-function stageDefault(pid = effectiveProjectId.value) {
-  if (!pid) return ''
-  const proj = props.projects.find(p => p.id === pid)
-  const cur = proj?.stages?.find((s: any) => s.key === proj.currentStage)
-  return cur?.label ?? ''
-}
-
-async function loadFolders(pid: any) {
+let folderRequest = 0
+async function loadFolders(pid: number | string | null) {
+  const request = ++folderRequest
   projectFolders.value = []
-  projectFoldersCursor.value = null
-  projectFoldersHasMore.value = false
-  projectFoldersLimited.value = false
+  selectedFolderPath.value = ''
   if (!pid) return
-  projectFoldersLoading.value = true
   try {
-    const page = await foldersApi.page({ projectId: pid, limit: 100, sortBy: 'name', sortOrder: 'asc' })
-    projectFolders.value = page.items
-    projectFoldersCursor.value = page.next_cursor
-    projectFoldersHasMore.value = page.has_more
-  } catch { projectFolders.value = [] }
-  finally { projectFoldersLoading.value = false }
-}
-
-async function loadMoreFolders() {
-  const pid = effectiveProjectId.value == null ? null : Number(effectiveProjectId.value)
-  if (!pid || !projectFoldersHasMore.value || projectFoldersLoading.value) return
-  const remaining = Math.max(0, 2000 - projectFolders.value.length)
-  if (remaining === 0) {
-    projectFoldersHasMore.value = false
-    projectFoldersLimited.value = true
-    return
+    const entries = await pathFilesApi.entries(`project:${Number(pid)}`, '')
+    if (request === folderRequest) projectFolders.value = entries.filter(entry => entry.kind === 'directory')
+  } catch (error) {
+    if (request === folderRequest) showAppError(errorMessage(error))
   }
-  projectFoldersLoading.value = true
-  try {
-    const page = await foldersApi.page({ projectId: pid, cursor: projectFoldersCursor.value, limit: 100, sortBy: 'name', sortOrder: 'asc' })
-    if (effectiveProjectId.value !== pid) return
-    const accepted = page.items.slice(0, remaining)
-    projectFolders.value = [...projectFolders.value, ...accepted]
-    projectFoldersCursor.value = page.next_cursor
-    projectFoldersHasMore.value = page.has_more && accepted.length === page.items.length
-    projectFoldersLimited.value = projectFolders.value.length >= 2000 && page.has_more
-  } catch { /* 允许用户再次加载 */ }
-  finally { projectFoldersLoading.value = false }
 }
-
-watch(effectiveProjectId, (pid) => {
-  selectedFolderId.value = null
-  selectedStage.value = stageDefault(pid)
-  loadFolders(pid)
-}, { immediate: false })
-watch(selectedId, () => { selectedFolderId.value = null })
+watch(effectiveProjectId, pid => { void loadFolders(pid) })
 watch(() => props.show, v => {
   if (v) {
     if (props.initialFiles.length) addFiles(filesToItems(props.initialFiles))
     if (effectiveProjectId.value) loadFolders(effectiveProjectId.value)
-    selectedStage.value = stageDefault()
   } else {
     pendingFiles.value = []
     pendingPaths.value = []
     selectedId.value = null
-    selectedFolderId.value = null
-    selectedStage.value = ''
+    selectedFolderPath.value = ''
     isDragging.value = false
     dragCounter = 0
     uploading.value = false
     uploadedCount.value = 0
     doneExpanded.value = false
     projectFolders.value = []
-    projectFoldersCursor.value = null
-    projectFoldersHasMore.value = false
+    folderRequest++
   }
 })
 
@@ -425,80 +340,29 @@ async function handleUpload() {
   uploadedCount.value = 0
   fileProgresses.value = pendingFiles.value.map(() => 0)
 
-  const projectId = effectiveProjectId.value as number
-  const baseFolderId = (props.lockedFolderId !== null ? props.lockedFolderId : selectedFolderId.value) as number | null
-  const space = projectId ? 'project' : 'personal'
-  const uploaded: any[] = []
-
+  const projectId = effectiveProjectId.value
+  const target: PathFileRef = props.workspaceTarget ?? (projectId
+    ? { directoryId: `project:${Number(projectId)}`, relativePath: selectedFolderPath.value }
+    : { directoryId: 'personal', relativePath: '' })
+  const account = getAccountBoundaryEpoch()
+  const isCurrent = () => account === getAccountBoundaryEpoch()
   try {
     const items = pendingFiles.value.map((file, i) => ({ file, relativePath: pendingPaths.value[i] }))
-    if (props.workspaceTarget) {
-      const target = props.workspaceTarget
-      const account = getAccountBoundaryEpoch()
-      while (items.length) {
-        const item = items[0]
-        if (account !== getAccountBoundaryEpoch()) return
-        const created = await uploadWorkspaceFile(target, item, progress => { fileProgresses.value[0] = progress },
-          conflicts => conflictDialog.value?.show(conflicts) ?? Promise.resolve(new Map()),
-          () => account === getAccountBoundaryEpoch(), pathFilesApi)
-        if (account !== getAccountBoundaryEpoch()) return
-        if (created) emit('workspace-changed')
-        items.shift()
-        pendingFiles.value.shift()
-        pendingPaths.value.shift()
-        fileProgresses.value.shift()
-      }
-      emit('uploaded', [])
-      emit('close')
-      return
-    }
-    const resolved = await resolveFolderTree(items, { projectId, baseFolderId })
-
-    for (let i = 0; i < pendingFiles.value.length; i++) {
-      const f = pendingFiles.value[i]
-      const folderId = resolved[i].folderId
-      const presign = await filesApi.presign({
-        filename: f.name,
-        size_bytes: f.size,
-        mime_type: f.type || 'application/octet-stream',
-        space,
-        project_id: projectId ?? null,
-        folder_id: folderId ?? null,
-        stage_name: selectedStage.value,
-      })
-
-      let created
-      if (presign.mode === 'oss') {
-        await uploadDirectWithProgress(presign.upload_url, f, (pct) => {
-          const next = [...fileProgresses.value]
-          next[i] = pct * 0.95
-          fileProgresses.value = next
-        })
-        created = await filesApi.confirm({
-          storage_key: presign.storage_key,
-          display_name: presign.final_name,
-          ext: presign.ext,
-          mime_type: f.type || 'application/octet-stream',
-          size_bytes: f.size,
-          space,
-          project_id: projectId ?? null,
-          folder_id: folderId ?? null,
-          stage_name: selectedStage.value,
-        })
-      } else {
-        created = await uploadFileWithProgress(f, { space, projectId, folderId, stageName: selectedStage.value }, (pct) => {
-          const next = [...fileProgresses.value]
-          next[i] = pct
-          fileProgresses.value = next
-        })
-      }
-      fileProgresses.value[i] = 1
-      uploaded.push(created)
+    for (const [index, item] of items.entries()) {
+      if (!isCurrent()) return
+      const created = await uploadWorkspaceFile(target, item, progress => { fileProgresses.value[index] = progress },
+        conflicts => conflictDialog.value?.show(conflicts) ?? Promise.resolve(new Map()),
+        isCurrent, pathFilesApi)
+      if (!isCurrent()) return
+      if (created) emit('workspace-changed')
       uploadedCount.value++
     }
-    emit('uploaded', uploaded)
-    setTimeout(() => emit('close'), 500)
+    emit('uploaded', [])
+    emit('close')
   } catch (err) {
+    if (!isCurrent()) return
+    pendingFiles.value.splice(0, uploadedCount.value)
+    pendingPaths.value.splice(0, uploadedCount.value)
     showAppError(errorMessage(err))
     uploading.value = false
   }

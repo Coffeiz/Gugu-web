@@ -14,8 +14,7 @@ test('旧历史引用按 owner 水合且不写回，删除对象后不泄漏并�
   try {
     await pool.query(`CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid NOT NULL);
       CREATE TABLE conversation_messages(id integer PRIMARY KEY,session_id integer,role text,content text,references_json jsonb,content_json jsonb);
-      CREATE TABLE folders(id integer PRIMARY KEY,user_id uuid,name text,parent_id integer,deleted_at timestamptz);
-      CREATE TABLE files(id integer PRIMARY KEY,user_id uuid,display_name text,ext text,space text,folder_id integer,stage_name text,mime_type text,deleted_at timestamptz,updated_at timestamptz)`)
+      CREATE TABLE files(id integer PRIMARY KEY,user_id uuid,display_name text,ext text,space text,stage_name text,mime_type text,deleted_at timestamptz,updated_at timestamptz)`)
     const owner = randomUUID(), other = randomUUID(), identity = { ownerId: owner, sessionId: '1' }
     await pool.query('INSERT INTO conversation_sessions VALUES (1,$1)', [owner])
     await pool.query("INSERT INTO files VALUES (2,$1,'资料','txt','personal',NULL,'','text/plain',NULL,now())", [owner])

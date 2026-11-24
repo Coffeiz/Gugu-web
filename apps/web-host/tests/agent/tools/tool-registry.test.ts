@@ -14,7 +14,7 @@ import { createAgentToolRegistry, filterConfiguredWebAgentTools, type AgentToolR
 import { createWebAgentShell } from '../../../src/modules/agent/tools/shell/sandbox.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '1', runId: 'run' }
-function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'trash' | 'httpGet'> = {}) {
+function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'diskTrashTools' | 'httpGet'> = {}) {
   const records: Array<{ id: number; userId: string; name: string; contact: null; email: null; phone: null; notes: string }> = []
   let enabled = new Set(['list_contacts', 'create_contact', 'create_project'])
   let failed = false, readFailed = false
@@ -42,12 +42,12 @@ function fixture(includeTime = false, includeOverview = false, includeProjects =
 test('Main 工具白名单保留已接入的业务工具组名称，并过滤未知工具', () => {
   const configured = [
     'create_contact', 'update_contact', 'delete_contact', 'create_project', 'update_project', 'set_color', 'archive_project', 'add_stage',
-    'remove_stage', 'rename_stage', 'set_stages', 'update_stage', 'create_workspace', 'update_workspace', 'unlink_workspace', 'delete_workspace_directory', 'undo_last_action', 'delete_folder', 'delete_file', 'compress_files', 'extract_files', 'global_search',
+    'remove_stage', 'rename_stage', 'set_stages', 'update_stage', 'create_workspace', 'update_workspace', 'set_project_workspace', 'undo_last_action', 'delete_folder', 'delete_file', 'compress_files', 'extract_files', 'global_search',
     'canvas_list', 'canvas_focus_node', 'canvas_search_placeable', 'canvas_create_note', 'canvas_delete', 'note_undo', 'call_tool', 'create_skill', 'update_skill', 'delete_skill',
     'note_create', 'note_update', 'delete_scheduled_task', 'web_search', 'similar_image_search', 'deep_research',
-    'grep', 'read_file', 'save_uploaded_file', 'save_im_attachment', 'view_image', 'delete_folder', 'save_attachment', 'mcp_demo_lookup', 'untrusted_tool', 'mcp_demo_../lookup',
+    'grep', 'read_file', 'save_uploaded_file', 'save_im_attachment', 'view_image', 'delete_folder', 'save_attachment', 'mcp_demo_lookup', 'unlink_workspace', 'delete_workspace_directory', 'untrusted_tool', 'mcp_demo_../lookup',
   ]
-  const retired = new Set(['compress_files', 'extract_files', 'grep', 'read_file', 'save_uploaded_file', 'save_im_attachment'])
+  const retired = new Set(['unlink_workspace', 'delete_workspace_directory', 'delete_folder', 'compress_files', 'extract_files', 'grep', 'read_file', 'save_uploaded_file', 'save_im_attachment'])
   assert.deepEqual(filterConfiguredWebAgentTools(configured), [...new Set(configured.slice(0, -2).filter(name => !retired.has(name)))])
 })
 
@@ -191,28 +191,28 @@ test('知识写工具由 Host 注册器显式启用并继续使用可信 owner �
 const scope = (ownerId = identity.ownerId) => ({ identity: { ...identity, ownerId }, roundId: 'round-1', signal: new AbortController().signal,
   resolution: null, execute: async () => { throw new Error('不可调用宿主 Shell') } })
 
-test('send_file 通过生产工具注册器按授权 owner 解析文件并返回可投递产物', async () => {
+test('send_item 通过生产工具注册器按授权 owner 解析文件并返回可投递产物', async () => {
   let authorized = true
   const resolvedOwners: string[] = []
   const sendFile = createScheduledSendFileTool(async (current, source) => {
     resolvedOwners.push(current.ownerId)
-    assert.deepEqual(source, { key: 'file_id', value: 23 })
-    return { file_id: 23, name: '合成报告', ext: 'txt', size_bytes: 4 }
-  }, { open: async () => { throw new Error('文件 ID 路径不应请求 URL') }, stage: async () => { throw new Error('文件 ID 路径不应暂存') } })
+    assert.deepEqual(source, { key: 'file', value: '/personal/合成报告.txt' })
+    return { file_path: '/personal/合成报告.txt', name: '合成报告', ext: 'txt', size_bytes: 4 }
+  }, { open: async () => { throw new Error('文件路径不应请求 URL') }, stage: async () => { throw new Error('文件路径不应暂存') } })
   const registry = createAgentToolRegistry({ core: {} as SqlDataRuntime, sendFile,
-    authorize: async (current, name) => authorized && current.ownerId === identity.ownerId && name === 'send_file' })
-  assert.ok((await registry.capabilities(identity)).some(item => item.name === 'send_file'))
-  const result = await registry.tools.dispatch({ id: 'send-1', name: 'send_file', input: { file_id: 23 } }, scope())
+    authorize: async (current, name) => authorized && current.ownerId === identity.ownerId && name === 'send_item' })
+  assert.ok((await registry.capabilities(identity)).some(item => item.name === 'send_item'))
+  const result = await registry.tools.dispatch({ id: 'send-1', name: 'send_item', input: { file: '/personal/合成报告.txt' } }, scope())
   assert.equal(result.kind, 'completed')
   if (result.kind === 'completed') {
     assert.equal(result.successful, true)
-    assert.deepEqual(result.artifact, { file_id: 23, name: '合成报告', ext: 'txt', size_bytes: 4 })
+    assert.deepEqual(result.artifact, { file_path: '/personal/合成报告.txt', name: '合成报告', ext: 'txt', size_bytes: 4 })
     assert.deepEqual(result.value, { ok: true, message: '已准备好附件，将随本轮结果尝试投递，是否送达以后续回执为准。' })
   }
   assert.deepEqual(resolvedOwners, [identity.ownerId])
   authorized = false
-  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'send_file'), false)
-  const denied = await registry.tools.dispatch({ id: 'send-2', name: 'send_file', input: { file_id: 23 } }, scope())
+  assert.equal((await registry.capabilities(identity)).some(item => item.name === 'send_item'), false)
+  const denied = await registry.tools.dispatch({ id: 'send-2', name: 'send_item', input: { file: '/personal/合成报告.txt' } }, scope())
   assert.equal(denied.kind, 'completed')
   if (denied.kind === 'completed') { assert.equal(denied.successful, false); assert.equal(denied.executed, false) }
   assert.deepEqual(resolvedOwners, [identity.ownerId])
@@ -584,7 +584,7 @@ test('近期待办需日历和时钟同时具备；回收站与近期待办按�
   missing.grant('get_upcoming')
   assert.equal((await missing.capabilities(identity)).some(tool => tool.name === 'get_upcoming'), false)
   let reads = 0
-  const f = fixture(true, false, false, undefined, undefined, undefined, { events, trash: { async list() { reads++; return { files: [], folders: [] } } } })
+  const f = fixture(true, false, false, undefined, undefined, undefined, { events, diskTrashTools: [{ definition: { name: 'list_trash', schema: { type: 'function', function: { name: 'list_trash', description: '读取回收站', parameters: { type: 'object', properties: {} } } } }, effect: 'read', validate: data => ({ success: true, data }), async execute() { reads++; return { kind: 'completed', successful: true, mutated: false, value: [] } } }] })
   f.grant('get_upcoming'); f.grant('list_trash')
   assert.ok((await f.capabilities(identity)).some(tool => tool.name === 'get_upcoming'))
   assert.ok((await f.capabilities(identity)).some(tool => tool.name === 'list_trash'))

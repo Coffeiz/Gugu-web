@@ -1,9 +1,22 @@
+import { projectTrashDirectoryKey } from './storage.js'
 import { CoreError } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
 import { randomUUID } from 'node:crypto'
-import { ensureRegistrationFileLibraryQuota, lockQuota, reconcileLocalUsage } from '../../files/storage/quota.js'
-import { recoverStagedLocalFile, stageLocalFileRemoval } from '../../files/storage/removal.js'
+import { createLocalFileTree, localEntryKind, moveLocalEntry, removeLocalTree } from '@gugu/fs/node'
+import { projectFileStorageKey } from '../../files/paths.js'
 import { enqueueScheduledTaskRagRebuild } from '../../scheduled-tasks/store.js'
+
+type ProjectDirectoryRow = { id: number; user_id: string; name: string; start_date: unknown; created_at: unknown }
+
+function directoryKey(project: ProjectDirectoryRow) {
+  return projectFileStorageKey(project.user_id, project.id, project.name, project.start_date, project.created_at)
+}
+
+function stagingKey(owner: string, journalId: string) {
+  if (![owner, journalId].every(value => /^[a-f0-9-]{36}$/u.test(value)))
+    throw new Error('项目清理日志标识无效')
+  return `${owner}/.gugu-project-purge/${journalId}`
+}
 
 export async function hasProjectExpiryJournalSchema(db: Pick<Pool, 'query'>): Promise<boolean> {
   const result = await db.query<{ ready: boolean }>(
@@ -13,15 +26,15 @@ export async function hasProjectExpiryJournalSchema(db: Pick<Pool, 'query'>): Pr
 }
 
 /** 清理一个过期项目；行锁使恢复和多个清理者不会同时处理同一项目。 */
-export async function purgeExpiredProject(pool: Pool, storageRoot: string, cutoff: Date, defaultLimitBytes: number | null): Promise<boolean> {
-  return purgeDeletedProject(pool, storageRoot, defaultLimitBytes, { cutoff })
+export async function purgeExpiredProject(pool: Pool, storageRoot: string, cutoff: Date): Promise<boolean> {
+  return purgeDeletedProject(pool, storageRoot, { cutoff })
 }
 
-export async function purgeDeletedProject(pool: Pool, storageRoot: string, defaultLimitBytes: number | null,
+export async function purgeDeletedProject(pool: Pool, storageRoot: string,
   target: { cutoff: Date } | { ownerId: string; projectId: number }): Promise<boolean> {
   const manual = 'ownerId' in target
   const client = await pool.connect()
-  const staged: NonNullable<Awaited<ReturnType<typeof stageLocalFileRemoval>>>[] = []
+  let staged: { source: string; target: string } | undefined
   let committed = false
   let commitAttempted = false
   let locked = false
@@ -36,10 +49,10 @@ export async function purgeDeletedProject(pool: Pool, storageRoot: string, defau
     // 先预留日志连接，再持有项目行锁；其他请求等待项目时不会耗尽所需连接。
     journalClient = await pool.connect()
     await client.query('BEGIN')
-    const result = await client.query<{ id: number; user_id: string }>(
+    const result = await client.query<ProjectDirectoryRow>(
       manual
-        ? `SELECT id,user_id::text FROM projects WHERE user_id=$1 AND id=$2 AND deleted_at IS NOT NULL FOR UPDATE`
-        : `SELECT id,user_id::text FROM projects WHERE deleted_at IS NOT NULL AND deleted_at <= $1
+        ? `SELECT id,user_id::text,name,start_date,created_at FROM projects WHERE user_id=$1 AND id=$2 AND deleted_at IS NOT NULL FOR UPDATE`
+        : `SELECT id,user_id::text,name,start_date,created_at FROM projects WHERE deleted_at IS NOT NULL AND deleted_at <= $1
            ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1`,
       manual ? [target.ownerId, target.projectId] : [target.cutoff],
     )
@@ -49,45 +62,45 @@ export async function purgeDeletedProject(pool: Pool, storageRoot: string, defau
       return false
     }
     const { id, user_id: owner } = project
-    const files = await client.query<{ id: number; storage_key: string }>(
-      `SELECT id,storage_key FROM files WHERE user_id=$1 AND
-       (project_id=$2 OR folder_id IN (SELECT id FROM folders WHERE user_id=$1 AND project_id=$2)) FOR UPDATE`,
-      [owner, id],
-    )
-    await ensureRegistrationFileLibraryQuota(client, owner, defaultLimitBytes)
-    const quota = await lockQuota(client, owner)
     const journalId = randomUUID()
+    const active = directoryKey(project)
+    const parked = projectTrashDirectoryKey(owner, id)
+    const hasParked = await localEntryKind(storageRoot, parked)
+    if (hasParked && await localEntryKind(storageRoot, active))
+      throw new CoreError('conflict', '发现两份项目目录，无法安全清理')
+    const source = hasParked ? parked : active
+    const targetPath = stagingKey(owner, journalId)
     // 独立连接先提交日志；项目行锁持续持有到清理事务结束。
     await journalClient.query(
       `INSERT INTO project_expiry_journals(id,user_id,project_id,entries,created_at)
        VALUES($1,$2,$3,$4::json,CURRENT_TIMESTAMP)`,
-      [journalId, owner, id, JSON.stringify(files.rows)],
+      [journalId, owner, id, JSON.stringify({ source })],
     )
-    for (const file of files.rows) {
-      const item = await stageLocalFileRemoval(storageRoot, owner, file.storage_key, journalId)
-      if (item) staged.push(item)
+    if (await localEntryKind(storageRoot, source)) {
+      if (!await createLocalFileTree(storageRoot, `${owner}/.gugu-project-purge`).ensureRoot()
+        || !await moveLocalEntry(storageRoot, source, targetPath))
+        throw new CoreError('conflict', '项目目录已变化')
+      staged = { source, target: targetPath }
     }
-    await client.query('DELETE FROM files WHERE user_id=$1 AND id=ANY($2::int[])', [owner, files.rows.map((file) => file.id)])
     const removedTasks = await client.query<{ id: number }>(
       `DELETE FROM scheduled_tasks WHERE user_id=$1 AND event_id IN
        (SELECT id FROM calendar_events WHERE user_id=$1 AND project_id=$2) RETURNING id`, [owner, id],
     )
     for (const task of removedTasks.rows) await enqueueScheduledTaskRagRebuild(client, owner, Number(task.id))
     await client.query('DELETE FROM calendar_events WHERE user_id=$1 AND project_id=$2', [owner, id])
-    await client.query('DELETE FROM folders WHERE user_id=$1 AND project_id=$2', [owner, id])
     await client.query('DELETE FROM projects WHERE user_id=$1 AND id=$2', [owner, id])
-    await reconcileLocalUsage(client, storageRoot, owner, quota, new Set(staged.map((item) => item.stagedPath)))
     commitAttempted = true
     await client.query('COMMIT')
     committed = true
-    for (const item of staged) await item.discard()
+    if (staged) await removeLocalTree(storageRoot, staged.target)
     await journalClient.query('DELETE FROM project_expiry_journals WHERE id=$1', [journalId])
     return true
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined)
     // 提交连接中断时结果未知，保留暂存文件供后续核对，不能假定回滚成功。
     if (!committed && !commitAttempted) {
-      for (const item of staged.reverse()) await item.restore()
+      if (staged && !await moveLocalEntry(storageRoot, staged.target, staged.source))
+        throw new Error('项目目录恢复失败', { cause: error })
     }
     throw error
   } finally {
@@ -110,18 +123,26 @@ export async function recoverProjectExpiryJournal(pool: Pool, storageRoot: strin
     if (!lock.rows[0]?.acquired) return 'busy'
     locked = true
     await client.query('BEGIN')
-    const journals = await client.query<{ id: string; user_id: string; project_id: number; entries: Array<{ id: number; storage_key: string }> }>(
+    const journals = await client.query<{ id: string; user_id: string; project_id: number; entries: { source?: string } }>(
       `SELECT id,user_id::text,project_id,entries FROM project_expiry_journals
        ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`,
     )
     const journal = journals.rows[0]
     if (!journal) { await client.query('COMMIT'); return false }
-    const project = await client.query('SELECT id FROM projects WHERE id=$1 AND user_id=$2 FOR UPDATE', [journal.project_id, journal.user_id])
-    for (const entry of journal.entries) {
-      const file = await client.query<{ storage_key: string }>('SELECT storage_key FROM files WHERE id=$1 AND user_id=$2 FOR UPDATE', [entry.id, journal.user_id])
-      if (file.rows[0] && file.rows[0].storage_key !== entry.storage_key) throw new Error('暂存文件对应的路径已变更')
-      if (project.rowCount && !file.rowCount) throw new Error('项目仍存在但暂存文件记录已不存在')
-      await recoverStagedLocalFile(storageRoot, journal.user_id, entry.storage_key, journal.id, Boolean(file.rowCount))
+    const source = journal.entries.source
+    const parked = projectTrashDirectoryKey(journal.user_id, journal.project_id)
+    if (typeof source !== 'string' || (source !== parked && (!source.startsWith(`${journal.user_id}/项目文件/`)
+      || !source.endsWith(` #${journal.project_id}`)))) throw new Error('项目清理日志路径无效')
+    const target = stagingKey(journal.user_id, journal.id)
+    const project = await client.query<ProjectDirectoryRow>(
+      'SELECT id,user_id::text,name,start_date,created_at FROM projects WHERE id=$1 AND user_id=$2 FOR UPDATE',
+      [journal.project_id, journal.user_id],
+    )
+    if (await localEntryKind(storageRoot, target)) {
+      if (project.rows[0]) {
+        if ((source !== parked && directoryKey(project.rows[0]) !== source) || !await moveLocalEntry(storageRoot, target, source))
+          throw new Error('项目目录恢复失败')
+      } else await removeLocalTree(storageRoot, target)
     }
     await client.query('DELETE FROM project_expiry_journals WHERE id=$1', [journal.id])
     await client.query('COMMIT')
@@ -144,7 +165,6 @@ export interface ProjectExpiryWorkerOptions {
   expire?: boolean
   pool: Pool
   storageRoot: string
-  defaultLimitBytes: number | null
   intervalMs?: number
   retentionMs?: number
   recoveryRetryMs?: number
@@ -183,7 +203,7 @@ export function startProjectExpiryWorker(options: ProjectExpiryWorkerOptions): {
         await recover()
         if (options.expire === false) continue
         const cutoff = new Date(Date.now() - retention)
-        while (!stopping && await purgeExpiredProject(options.pool, options.storageRoot, cutoff, options.defaultLimitBytes)) { /* 逐项清理 */ }
+        while (!stopping && await purgeExpiredProject(options.pool, options.storageRoot, cutoff)) { /* 逐项清理 */ }
       } catch (error) { options.onError(error) }
     }
   })()

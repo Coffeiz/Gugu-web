@@ -6,11 +6,15 @@ import type { ResolveChatCommand } from '@/components/common/gugu-chat/chatComma
 import { requestDesktopAgentSessions } from './agent-session-transport'
 import { cancelDesktopChatSession, getDesktopRunState } from './agent-chat'
 
-const availableCommands: readonly string[] = ['auto', 'status', 'stop', 'memory', 'forget', 'new', 'help', 'goal', 'compact']
+const workspaceDescription = '查看、绑定、解除或删除工作区'
+const workspaceHelp = '/workspace list　列出可绑定工作区\n/workspace show　查看当前绑定\n/workspace bind <序号或名称>　绑定指定工作区\n/workspace unlink　解除当前会话绑定\n/workspace delete <ID> [confirm]　删除工作区登记\n/workspace status　查看沙箱权限状态'
+
+const availableCommands: readonly string[] = ['auto', 'status', 'stop', 'memory', 'forget', 'new', 'help', 'goal', 'compact', 'workspace']
 
 export async function listDesktopChatCommands() {
   return agentCommandMenu().filter(item => availableCommands.includes(item.command.slice(1)))
-    .map(item => item.command === '/new' ? { ...item, description: i18n.global.t('chat.newCommandDescription') } : item)
+    .map(item => item.command === '/new' ? { ...item, description: i18n.global.t('chat.newCommandDescription') }
+      : item.command === '/workspace' ? { ...item, description: workspaceDescription } : item)
 }
 
 export function createDesktopChatCommandAccess(automaticMode: {
@@ -25,7 +29,9 @@ export function createDesktopChatCommandAccess(automaticMode: {
     const argument = command.argument.toLowerCase()
     const goalAction = name === 'goal' && !isAgentCommandHelpArgument(argument) ? parseAgentGoalArgument(argument) : null
     if (goalAction === 'create' || name === 'compact' && !isAgentCommandHelpArgument(argument)) return undefined
+    if (name === 'workspace' && !isAgentCommandHelpArgument(argument)) return undefined
     return async () => {
+      if (name === 'workspace') return { text: workspaceHelp }
       if (name === 'goal' && !isAgentCommandHelpArgument(argument)) {
         if (sessionId == null) return { text: '当前还没有可管理目标任务的会话。' }
         if (!goalAction) return { text: agentCommandHelp('goal', availableCommands) }
@@ -35,8 +41,9 @@ export function createDesktopChatCommandAccess(automaticMode: {
       if (!availableCommands.includes(name) || name === 'help' || isAgentCommandHelpArgument(argument)) {
         const target = name === 'help' && !isAgentCommandHelpArgument(argument)
           ? canonicalAgentCommandName(argument) : name === 'help' ? '' : name
+        if (target === 'workspace') return { text: workspaceHelp }
         if (target === 'new') return { text: `/new　${t('chat.newCommandDescription')}` }
-        return { text: agentCommandHelp(target, availableCommands, { '/new': t('chat.newCommandDescription') }) }
+        return { text: agentCommandHelp(target, availableCommands, { '/new': t('chat.newCommandDescription'), '/workspace': workspaceDescription }) }
       }
       if (name === 'new')
         return argument ? { text: `/new　${t('chat.newCommandDescription')}` } : { newSession: true }

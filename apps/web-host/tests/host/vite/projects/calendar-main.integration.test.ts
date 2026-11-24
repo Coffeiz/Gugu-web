@@ -61,7 +61,7 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
         is_active boolean NOT NULL, account_status text, security_version integer,
         avatar text, created_at timestamptz, timezone text, email_subscribed boolean,
         is_developer boolean NOT NULL DEFAULT FALSE, last_active_at timestamptz,
-        storage_limit_bytes bigint, hashed_password text,
+        hashed_password text,
         suspended_until timestamptz, suspended_reason text
       );
       CREATE TABLE user_bots (id integer, user_id uuid NOT NULL, platform text NOT NULL, enabled boolean NOT NULL, owner_platform_user_id text);
@@ -73,7 +73,6 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
         enabled boolean NOT NULL, updated_at timestamptz NOT NULL);
       CREATE TABLE agent_usage (id serial PRIMARY KEY, user_id uuid, tokens_in bigint, tokens_out bigint,
         created_at timestamptz, is_byok boolean);
-      CREATE TABLE storage_quota_ledgers (user_id uuid, category text, used_bytes bigint);
       CREATE TABLE projects (
         id serial PRIMARY KEY, user_id uuid NOT NULL, name varchar(200) NOT NULL,
         summary varchar(200), contact_name varchar(200), status varchar(20) NOT NULL,
@@ -86,15 +85,11 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
       );
       CREATE TABLE files (
         id serial PRIMARY KEY, user_id uuid NOT NULL, display_name varchar(300) NOT NULL,
-        ext varchar(20) NOT NULL, space varchar(20) NOT NULL, project_id integer, folder_id integer,
+        ext varchar(20) NOT NULL, space varchar(20) NOT NULL, project_id integer,
         workspace_directory_id integer, stage_name varchar(100), mind_map_id integer,
         storage_key varchar(500) NOT NULL, version integer NOT NULL, size varchar(50),
         size_bytes bigint NOT NULL, mime_type varchar(200), img_width integer, img_height integer,
         created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz
-      );
-      CREATE TABLE folders (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, project_id integer, workspace_directory_id integer,
-        parent_id integer, name varchar(200) NOT NULL, version integer NOT NULL, deleted_at timestamptz
       );
       CREATE TABLE calendar_events (
         id serial PRIMARY KEY, user_id uuid NOT NULL, title varchar(300) NOT NULL,
@@ -111,7 +106,7 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
         reminder_lead_minutes integer, channels varchar(40) NOT NULL, delivery_targets jsonb,
         updated_at timestamptz, end_at timestamptz, last_run_at timestamptz,
         last_run_failed boolean, filesystem_authorization_grant_id integer, workspace_id integer,
-        interval_minutes integer, authorized_tools jsonb, email_attachment_file_ids jsonb
+        interval_minutes integer, authorized_tools jsonb, email_attachment_file_paths jsonb
       );
       CREATE TABLE project_file_counts (project_id integer PRIMARY KEY, file_count bigint NOT NULL);
       CREATE TABLE clients (
@@ -131,7 +126,7 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
         id serial PRIMARY KEY, user_id uuid, event text, properties jsonb, created_at timestamptz
       );
       CREATE TABLE workspaces (
-        id serial PRIMARY KEY, user_id uuid, name text, kind text, folder_id integer,
+        id serial PRIMARY KEY, user_id uuid, name text, kind text,
         project_id integer, directory_id integer, enabled boolean, is_default boolean,
         created_at timestamptz, updated_at timestamptz
       );

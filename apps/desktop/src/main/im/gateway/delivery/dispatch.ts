@@ -1,9 +1,14 @@
+import { resolveQqNoticeTarget, type QqNoticeKind } from '@gugu/gateway/qq'
+import { runDesktopWorkspaceExtra, type DesktopWorkspaceCommands } from '../../../agent/workspace-command.js'
 import type { DesktopImMediaRoute } from './attachments.js'
 import { createHash } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { safeStorage } from 'electron'
-import { formatImToolReceipt, createImRequestedReply, parseImReceivedMessage, type ImConnectionIdentity, type ImReceivedMessage } from '@gugu/gateway'
+import { formatImToolReceipt, replyToImMemoryCommand, readImAddressedCommand, createImRequestedReply, parseImReceivedMessage, type ImConnectionIdentity, type ImReceivedMessage } from '@gugu/gateway'
 import { redactToolError, type RunEvent } from '@gugu/core/agent'
+import { immediateImCommandReply, normalizeImWorkspaceArgument, runImAutomaticModeCommand, runImForgetCommand } from '@gugu/core/im/shortcut'
+import { agentCommandMenu, desktopWorkspaceReply, parseAgentGoalArgument, parseDesktopWorkspaceCommand } from '@gugu/core/agent/commands/menu'
+import { formatImCompactionNotice } from '@gugu/core/im/run-delivery'
 import { isAttentionSourceKind } from '@gugu/core/im/attention/directive'
 import type { DesktopAgentEventPage, DesktopAppearancePreferences } from '@gugu/core/desktop'
 import { DesktopError } from '../../../core-host.js'
@@ -21,18 +26,44 @@ type SendResult = Outcome | { outcome: Outcome; platformMessageIds?: readonly st
 type AcceptedReplyFact = { platformMessageIds: readonly string[]; recipientSenderId: string; sentAtMs: number; sourceAttentionKind?: string }
 type Prepared = { sessionId: number; runId: string | null; eventKey: string; sealedEvent: string; clientId: string }
 
+export async function stopDesktopImRun(host: IpcHost, event: ImReceivedMessage, connectionId: string, ownerPlatformUserId?: string) {
+  const hash = createHash('sha256').update(JSON.stringify([connectionId, desktopImEventKey(event), 'stop'])).digest('hex')
+  const operation = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`
+  const { outcome } = await host.request<{ outcome: string }>('im.inbox.cancelRun', {
+    platform: event.scope.platform, connectionId, chatType: event.scope.chatType, platformUserId: event.scope.platformUserId,
+    ...(ownerPlatformUserId === undefined ? {} : { ownerPlatformUserId }),
+  }, operation)
+  return outcome === 'requested' ? '🛑 已停止当前任务'
+    : outcome === 'not_owner' ? '只能停止自己发起的任务。'
+      : outcome === 'already_completed' ? '这个任务已经结束啦～' : '当前没有正在运行的任务。'
+}
+
+export async function readDesktopImRunStatus(host: IpcHost, event: ImReceivedMessage, connectionId: string, ownerPlatformUserId?: string) {
+  const { status } = await host.request<{ status: string }>('im.inbox.status', {
+    platform: event.scope.platform, connectionId, chatType: event.scope.chatType, platformUserId: event.scope.platformUserId,
+    ...(ownerPlatformUserId === undefined ? {} : { ownerPlatformUserId }),
+  })
+  if (status === 'compacting') return '正在整理上下文。'
+  if (status === 'waiting_agent') return '正在等待子 Agent 的消息。'
+  return status === 'waiting' ? '正在等待你的确认。'
+    : status === 'preparing' || status === 'running' ? '当前任务仍在运行。' : '当前没有正在运行的任务。'
+}
+
 export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof safeStorage, 'decryptStringAsync'>,
   model: Pick<ReturnType<typeof createDesktopAgentModelService>, 'resolveRunModelSelection'>,
   readPreferences?: () => Promise<DesktopAppearancePreferences>,
-  report?: (code: string, error: unknown, method?: string) => void, registerMedia?: (route: DesktopImMediaRoute) => () => void) {
+  report?: (code: string, error: unknown, method?: string) => void, registerMedia?: (route: DesktopImMediaRoute) => () => void,
+  workspaceCommands?: DesktopWorkspaceCommands) {
   return async (options: {
     connection: ImConnectionIdentity; connectionId: string; signal: AbortSignal
     createStream?(target: { eventKey: string; runId: string; sessionId: number; messageId: string; referenceMessageId?: string; preferences?: DesktopAppearancePreferences }): Promise<DesktopImStream | undefined>
     startTyping?(replyContext: string): () => Promise<void>
+    sendOwnerPrivate?(text: string): Promise<Outcome>
     sendPrompt?(prompt: Prompt, recipient: string): Promise<string | null>
     media?: DesktopImMediaRoute['media']
     authorize(): Promise<boolean>
-    send(reply: NonNullable<ReturnType<typeof createImRequestedReply>>, replyContext?: string): Promise<SendResult>
+    sendActiveNotice?(reply: NonNullable<ReturnType<typeof createImRequestedReply>>): Promise<Outcome>
+    send(reply: NonNullable<ReturnType<typeof createImRequestedReply>>, replyContext?: string, senderName?: string): Promise<SendResult>
   } & ({ userId: string; group?: never } | {
     group: { id: string; ownerPlatformUserId: string; authorizeMessage(event: ImReceivedMessage): Promise<boolean>; authorizeFile(event: ImReceivedMessage): Promise<boolean> }; userId?: never
   })) => {
@@ -44,7 +75,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
       ...mediaRoute, media: options.media, authorize: options.authorize,
     })
     const scope = { platform: connection.platform, connectionId }
-    let projection: { runId: string; sessionId: number; cursor: number; messages: Map<string, string>; pendingRound?: { sequence: number; text: string }; finalText?: string; prompt?: Prompt; stream?: DesktopImStream; streamOutcome?: Outcome; streamFinal?: boolean } | undefined
+    let projection: { runId: string; sessionId: number; cursor: number; messages: Map<string, string>; sentRound?: { text: string; outcome: Outcome }; finalText?: string; prompt?: Prompt; stream?: DesktopImStream; streamOutcome?: Outcome; streamFinal?: boolean } | undefined
     let change = 0
     let pendingWake: AbortController | undefined
     const unsubscribe = host.onAgentRunChanged?.((sessionId, runId) => {
@@ -112,12 +143,143 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
               return
             }
             if (!item.runId) {
+              const { semantic, command, unaddressed } = readImAddressedCommand(event)
+              const available = agentCommandMenu().map(item => item.command.slice(1))
+              let commandReply = command ? immediateImCommandReply(semantic, available) : null
+              if (unaddressed?.name === 'goal') {
+                if (!await callRpc<boolean>('im.inbox.reject', { ...scope, eventKey: item.eventKey })) return
+                continue
+              }
+              const goal = command?.name === 'goal' ? parseAgentGoalArgument(command.argument) : null
+              const owner = !options.group || event.scope.platformUserId === options.group.ownerPlatformUserId
+              const startGoal = goal === 'create' && owner && !commandReply
+              if (command && !startGoal) {
+                if (!await callRpc<boolean>('im.inbox.reject', { ...scope, eventKey: item.eventKey })) return
+                if (!commandReply && command.name === 'workspace') {
+                  const argument = normalizeImWorkspaceArgument(command.argument)
+                  const workspace = parseDesktopWorkspaceCommand(argument)
+                  if (options.group) commandReply = '请在私聊中查看或绑定工作区。'
+                  else commandReply = await runDesktopWorkspaceExtra(argument, workspaceCommands, options.authorize,
+                    async () => desktopWorkspaceReply('show', await callRpc('agent.sessions.workspace', {
+                      id: item.sessionId, action: 'show', imPlatform: connection.platform, imConnectionId: connectionId,
+                    })))
+                  if (!commandReply) {
+                    if (!workspace) commandReply = '请使用 /workspace list、show、bind <序号或名称> 或 unlink。'
+                    else try {
+                      const write = workspace.action === 'bind' || workspace.action === 'unlink'
+                      const result = await callRpc(write ? 'agent.sessions.setWorkspace' : 'agent.sessions.workspace', {
+                        id: item.sessionId, action: workspace.action, imPlatform: connection.platform, imConnectionId: connectionId,
+                        ...(workspace.directoryId ? { directoryId: workspace.directoryId } : {}),
+                      })
+                      commandReply = desktopWorkspaceReply(workspace.action, result)
+                    } catch (error) { commandReply = error instanceof DesktopError ? error.message : '工作区命令暂时无法执行。' }
+                  }
+                }
+                if (!commandReply && command.name === 'goal') {
+                  if (!owner) commandReply = '只有绑定 Bot 的用户可以管理目标任务。'
+                  else if (!goal || goal === 'create') commandReply = '用法：/goal <目标>、/goal status、/goal pause、/goal resume、/goal cancel。'
+                  else commandReply = (await callRpc<{ text: string }>('agent.sessions.goal', {
+                    id: item.sessionId, action: goal, imPlatform: connection.platform, imConnectionId: connectionId,
+                    ...(options.group ? { imGroupSenderId: event.scope.platformUserId } : {}),
+                  })).text
+                }
+                if (!commandReply && command.name === 'new') {
+                  if (options.group && event.scope.platformUserId !== options.group.ownerPlatformUserId)
+                    commandReply = '只有绑定 Bot 的用户可以开启新对话。'
+                  else {
+                    const result = await callRpc<{ reset: boolean }>('agent.sessions.resetImContext', {
+                      id: item.sessionId, imPlatform: connection.platform, imConnectionId: connectionId,
+                      ...(options.group ? { imGroupSenderId: event.scope.platformUserId } : {}),
+                    })
+                    commandReply = result.reset ? '已开启新对话，旧的对话上下文已清空。' : '请先等待当前任务结束或停止任务。'
+                  }
+                }
+                if (!commandReply && command.name === 'auto') {
+                  commandReply = await runImAutomaticModeCommand(command.argument, {
+                    owner: !options.group || event.scope.platformUserId === options.group.ownerPlatformUserId,
+                    enabled: true,
+                    async read() {
+                      return (await callRpc<DesktopAppearancePreferences>('preferences.desktop.get')).automaticModeEnabled === true
+                    },
+                    async write(enabled) {
+                      const saved = await host.request<DesktopAppearancePreferences>('preferences.desktop.update',
+                        { patch: { automaticModeEnabled: enabled } })
+                      return saved.automaticModeEnabled === true
+                    },
+                  })
+                }
+                if (!commandReply && command.name === 'forget') {
+                  commandReply = await runImForgetCommand(command.argument,
+                    !options.group || event.scope.platformUserId === options.group.ownerPlatformUserId, async query => {
+                      const preview = await callRpc<{ count: number; revision: string }>('agent.memory.forget', { query })
+                      if (!preview.count) return 0
+                      if (!await options.authorize()) return 0
+                      return (await callRpc<{ count: number }>('agent.memory.forget', { query, revision: preview.revision })).count
+                    })
+                }
+                if (!commandReply && command.name === 'memory') {
+                  const sendOwnerPrivate = options.sendOwnerPrivate
+                  commandReply = await replyToImMemoryCommand({
+                    chatType: event.scope.chatType, signal,
+                    async authorizeOwner() {
+                      return owner && await options.authorize()
+                        && (!options.group || await options.group.authorizeMessage(event!))
+                    },
+                    readMemory: async () => (await callRpc<{ text: string }>('agent.memory.read')).text,
+                    sendOwnerPrivate: sendOwnerPrivate
+                      ? async text => await sendOwnerPrivate(text) === 'accepted'
+                      : undefined,
+                  })
+                }
+                if (!commandReply && command.name === 'compact') {
+                  if (options.group && event.scope.platformUserId !== options.group.ownerPlatformUserId)
+                    commandReply = '只有绑定 Bot 的用户可以整理会话上下文。'
+                  else try {
+                    const { config } = await model.resolveRunModelSelection()
+                    const { operation } = await callRpc<{ operation: string }>('agent.sessions.compact', {
+                      id: item.sessionId, text: semantic, model: config, clientId: item.clientId,
+                      imPlatform: connection.platform, imConnectionId: connectionId,
+                      ...(options.group ? { imGroupSenderId: event.scope.platformUserId } : {}),
+                    })
+                    for (;;) {
+                      signal.throwIfAborted()
+                      const page = await callRpc<DesktopAgentEventPage>('agent.sessions.events', { id: item.sessionId, runId: operation })
+                      if (page.status !== 'running') {
+                        const reply = page.events.find(event => event.type === 'content' || event.type === 'error')
+                        commandReply = typeof reply?.text === 'string' ? reply.text : '这次整理没有完成，请稍后重试。'
+                        break
+                      }
+                      await delay(250, undefined, { signal })
+                    }
+                  } catch {
+                    signal.throwIfAborted()
+                    commandReply = '这次整理没有完成，请稍后重试。'
+                  }
+                }
+                if (!commandReply && command.name === 'status') {
+                  try {
+                    commandReply = await readDesktopImRunStatus(host, event, connectionId, options.group?.ownerPlatformUserId)
+                  } catch { commandReply = '当前无法读取任务状态，请稍后重试。' }
+                }
+                if (!commandReply && command.name === 'stop')
+                  commandReply = await stopDesktopImRun(host, event, connectionId, options.group?.ownerPlatformUserId)
+                if (!commandReply) continue
+                const reply = createImRequestedReply(event.scope, { ownerId: connection.ownerId,
+                  deliveryId: item.clientId, text: commandReply }, connection.platform === 'qq' ? event.eventId : event.platformMessageId)
+                if (reply && await options.authorize()) {
+                  try { await options.send(reply, replyContext) }
+                  catch (error) { report?.('im_command_reply_failed', error) }
+                }
+                continue
+              }
               const selection = await model.resolveRunModelSelection()
               if (!await options.authorize()) return
               if (options.group && !await options.group.authorizeMessage(event)) continue
               await callRpc('agent.sessions.startRun', {
-                id: item.sessionId, text: event.quotedText ? `引用消息：${JSON.stringify(event.quotedText)}\n\n${event.text}` : event.text, clientId: item.clientId, model: selection.config, modelId: selection.id, interactive: !options.group && Boolean(options.sendPrompt),
-                ...(options.group ? { groupSender: { id: event.scope.platformUserId, name: event.platformUserName } } : {}),
+                id: item.sessionId, text: startGoal ? semantic : event.text, ...(event.quotedText ? { quotedText: event.quotedText } : {}), clientId: item.clientId, model: selection.config, modelId: selection.id, interactive: !options.group && Boolean(options.sendPrompt),
+                ...(options.group ? { groupSender: { id: event.scope.platformUserId, name: event.platformUserName,
+                  botId: event.platformBotUserId, otherBotNames: event.otherBotNames,
+                  platformSentMs: event.platformSentMs, eventReceivedMs: event.eventReceivedMs } } : {}),
                 ...(envelope?.pendingAskResume ? { resumePassiveMessage: true } : {}),
                 ...(envelope?.attachments ? { attachments: envelope.attachments } : {}),
               })
@@ -128,12 +290,17 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             const update = (action: 'begin' | Outcome, noticeKey?: string, replyFact?: AcceptedReplyFact) =>
               callRpc<boolean>('im.inbox.delivery', { ...target, action, ...(noticeKey ? { noticeKey } : {}), ...(replyFact ? { replyFact } : {}) })
             const preferences = options.group ? undefined : await readPreferences?.()
-            const makeReply = (text: string, deliveryId: string) =>
-              createImRequestedReply(event.scope, { ownerId: connection.ownerId, deliveryId, text }, event.platformMessageId)
-            async function sendReply(reply: NonNullable<ReturnType<typeof makeReply>>, trackAcceptedFact = false): Promise<{ outcome: Outcome; replyFact?: AcceptedReplyFact }> {
+            const makeReply = (text: string, deliveryId: string, originalMessageId?: string) =>
+              createImRequestedReply(event.scope, { ownerId: connection.ownerId, deliveryId, text },
+                originalMessageId ?? (connection.platform === 'qq' ? event.eventId : event.platformMessageId))
+            async function sendReply(reply: NonNullable<ReturnType<typeof makeReply>>, trackAcceptedFact = false, active = false): Promise<{ outcome: Outcome; replyFact?: AcceptedReplyFact }> {
               if (!await options.authorize() || options.group && !await options.group.authorizeMessage(event!)) return { outcome: 'rejected' }
               try {
-                const sent = await options.send(reply, replyContext)
+                const sent = active && connection.platform === 'qq'
+                  ? await options.sendActiveNotice?.(reply) ?? 'rejected'
+                  : connection.platform === 'qq' && options.group && event!.platformUserName
+                  ? await options.send(reply, replyContext, event!.platformUserName)
+                  : await options.send(reply, replyContext)
                 const outcome = typeof sent === 'string' ? sent : sent.outcome
                 const ids = typeof sent === 'string' ? [] : [...new Set(sent.platformMessageIds ?? [])]
                 const recipientSenderId = options.group ? event!.scope.platformUserId : null
@@ -142,12 +309,18 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                     ...(envelope?.sourceAttentionKind ? { sourceAttentionKind: envelope.sourceAttentionKind } : {}) } } : {}) }
               } catch { return { outcome: 'unknown' } }
             }
-            async function sendNotice(key: string, text: string) {
+            async function sendNotice(key: string, text: string, kind: QqNoticeKind = 'reply') {
               const noticeKey = createHash('sha256').update(JSON.stringify([clientId, key])).digest('hex')
-              const reply = makeReply(text, noticeKey)
+              const qq = connection.platform === 'qq' ? resolveQqNoticeTarget(kind, event!.eventId) : undefined
+              if (qq?.mode === 'rejected') return 'rejected'
+              const reply = qq?.mode === 'active'
+                ? createImRequestedReply(event!.scope, { ownerId: connection.ownerId, deliveryId: noticeKey, text })
+                : makeReply(text, noticeKey, qq?.messageId)
               if (!reply || !await options.authorize()) return
               if (!await update('begin', noticeKey)) return
-              await update((await sendReply(reply)).outcome, noticeKey)
+              const { outcome } = await sendReply(reply, false, qq?.mode === 'active')
+              await update(outcome, noticeKey)
+              return outcome
             }
             if (projection?.runId !== item.runId || projection.sessionId !== item.sessionId) {
               await projection?.stream?.close()
@@ -158,19 +331,30 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             const current = projection
             let status: string
             do {
-              const page = await callRpc<DesktopAgentEventPage>('agent.sessions.events', { id: item.sessionId, runId: item.runId, after: current.cursor, ...(preferences || current.stream || options.group ? { imDelivery: true } : {}), ...(current.stream ? { imStream: true } : {}) })
+              const page = await callRpc<DesktopAgentEventPage>('agent.sessions.events', { id: item.sessionId, runId: item.runId, after: current.cursor, imDelivery: true, ...(current.stream ? { imStream: true } : {}) })
               for (const entry of page.events) {
                 if (entry.type === 'im_stream' && current.stream && current.streamOutcome !== 'unknown' && current.streamOutcome !== 'rejected') {
                   const runEvent = entry.runEvent as RunEvent
                   current.streamOutcome = await current.stream.project(runEvent)
                   if (runEvent.type === 'final') current.streamFinal = true
                 }
-                if (entry.type === 'im_round_end' && typeof entry.sequence === 'number' && typeof entry.text === 'string')
-                  current.pendingRound = { sequence: entry.sequence, text: entry.text }
-                if ((entry.type === 'round_start' || entry.type === 'im_round_continues') && current.pendingRound) {
-                  const pending = current.pendingRound
-                  if (!current.stream && preferences?.showIntermediateReplies) await sendNotice(`round:${pending.sequence}`, pending.text)
-                  current.pendingRound = undefined
+                if (entry.type === 'im_compaction' && typeof entry.sequence === 'number'
+                  && !options.group && (connection.platform === 'feishu' || preferences?.imToolDisplayMode !== 'off')) {
+                  const notice = formatImCompactionNotice({ phase: entry.phase, applied: entry.applied })
+                  if (notice) {
+                    if (connection.platform === 'qq' && current.stream && entry.phase === 'started'
+                      && current.streamOutcome !== 'unknown' && current.streamOutcome !== 'rejected') {
+                      current.streamOutcome = await current.stream.project(entry.runEvent as RunEvent)
+                    }
+                    if (current.streamOutcome !== 'unknown' && current.streamOutcome !== 'rejected')
+                      await sendNotice(`compaction:${entry.sequence}`, notice, 'compaction')
+                  }
+                }
+                if (entry.type === 'round_start') current.sentRound = undefined
+                if (entry.type === 'im_round_end' && typeof entry.sequence === 'number' && typeof entry.text === 'string' && entry.text.trim()
+                  && !current.stream && preferences?.showIntermediateReplies) {
+                  const outcome = await sendNotice(`round:${entry.sequence}`, entry.text)
+                  current.sentRound = { text: entry.text, outcome: outcome ?? 'unknown' }
                 }
                 if (entry.type === 'im_final_text' && typeof entry.text === 'string') current.finalText = entry.text
                 if (entry.type === 'interaction_required' && entry.task_paused === true && entry.resolved !== true
@@ -189,7 +373,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                   && (toolMode === 'all' || (message.toolDurationMs ?? 0) >= 5000))
                   await sendNotice(`tool:${message.eventId}`, formatImToolReceipt({
                     name: message.toolName, status: message.toolStatus, display: message,
-                  }, redactToolError))
+                  }, redactToolError, preferences?.locale), 'tool')
               }
               current.cursor = page.cursor
               status = page.status
@@ -218,6 +402,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
               if (!await update('begin')) await update('unknown')
               else {
                 if (current.stream) await update(current.streamOutcome === 'accepted' && !current.streamFinal ? 'unknown' : current.streamOutcome ?? 'unknown')
+                else if (status === 'completed' && current.sentRound?.text === text) await update(current.sentRound.outcome)
                 else {
                   const reply = makeReply(text, item.clientId)
                   if (reply && status === 'completed') {

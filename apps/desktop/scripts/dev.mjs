@@ -69,6 +69,7 @@ const vite = spawn(process.execPath, viteArgs, {
   env: { ...process.env, ...bridge },
 })
 let electron
+let runningHostFingerprint
 let stopping = false
 let restarting = false
 let builder
@@ -125,22 +126,14 @@ const LOOPSCOPE_ENDPOINT_DEFAULT = 'http://127.0.0.1:4320'
 const LOOPSCOPE_ENABLED_PATTERN = /^(1|true|yes|on)$/i
 
 /**
- * 采集器在线时默认接入 LoopScope，开发时不必每次带环境变量。
- * 显式设置 LOOPSCOPE_ENABLED 时以用户为准；未设置时按采集器是否在线自动决定。
+ * 桌面开发默认启用采集，让稍后启动的本地 Collector 也能接收新 Run。
+ * 显式设置 LOOPSCOPE_ENABLED 时以用户为准。
  */
 async function resolveLoopScopeEnv() {
   const endpoint = process.env.LOOPSCOPE_ENDPOINT?.trim() || LOOPSCOPE_ENDPOINT_DEFAULT
   const explicit = process.env.LOOPSCOPE_ENABLED?.trim()
   if (explicit !== undefined) return LOOPSCOPE_ENABLED_PATTERN.test(explicit) ? { endpoint } : undefined
-  const { hostname, port } = new URL(endpoint)
-  const online = await new Promise(resolve => {
-    const socket = createConnection({ host: hostname, port: Number(port) })
-    const finish = value => { socket.destroy(); resolve(value) }
-    socket.setTimeout(1000, () => finish(false))
-    socket.once('connect', () => finish(true))
-    socket.once('error', () => finish(false))
-  })
-  return online ? { endpoint } : undefined
+  return { endpoint }
 }
 
 const loopScope = await resolveLoopScopeEnv()
@@ -153,6 +146,7 @@ if (loopScope) {
 electronEnv.NODE_OPTIONS = electronEnv.NODE_OPTIONS?.replace(/(?:^|\s)--use-bundled-ca(?=\s|$)/g, '').trim()
 
 function launchElectron() {
+  runningHostFingerprint = hostFingerprint()
   electron = spawn(process.execPath, [electronCli, '.'], { cwd: desktop, stdio: 'inherit', env: electronEnv })
   electron.on('error', error => { console.error(error.message); stop(1) })
   electron.on('exit', code => { if (!restarting) stop(code ?? 0) })
@@ -222,7 +216,6 @@ async function rebuild() {
     const level = pending
     pending = 0
     console.log(level === 2 ? '检测到共享包改动，正在重建桌面 Core' : '检测到宿主改动，正在重建 Electron')
-    const previousHost = hostFingerprint()
     try {
       if (level === 2) await buildWorkspace()
       await runBuild([resolve(desktop, 'scripts/build.mjs')])
@@ -232,7 +225,7 @@ async function rebuild() {
       return
     }
     if (stopping) return
-    if (previousHost !== hostFingerprint()) await restartElectron()
+    if (runningHostFingerprint !== hostFingerprint()) await restartElectron()
     else if (level === 2) {
       await reloadRuntime('core')
       console.log('桌面 Core 已自动重载')

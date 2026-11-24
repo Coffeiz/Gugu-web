@@ -86,11 +86,20 @@ function safeLocation(schema: Schema, input: unknown, path: unknown): { path: st
 function projectedIssues(schema: Schema, input: unknown, error?: unknown): Issue[] {
   if (!object(input)) return [{ path: '$', rule: 'type', message: '工具输入必须是 object' }]
   const out = publicIssues(schema, input)
-  // 未公开的领域refine只使用固定规则名；不读取message、input、keys或原始异常。
+  // 领域校验只投影已知约束和公开路径，不读取原始错误消息或输入值。
   if (!out.length && object(error) && Array.isArray(error.issues)) for (const entry of error.issues) {
     if (!object(entry)) continue
     const location = safeLocation(schema, input, entry.path)
     const code = entry.code
+    const constraint = code === 'custom' && object(entry.params) ? entry.params.constraint : undefined
+    if (constraint === 'all_day_time_required' && location.path === 'time') {
+      out.push({ path: 'time', rule: 'required', message: 'all_day=false 时必须提供开始时间 time。' })
+      continue
+    }
+    if (constraint === 'all_day_time_forbidden' && (location.path === 'time' || location.path === 'end_time')) {
+      out.push({ path: location.path, rule: 'forbidden', message: `all_day=true 时请移除 ${location.path}。` })
+      continue
+    }
     let rule = 'invalid'
     if (code === 'invalid_type') rule = location.value === undefined ? 'required' : 'type'
     else if (code === 'unrecognized_keys') rule = 'additionalProperties'

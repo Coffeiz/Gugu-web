@@ -26,14 +26,10 @@ test('PostgreSQL Local 正文保存执行版本 CAS、更新正文并保存撤�
         id integer PRIMARY KEY, user_id uuid NOT NULL, name text, color text,
         start_date date, created_at timestamptz NOT NULL, deleted_at timestamptz
       );
-      CREATE TABLE folders (
-        id integer PRIMARY KEY, user_id uuid NOT NULL, parent_id integer, name text,
-        project_id integer, workspace_directory_id integer, deleted_at timestamptz
-      );
       CREATE TABLE files (
         id serial PRIMARY KEY, user_id uuid NOT NULL, display_name text NOT NULL, ext text NOT NULL,
-        space text NOT NULL, project_id integer, folder_id integer, workspace_directory_id integer,
-        stage_name text NOT NULL, mind_map_id integer, storage_key text NOT NULL, version integer NOT NULL,
+        space text NOT NULL, project_id integer, workspace_directory_id integer,
+        stage_name text NOT NULL, mind_map_id integer, path text NOT NULL, version integer NOT NULL,
         size text NOT NULL, size_bytes bigint NOT NULL, mime_type text, img_width integer, img_height integer,
         created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz
       );
@@ -59,7 +55,7 @@ test('PostgreSQL Local 正文保存执行版本 CAS、更新正文并保存撤�
         id serial PRIMARY KEY, user_id uuid NOT NULL, directory_name text NOT NULL, deleted_at timestamptz
       );
       CREATE TABLE workspaces (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, kind text NOT NULL, folder_id integer,
+        id serial PRIMARY KEY, user_id uuid NOT NULL, kind text NOT NULL,
         project_id integer, directory_id integer, enabled boolean NOT NULL
       );
       CREATE TABLE file_sync_reconcile_runs (
@@ -70,9 +66,7 @@ test('PostgreSQL Local 正文保存执行版本 CAS、更新正文并保存撤�
       );
       INSERT INTO projects (id,user_id,name,color,start_date,created_at)
       VALUES (1,'${ownerId}','示例项目','lavender','2026-11-01',CURRENT_TIMESTAMP);
-      INSERT INTO folders (id,user_id,parent_id,name,project_id,workspace_directory_id)
-      VALUES (1,'${ownerId}',NULL,'会议',NULL,NULL);
-      INSERT INTO files (user_id,display_name,ext,space,stage_name,storage_key,version,size,size_bytes,
+      INSERT INTO files (user_id,display_name,ext,space,stage_name,path,version,size,size_bytes,
         mime_type,created_at,updated_at) VALUES
         ('${ownerId}','备忘录','md','personal','','${ownerId}/个人文件/备忘录.md',1,'4 B',4,
          'text/markdown',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
@@ -85,18 +79,16 @@ test('PostgreSQL Local 正文保存执行版本 CAS、更新正文并保存撤�
         ('${ownerId}','会议记录','md','personal','','${ownerId}/个人文件/会议/记录.md',1,'6 B',6,
          'text/markdown',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
       INSERT INTO workspace_directories (user_id,directory_name) VALUES ('${ownerId}','notes');
-      INSERT INTO workspaces (user_id,kind,folder_id,project_id,directory_id,enabled) VALUES
-        ('${ownerId}','directory',NULL,NULL,1,TRUE),
-        ('${ownerId}','project',NULL,1,NULL,TRUE),
-        ('${ownerId}','folder',1,NULL,NULL,TRUE);
+      INSERT INTO workspaces (user_id,kind,project_id,directory_id,enabled) VALUES
+        ('${ownerId}','directory',NULL,1,TRUE),
+        ('${ownerId}','project',1,NULL,TRUE);
       INSERT INTO file_sync_bindings
         (user_id,workspace_id,source,mode,root_path,revision,gap_revision,root_fingerprint,status,updated_at)
       VALUES
         ('${ownerId}',NULL,'local_directory','bidirectional','.',0,0,'${'a'.repeat(64)}','active',CURRENT_TIMESTAMP),
         ('${ownerId}',NULL,'local_directory','mirror_out','.',0,0,'${'b'.repeat(64)}','active',CURRENT_TIMESTAMP),
         ('${ownerId}',1,'local_directory','bidirectional','.',0,0,'${'c'.repeat(64)}','active',CURRENT_TIMESTAMP),
-        ('${ownerId}',2,'local_directory','bidirectional','.',0,0,'${'d'.repeat(64)}','active',CURRENT_TIMESTAMP),
-        ('${ownerId}',3,'local_directory','bidirectional','.',0,0,'${'e'.repeat(64)}','active',CURRENT_TIMESTAMP);
+        ('${ownerId}',2,'local_directory','bidirectional','.',0,0,'${'d'.repeat(64)}','active',CURRENT_TIMESTAMP);
     `)
     const source = path.join(root, ownerId, '个人文件', '备忘录.md')
     await mkdir(path.dirname(source), { recursive: true })
@@ -110,9 +102,9 @@ test('PostgreSQL Local 正文保存执行版本 CAS、更新正文并保存撤�
     const projectSource = path.join(root, ownerId, '项目文件', '2026', '11', '示例项目 #1', 'brief.md')
     await mkdir(path.dirname(projectSource), { recursive: true })
     await writeFile(projectSource, '旧项目简报')
-    const folderSource = path.join(root, ownerId, '个人文件', '会议', '记录.md')
-    await mkdir(path.dirname(folderSource), { recursive: true })
-    await writeFile(folderSource, '旧会议记录')
+    const nestedFileSource = path.join(root, ownerId, '个人文件', '会议', '记录.md')
+    await mkdir(path.dirname(nestedFileSource), { recursive: true })
+    await writeFile(nestedFileSource, '旧会议记录')
     const operations = createPostgresFileContentOperations(pool, {
       async removeCommittedBackup() { throw new Error('模拟清理失败') },
       storageRoot: root,
@@ -190,16 +182,17 @@ test('PostgreSQL Local 正文保存执行版本 CAS、更新正文并保存撤�
       idempotencyKey: null, undoContextId: null, clientId: 'project-client',
     })
     await operations.update(ownerId, 5, '新会议记录', 1, {
-      idempotencyKey: null, undoContextId: null, clientId: 'folder-client',
+      idempotencyKey: null, undoContextId: null, clientId: 'nested-path-client',
     })
     const projectJournal = await pool.query<{ relative_path: string }>(
       'SELECT relative_path FROM file_sync_journal WHERE user_id=$1 AND binding_id=4', [ownerId],
     )
-    const folderJournal = await pool.query<{ relative_path: string }>(
-      'SELECT relative_path FROM file_sync_journal WHERE user_id=$1 AND binding_id=5', [ownerId],
+    const nestedFileJournal = await pool.query<{ relative_path: string }>(
+      `SELECT relative_path FROM file_sync_journal
+       WHERE user_id=$1 AND binding_id=1 AND relative_path='个人文件/会议/记录.md'`, [ownerId],
     )
     assert.equal(projectJournal.rows[0]?.relative_path, 'brief.md')
-    assert.equal(folderJournal.rows[0]?.relative_path, '记录.md')
+    assert.equal(nestedFileJournal.rows[0]?.relative_path, '个人文件/会议/记录.md')
     assert.deepEqual(published, [1, 3, 4, 5])
 
     await assert.rejects(operations.update(ownerId, 1, '过期覆盖', 1, {
@@ -235,7 +228,7 @@ test('PostgreSQL Local 正文保存执行版本 CAS、更新正文并保存撤�
     await assert.rejects(failedRollbackOps.update(ownerId, 1, '待回滚正文', 3, {idempotencyKey:null,undoContextId:null,clientId:null}), /模拟写入失败/)
     const retained = (await readdir(path.dirname(source))).find(name => name.startsWith('.content-stage-') && !existingStages.has(name))!
     assert.equal(await readFile(path.join(path.dirname(source), retained, 'content.old'), 'utf8'), '提交的新正文')
-    await pool.query('UPDATE files SET storage_key=$2 WHERE id=$1',[1,`${otherOwnerId}/个人文件/私有.md`])
+    await pool.query('UPDATE files SET path=$2 WHERE id=$1',[1,`${otherOwnerId}/个人文件/私有.md`])
     await assert.rejects(operations.update(ownerId,1,'不可写入',3,{idempotencyKey:null,undoContextId:null,clientId:null}),/文件不存在/)
     assert.equal(await readFile(foreign,'utf8'),'不应读取')
   } finally {

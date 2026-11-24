@@ -32,7 +32,7 @@
                 tabindex="0"
                 :data-note-id="note.id"
                 @click="selectNote(note.id)"
-                @keydown.enter.prevent="selectNote(note.id)"
+                @keydown.enter.self.prevent="selectNote(note.id)"
               >
                 <div class="ni-head">
                   <span class="ni-time">{{ timeHM(note) }}</span>
@@ -69,6 +69,10 @@
                     {{ taskCount(note) }}
                   </span>
                 </div>
+                <ActionButton type="button" variant="danger" fit class="ni-delete"
+                  :aria-label="t('mindUi.delete')" :title="t('mindUi.delete')" @click.stop="onDelete(note)">
+                  <PhTrash :size="13" weight="bold" />
+                </ActionButton>
               </div>
             </template>
             <FirstUseEmptyState v-if="!store.timeline.length" class="ntp-empty-state"
@@ -127,7 +131,7 @@
                 <PhPencilSimple :size="14" weight="bold" />
                 {{ t('mindUi.edit') }}
               </ActionButton>
-              <ActionButton variant="danger" fit class="rp-foot-action" @click="onDelete">
+              <ActionButton variant="danger" fit class="rp-foot-action" @click="onDelete(selected)">
                 <PhTrash :size="14" weight="bold" />
                 {{ t('mindUi.delete') }}
               </ActionButton>
@@ -394,9 +398,9 @@ const allRefs = computed<NtpNodeRef[]>(() => {
   }
   return out
 })
-function refLabel(type: string, id: number): string | null {
+function refLabel(type: string, id: number | string): string | null {
   if (type === 'project') return projectStore.projects.find(p => p.id === id)?.name ?? null
-  if (type === 'file') return filesCache.getFile(id)?.displayName ?? null
+  if (type === 'file') return typeof id === 'string' ? filesCache.getFile(id)?.displayName ?? null : null
   return null
 }
 function refTypeLabel(type: string) { return t(`mindEditorUi.referenceTypes.${type}`, t('mindUi.object')) }
@@ -667,8 +671,7 @@ async function onColor(note: MindNote, color: string | null) {
 }
 
 // ── 删除：confirmDialog 危险确认（前端规范禁原生 confirm），负 id 样例只删内存 ──
-async function onDelete() {
-  const note = selected.value
+async function onDelete(note: MindNote | null | undefined) {
   if (!note) return
   if (!await confirmDialog({
     title: t('mindThreePane.delTitle'),
@@ -905,6 +908,16 @@ function onListScroll() {
 }
 .ni-preview.no-title { -webkit-line-clamp: 3; color: var(--text-primary); font-weight: 500; }
 .ni-foot { display: flex; align-items: center; gap: 8px; min-height: 18px; }
+.ntp-item > .ni-delete {
+  position: absolute; inset-inline-end: 13px; top: 50%; transform: translateY(-50%);
+  opacity: 0; pointer-events: none;
+}
+.ntp-item:is(:hover, :focus-within) { padding-inline-end: 48px; }
+.ntp-item:is(:hover, :focus-within) .ni-delete { opacity: 1; pointer-events: auto; }
+@media (hover: none) {
+  .ntp-item { padding-inline-end: 48px; }
+  .ntp-item > .ni-delete { opacity: 1; pointer-events: auto; }
+}
 /* 颜色球：即当前颜色指示；点击向右展开抽屉选择（默认纸色 = 棋盘格），选完球即新色。
    抽屉沿用 NoteEditor 样式/插入抽屉的「max-width 从 0 长开」模式，不用浮层 */
 .color-dot-wrap { position: relative; display: inline-flex; align-items: center; }

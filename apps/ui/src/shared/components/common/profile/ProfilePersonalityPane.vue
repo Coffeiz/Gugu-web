@@ -76,7 +76,7 @@ const customCharacterCount = computed(() => Array.from(prefsStore.customReplySty
 function openCustomEditor(enableOnSave = false) {
   customStatus.value = ''; customError.value = ''
   previewStore.openVirtual(
-    { id: -2, displayName: 'reply-style', ext: 'MD', size: `${customCharacterCount.value} 字符` },
+    { virtualKey: 'reply-style', displayName: 'reply-style', ext: 'MD', size: `${customCharacterCount.value} 字符` },
     prefsStore.customReplyStyle,
     content => saveCustomDocument(content, enableOnSave),
   )
@@ -134,7 +134,7 @@ function syncFromStore() { enabled.value = prefsStore.personalityPreferenceEnabl
 function openEditor(enableOnSave = false) {
   status.value = ''; error.value = ''
   previewStore.openVirtual(
-    { id: -1, displayName: 'persona', ext: 'MD', size: `${characterCount.value} 字符` },
+    { virtualKey: 'persona', displayName: 'persona', ext: 'MD', size: `${characterCount.value} 字符` },
     prefsStore.personalityPreference,
     content => saveDocument(content, enableOnSave),
   )

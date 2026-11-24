@@ -52,3 +52,13 @@ export function parseGlobalSearchQuery(value: unknown): GlobalSearchQuery {
   const types = rawTypes.length === 0 ? null : rawTypes.filter((type): type is GlobalSearchType => known.has(type))
   return { q, queries, mode, perType, types }
 }
+
+/** 打开文件夹优先匹配路径，其次匹配完整名称；同一位置只算一个候选。 */
+export function matchFolderSearchHits<T extends { title: string; path_file: { location: { value: string } } }>(
+  query: string, hits: readonly T[],
+): T[] {
+  const exact = hits.filter(hit => hit.path_file.location.value === query)
+  const name = casefoldSearchText(query.normalize('NFC'))
+  const candidates = exact.length ? exact : hits.filter(hit => casefoldSearchText(hit.title.normalize('NFC')) === name)
+  return [...new Map(candidates.map(hit => [hit.path_file.location.value, hit])).values()]
+}

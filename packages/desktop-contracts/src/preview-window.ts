@@ -11,7 +11,8 @@ export interface DesktopPreviewFile extends DesktopPreviewMetadata {
   workspaceFile: { directoryId: DesktopFileDirectory; relativePath: string; identity?: string }
 }
 
-export type DesktopPreviewWindowFile = DesktopPreviewFile | (DesktopPreviewMetadata & { contentUrl: string })
+export type DesktopPreviewRequest = DesktopPreviewFile | { attachmentId: string } | { libraryPath: string }
+export type DesktopPreviewWindowFile = DesktopPreviewFile | (DesktopPreviewMetadata & { contentUrl: string; canReveal?: false })
 
 export const previewWindowChannels = {
   open: 'gugu:preview-window:open',
@@ -26,7 +27,7 @@ export interface DesktopPreviewWindowState { fullscreen: boolean; pinned: boolea
 export type DesktopPreviewWindowControl = 'read' | 'fullscreen' | 'pin'
 
 export interface PreviewWindowBridge {
-  open(file: DesktopPreviewFile): Promise<DesktopReply<null>>
+  open(file: DesktopPreviewRequest): Promise<DesktopReply<null>>
   read(): Promise<DesktopReply<DesktopPreviewWindowFile>>
   close(): Promise<DesktopReply<null>>
   reveal(): Promise<DesktopReply<null>>

@@ -1,5 +1,5 @@
 import {dataContext} from '../contracts/index.js'
-export const allowedUserBotTools:readonly string[]=Object.freeze(['web_search','http_get','similar_image_search','send_file','group_context_search'])
+export const allowedUserBotTools:readonly string[]=Object.freeze(['web_search','http_get','similar_image_search','send_item','group_context_search'])
 export type UserBotImPlatform='qq'|'feishu'|'telegram'|'wechat'
 /** 持久流式投递由 QQ、飞书和 Telegram 支持；微信 iLink 仅提供私聊状态反馈。 */
 export function defaultUserBotPrivateStreamingEnabled(platform:UserBotImPlatform):boolean {
@@ -24,15 +24,11 @@ export function normalizeUserBotTools(configured:unknown):string[] {
  return allowed
 }
 const groupToolSets = Object.freeze({
- groupWebToolsEnabled:['http_get','similar_image_search','send_file'],
+ groupWebToolsEnabled:['http_get','similar_image_search','send_item'],
  groupProviderSearchEnabled:['web_search'],
  groupHistorySearchEnabled:['group_context_search'],
 })
 const groupFileToolNames = groupToolSets.groupWebToolsEnabled
-/** Desktop 与 Web Host 对同一群工具授权使用同一判定；未知工具始终拒绝。 */
-export function userBotGroupToolAllowed(configured:unknown,toolName:string):boolean {
- return normalizeUserBotTools(configured).includes(toolName)
-}
 /** 群附件处理只有在至少一个网页/图片/文件工具获准时才开放。 */
 export function userBotGroupFileToolsAllowed(configured:unknown):boolean {
  if(configured&&typeof configured==='object'&&!Array.isArray(configured))

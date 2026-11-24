@@ -8,7 +8,6 @@ import { dataContext, CoreError } from '../../../src/contracts/index.js'
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { createDurableProjectMutationPort } from '../../../src/agent/tools/projects/mutation-port.js'
-import { createKyselyProjectUpdateTransaction } from '../../../src/projects/update-store.js'
 import { createProjectMutationTools, createProjectStageTools } from '../../../src/agent/tools/projects.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect, fixture } from '../run/fixtures.js'
@@ -34,26 +33,14 @@ function mount(){
 beforeEach(async()=>{
  folder=await mkdtemp(join(tmpdir(),'gugu-project-receipt-'));filename=join(folder,'core.db');await initializeSqlite(filename)
  const opened=await openSqliteRuntime(filename);core=opened.runtime;owner=opened.ownerId;other=randomUUID();allowed=true;moves=[];published=0;failAfterMove=false
- await sql`CREATE TABLE files(id INTEGER PRIMARY KEY,user_id TEXT,project_id INTEGER,storage_key TEXT)`.execute(core.db)
  const project=await core.transaction(dataContext(owner),data=>data.projects.create({name:'计划😀',start_date:'2026-11-01',stages:[{key:'s0',label:'阶段',todos:[{id:'t0',text:'未完',done:false},{id:'t1',text:'已完',done:true}]}]}))
  id=project.id;oldPrefix=`${owner}/项目文件/2026/11/计划😀 #${id}`
  await mkdir(join(folder,'files',oldPrefix),{recursive:true});await writeFile(join(folder,'files',oldPrefix,'owned.txt'),'合成正文')
- await sql`INSERT INTO files VALUES(1,${owner.replaceAll('-','')},${id},${oldPrefix+'/owned.txt'})`.execute(core.db)
  mount()
 })
 afterEach(async()=>{await core?.close();if(folder)await rm(folder,{recursive:true,force:true})})
 
-it('桌面 SQLite 项目更新不依赖 Web 文件表',async()=>{
- await sql`DROP TABLE files`.execute(core.db)
- await core.db.transaction().execute(async tx=>{
-  await createKyselyProjectUpdateTransaction(tx,'sqlite',owner).updateFileStoragePrefixes(owner,id,oldPrefix,`${owner}/项目文件/2026/11/新名 #${id}`)
- })
- const tables=await sql<{name:string}>`SELECT name FROM sqlite_master WHERE type='table' AND name='files'`.execute(core.db)
- expect(tables.rows).toHaveLength(0)
- expect((await core.transaction(dataContext(owner),data=>data.projects.get(id)))?.name).toBe('计划😀')
-})
-
-it('真实注册器同事务解析、更新阶段/Undo/文件前缀与收据，重建后重放不再次改名或发布',async()=>{
+it('无旧文件表时更新项目和磁盘目录，重建后重放不再次改名或发布',async()=>{
  const request=call('update_project',{project:'计划😀',project_name:'新名😀',status:'done',summary:'摘要'})
  expect(await registry.tools.dispatch(request,scope())).toMatchObject({successful:true,mutated:true,value:{project_id:id,name:'新名😀'}})
  const project=await core.transaction(dataContext(owner),data=>data.projects.get(id))
@@ -61,7 +48,6 @@ it('真实注册器同事务解析、更新阶段/Undo/文件前缀与收据，�
  expect(JSON.parse(project!.stages_json)[0].todos).toEqual([{id:'t0',text:'未完',done:true,_savedDone:false,autoCompleted:true},{id:'t1',text:'已完',done:true}])
  const next=`${owner}/项目文件/2026/11/新名😀 #${id}`
  expect(await readFile(join(folder,'files',next,'owned.txt'),'utf8')).toBe('合成正文')
- expect((await sql<{storage_key:string}>`SELECT storage_key FROM files`.execute(core.db)).rows[0]!.storage_key).toBe(next+'/owned.txt')
  expect((await sql<{n:number}>`SELECT count(*) n FROM undo_operations`.execute(core.db)).rows[0]!.n).toBe(1)
  expect((await sql<{n:number}>`SELECT count(*) n FROM core_operation_receipts`.execute(core.db)).rows[0]!.n).toBe(1)
  await core.close();core=(await openSqliteRuntime(filename)).runtime;mount()
@@ -146,7 +132,7 @@ it('阶段新增、重命名、切换和删除保留稳定key；删除当前阶�
  expect(await change('add_stage',{label:'  验收  ',position:0})).toMatchObject({value:{stage_key:'s1',label:'验收'}})
  expect(await change('rename_stage',{stage:'s1',new_label:'交付'})).toMatchObject({value:{label:'交付'}})
  expect(await change('update_stage',{stage:'s1'})).toMatchObject({value:{current_stage:'s1'}})
- expect(await change('remove_stage',{stage:'s1'})).toMatchObject({value:{removed:'交付',current_stage_key:'s0',current_stage:'阶段'}})
+ expect(await change('remove_stage',{stage:'s1'})).toMatchObject({value:{removed:'交付',remaining_stages:[{key:'s0',label:'阶段'}],current_stage_key:'s0',current_stage:'阶段'}})
  expect(await persisted()).toMatchObject({version:5,current_stage:'s0'})
  expect(await change('remove_stage',{stage:'s0'},'last')).toMatchObject({successful:false,value:{error:'项目至少保留一个阶段，无法删除最后一个阶段'}})
  expect((await persisted())!.version).toBe(5)
@@ -173,10 +159,12 @@ it('批量待办先校验移动目标，失败项不能随成功项偷偷写入�
   {text:'t0',new_text:'不得生效',done:true,to_stage:'missing'},
   {text:'t1',new_text:'已改名',done:false,to_stage:'s1'},
   {text:'t2',done:true},
+  {text:'t0',stage:'s1',done:true},
  ]})
  expect(result).toMatchObject({successful:true,value:{results:[
   {action:'add',added:['新增']},{todo:'未完',error:'目标阶段不存在: missing'},
   {todo:'已完',action:'rename+done+move',done:false},{todo:'新增',action:'done',done:true},
+  {todo:'t0',error:'未找到待办',hint:expect.stringContaining('to_stage')},
  ]}})
  const project=(await persisted())!,stages=JSON.parse(project.stages_json)
  expect(project.current_stage).toBe('s0')

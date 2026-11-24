@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -8,12 +8,12 @@ import test from 'node:test'
 import { RegistrationRequestError } from '../../src/modules/auth/registration/routes.js'
 import { createPostgresRegistrationOperations } from '../../src/modules/auth/registration/store.js'
 
+import { checkDatabaseReadiness } from '../../src/database.js'
 import { migratePostgres } from '@gugu/database/postgres'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 async function createFixture(options: {
-  failWorkspaceRoot?: boolean
   failCommit?: boolean
   consumeCode?: boolean
 } = {}) {
@@ -23,18 +23,13 @@ async function createFixture(options: {
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 2 })
   const root = await mkdtemp(join(tmpdir(), 'gugu-register-'))
   assert.equal(await migratePostgres(pool, 'apply'), 'applied')
+  await pool.query('DROP TABLE project_file_counts')
+  await checkDatabaseReadiness(statement => pool.query(statement))
 
   const calls: string[] = []
   const restorationTtls: number[] = []
   const failedPool = options.failCommit ? wrapFailingCommit(pool) : pool
   const operations = createPostgresRegistrationOperations(failedPool, {
-    defaultStorageLimitBytes: 4096,
-    workspaceShellSupported: () => true,
-    async prepareDefaultWorkspaceRoot(userId, directoryName) {
-      calls.push('prepareWorkspaceRoot')
-      if (options.failWorkspaceRoot) throw new Error('synthetic workspace root failure')
-      await mkdir(join(root, userId, 'workspace', directoryName), { recursive: true })
-    },
     registrationCodes: {
       async remainingTtlMs(email) {
         calls.push(`ttl:${email}`)
@@ -56,8 +51,7 @@ async function createFixture(options: {
 
   return {
     schema, pool, adminPool, root, calls, restorationTtls, operations,
-    async qualifiedCount(table: 'users' | 'user_preferences' | 'workspace_directories' | 'workspaces'
-      | 'storage_quota_ledgers' | 'storage_quota_events') {
+    async qualifiedCount(table: 'users' | 'user_preferences' | 'workspace_directories' | 'workspaces') {
       const result = await adminPool.query<{ count: string }>(`SELECT count(*)::text AS count FROM "${schema}"."${table}"`)
       return Number(result.rows[0]?.count ?? 0)
     },
@@ -112,7 +106,7 @@ const input = {
   locale: 'zh-CN' as const,
 }
 
-test('PostgreSQL registration atomically creates user, locale preference and default workspace rows', {
+test('PostgreSQL registration atomically creates user, locale preference without creating a workspace', {
   skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL registration integration',
 }, async () => {
   const fixture = await createFixture()
@@ -131,9 +125,8 @@ test('PostgreSQL registration atomically creates user, locale preference and def
       'SELECT is_developer FROM users WHERE id = $1', [user.id],
     )).rows[0]?.is_developer, false)
     assert.equal(user.createdAt instanceof Date || typeof user.createdAt === 'string', true)
-    assert.equal((await stat(join(fixture.root, user.id, 'workspace', 'default'))).isDirectory(), true)
+    await assert.rejects(stat(join(fixture.root, user.id, 'workspace')), { code: 'ENOENT' })
     assert.deepEqual(fixture.calls, [
-      'prepareWorkspaceRoot',
       `ttl:${input.email}`,
       `consume:${input.email}:123456`,
     ])
@@ -142,53 +135,14 @@ test('PostgreSQL registration atomically creates user, locale preference and def
     assert.equal(await fixture.operations.emailIsOccupied(input.email.toUpperCase()), true)
     assert.equal(await fixture.qualifiedCount('users'), 1)
     assert.equal(await fixture.qualifiedCount('user_preferences'), 1)
-    assert.equal(await fixture.qualifiedCount('workspace_directories'), 1)
-    assert.equal(await fixture.qualifiedCount('workspaces'), 1)
-
-    assert.deepEqual((await fixture.pool.query(`SELECT category,limit_bytes::integer,used_bytes::integer
-      FROM storage_quota_ledgers WHERE user_id=$1`, [user.id])).rows, [
-      { category: 'file_library', limit_bytes: 4096, used_bytes: 0 },
-    ])
-    assert.deepEqual((await fixture.pool.query(`SELECT operation,delta_bytes::integer
-      FROM storage_quota_events WHERE user_id=$1`, [user.id])).rows, [{ operation: 'initialize', delta_bytes: 0 }])
+    assert.equal(await fixture.qualifiedCount('workspace_directories'), 0)
+    assert.equal(await fixture.qualifiedCount('workspaces'), 0)
 
     const prefs = await fixture.pool.query<{ data_json: string }>(
       'SELECT data_json FROM user_preferences WHERE user_id = $1', [user.id],
     )
     assert.deepEqual(JSON.parse(prefs.rows[0]!.data_json), { locale: 'zh-CN' })
-    const directory = await fixture.pool.query<{ name: string; directory_name: string; is_default: boolean; is_system: boolean }>(
-      'SELECT name, directory_name, is_default, is_system FROM workspace_directories WHERE user_id = $1', [user.id],
-    )
-    assert.deepEqual(directory.rows[0], {
-      name: '默认工作区', directory_name: 'default', is_default: true, is_system: true,
-    })
-    const binding = await fixture.pool.query<{ name: string; kind: string; directory_id: number; enabled: boolean; is_default: boolean }>(
-      'SELECT name, kind, directory_id, enabled, is_default FROM workspaces WHERE user_id = $1', [user.id],
-    )
-    assert.deepEqual(binding.rows[0], {
-      name: '默认工作区', kind: 'directory', directory_id: directory.rows[0] && (await fixture.pool.query<{ id: number }>(
-        'SELECT id FROM workspace_directories WHERE user_id = $1', [user.id],
-      )).rows[0]!.id, enabled: true, is_default: false,
-    })
     assert.equal(await fixture.operations.userExists('别名', input.email.toUpperCase()), true)
-  } finally {
-    await fixture.close()
-  }
-})
-
-test('registration root-preparation failure rolls back all PostgreSQL registration rows', {
-  skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL registration integration',
-}, async () => {
-  const fixture = await createFixture({ failWorkspaceRoot: true })
-  try {
-    await assert.rejects(fixture.operations.registerUser(input, null), /synthetic workspace root failure/)
-    assert.deepEqual(fixture.calls, ['prepareWorkspaceRoot'])
-    assert.equal(await fixture.qualifiedCount('users'), 0)
-    assert.equal(await fixture.qualifiedCount('user_preferences'), 0)
-    assert.equal(await fixture.qualifiedCount('workspace_directories'), 0)
-    assert.equal(await fixture.qualifiedCount('workspaces'), 0)
-    assert.equal(await fixture.qualifiedCount('storage_quota_ledgers'), 0)
-    assert.equal(await fixture.qualifiedCount('storage_quota_events'), 0)
   } finally {
     await fixture.close()
   }
@@ -208,8 +162,6 @@ test('a concurrent or replaced verification code aborts the PostgreSQL registrat
     assert.equal(await fixture.qualifiedCount('user_preferences'), 0)
     assert.equal(await fixture.qualifiedCount('workspace_directories'), 0)
     assert.equal(await fixture.qualifiedCount('workspaces'), 0)
-    assert.equal(await fixture.qualifiedCount('storage_quota_ledgers'), 0)
-    assert.equal(await fixture.qualifiedCount('storage_quota_events'), 0)
   } finally {
     await fixture.close()
   }
@@ -228,11 +180,9 @@ test('a PostgreSQL commit failure rolls back rows and restores only the remainin
     assert.equal(await fixture.qualifiedCount('user_preferences'), 0)
     assert.equal(await fixture.qualifiedCount('workspace_directories'), 0)
     assert.equal(await fixture.qualifiedCount('workspaces'), 0)
-    assert.equal(await fixture.qualifiedCount('storage_quota_ledgers'), 0)
-    assert.equal(await fixture.qualifiedCount('storage_quota_events'), 0)
     assert.equal(fixture.restorationTtls.length, 1)
     assert.ok(fixture.restorationTtls[0]! > 0 && fixture.restorationTtls[0]! <= 60_000)
-    assert.deepEqual(fixture.calls.slice(0, 2), ['prepareWorkspaceRoot', `ttl:${input.email}`])
+    assert.deepEqual(fixture.calls.slice(0, 1), [`ttl:${input.email}`])
     assert.deepEqual(fixture.calls.slice(-2), [
       `consume:${input.email}:123456`, `restore:${input.email}:123456`,
     ])

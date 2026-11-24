@@ -23,11 +23,11 @@ test('workspace list projects owner data, disabled rows and Python preference de
     { rows: [{ data_json: JSON.stringify({ shell_enabled: true, automatic_mode_enabled: true }) }], rowCount: 1 },
     { rows: [
       {
-        id: 2, name: '默认目录', kind: 'directory', folder_id: null, project_id: null,
+        id: 2, name: '默认目录', kind: 'directory', project_id: null,
         directory_id: 31, enabled: true, is_default: true,
       },
       {
-        id: 1, name: '停用项目', kind: 'project', folder_id: null, project_id: 9,
+        id: 1, name: '停用项目', kind: 'project', project_id: 9,
         directory_id: null, enabled: false, is_default: false,
       },
     ], rowCount: 2 },
@@ -63,11 +63,11 @@ test('workspace list projects owner data, disabled rows and Python preference de
     ptyEnabled: false,
     items: [
       {
-        id: 2, name: '默认目录', kind: 'directory', folderId: null, projectId: null,
+        id: 2, name: '默认目录', kind: 'directory', projectId: null,
         directoryId: 31, enabled: true, isDefault: true, boundSessionCount: 2,
       },
       {
-        id: 1, name: '停用项目', kind: 'project', folderId: null, projectId: 9,
+        id: 1, name: '停用项目', kind: 'project', projectId: 9,
         directoryId: null, enabled: false, isDefault: false, boundSessionCount: 1,
       },
     ],

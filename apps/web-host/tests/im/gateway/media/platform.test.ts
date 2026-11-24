@@ -87,3 +87,39 @@ test('Telegram引用仅查同scope历史，目标平台消息绑定新draft引�
   assert.equal(store.staged.length, 0); assert.deepEqual(notices, [])
   await media.close(); await api.close()
 })
+
+test('QQ 群聊引用未入库的原图时下载图片并归入当前消息，已有原图时复用', async () => {
+  const store = storage(), requests: string[] = [], refs: string[] = []
+  let cached = false
+  store.value.reuse = async input => {
+    refs.push(input.sourcePlatformMessageId)
+    return cached ? { ownerId: scope.ownerId, attachId: 'quoted-draft', created: true, creationReceipt: 'quote-receipt' } : null
+  }
+  const media = createPlatformMedia({ storage: store.value,
+    transport: { async request(input) {
+      requests.push(input.url)
+      return response(200, {}, Buffer.from([255, 216, 255, 224]))
+    }, async close() {} },
+    resolve: async () => [{ address: '9.9.9.9', family: 4 }] })
+  const group = { ...scope, chatType: 'group' as const, chatId: 'synthetic-group' }
+  try {
+    const parsed = parseQqMessage('GROUP_AT_MESSAGE_CREATE', {
+      id: 'reply-event', content: '看一下这张图', group_openid: group.chatId,
+      author: { user_openid: group.platformUserId },
+      message_scene: { ext: ['msg_idx=reply-index', 'msg_ref_idx=original-index'] },
+      msg_elements: [{ msg_idx: 'original-index', image: { url: 'https://cdn.example.test/quoted-image' } }],
+    }, { botId: group.botId, ownerId: group.ownerId })!
+    const payload = await media.qq(group, parsed, signal)
+    assert.equal(payload.reply_to_platform_message_id, 'original-index')
+    assert.deepEqual(payload.attachments, ['attachment-1'])
+    assert.deepEqual(requests, ['https://cdn.example.test/quoted-image'])
+    assert.deepEqual(store.staged.map(input => {
+      const { sourcePlatformMessageId, sourceAttachmentIndex, quoted, mime } = input as Parameters<PlatformAttachmentStore['stage']>[0]
+      return { sourcePlatformMessageId, sourceAttachmentIndex, quoted, mime }
+    }), [{ sourcePlatformMessageId: 'reply-index', sourceAttachmentIndex: 0, quoted: true, mime: 'image/jpeg' }])
+    cached = true
+    assert.deepEqual((await media.qq(group, parsed, signal)).attachments, ['quoted-draft'])
+    assert.deepEqual(refs, ['original-index', 'original-index'])
+    assert.equal(requests.length, 1)
+  } finally { await media.close() }
+})

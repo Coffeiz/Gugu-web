@@ -15,15 +15,6 @@ export interface PreparedPathMirrorMutation {
   rollback(): Promise<void>
   /** Remove old empty directory skeleton after the database commit. */
   finalize(): Promise<void>
-  readonly fileChanges?: readonly PathMirrorFileChange[]
-}
-
-export interface PathMirrorFileChange {
-  fileId: number
-  beforeStorageKey: string
-  afterStorageKey: string
-  beforeDisplayName: string
-  afterDisplayName: string
 }
 
 export class PathMirrorMutationError extends Error {

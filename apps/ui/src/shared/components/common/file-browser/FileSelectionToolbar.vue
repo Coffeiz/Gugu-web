@@ -10,6 +10,8 @@ defineProps({
   archiveDisabled: { type: Boolean, default: false },
   canExtractArchive: { type: Boolean, default: false },
   pathActions: { type: Boolean, default: false },
+  pathCompress: { type: Boolean, default: false },
+  pathDownload: { type: Boolean, default: false },
   trash: { type: Boolean, default: false },
   compact: { type: Boolean, default: false },
 })
@@ -45,16 +47,16 @@ const canBatchDownload = useFileOpenAccess()?.canBatchDownload !== false
     </template>
 
     <template v-else>
-      <template v-if="canBatchDownload && (!pathActions || folderCount === 0)">
-        <button class="file-selection-btn" :disabled="downloading" @click="emit('download')">
+      <template v-if="canBatchDownload && (!pathActions || folderCount === 0 || pathDownload)">
+        <button class="file-selection-btn" :disabled="downloading" data-testid="selection-download" @click="emit('download')">
           <Icon name="action.download" v-if="!downloading" :size="compact ? 11 : 12" />
           <span v-else class="file-selection-spinner" />
           {{ downloading ? t('common.status.processing') : t('common.actions.download') }}
         </button>
         <span class="file-selection-divider" />
       </template>
-      <template v-if="!pathActions">
-        <button v-if="canExtractArchive" class="file-selection-btn" :disabled="archiving" data-testid="selection-extract-archive" @click="emit('extract')">
+      <template v-if="!pathActions || pathCompress">
+        <button v-if="!pathActions && canExtractArchive" class="file-selection-btn" :disabled="archiving" data-testid="selection-extract-archive" @click="emit('extract')">
           <Icon name="action.archive" :size="compact ? 11 : 12" />
           {{ t('filesUi.extract') }}
         </button>

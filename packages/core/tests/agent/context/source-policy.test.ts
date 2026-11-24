@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agentContextPolicy } from '../../../src/agent/context/source-policy.js'
+import { agentContextPolicy } from '../../../src/agent/scenes/source-policy.js'
 
 describe('agentContextPolicy', () => {
   it('仅将可信 IM member 和 unknown 限制为自身上下文，并保留 owner 连续能力', () => {

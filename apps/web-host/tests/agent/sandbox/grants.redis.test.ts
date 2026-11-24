@@ -20,7 +20,8 @@ test('真实 Redis 执行确认码 Lua 协议并验证一次性兑换与 owner �
     assert.match(code ?? '', /^[a-f0-9]{12}$/)
     assert.equal(await store.hasGrant(ownerId, summary, identity), false)
     assert.equal(await store.redeem(`other-${ownerId}`, code!), false)
-    assert.equal(await store.redeem(ownerId, code!), true)
+    assert.equal(await store.redeem(ownerId, code!, { summary, identity: 'session:filesystem:other' }), false)
+    assert.equal(await store.redeem(ownerId, code!, { summary, identity }), true)
     assert.equal(await store.hasGrant(ownerId, summary, identity), true)
     assert.equal(await store.redeem(ownerId, code!), false)
   } finally {

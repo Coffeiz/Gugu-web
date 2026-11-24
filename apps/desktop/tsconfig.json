@@ -10,7 +10,10 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "#core-source/*": ["../../packages/core/src/*"]
+    }
   },
   "include": ["src/**/*.ts", "scripts/**/*.ts"]
 }

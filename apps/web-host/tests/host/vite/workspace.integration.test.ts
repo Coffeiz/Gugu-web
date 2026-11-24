@@ -65,11 +65,7 @@ test('Vite→Node Host→isolated PostgreSQL keeps Local workspace directory CRU
       );
       CREATE TABLE files (
         id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_directory_id integer NOT NULL,
-        space text NOT NULL, folder_id integer, deleted_at timestamptz, updated_at timestamptz
-      );
-      CREATE TABLE folders (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_directory_id integer NOT NULL,
-        parent_id integer, deleted_at timestamptz, updated_at timestamptz, version integer NOT NULL DEFAULT 1
+        space text NOT NULL, deleted_at timestamptz, updated_at timestamptz
       );
       CREATE TABLE conversation_sessions (id serial PRIMARY KEY, user_id uuid NOT NULL, workspace_id integer);
       CREATE TABLE scheduled_tasks (id serial PRIMARY KEY, user_id uuid, workspace_id integer, enabled boolean NOT NULL);

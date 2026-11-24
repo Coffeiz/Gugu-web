@@ -45,7 +45,7 @@ function rows(value: Json, label: string): Record<string, Json>[] {
   return value as Record<string, Json>[]
 }
 
-/** Web 的可信来源投影与 owner scope 策略；数据读取和授权仍由 Host 注入。 */
+/** 已授权账号概览的快照投影，主对话与任务可按范围接入。 */
 export function createWebAgentContextBuilder(ports: Omit<AgentContextBuilderPorts, 'dynamic'> & { now(): number }, source: 'web' | null = 'web',
   options: { includeScopedContext?: boolean; includeOwnerOverview?: boolean } = {}): ContextSourcePorts['builder'] {
   return createAgentContextBuilder({

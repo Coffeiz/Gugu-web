@@ -2,7 +2,7 @@
 name: 思维画布
 description: 用于查看、定位、创建或整理画布，以及管理其中的便签、引用和连接。
 category: canvas
-related_tools: canvas_list, canvas_get, canvas_search, canvas_focus_node, canvas_search_placeable, canvas_create, canvas_delete, canvas_create_note, canvas_add_node, canvas_update_node, canvas_remove_node, canvas_update_note, canvas_delete_note, canvas_connect, canvas_update_anchor, canvas_disconnect, canvas_batch, present_file
+related_tools: canvas_list, canvas_get, canvas_search, canvas_focus_node, canvas_search_placeable, canvas_create, canvas_delete, canvas_create_note, canvas_add_node, canvas_update_node, canvas_remove_node, canvas_update_note, canvas_delete_note, canvas_connect, canvas_update_anchor, canvas_disconnect, canvas_batch, open_item
 emoji: 🧠
 ---
 
@@ -20,7 +20,7 @@ emoji: 🧠
 
 - 搜索画布中已经存在的节点用 `canvas_search`。
 - 用户希望找回画布中的具体卡片时，先用 `canvas_get` / `canvas_search` 确认目标，再用 `canvas_focus_node` 生成定位链接，并将链接提供给用户点击；该操作不移动卡片，也不改保存的视口。
-- 搜索可以放入画布的项目、文件、活动用 `canvas_search_placeable`。文件使用返回的路径引用作为 `ref_id`。桌面沙箱外文件先通过 `present_file` 的 `reference_only: true` 获得本机授权引用，再使用回执链接末尾的引用标识。禁止使用数字文件 ID。桌面回执中的绝对路径 `path` 原样保留给后续读取或编辑。
+- 搜索可以放入画布的项目、文件、活动用 `canvas_search_placeable`。文件使用返回的路径引用作为 `ref_id`。桌面沙箱外文件先通过 `open_item` 的 `reference_only: true` 获得本机授权引用，再使用回执链接末尾的引用标识。禁止使用数字文件 ID。桌面回执中的绝对路径 `location.value` 原样保留给后续读取或编辑。
 - 普通时间流 `note` 不能放入画布；画布便签必须使用 `canvas_create_note`。
 - 按当前 Schema 选择单项或批量入口。涉及多种画布修改时，优先查看 `canvas_batch` 的操作类型与限制。
 - 创建、移动、连接或批量编排后，以工具结果为准，不要只用文字声称成功。

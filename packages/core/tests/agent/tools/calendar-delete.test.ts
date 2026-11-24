@@ -30,7 +30,7 @@ beforeEach(async () => {
   for (const [id, user, title, date] of [[1, key, '评审', '2026-12-01'], [2, key, '周报评审', '2026-12-08'], [3, other.replaceAll('-', ''), '他人活动', '2026-12-01']] as const)
     await sql`INSERT INTO calendar_events(id,user_id,title,date,time,type,version,created_at) VALUES(${id},${user},${title},${date},'09:00','event',1,'2026-11-17 00:00:00')`.execute(core.db)
   for (const [id, eventId] of [[1, 1], [2, 2]] as const)
-    await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,reminder_lead_minutes,name,payload,cron,schedule_kind,start_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_ids,created_at,updated_at)
+    await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,reminder_lead_minutes,name,payload,cron,schedule_kind,start_at,channels,enabled,delivery_targets,authorized_tools,email_attachment_file_paths,created_at,updated_at)
       VALUES(${id},${key},${eventId},30,'活动提醒','提醒正文','@once:2026-12-01T00:00:00+00:00','once','2026-12-01 00:00:00','web',1,NULL,'[]','[]','2026-11-17 00:00:00','2026-11-17 00:00:00')`.execute(core.db)
 })
 afterEach(async () => { await core?.close(); if (folder) await rm(folder, { recursive: true, force: true }) })

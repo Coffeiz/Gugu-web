@@ -113,10 +113,6 @@ import {
 import { validateTaskCron } from '../modules/scheduled-tasks/schedule/cron.js'
 import { createRedisFilesystemRevokeMetric } from '../adapters/cache/redis-events.js'
 import { createRedisEmailDeliveryMetric } from '../adapters/cache/redis-events.js'
-import { createRedisStorageQuotaStatusStore } from '../modules/admin/storage.js'
-import { createManualStorageQuotaReconcile, StorageQuotaReconcileUnavailable } from '../modules/admin/storage.js'
-import { createPostgresStorageQuotaReconcilePort } from '../modules/files/storage/quota.js'
-import { reconcileAllStorageUsers } from '../modules/admin/storage.js'
 import { createNotificationBroadcaster } from '@gugu/core/notifications/broadcast'
 import { createRedisNotificationPublisher } from '../adapters/cache/redis-events.js'
 import { createMcpStatusReader } from '@gugu/core/mcp/status'
@@ -221,7 +217,7 @@ import { createPostgresRegistrationOperations } from '../modules/auth/registrati
 import { createPostgresPasswordResetStore } from '../modules/auth/password-reset.js'
 import { createPostgresEmailChangeStore } from '../modules/auth/email-change.js'
 import { createAuthEmailSender, createSmtpTransport } from '../adapters/email/smtp-email.js'
-import { createProjectFileCountListing, createProjectGetter, createProjectListing } from '../modules/projects/store.js'
+import { createProjectFileCountListing, createProjectGetter, createProjectListing, readProjectFileCount } from '../modules/projects/store.js'
 import { projectResponse } from '@gugu/core'
 import { createClientOperations } from '../modules/clients/service.js'
 import { createMindFileReferenceResolver, createMindFileReferences } from '../modules/mind/file-references.js'
@@ -310,99 +306,35 @@ import { BUILTIN_AGENT_TOOL_STATE_LABELS, DEFAULT_AGENT_STATE_LABELS } from '@gu
 import { createAgentStateLabelOverrides } from '../modules/agent/sessions/labels.js'
 import { createAgentStateLabelOperations } from '../modules/admin/llm-strategy.js'
 import {
-  createPostgresFileBrowserOperations,
   createPostgresFileReadOperations,
-  createPostgresFolderReadOperations,
 } from '../modules/files/browse.js'
 import { createPostgresXlsxPreviewOperations, createPostgresFileContentOperations } from '../modules/files/content.js'
-import { createPostgresFileUploadOperations, createPostgresFileConflictOperations } from '../modules/files/upload.js'
 import { createPublicAgentEgress } from '../adapters/network/safe-egress-proxy.js'
 import { createCitationSiteLookup } from '@gugu/core/agent/citation-site'
 import {
   createPostgresFileDeleteOperations,
   createPostgresFileRestoreOperations,
-  TrashPurgeUnavailableError,
 } from '../modules/files/trash/service.js'
-import { createPostgresTrashReadOperations, createPostgresTrashMutationOperations } from '../modules/files/trash/store.js'
-import { createPostgresTrashPurgeOperations } from '../modules/files/trash/purge.js'
 import { createPostgresFileUpdateOperations, createPostgresFileCopyOperations } from '../modules/files/store.js'
-import { createPostgresFileBatchDownloadOperations } from '../modules/files/download.js'
-import { createPostgresFileArchiveOperations } from '../modules/files/archive/service.js'
-import { capturePostgresFolderPathMirrorDirectoryKeys, createPostgresFolderPathMirrorPlanner } from '../modules/files/folders/paths.js'
-import { createPostgresFolderWriteOperations, type FolderUndoRecord } from '../modules/files/folders/write.js'
-import { createPostgresFolderCopyOperations } from '../modules/files/folders/copy.js'
-import { createPostgresFolderDeleteOperations } from '../modules/files/folders/delete.js'
 import { prepareWorkspaceDirectoryAcl } from '../adapters/sandbox/workspace-directory-acl.js'
 import { createSandboxdWorkspacePtyTerminator } from '../adapters/sandbox/sandboxd-pty.js'
-import { createRedisRateLimitCommands, createRedisRegistrationCodeCommands, createRedisPasswordResetCommands, createRedisAgentActiveStatusReader, createRedisAgentCancellationCommands, createRedisAgentRunRecoveryState, createRedisAgentSessionReflectionCleaner, createRedisScheduledTaskCommands, createRedisFilesystemAuthorizationCommands, createRedisTrashPurgeNotifier, type RedisEventPublisher } from '../adapters/cache/redis-events.js'
+import { createRedisRateLimitCommands, createRedisRegistrationCodeCommands, createRedisPasswordResetCommands, createRedisAgentCancellationCommands, createRedisAgentRunRecoveryState, createRedisAgentSessionReflectionCleaner, createRedisScheduledTaskCommands, createRedisFilesystemAuthorizationCommands, type RedisEventPublisher } from '../adapters/cache/redis-events.js'
 import { createRedisRateLimiter } from '../modules/auth/rate-limit.js'
 import { createPostgresAdminStorageSnapshotQuery, diskUsageForStorage } from '../modules/admin/storage.js'
 import { createPostgresAdminUserStatusStore } from '../modules/admin/user-status.js'
 import { resolveAdminDebugLogFiles } from '../modules/admin/logs.js'
 import { createSecurityEventFingerprint } from '../modules/admin/audit.js'
 import { createAdminAuth, createAdminPromptOptions } from './admin.js'
-import { booleanSetting, objectSetting, optionalIntegerSetting, userQuotaSettings } from './settings.js'
+import { booleanSetting, objectSetting, userQuotaSettings } from './settings.js'
 import { createMindServices } from './mind.js'
 import { createWebWorkers } from './workers.js'
 import { createAgentServices } from './agent.js'
-
-async function recordFolderUndo(client: PoolClient, record: FolderUndoRecord): Promise<void> {
-  const contextId = record.contextId?.trim().slice(0, 128)
-  if (!contextId) return
-  const ref = `folder:${record.folder.id}`
-  const snapshot = (folder: FolderUndoRecord['folder']) => ({
-    id: folder.id,
-    name: folder.name,
-    project_id: folder.projectId,
-    workspace_directory_id: folder.workspaceDirectoryId,
-    parent_id: folder.parentId,
-    version: folder.version,
-    deleted_at: null,
-  })
-  const beforeItems = record.before ? { [ref]: snapshot(record.before) } : {}
-  const afterItems = { [ref]: snapshot(record.folder) }
-
-  await client.query(
-    `UPDATE undo_operations
-     SET status = 'expired', failure_code = 'redo_cleared_by_new_operation'
-     WHERE user_id = $1 AND undo_context_id = $2 AND actor_type = 'web' AND status = 'undone'`,
-    [record.userId, contextId],
-  )
-  await client.query(
-    `INSERT INTO undo_operations (
-       id, user_id, undo_context_id, group_id, resource, action, target_refs,
-       before_state, after_state, base_versions, artifact_refs, actor_type,
-       status, created_at, expires_at, undone_at, failure_code
-     ) VALUES (
-       $1, $2, $3, $4, 'files', $5, $6::json, $7::json, $8::json, $9::json,
-       '{}'::json, 'web', 'active', CURRENT_TIMESTAMP,
-       CURRENT_TIMESTAMP + INTERVAL '30 days', NULL, NULL
-     )`,
-    [
-      `op-${randomUUID().replaceAll('-', '')}`,
-      record.userId,
-      contextId,
-      `group-${randomUUID().replaceAll('-', '')}`,
-      record.action,
-      JSON.stringify([{ kind: 'folder', id: record.folder.id }]),
-      JSON.stringify({ items: beforeItems }),
-      JSON.stringify({ items: afterItems }),
-      JSON.stringify({ [ref]: { version: record.before?.version ?? 0 } }),
-    ],
-  )
-}
-
-function folderSearchAlias(name: string): string {
-  // Preserve case-insensitive literal search until the Python pinyin/Sudachi indexer is ported.
-  return name.toLowerCase()
-}
 
 const noRedisEvents: RedisEventPublisher = {
   async publishAuthStateChanged() { return false },
   async bumpContextRevision() { return false },
   async publishResourceChanged() { return false },
   async publishAgentRunChanged() { return false },
-  async publishTrashPurgeProgress() { return false },
 }
 
 function createUserAuth(
@@ -455,16 +387,7 @@ function imMaintenanceProviderConfig(environment: NodeJS.ProcessEnv, path: strin
   }
 }
 
-function ephemeralStorageQuota(config: WebUiConfig, env: NodeJS.ProcessEnv): number {
-  const override = config.configOverridePath ? readConfigOverride(config.configOverridePath) : {}
-  const sandbox = objectSetting(override.sandbox)
-  const configured = optionalIntegerSetting(
-    env.SANDBOX__EPHEMERAL_QUOTA_BYTES, sandbox.ephemeral_quota_bytes, 'SANDBOX__EPHEMERAL_QUOTA_BYTES',
-  )
-  const value = configured ?? 1024 * 1024 * 1024
-  if (value < 64 * 1024 * 1024) throw new Error('SANDBOX__EPHEMERAL_QUOTA_BYTES 配置无效')
-  return value
-}
+
 
 export async function createWebUiApp(
   config: WebUiConfig,
@@ -474,7 +397,6 @@ export async function createWebUiApp(
   env: NodeJS.ProcessEnv = process.env,
   canRebuildAgentMemoryIndex: () => boolean = () => false,
   projectJournalPool?: Pool,
-  trashPurgeSchemaApplied = false,
   searchUsageSchemaApplied = false,
   im?: {
     bindMcp(runtime: ReturnType<typeof createMcpRuntime>): void
@@ -482,23 +404,9 @@ export async function createWebUiApp(
     removeSession(ownerId: string, sessionId: number, ports: AgentSessionDeletePorts, legacy: () => Promise<boolean>): Promise<boolean>
   },
 ): Promise<{ app: ReturnType<typeof createApp>; startWorkers(): Promise<void>
-  runAgent: ReturnType<typeof createSerialWorker>; loopScopeTrace: ReturnType<typeof createWebLoopScopeTrace>; agentRunLog: import('@gugu/core/agent').AgentRunLogPort; imOwnerTools: Awaited<ReturnType<typeof createAgentServices>>['imOwnerTools']; registerImSubagentParentBinder: Awaited<ReturnType<typeof createAgentServices>>['registerImSubagentParentBinder']; imMcpDirectory: ReturnType<typeof createMcpSkillToolDirectory> }> {
+  runAgent: ReturnType<typeof createSerialWorker>; loopScopeTrace: ReturnType<typeof createWebLoopScopeTrace>; agentRunLog: import('@gugu/core/agent').AgentRunLogPort; imOwnerTools: Awaited<ReturnType<typeof createAgentServices>>['imOwnerTools']; registerImSubagentParentBinder: Awaited<ReturnType<typeof createAgentServices>>['registerImSubagentParentBinder']; imMcpDirectory: ReturnType<typeof createMcpSkillToolDirectory>; imFilesystemAuthorization: ReturnType<typeof createAgentSessionFilesystemAuthorization> }> {
   const publisher = redisEvents ?? noRedisEvents
   const byokMasterKeys: Readonly<Record<string, string>> = await readConfiguredByokMasterKeys(env).catch(() => Object.freeze({}))
-  const fileUploads = createPostgresFileUploadOperations(pool, {
-    storageRoot: config.storageLocalPath,
-    defaultLimitBytes: config.storageDefaultLimitBytes,
-    async publishChanged(event) {
-      await publisher.publishResourceChanged({
-        ownerId: event.ownerId,
-        resource: 'files',
-        operation: event.operation,
-        entityId: event.entityId,
-        origin: event.origin,
-        payload: { kind: 'file', entity: event.payload },
-      })
-    },
-  })
   const fileDeletes = createPostgresFileDeleteOperations(pool, {
     storageRoot: config.storageLocalPath,
     async publishChanged(event) {
@@ -540,28 +448,6 @@ export async function createWebUiApp(
   const loopScopeTransport = createNodeProviderTransport({ allowLocal: true, connectTimeoutMs: 5_000, writeTimeoutMs: 10_000, environment: () => env })
   const loopScopeTrace = createWebLoopScopeTrace({ enabled: env.LOOPSCOPE_ENABLED, endpoint: env.LOOPSCOPE_ENDPOINT, transport: loopScopeTransport })
   const recordEmailDelivery = config.redisUrl ? createRedisEmailDeliveryMetric(config.redisUrl) : undefined
-  const readStorageQuotaManualState = config.redisUrl ? createRedisValueReader(config.redisUrl) : null
-  const storageQuotaReconcile = config.redisUrl && readStorageQuotaManualState
-    ? createManualStorageQuotaReconcile({
-      commands: createRedisScheduledTaskCommands(config.redisUrl),
-      state: { read: () => readStorageQuotaManualState('storage:quota_reconcile:manual_state') },
-      work: (signal, onProgress) => reconcileAllStorageUsers(createPostgresStorageQuotaReconcilePort({
-        pool,
-        storageRoot: config.storageLocalPath,
-        defaultFileLibraryLimit: () => config.storageDefaultLimitBytes,
-        ephemeralLimit: () => ephemeralStorageQuota(config, env),
-      }), {
-        signal,
-        onProgress,
-        onUserError(error) {
-          console.error(`gugu-webui storage quota user reconcile failed (${error instanceof Error ? error.name : 'unknown'})`)
-        },
-      }),
-      onError(error) {
-        console.error(`gugu-webui storage quota reconciliation failed (${error instanceof Error ? error.name : 'unknown'})`)
-      },
-    })
-    : { async start(): Promise<never> { throw new StorageQuotaReconcileUnavailable() } }
   const readMcpSettings = createMcpSettingsReader(resolveConfigOverridePath(env), env)
   const skillToolRegistry = createAgentToolRegistry({ core, authorize: async () => false })
   const capabilitySkills = createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal)
@@ -626,17 +512,14 @@ export async function createWebUiApp(
     ...createDiskFileSearchSources(pool, config.storageLocalPath),
   ]) : globalSearch
   const mindReferencePorts = createPostgresMindReferenceSuggestionPorts(pool)
-  const diskFileReferences = process.platform === 'linux' ? createMindFileReferences(pool, config.storageLocalPath) : undefined
-  const diskReferenceSuggester = diskFileReferences
-    ? createMindReferenceSuggester({ ...mindReferencePorts, globalSearch, matchingFileReferences: diskFileReferences })
-    : undefined
+  const diskFileReferences = process.platform === 'linux' ? createMindFileReferences(pool, config.storageLocalPath, true) : undefined
+  const pathReferenceSuggester = createMindReferenceSuggester({
+    ...mindReferencePorts, globalSearch, matchingFileReferences: diskFileReferences,
+  })
   const mindRefSuggest = {
-    ...createMindReferenceSuggester({ ...mindReferencePorts, globalSearch }),
-    ...(diskFileReferences && diskReferenceSuggester ? {
-      suggestWithDiskFiles: (owner: string, query: string, limit: number) =>
-        query.trim().startsWith('/') ? diskFileReferences(owner, query.trim(), limit)
-          : diskReferenceSuggester.suggest(owner, query, limit),
-    } : {}),
+    suggest: (owner: string, query: string, limit: number) =>
+      diskFileReferences && query.trim().startsWith('/') ? diskFileReferences(owner, query.trim(), limit)
+        : pathReferenceSuggester.suggest(owner, query, limit),
   }
   const publishProjectMutation = createProjectPostCommitPublisher(pool, {
     bumpContextRevision: (ownerId, resource) => publisher.bumpContextRevision(ownerId, resource),
@@ -657,17 +540,19 @@ export async function createWebUiApp(
   })
   const projectCreate = createProjectCreator(projectCreateRuntime)
   const projectDirectoryRenamer = createLocalProjectDirectoryRenamer(config.storageLocalPath)
+  const countProjectFiles = (ownerId: string, projectId: number) => readProjectFileCount(pool, config.storageLocalPath, ownerId, projectId)
   const projectUpdateRuntime = createPostgresProjectUpdateRuntime(
     pool,
     projectDirectoryRenamer,
     publishProjectMutation,
+    countProjectFiles,
   )
   const projectUpdate = createProjectUpdater(projectUpdateRuntime)
   const projectTrashStorage = createLocalProjectTrashStorage(
     config.storageLocalPath,
     createProjectTrashOriginalStorageKeyResolver(createPostgresProjectTrashPathMetadataReader(pool)),
   )
-  const projectTrash = createProjectTrashService(createPostgresProjectTrashRuntime(pool, publishProjectMutation), projectTrashStorage)
+  const projectTrash = createProjectTrashService(createPostgresProjectTrashRuntime(pool, publishProjectMutation, countProjectFiles), projectTrashStorage)
   const projectDeleteJournal = projectJournalPool
     ? createPostgresProjectDeleteJournal(projectJournalPool, createLocalProjectUndoJournalStorage(config.storageLocalPath)) : undefined
   const publishCalendarCreate = createCalendarEventPostCommitPublisher({
@@ -690,82 +575,6 @@ export async function createWebUiApp(
       undoContextId: metadata.undoContextId,
       clientId: metadata.clientId,
     })
-  const folderPathPlanner = createPostgresFolderPathMirrorPlanner(config.storageLocalPath, folderSearchAlias)
-  const folderWrites = createPostgresFolderWriteOperations(pool, {
-    buildSearchRomaji: folderSearchAlias,
-    async preparePathMirrorMutation(client, ownerId, folderId, action, beforeName, previousDirectoryKeys) {
-      return folderPathPlanner(client, ownerId, folderId, action, beforeName, previousDirectoryKeys)
-    },
-    async capturePathMirrorDirectoryKeys(client, ownerId, folderId) {
-      return capturePostgresFolderPathMirrorDirectoryKeys(config.storageLocalPath, client, ownerId, folderId)
-    },
-    recordForwardUndo: recordFolderUndo,
-    async publishChanged(event) {
-      await publisher.publishResourceChanged({
-        ownerId: event.ownerId,
-        resource: 'files',
-        operation: event.operation,
-        entityId: event.folder.id,
-        origin: event.origin,
-        payload: {
-          kind: 'folder',
-          entity: {
-            id: event.folder.id,
-            projectId: event.folder.projectId,
-            workspaceDirectoryId: event.folder.workspaceDirectoryId,
-            parentId: event.folder.parentId,
-            name: event.folder.name,
-            fileCount: event.folder.fileCount,
-            folderCount: event.folder.folderCount,
-            version: event.folder.version,
-          },
-        },
-      })
-    },
-    onPathCleanupFailure(errorType) {
-      console.error(`gugu-webui files PathMirror cleanup failed: ${errorType}`)
-    },
-    onPathRollbackFailure(errorType) {
-      console.error(`gugu-webui files PathMirror rollback failed: ${errorType}`)
-    },
-  })
-  const folderCopy = createPostgresFolderCopyOperations(pool, {
-    storageRoot: config.storageLocalPath,
-    fileSyncEnabled: config.filesyncEnabled,
-    buildSearchRomaji: folderSearchAlias,
-    async publishChanged(event) {
-      await publisher.publishResourceChanged({
-        ownerId: event.ownerId,
-        resource: 'files',
-        operation: 'create',
-        entityId: Number(event.folder.id),
-        origin: event.origin,
-        payload: { kind: 'folder', entity: event.folder },
-      })
-    },
-  })
-  const folderDelete = createPostgresFolderDeleteOperations(pool, {
-    storageRoot: config.storageLocalPath,
-    async captureDirectoryKeys(client, ownerId, folderId) {
-      return capturePostgresFolderPathMirrorDirectoryKeys(config.storageLocalPath, client, ownerId, folderId)
-    },
-    async publishChanged(event) {
-      await publisher.publishResourceChanged({
-        ownerId: event.ownerId,
-        resource: 'files',
-        operation: 'delete',
-        entityId: event.folderId,
-        origin: event.origin,
-        payload: { kind: 'folder', id: event.folderId },
-      })
-    },
-    onPathCleanupFailure(errorType) {
-      console.error(`gugu-webui folder delete PathMirror cleanup failed: ${errorType}`)
-    },
-    onPathRollbackFailure(errorType) {
-      console.error(`gugu-webui folder delete PathMirror rollback failed: ${errorType}`)
-    },
-  })
   const workspaceCreate = createPostgresWorkspaceCreator(pool)
   const workspaceUpdate = createPostgresWorkspaceUpdater(pool)
   const workspaceBindings = createPostgresWorkspaceBindingOperations(pool)
@@ -825,9 +634,6 @@ export async function createWebUiApp(
     } : {}),
     listInteractions: createPostgresAgentInteractionHistory(pool, undefined, config.secretKey, true),
   }).list
-  const agentQueueStatuses = config.redisUrl
-    ? createRedisAgentActiveStatusReader(config.redisUrl)
-    : async () => new Map<number, boolean>()
   const readAgentSessionState = createPostgresAgentSessionStateReader(pool, {
     recover: recoverAgentOrphanedSession ?? (async () => false),
     async isActive(sessionId, ownerId) {
@@ -875,7 +681,6 @@ export async function createWebUiApp(
   const seedRegistration = createRegistrationSeeder({
     applySeed: createPostgresRegistrationSeedOperations(pool, {
       storageRoot: config.storageLocalPath,
-      defaultLimitBytes: config.storageDefaultLimitBytes,
     }),
     surpriseMp3: createOnboardingSurpriseMp3Reader(),
     onFailure() { console.error('gugu-webui onboarding seed failed') },
@@ -885,11 +690,6 @@ export async function createWebUiApp(
     seed: seedRegistration,
   })
   const registrationOperations = createPostgresRegistrationOperations(pool, {
-    defaultStorageLimitBytes: config.storageDefaultLimitBytes,
-    workspaceShellSupported: () => true,
-    async prepareDefaultWorkspaceRoot(userId, directoryName) {
-      await prepareWorkspaceDirectoryAcl(resolve(config.storageLocalPath, userId, 'workspace', directoryName))
-    },
     // 关闭验证码时不会调用此端口；启用验证码但 Redis 不可用时保持 fail-closed。
     registrationCodes: registrationCodeStore ?? {
       async remainingTtlMs() { throw new Error('Registration code store is unavailable') },
@@ -918,38 +718,6 @@ export async function createWebUiApp(
       })
     },
   })
-  const trashPurgeOperations = createPostgresTrashPurgeOperations(pool, {
-    notifyWorker: config.redisUrl ? createRedisTrashPurgeNotifier(config.redisUrl) : async () => undefined,
-  })
-  const trashOperations = {
-    ...createPostgresTrashReadOperations(pool, config.secretKey),
-    ...createPostgresTrashMutationOperations(pool, {
-      storageRoot: config.storageLocalPath,
-      async publishChanged(event) {
-        await publisher.publishResourceChanged({
-          ownerId: event.ownerId,
-          resource: 'files',
-          operation: 'delete',
-          entityId: event.entityId,
-          origin: event.origin,
-          payload: { kind: event.entityType, id: event.entityId },
-        })
-      },
-    }),
-    ...trashPurgeOperations,
-    async startEmpty(ownerId: string) {
-      if (!trashPurgeSchemaApplied || process.platform !== 'linux') throw new TrashPurgeUnavailableError()
-      return trashPurgeOperations.startEmpty(ownerId)
-    },
-    restoreFolder(ownerId: string, folderId: number, origin: string | null) {
-      if (!fileRestores.restoreFolder) throw new Error('Local 文件夹恢复适配器未就绪')
-      return fileRestores.restoreFolder(ownerId, folderId, origin)
-    },
-    restoreFiles(ownerId: string, fileIds: number[], origin: string | null) {
-      if (!fileRestores.restoreBatch) throw new Error('Local 批量文件恢复适配器未就绪')
-      return fileRestores.restoreBatch(ownerId, fileIds, origin)
-    },
-  }
   const embeddingGate = createByokGateReader(resolveConfigOverridePath(env), env)
   const embeddingRebuildState = createRedisUserEmbeddingRebuildState(
     config.redisUrl ? createRedisScheduledTaskCommands(config.redisUrl) : null,
@@ -1115,8 +883,8 @@ export async function createWebUiApp(
     publisher, capabilitySkills, filesystemAuthorizationConfirmations, readMcpSettings,
     mcpSkillTools, mcpRuntime, projectTrashStorage, projectDirectoryRenamer,
     canRebuildAgentMemoryIndex, bubblewrapRootfs, shellMounts, readAgentShellSnapshot,
-    projectDeleteJournal, fileUploads, searchUsageSchemaApplied,
-    folderDelete, projectCreateRuntime,
+    projectDeleteJournal, searchUsageSchemaApplied,
+    projectCreateRuntime,
     publishProjectMutation, projectUpdateRuntime, publishCanvasChanged, scheduledNotifyImPlatforms,
     workspaceCreate, workspaceDirectories,
     userSkillManager, globalSearch: webSearch, resolveEmbeddingSettings, createEmbeddingTransport,
@@ -1138,9 +906,9 @@ export async function createWebUiApp(
   })
   const attachmentUpload = createPostgresAgentAttachmentUploadOperations(pool, config.storageLocalPath)
   const attachmentEgress = createPublicAgentEgress(createSafeEgressSettingsReader(env, runtimeConfigPath), config.secretKey)
-  const scheduledAttachments = createWebScheduledAttachmentResources(core, config.storageLocalPath, downloadAttachment, {
+  const scheduledAttachments = createWebScheduledAttachmentResources(config.storageLocalPath, downloadAttachment, {
     open: attachmentEgress.open, stage: attachmentUpload.stage,
-  })
+  }, pool)
   const publishScheduledNotification = config.redisUrl ? createRedisNotificationPublisher(config.redisUrl) : async () => false
   const scheduledDeliveryOptions = {
     webPushKey: webPush?.publicKey,
@@ -1206,6 +974,7 @@ export async function createWebUiApp(
       globalSmtp: config.smtp,
       send: createSmtpTestDelivery(env),
       storageRoot: config.storageLocalPath,
+      openPath: scheduledAttachments.openLibraryFile,
       downloadGenerated: downloadAttachment,
     }),
   }
@@ -1243,7 +1012,7 @@ export async function createWebUiApp(
   const projectPurgeAvailable = Boolean(projectJournalPool && await hasProjectExpiryJournalSchema(pool))
   if (projectExpiryWorkerEnabled && !projectPurgeAvailable) throw new Error('项目过期清理 Worker 需要已迁移的 PostgreSQL 项目日志结构')
   const backgroundWorkers = createWebWorkers({
-    config, pool, core, publisher, trashOperations, trashPurgeSchemaApplied, projectJournalPool,
+    config, pool, core, projectJournalPool,
     projectExpiryWorkerEnabled, projectPurgeAvailable, canRebuildAgentMemoryIndex, ownerReflectionWork, scheduledRepeatingWorker, scheduledOnceWorker,
   })
   async function refreshScheduledWorkers() {
@@ -1401,9 +1170,9 @@ export async function createWebUiApp(
         await publisher.publishAuthStateChanged(userId)
       },
     },
-    listProjects: createProjectListing(core, pool),
-    listProjectFileCounts: createProjectFileCountListing(pool),
-    getProject: createProjectGetter(core, pool),
+    listProjects: createProjectListing(core, pool, config.storageLocalPath),
+    listProjectFileCounts: createProjectFileCountListing(pool, config.storageLocalPath),
+    getProject: createProjectGetter(core, pool, config.storageLocalPath),
     createProject: async (context, input, metadata) => {
       const result = await projectCreate(context.data.ownerId, input as Fields, {
         idempotencyKey: metadata.idempotencyKey,
@@ -1427,7 +1196,7 @@ export async function createWebUiApp(
     ...(projectJournalPool && projectPurgeAvailable ? {
       async purgeProject(ownerId: string, projectId: number, metadata: WriteRequestMetadata) {
         const removed = await purgeDeletedProject(projectJournalPool, config.storageLocalPath,
-          config.storageDefaultLimitBytes, { ownerId, projectId })
+          { ownerId, projectId })
         if (removed) await publishProjectMutation({
           userId: ownerId, resource: 'projects', operation: 'delete', entityId: projectId, origin: metadata.clientId ?? null,
         })
@@ -1461,7 +1230,7 @@ export async function createWebUiApp(
     undo: createHostCoreUndoOperations(pool, createRuntimeUndoTransactionPort(core), async (ownerId, event) => {
       await publisher.publishResourceChanged({
         ownerId, resource: String(event.resource), operation: String(event.operation),
-        origin: String(event.origin), entityIds: event.entity_ids as number[],
+        origin: String(event.origin), entityIds: event.entity_ids as Array<number | string>,
       })
     }, { trash: projectTrashStorage, renameDirectory: projectDirectoryRenamer }, createLocalFileUndoStorage(config.storageLocalPath)),
     deleteScheduledTask: createScheduledTaskDeleter(createKyselyScheduledTaskDeleteRuntime(core.db, 'postgres', async (ownerId, id, origin) => {
@@ -1605,8 +1374,11 @@ export async function createWebUiApp(
     },
     agentPendingQueueClaims: {
       ...createPostgresAgentPendingQueueClaims(pool, {
-        async isSessionActive(sessionId) {
-          return (await agentQueueStatuses([sessionId])).get(sessionId) ?? false
+        async isSessionActive(sessionId, tx) {
+          // 队列已在当前事务锁定并校验会话，只检查实际执行位。
+          const session = await tx.selectFrom('conversation_sessions')
+            .select('execution_state').where('id', '=', sessionId).executeTakeFirst()
+          return session?.execution_state === 'running' || session?.execution_state === 'baseline_updating'
         },
       }),
       publishChanged: publishPendingQueueChanged,
@@ -1627,15 +1399,12 @@ export async function createWebUiApp(
         ) } : {}),
       }),
     },
-    fileBrowser: createPostgresFileBrowserOperations(pool, config.secretKey),
     fileReads: {
-      ...createPostgresFileReadOperations(pool, config.storageDefaultLimitBytes, config.storageLocalPath),
+      ...createPostgresFileReadOperations(pool, config.storageLocalPath),
       ...createPostgresXlsxPreviewOperations(pool, config.storageLocalPath),
     },
-    fileUploads,
     fileDeletes,
     fileRestores,
-    trash: trashOperations,
     fileContents: createPostgresFileContentOperations(pool, {
       storageRoot: config.storageLocalPath,
       fileSyncEnabled: config.filesyncEnabled,
@@ -1677,32 +1446,7 @@ export async function createWebUiApp(
         })
       },
     }),
-    fileConflicts: createPostgresFileConflictOperations(pool),
-    fileBatchDownloads: createPostgresFileBatchDownloadOperations(pool, config.storageLocalPath),
-    fileArchives: createPostgresFileArchiveOperations(pool, {
-      storageRoot: config.storageLocalPath,
-      fileSyncEnabled: config.filesyncEnabled,
-      defaultLimitBytes: config.storageDefaultLimitBytes,
-      async publishCreatedFile(event) {
-        await publisher.publishResourceChanged({
-          ownerId: event.ownerId,
-          resource: 'files',
-          operation: 'create',
-          entityId: event.entityId,
-          origin: event.origin,
-          payload: { kind: 'file', entity: event.payload },
-        })
-      },
-      async publishCreatedBatch(ownerId, origin) {
-        await publisher.publishResourceChanged({ ownerId, resource: 'files', operation: 'create', origin })
-      },
-    }),
     globalSearch: webSearch,
-    folderDownloads: createPostgresFileBatchDownloadOperations(pool, config.storageLocalPath),
-    folderReads: createPostgresFolderReadOperations(pool),
-    folderWrites,
-    folderCopy,
-    folderDelete,
     adminAuth: createAdminAuth(pool, config),
     adminUpdateMode: resolveAdminUpdateMode(env.GUGU_UPDATE_DEPLOYMENT_MODE),
     adminAgentCapabilities: {
@@ -1732,14 +1476,6 @@ export async function createWebUiApp(
       read: createAdminUserRiskReader(core.db),
     },
     emailRecipientCount: { read: createEmailRecipientCounter((sql, values) => pool.query(sql, values)) },
-    storageQuotaStatus: {
-      store: config.redisUrl ? createRedisStorageQuotaStatusStore(config.redisUrl) : {
-        async read() { throw new Error('Redis unavailable') },
-        async lockExists() { throw new Error('Redis unavailable') },
-        async interruptIfUnchanged() { throw new Error('Redis unavailable') },
-      },
-      reconcile: storageQuotaReconcile,
-    },
     serviceStatus: { read: createServiceStatusReader({
       redis: config.redisUrl ? createRedisServiceStatusCommands(config.redisUrl) : null,
       dbOk: async () => { try { await pool.query('SELECT 1'); return true } catch { return false } },
@@ -2128,7 +1864,7 @@ export async function createWebUiApp(
       ]))
     }
   })
-  return { app, runAgent, loopScopeTrace, agentRunLog, imOwnerTools, registerImSubagentParentBinder, imMcpDirectory: mcpSkillTools, async startWorkers() {
+  return { app, runAgent, loopScopeTrace, agentRunLog, imOwnerTools, registerImSubagentParentBinder, imMcpDirectory: mcpSkillTools, imFilesystemAuthorization: agentFilesystemAuthorization, async startWorkers() {
     await agentRunLifecycle?.start()
     await backgroundWorkers.start()
     webPush?.start()

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildGreetingPrompt, createGreetingGenerator, normalizeGreetingLocale } from '../../../src/agent/greeting.js'
+import { buildGreetingPrompt, createGreetingGenerator, normalizeGreetingLocale } from '../../../src/agent/scenes/greeting/index.js'
 
 describe('对话问候', () => {
   it('按 Python 规则归一语言，并只把近况当作轻松话头', () => {

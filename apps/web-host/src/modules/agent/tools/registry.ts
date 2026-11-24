@@ -19,9 +19,10 @@ export type SharedOwnerToolOptions = Pick<AgentToolRegistryOptions,
   | 'scheduledTasks' | 'scheduledTaskWrites' | 'calendar' | 'events' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete'
   | 'knowledge' | 'knowledgeWrites' | 'skillMetadata' | 'skillManagement'>
 
-export type ImOwnerToolFactory = (lease: AgentDispatchLease, timezone: string, authorize: () => Promise<boolean>, binding: Pick<AgentRunBinding, 'selection' | 'resolve'>) => Promise<{
+export type ImOwnerToolFactory = (lease: AgentDispatchLease, timezone: string, authorize: () => Promise<boolean>, binding: Pick<AgentRunBinding, 'selection' | 'resolve'>, verifiedOwner?: boolean) => Promise<{
   tools: SharedOwnerToolOptions & Pick<AgentToolRegistryOptions,
     'clientDelete' | 'projectDelete' | 'scheduledTaskDelete' | 'skillDelete' | 'knowledgeDelete' | 'mcpManagement' | 'sendEmail'
     | 'subagentTools' | 'canvasBatch' | 'canvasDeleteNote' | 'canvasDisconnect' | 'canvasDelete' | 'shell' | 'diskTrashTools'>
+  historicalSaveAttachment?: AgentToolRegistryOptions['saveAttachment']
   describe?: AgentPromptDescriptionPorts<PoolClient>['describe']
 }>

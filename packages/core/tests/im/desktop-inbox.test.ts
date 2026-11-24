@@ -3,6 +3,10 @@ import { createDesktopGroupContextSearch } from '../../src/im/desktop-group-cont
 import { createDesktopChatAttachmentStore } from '../../src/agent/attachments/desktop-store.js'
 import { createDesktopImProjectionTransfer } from '../../src/runtime/desktop-im-projection-transfer.js'
 import { createSqliteAgentAdmission } from '../../src/agent/run/sqlite-admission.js'
+import { resetAgentSessionContext } from '../../src/agent/sessions/delete-data.js'
+import { clearDesktopWorkspaceBindings, manageDesktopSessionGoal, readDesktopAgentHistoryPage } from '../../src/agent/sessions/desktop.js'
+import { createSqliteAgentSessionSource } from '../../src/agent/context/sqlite-source.js'
+import { selectSessionHistory } from '../../src/agent/context/history/ordering.js'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +14,33 @@ import { sql } from 'kysely'
 import { expect, it } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
 import { readDesktopImAttachmentReference, desktopImAttachmentDelivery, desktopImGroupRunEvent, recordDesktopImGroupMessage, resumeDesktopImPendingAsk, readPendingDesktopImConnection, admitDesktopImEvent, prepareDesktopImEvent, updateDesktopImDelivery, nextDesktopQqSequence, desktopImProjection, desktopImPrompt, rejectDesktopImEvent } from '../../src/im/desktop-inbox.js'
+
+it('QQ 群聊保存已确认的 Bot 身份并仅在历史展示映射提及', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-im-bot-mention-'))
+  try {
+    const path = join(directory, 'test.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      const connection = { platform: 'qq', connectionId: 'a'.repeat(64), eventKey: 'b'.repeat(64), sealedEvent: 'AQ==' }
+      await admitDesktopImEvent(runtime.db, ownerId, connection)
+      const incoming = await prepareDesktopImEvent(runtime.db, ownerId, { ...connection, chatType: 'group', ownerPlatformUserId: 'owner' })
+      if (!incoming) throw new Error('收件未准备')
+      const text = '<@synthetic-bot>、<@other-bot> 和 <@unknown> 你好'
+      await createSqliteAgentAdmission(runtime.db).prepare(ownerId, { session_id: incoming.sessionId, message: text,
+        quotedText: '<@synthetic-bot> 和 <@other-bot> 旧消息', client_message_id: incoming.clientId,
+        groupSender: { id: 'sender', name: '小北', botId: 'synthetic-bot',
+          otherBotNames: [{ id: 'other-bot', name: '小南' }] } })
+      const stored = await sql<{ content: string; platform_bot_user_id: string }>`SELECT content,platform_bot_user_id
+        FROM conversation_messages WHERE session_id=${incoming.sessionId} AND role='user'`.execute(runtime.db)
+      expect(stored.rows[0]).toEqual({ content: text, platform_bot_user_id: 'synthetic-bot' })
+      const history = await readDesktopAgentHistoryPage(runtime.db, ownerId, incoming.sessionId)
+      expect(history.messages.find(message => message.role === 'user')).toMatchObject({
+        text: '@咕咕、@小南 和 <@unknown> 你好', quotedText: '@咕咕 和 @小南 旧消息',
+      })
+    } finally { await runtime.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
 
 it('重启后为同一收件恢复原会话和消息标识，隔离其他连接', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-im-inbox-'))
@@ -45,7 +76,7 @@ it('重启后为同一收件恢复原会话和消息标识，隔离其他连接'
     const key = { ...connection, eventKey: event.eventKey, runId: admitted.identity.runId }
     const owner = opened.ownerId.replaceAll('-', '')
     const db = opened.runtime.db
-    await sql`INSERT INTO agent_run_checkpoints VALUES
+    await sql`INSERT INTO agent_run_checkpoints (user_id,session_id,run_id,version,sequence,status,phase,nonce,payload) VALUES
       (${owner},${first.sessionId},${key.runId},1,0,'waiting','interaction',X'00',X'00')`.execute(db)
     await sql`INSERT INTO interaction_prompts(id,user_id,session_id,kind,title,body,schema_json,status,expires_at,created_at)
       VALUES (1,${owner},${first.sessionId},'form','','','{}','active','2027-01-01 00:00:00','2026-11-21 00:00:00')`.execute(db)
@@ -152,6 +183,11 @@ it('桌面收件与附件暂存原子提交，重复收件不创建附件', asyn
       })
       expect(await store.forSession(ownerId, prepared.sessionId)).toEqual([attachment.attachId])
       expect(await readDesktopImAttachmentReference(runtime.db, ownerId, reference)).toMatchObject({ attachId: attachment.attachId })
+      await sql`UPDATE conversation_sessions SET chat_type=NULL WHERE id=${prepared.sessionId}`.execute(runtime.db)
+      const { rows: [previous] } = await sql<{ id: number }>`
+        INSERT INTO conversation_messages(session_id,conversation_seq,role,content,created_at)
+        VALUES (${prepared.sessionId},0,'user','测试历史附件',CURRENT_TIMESTAMP) RETURNING id`.execute(runtime.db)
+      await sql`UPDATE chat_attachments SET message_id=${previous!.id} WHERE attach_id=${attachment.attachId}`.execute(runtime.db)
       const delivery = (action: Parameters<typeof desktopImAttachmentDelivery>[3]) =>
         desktopImAttachmentDelivery(runtime.db, identity, attachment.attachId, action)
       expect(await desktopImAttachmentDelivery(runtime.db, identity, 'b'.repeat(32), 'begin')).toBeNull()
@@ -221,6 +257,35 @@ it('桌面群收件保留群会话类型，并拒绝复用为私聊', async () =
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
+it('普通群消息按平台时间进入后续 AT 运行历史，且不创建独立运行', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-im-context-order-'))
+  try {
+    const path = join(directory, 'test.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      const db = runtime.db
+      const scope = { platform: 'qq', connectionId: 'a'.repeat(64), ownerPlatformUserId: 'owner' }
+      for (const [index, seconds] of [49, 46, 50, 52].entries())
+        await recordDesktopImGroupMessage(db, ownerId, { ...scope, eventKey: String(index + 1).repeat(64),
+          text: `群消息 ${seconds}`, platformUserId: 'member', platformSentMs: seconds * 1000, eventReceivedMs: (60 + index) * 1000 })
+      expect(await prepareDesktopImEvent(db, ownerId, { ...scope, chatType: 'group' })).toBeNull()
+      await admitDesktopImEvent(db, ownerId, { ...scope, eventKey: 'b'.repeat(64), sealedEvent: 'AQ==' })
+      const turn = await prepareDesktopImEvent(db, ownerId, { ...scope, chatType: 'group' })
+      if (!turn) throw new Error('AT 收件未准备')
+      const { identity } = await createSqliteAgentAdmission(db).prepare(ownerId, {
+        session_id: turn.sessionId, message: '下一条 AT', client_message_id: turn.clientId,
+        groupSender: { id: 'owner', platformSentMs: 59_000, eventReceivedMs: 64_000 },
+      })
+      const source = createSqliteAgentSessionSource(db)
+      const history = await source.historyReader.read(identity)
+      expect(selectSessionHistory(identity, history.rows, history.baselineSeq).rows.map(row => row.content))
+        .toEqual(['群消息 46', '群消息 49', '群消息 50', '群消息 52', '下一条 AT'])
+      expect((await source.currentTurn(identity)).currentUser?.messageTimestamp).toBe(59_000)
+    } finally { await runtime.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
 it('仅记录的群消息只写一条历史，切到回应模式后重放也不会入队', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-im-inbox-'))
   const path = join(directory, 'test.db')
@@ -228,9 +293,15 @@ it('仅记录的群消息只写一条历史，切到回应模式后重放也不�
     await initializeSqlite(path)
     const { runtime, ownerId } = await openSqliteRuntime(path)
     try {
-      const event = { platform: 'qq', connectionId: 'c'.repeat(64), eventKey: 'd'.repeat(64), text: '测试群记录', platformUserId: 'sender', platformUserName: '小北' }
-      expect(await recordDesktopImGroupMessage(runtime.db, ownerId, event)).toBe(true)
-      expect(await recordDesktopImGroupMessage(runtime.db, ownerId, event)).toBe(false)
+      const event = { platform: 'qq', connectionId: 'c'.repeat(64), eventKey: 'd'.repeat(64), text: '测试群记录', quotedText: '被引用的原文', platformUserId: 'sender', platformUserName: '小北' }
+      const changed: number[] = []
+      const record = () => recordDesktopImGroupMessage(runtime.db, ownerId, event, undefined, id => changed.push(id))
+      expect(await record()).toBe(true)
+      expect(await record()).toBe(false)
+      const { rows: [recordedSession] } = await sql<{ session_id: number }>`SELECT session_id FROM desktop_im_sessions`.execute(runtime.db)
+      expect(changed).toEqual([recordedSession!.session_id])
+      const history = await readDesktopAgentHistoryPage(runtime.db, ownerId, recordedSession!.session_id)
+      expect(history.messages).toMatchObject([{ text: event.text, quotedText: event.quotedText }])
       await admitDesktopImEvent(runtime.db, ownerId, { ...event, sealedEvent: 'AQ==' })
       expect(await readPendingDesktopImConnection(runtime.db, ownerId, { platform: 'qq' })).toBeNull()
       const { rows } = await sql`SELECT role,content FROM conversation_messages`.execute(runtime.db)
@@ -408,4 +479,89 @@ it('恢复已准备的文件计划时跳过已落盘文件，继续写入失败�
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+it('/new 拒绝重置运行中的 IM 会话，空闲时清除旧对话并保留工作区绑定', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-im-new-'))
+  try {
+    const path = join(directory, 'test.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      const connection = { platform: 'qq', connectionId: 'a'.repeat(64), eventKey: 'b'.repeat(64), sealedEvent: 'AQ==' }
+      await admitDesktopImEvent(runtime.db, ownerId, connection)
+      const event = await prepareDesktopImEvent(runtime.db, ownerId, connection)
+      if (!event) throw new Error('收件未准备')
+      const { sessionId } = event
+      const workspace = { workspace_id: 'desktop:11111111-1111-4111-8111-111111111111' }
+      await sql`UPDATE conversation_sessions SET session_context=${JSON.stringify({ workspace_binding: workspace, goal_text: '旧目标' })},
+        summary='旧摘要',active_run_id='active',execution_state='running' WHERE id=${sessionId}`.execute(runtime.db)
+      await sql`INSERT INTO conversation_messages (session_id,conversation_seq,role,content,created_at)
+        VALUES (${sessionId},1,'user','旧消息',CURRENT_TIMESTAMP)`.execute(runtime.db)
+      const reset = () => runtime.db.transaction().execute(tx => resetAgentSessionContext(tx, 'sqlite', ownerId, sessionId))
+      expect(await reset()).toBeNull()
+      await sql`UPDATE conversation_sessions SET active_run_id=NULL,execution_state='idle' WHERE id=${sessionId}`.execute(runtime.db)
+      expect(await reset()).toEqual([])
+      const state = (await sql<{ summary: string; session_context: string }>`SELECT summary,session_context FROM conversation_sessions
+        WHERE id=${sessionId}`.execute(runtime.db)).rows[0]!
+      expect(state.summary).toBe('')
+      expect(JSON.parse(state.session_context)).toEqual({ workspace_binding: workspace })
+      expect((await sql`SELECT id FROM conversation_messages WHERE session_id=${sessionId}`.execute(runtime.db)).rows).toEqual([])
+    } finally { await runtime.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('群聊目标只允许 Bot 所有者创建和管理，控制命令沿用同一会话目标', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-im-goal-'))
+  try {
+    const path = join(directory, 'test.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      const connection = { platform: 'qq', connectionId: 'a'.repeat(64), eventKey: 'b'.repeat(64), sealedEvent: 'AQ==' }
+      await admitDesktopImEvent(runtime.db, ownerId, connection)
+      const event = await prepareDesktopImEvent(runtime.db, ownerId, { ...connection, chatType: 'group', ownerPlatformUserId: '小北' })
+      if (!event) throw new Error('收件未准备')
+      const { sessionId } = event
+      const scope = { platform: connection.platform, connectionId: connection.connectionId, groupSenderId: '小北' }
+      await expect(manageDesktopSessionGoal(runtime.db, ownerId, sessionId, 'status', { ...scope, groupSenderId: '小南' })).rejects.toThrow('当前会话不存在')
+      const run = await createSqliteAgentAdmission(runtime.db).prepare(ownerId, { session_id: sessionId, message: '/goal 整理测试材料',
+        client_message_id: event.clientId, groupSender: { id: '小北', name: '小北' } })
+      expect(run.goalMode).toBe(true)
+      expect((await manageDesktopSessionGoal(runtime.db, ownerId, sessionId, 'status', scope)).text).toContain('整理测试材料')
+      expect((await manageDesktopSessionGoal(runtime.db, ownerId, sessionId, 'pause', scope)).text).toContain('已暂停')
+      expect((await manageDesktopSessionGoal(runtime.db, ownerId, sessionId, 'resume', scope)).text).toContain('已恢复')
+      expect((await manageDesktopSessionGoal(runtime.db, ownerId, sessionId, 'cancel', scope)).text).toContain('已取消')
+      expect((await manageDesktopSessionGoal(runtime.db, ownerId, sessionId, 'status', scope)).text).toContain('没有')
+    } finally { await runtime.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('删除工作区登记只解除匹配的会话绑定并使快照失效', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-im-workspace-unbind-'))
+  try {
+    const path = join(directory, 'test.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      const ids = ['desktop:11111111-1111-4111-8111-111111111111', 'desktop:22222222-2222-4222-8222-222222222222']
+      for (const [index, id] of ids.entries()) {
+        const connection = { platform: 'qq', connectionId: String(index + 1).repeat(64), eventKey: String(index + 1).repeat(64), sealedEvent: 'AQ==' }
+        await admitDesktopImEvent(runtime.db, ownerId, connection)
+        const event = await prepareDesktopImEvent(runtime.db, ownerId, connection)
+        if (!event) throw new Error('收件未准备')
+        await sql`UPDATE conversation_sessions SET session_context=${JSON.stringify({
+          workspace_binding: { directory_id: id }, goal_text: '保留目标',
+        })},snapshot_hash='旧快照' WHERE id=${event.sessionId}`.execute(runtime.db)
+      }
+      await clearDesktopWorkspaceBindings(runtime.db, ownerId, ids[0]!)
+      await clearDesktopWorkspaceBindings(runtime.db, ownerId, ids[0]!)
+      const { rows } = await sql<{ session_context: string; snapshot_hash: string | null }>`
+        SELECT session_context,snapshot_hash FROM conversation_sessions ORDER BY id`.execute(runtime.db)
+      expect(JSON.parse(rows[0]!.session_context)).toEqual({ goal_text: '保留目标' })
+      expect(rows[0]!.snapshot_hash).toBeNull()
+      expect(JSON.parse(rows[1]!.session_context).workspace_binding.directory_id).toBe(ids[1])
+      expect(rows[1]!.snapshot_hash).toBe('旧快照')
+    } finally { await runtime.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
 })

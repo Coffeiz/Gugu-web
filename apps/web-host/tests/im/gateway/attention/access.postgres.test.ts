@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import type { Pool } from 'pg'
+import { Kysely, PostgresDialect } from 'kysely'
+import { createWechatConnector } from '../../../../src/modules/im/connect/platforms/wechat/index.js'
 import type { ImActorInput } from '@gugu/core/im/access'
 import { createPostgresImAccess } from '../../../../src/modules/im/gateway/inbound/access.js'
 
@@ -50,22 +52,23 @@ test('快照拒绝跨owner、Bot、平台和私聊群域复用，伪造行归属
   }
 })
 
-test('四平台角色仅依据可信Bot绑定，Telegram未知私聊不提升owner', async () => {
+test('四平台角色仅依据可信Bot绑定，未绑定私聊不提升 owner', async () => {
   const f = fixture()
   for (const platform of ['qq', 'feishu', 'wechat', 'telegram'] as const) {
     f.set({ ...row(), platform })
     assert.equal((await f.access.resolveActor({ ...input, platform, ...(platform === 'wechat' ? { chatType: 'c2c' as const, chatId: null } : {}) })).role, 'owner')
     if (platform === 'wechat') await assert.rejects(f.access.resolveActor({ ...input, platform }), /IM 权限不可用/)
     const stranger = await f.access.resolveActor({ ...input, platform, platformUserId: 'synthetic-stranger', chatType: 'c2c', chatId: null })
-    assert.equal(stranger.role, platform === 'feishu' || platform === 'wechat' ? 'owner' : platform === 'telegram' ? 'unknown' : 'member')
+    assert.equal(stranger.role, 'unknown')
+    assert.equal(await f.access.authorizeTool({ ...input, platform, platformUserId: 'synthetic-stranger', chatType: 'c2c', chatId: null }, 'list_projects'), false)
   }
 })
 
 test('解绑与白名单撤销实时拒绝工具及旧Run投递，原快照不冒充实时授权', async () => {
   const f = fixture(), snapshot = await f.access.snapshot(input), ownerActor = snapshot.actor(input)
-  assert.equal(await f.access.authorizeTool(input, 'create_skill'), true)
+  assert.equal(await f.access.authorizeTool(input, 'web_search'), true)
   f.set({ ...row(), owner_platform_user_id: null })
-  assert.equal(await f.access.authorizeTool(input, 'create_skill'), false)
+  assert.equal(await f.access.authorizeTool(input, 'web_search'), false)
   assert.equal(await f.access.authorizeDelivery(ownerActor, snapshot.bot), false)
   assert.equal(snapshot.actor(input).role, 'owner')
   f.set(row())
@@ -132,12 +135,13 @@ test('隔离PostgreSQL：真实JOIN按owner/Bot/平台隔离并立即观察账�
     await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY,is_active boolean,account_status varchar(16));
       CREATE TABLE user_bots(id integer PRIMARY KEY,user_id uuid REFERENCES users(id),platform varchar(20),enabled boolean,
       owner_platform_user_id varchar(128),group_allowed_tools json,group_owner_memory_enabled boolean,
+      name text,app_secret text,app_id text,owner_bound_at timestamptz,
       group_chat_enabled boolean DEFAULT true,feishu_group_chat_enabled boolean)`)
     await pool.query('INSERT INTO users VALUES($1,true,\'active\'),($2,true,\'active\')', [owner, other])
     await pool.query(`INSERT INTO user_bots(id,user_id,platform,enabled,owner_platform_user_id,group_allowed_tools,group_owner_memory_enabled) VALUES(71,$1,'qq',true,'synthetic-owner','["group_context_search"]',true),
       (72,$2,'qq',true,'synthetic-owner','[]',false)`, [owner, other])
     const db = pool
-    const access = createPostgresImAccess({ query: (text, params) => db.query(text, params), supportedPlatforms: () => ['qq'] })
+    const access = createPostgresImAccess({ query: (text, params) => db.query(text, params), supportedPlatforms: () => ['qq', 'wechat'] })
     assert.equal(await access.readBot({ ...input, ownerId: other }), null)
     assert.equal(await access.readBot({ ...input, botId: '72' }), null)
     const member = { ...input, platformUserId: 'synthetic-member' }
@@ -150,6 +154,33 @@ test('隔离PostgreSQL：真实JOIN按owner/Bot/平台隔离并立即观察账�
     await db.query('UPDATE user_bots SET group_chat_enabled=true WHERE id=71')
     await db.query("UPDATE user_bots SET group_allowed_tools='[]' WHERE id=71")
     assert.equal(await access.authorizeTool(member, 'group_context_search'), false)
+    await db.query(`INSERT INTO user_bots(id,user_id,platform,enabled,name,group_owner_memory_enabled)
+      VALUES(73,$1,'wechat',true,'测试微信',false)`, [owner])
+    const challenges = new Map<string, string>()
+    let pairingUser: string | undefined
+    const connector = createWechatConnector(new Kysely({ dialect: new PostgresDialect({ pool: db }) }), {
+      portalBase: 'https://pairing.example.invalid', platforms: () => ['wechat'], generateId: randomUUID, randomUin: () => 1,
+      store: {
+        async get(key) { return challenges.get(key) ?? null },
+        async saveIfAbsent(key, value) { if (challenges.has(key)) return false; challenges.set(key, value); return true },
+        async delete(key) { challenges.delete(key) },
+      },
+      transport: { async request(request) {
+        const payload = new URL(request.url).pathname.endsWith('status')
+          ? { status: 'confirmed', bot_token: 'synthetic-token', ilink_user_id: pairingUser }
+          : { qrcode: 'synthetic-code', qrcode_img_content: 'https://pairing.example.invalid/qr' }
+        return { status: 200, headers: {}, body: (async function* () { yield Buffer.from(JSON.stringify(payload)) })(), cancel() {} }
+      } },
+      encrypt: () => 'synthetic-encrypted', publishChanged: async () => {},
+    })
+    const pairing = await connector.start(owner)
+    const wechat = { ...input, platform: 'wechat' as const, botId: '73', chatType: 'c2c' as const, chatId: null }
+    await assert.rejects(connector.poll(owner, pairing.task_id), { statusCode: 502 })
+    assert.equal(await access.authorizeTool(wechat, 'list_projects'), false)
+    pairingUser = wechat.platformUserId
+    assert.equal((await connector.poll(owner, pairing.task_id)).status, 'success')
+    assert.equal(await access.authorizeTool(wechat, 'list_projects'), true)
+    assert.equal(await access.authorizeTool({ ...wechat, platformUserId: 'synthetic-stranger' }, 'list_projects'), false)
     await db.query("UPDATE users SET account_status='suspended' WHERE id=$1", [owner])
     assert.equal(await access.readBot(input), null)
   } finally {

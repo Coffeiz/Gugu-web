@@ -16,8 +16,7 @@ export interface WorkspaceListRuntime {
 export interface WorkspaceListRow {
   id: number
   name: string
-  kind: 'folder' | 'project' | 'directory'
-  folder_id: number | null
+  kind: 'project' | 'directory'
   project_id: number | null
   directory_id: number | null
   enabled: boolean
@@ -75,7 +74,7 @@ export function createWorkspaceLister(store: WorkspaceListReadPort, runtime: Wor
         terminalEntryEnabled: settings.sandboxReady && terminalMode !== 'entry_disabled' && shellAvailable,
         ptyEnabled: settings.sandboxReady && terminalMode === 'auto' && shellAvailable && settings.fullUserSandboxAuthorizationEnabled,
         items: rows.map(row => ({ id: Number(row.id), name: row.name, kind: row.kind,
-          folderId: row.folder_id == null ? null : Number(row.folder_id), projectId: row.project_id == null ? null : Number(row.project_id),
+          projectId: row.project_id == null ? null : Number(row.project_id),
           directoryId: row.directory_id == null ? null : Number(row.directory_id), enabled: row.enabled, isDefault: row.is_default,
           boundSessionCount: counts.get(Number(row.id)) ?? 0,
         })),
@@ -86,8 +85,9 @@ export function createWorkspaceLister(store: WorkspaceListReadPort, runtime: Wor
 
 export interface AgentWorkspacePayload {
   workspace_id: number | string; name: string; kind: string; enabled?: boolean; is_default?: boolean; bound_session_count?: number
-  project_id: number | null; folder_id: number | null; project_name?: string | null; folder_name?: string | null
+  project_id: number | null; project_name?: string | null
   directory_id?: number | string; directory_name?: string | null
+  available?: boolean; location?: import('../agent/sessions/reference-context.js').ResolvedObjectPath
 }
 export interface WorkspaceAgentReadPort {
   read(ownerId: string, workspaceId: number | string | undefined, signal?: AbortSignal): Promise<AgentWorkspacePayload[]>

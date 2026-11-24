@@ -65,7 +65,6 @@ function fakeRuntime(initial = project()) {
           working = updated
           return working
         },
-        async updateFileStoragePrefixes() {},
         async recordUndo(record) { undo.push(record) },
       })
       row = working

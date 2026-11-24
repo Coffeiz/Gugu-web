@@ -6,6 +6,10 @@ MessageArea,applyCompaction,compactContext,createAgentCompactionPort,createLazyA
 matchedAtomicUnits,providerInputTokens,runReflection,resolveCompactionLimits,shouldCompact,stableJson,stripToolCallInputs,summaryOutputExhausted,toolCallIds,toolResultIds,trimOldestHistory,validateCompactSummary
 } from "../../../src/agent/index.js"
 import type { AgentProviderAuxiliaryPorts } from "../../../src/agent/index.js"
+import { projectDurableHistoryCompaction, selectHistoryCompactionPrefix, summarizeHistoryPrefix } from '../../../src/agent/run/history-compaction.js'
+import type { CanonicalRunContext, PersistedHistoryRow } from '../../../src/agent/models.js'
+import { selectSessionHistory } from '../../../src/agent/context/history/ordering.js'
+
 function services(): ContextServices {
   let id = 0
   return { nextId: () => `id-${++id}`, digest: value => createHash('sha256').update(stableJson(value)).digest('hex').slice(0, 16) }
@@ -460,5 +464,56 @@ describe('摘要请求的实际超窗恢复', () => {
     expect(await summarizer.summarize(input)).toBe(''); expect(calls).toBe(1); expect(transforms).toBe(0)
     port.provider.complete = async () => { calls++; throw new Error('ordinary failure') }
     expect(await summarizer.summarize(input)).toBe(''); expect(calls).toBe(3); expect(transforms).toBe(0)
+  })
+})
+
+
+describe('持久历史压缩与下一轮恢复', () => {
+  const identity = { ownerId: 'owner', sessionId: 'session', runId: 'current' }
+  const row = (seq: number, content: string, runId: string, round: number, effective = seq) => ({
+    id: String(seq), role: 'user', content, content_json: null, effective, runId, roundId: `round-${round}`,
+  })
+
+  it('使用摘要水位，保留上一 Run 最后十轮和完整锚点分组，排除当前 Run', async () => {
+    const history = [
+      { ...row(31, '原摘要', 'old', 1), role: 'summary', coversUntilSeq: 3 },
+      row(2, '已经覆盖', 'old', 1), row(4, '可压缩旧消息', 'old', 1),
+      row(5, '同一锚点的前置材料', 'previous', 2, 5), row(6, '保留轮的正文', 'previous', 3, 5),
+      ...Array.from({ length: 9 }, (_, index) => row(index + 7, '保留工具轮', 'previous', index + 4)),
+      row(16, '当前消息', 'current', 1), row(17, '当前工具结果', 'current', 1),
+    ]
+    const plan = selectHistoryCompactionPrefix(history, 2, { anchorSeq: 17, runId: 'current' })!
+    expect(plan).toMatchObject({ baseline: 4, previous: '原摘要' })
+    expect(plan.covered.map(item => item.id)).toEqual(['4'])
+    const summary = await summarizeHistoryPrefix(plan, { async summarize(input) {
+      expect(input.compressible.map(message => message.content)).toEqual(['可压缩旧消息'])
+      expect(input.previousSummary).toContain('原摘要')
+      return '持久摘要'
+    } }, new AbortController().signal)
+    expect(summary).toBe('持久摘要')
+  })
+
+  it('摘要含本轮原文时按持久覆盖范围重建，下一轮完整恢复保留区', () => {
+    const history = [
+      row(1, '旧上下文', 'old', 1), row(2, '保留的追问', 'previous', 1),
+      row(3, '当前消息', 'current', 1),
+    ]
+    const snapshot = { ...identity, contextEpoch: 1, context: {}, snapshotHash: 'snapshot',
+      sessionInfoHash: null, snapshotExpiresAt: null, baselineMessageSeq: 0 }
+    const context = {
+      identity, historyBaseline: { baselineSeq: 0 }, sourceEffects: { sessionSnapshot: { state: snapshot } },
+      compactions: [{ result: { changed: true, coversUnpersisted: true, coversUntilMessageIds: ['1', '2'],
+        messages: [{ role: 'user', content: formatCompactedSummary('本轮工具原文') }] } }],
+    } as unknown as CanonicalRunContext
+    const saved = projectDurableHistoryCompaction(context, history, 3)!
+    expect(saved.baseline).toBe(1)
+    expect(saved.summary).toContain('旧上下文')
+    expect(saved.summary).not.toMatch(/本轮工具原文|保留的追问|当前消息/)
+    const persisted: PersistedHistoryRow[] = [...history,
+      { ...row(4, saved.summary, 'current', 1), role: 'summary', coversUntilSeq: saved.baseline },
+    ].map(item => ({ ...identity, ...item, conversationSeq: Number(item.id), historyAnchorSeq: null }))
+    const next = selectSessionHistory(identity, persisted, 0)
+    expect(next.effectiveBaselineSeq).toBe(1)
+    expect(next.rows.map(item => item.content)).toEqual([saved.summary, '保留的追问', '当前消息'])
   })
 })

@@ -286,7 +286,8 @@ export function createPostgresAgentDispatch(pool: Pick<Pool, 'connect' | 'query'
         const source = agentDispatchSource(input)
         if (source && !supports(input)) return null
         // 原生交互继续由 IM 恢复器认领，派单交付只唤醒内部等待。
-        if (source === 'im' && status === 'waiting') {
+        if (source === 'im' && status === 'waiting' && !row.cancel_requested) {
+          if (!options.subagentWaits) return null
           const { rows: [ready] } = await client.query<{ ready: boolean }>(
             `SELECT ${readySubagentWait('$1', '$2', '$3')} AS ready`, [ownerId, sessionId, row.run_id])
           if (!ready?.ready) return null

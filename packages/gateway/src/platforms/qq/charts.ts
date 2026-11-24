@@ -70,7 +70,7 @@ export function createQqChartPreparation(
           }
           if (event.type === 'token' && typeof event.payload.text === 'string') await projector.append(event.payload.text)
           else if (event.type === 'round_end') afterRound = true
-          else if (event.type === 'tool_call' || event.type === 'run_waiting' || event.type === 'interaction_required') {
+          else if (event.type === 'tool_call' || (event.type === 'compaction' && event.payload.phase === 'started') || event.type === 'run_waiting' || event.type === 'interaction_required') {
             await projector.finish()
             projector = createImChartParser({ renderCharts: prefetch })
           }

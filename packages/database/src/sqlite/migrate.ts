@@ -1,3 +1,5 @@
+export { initializeDesktopScheduledTaskFilePaths } from './migrations/0027_desktop_scheduled_task_file_paths.js'
+export { initializeDesktopImportedMemory } from './migrations/0026_desktop_imported_memory.js'
 export { initializeDesktopAgentRunRetention } from './migrations/0025_desktop_agent_run_retention.js'
 export { initializeDesktopSubagentSessionInbox } from './migrations/0024_desktop_subagent_session_inbox.js'
 export { initializeDesktopSubagentAdmissions } from './migrations/0023_desktop_subagent_admissions.js'

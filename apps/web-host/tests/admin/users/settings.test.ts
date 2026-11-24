@@ -3,9 +3,9 @@ import test from 'node:test'
 import { parseQuotaPatch } from '../../../src/modules/admin/user-management.js'
 
 test('配额遵循Python整数转换、null及各字段下界，忽略未知字段', () => {
-  assert.deepEqual(parseQuotaPatch({token_limit_6h: ' -1 ', token_limit_weekly: 4.9, storage_limit_bytes: null, search_limit_daily: true, extra: 20}), {token_limit_6h:-1, token_limit_weekly:4, storage_limit_bytes:null, search_limit_daily:1})
+  assert.deepEqual(parseQuotaPatch({token_limit_6h: ' -1 ', token_limit_weekly: 4.9, search_limit_daily: true, extra: 20}), {token_limit_6h:-1, token_limit_weekly:4, search_limit_daily:1})
   assert.deepEqual(parseQuotaPatch({search_limit_daily:'１２_３'}), {search_limit_daily:123})
-  for (const input of [{search_limit_daily:-1},{storage_limit_bytes:-2},{token_limit_6h:'2.5'},{token_limit_6h:[]},{token_limit_6h:''}]) assert.throws(()=>parseQuotaPatch(input), {statusCode:422})
+  for (const input of [{search_limit_daily:-1},{token_limit_6h:'2.5'},{token_limit_6h:[]},{token_limit_6h:''}]) assert.throws(()=>parseQuotaPatch(input), {statusCode:422})
 })
 
 import Fastify from 'fastify'
@@ -27,17 +27,16 @@ test('管理员更新配额持久化、失败不部分写入，开发者标记�
     writeAuditLog:async(_username,_action,description)=>{audits.push(description)},
   })
   try {
-    await pool.query('CREATE TABLE users (id uuid PRIMARY KEY,username text NOT NULL,is_developer boolean NOT NULL DEFAULT false,token_limit_6h bigint,token_limit_weekly bigint,storage_limit_bytes bigint,search_limit_daily integer)')
+    await pool.query('CREATE TABLE users (id uuid PRIMARY KEY,username text NOT NULL,is_developer boolean NOT NULL DEFAULT false,token_limit_6h bigint,token_limit_weekly bigint,search_limit_daily integer)')
     const id=randomUUID(), other=randomUUID(), headers={authorization:'admin'}, path=`/api/v1/admin/users/${id}`
     await pool.query("INSERT INTO users(id,username,token_limit_6h) VALUES($1,'小北',20),($2,'小南',30)",[id,other])
     assert.equal((await app.inject({method:'PATCH',url:`${path}/quota`,payload:{token_limit_6h:1}})).statusCode,401)
     assert.equal((await app.inject({method:'PATCH',url:`${path}/quota`,headers,payload:{token_limit_6h:2,search_limit_daily:-1}})).statusCode,422)
     assert.equal(Number((await pool.query('SELECT token_limit_6h FROM users WHERE id=$1',[id])).rows[0].token_limit_6h),20)
-    const response=await app.inject({method:'PATCH',url:`${path}/quota`,headers,payload:{token_limit_6h:'-1',search_limit_daily:4.9,storage_limit_bytes:null}})
+    const response=await app.inject({method:'PATCH',url:`${path}/quota`,headers,payload:{token_limit_6h:'-1',search_limit_daily:4.9}})
     assert.equal(response.statusCode,200)
     assert.equal(Number(response.json().token_limit_6h),-1)
     assert.equal(response.json().search_limit_daily,4)
-    assert.equal(response.json().storage_limit_bytes,null)
     for(const expected of [true,false]) {
       const result=await app.inject({method:'PATCH',url:`${path}/developer`,headers})
       assert.deepEqual(result.json(),{id,is_developer:expected})

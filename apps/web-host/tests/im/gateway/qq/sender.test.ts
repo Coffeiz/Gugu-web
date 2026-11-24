@@ -59,19 +59,23 @@ test('QQ5xx、超时与缺消息ID均UNKNOWN不盲目主动重发', async () => 
   }
 })
 
-test('QQ群mention独立Markdown且正文主动，已确认mention后失败不重复提醒', async () => {
-  assert.deepEqual(splitQqGroupMentions('@sender @known @stranger <@other>', 'sender', ['known']), {
-    mention: '<qqbot-at-user id="sender" /><qqbot-at-user id="known" /><qqbot-at-user id="other" />', body: '@stranger',
+test('QQ群合并原生提及和正文，明确拒绝 Markdown 时只降级正文', async () => {
+  assert.deepEqual(splitQqGroupMentions('@sender @known @stranger <@other> <@known> `@sender`', 'sender', ['known']), {
+    mention: '<qqbot-at-user id="sender" /><qqbot-at-user id="known" />', body: '@stranger ＜@other＞  `@sender`',
   })
-  const f = fixture(), group = { id: 'synthetic-group', chatType: 'group' as const, messageId: 'group-inbound', mentionUserId: 'sender' }
-  f.setHandler(async () => { if (f.calls.length === 2) throw new QqApiError('message', 503); return { id: 'mention-id' } })
-  assert.deepEqual(await f.sender.text(group, '@sender 正文'), { outcome: 'unknown', platformMessageIds: ['mention-id'] })
-  assert.equal(f.calls.length, 2)
-  assert.equal(f.calls[0]!.body.msg_type, 2)
-  assert.deepEqual(f.calls[0]!.body.markdown, { content: '<qqbot-at-user id="sender" />' })
-  assert.equal(f.calls[0]!.body.msg_id, 'group-inbound')
-  assert.equal(f.calls[1]!.body.msg_id, undefined)
-  assert.equal(f.calls[1]!.body.content, '正文')
+  const group = { id: 'synthetic-group', chatType: 'group' as const, messageId: 'group-inbound', mentionUserId: 'sender', mentionUserName: '小北' }
+  const f = fixture()
+  assert.equal((await f.sender.text(group, '@小北 正文')).outcome, 'accepted')
+  assert.equal(f.calls.length, 1)
+  assert.deepEqual(f.calls[0]!.body, { msg_type: 2, msg_seq: 1, msg_id: 'group-inbound',
+    markdown: { content: '<qqbot-at-user id="sender" />\n\n正文' } })
+  const rejectedMarkdown = fixture()
+  rejectedMarkdown.setHandler(async () => {
+    if (rejectedMarkdown.calls.length === 1) throw new QqApiError('message', 400, 50056)
+    return { id: 'body-id' }
+  })
+  assert.deepEqual(await rejectedMarkdown.sender.text(group, '@小北 正文'), { outcome: 'accepted', platformMessageIds: ['body-id'] })
+  assert.deepEqual(rejectedMarkdown.calls[1]!.body, { msg_type: 0, msg_seq: 2, msg_id: 'group-inbound', content: '正文' })
 })
 
 test('QQ私聊流排队等首帧stream_msg_id，仅确认实际发送帧且DONE关闭后才成功', async () => {

@@ -41,10 +41,9 @@ test('定时执行按任务 owner 绑定 BYOK，并为每次尝试生成独立�
         schedule_kind text NOT NULL DEFAULT 'cron',end_at timestamptz,last_run_failed boolean);
       CREATE TABLE user_preferences(user_id uuid,data_json text);
       CREATE TABLE projects(id int PRIMARY KEY,user_id uuid,name text,status text,priority text,start_date date,deadline date,done_at timestamptz,
-        contact_name text,summary text,stages_json text,deleted_at timestamptz,archived boolean);
+        contact_name text,summary text,stages_json text,deleted_at timestamptz,archived boolean,created_at timestamptz DEFAULT now());
       CREATE TABLE calendar_events(user_id uuid,date text,title text,deleted_at timestamptz);
-      CREATE TABLE folders(id int PRIMARY KEY,user_id uuid,name text,project_id int,workspace_directory_id int,parent_id int,deleted_at timestamptz);
-      CREATE TABLE files(id int PRIMARY KEY,user_id uuid,display_name text,ext text,space text,folder_id int,project_id int,
+      CREATE TABLE files(id int PRIMARY KEY,user_id uuid,display_name text,ext text,space text,project_id int,
         deleted_at timestamptz,updated_at timestamptz);
       CREATE TABLE user_bots(user_id uuid,platform text,enabled boolean);
       CREATE TABLE agent_usage(id serial PRIMARY KEY,user_id uuid,session_id integer,tokens_in integer,tokens_out integer,
@@ -224,7 +223,7 @@ test('定时执行按任务 owner 绑定 BYOK，并为每次尝试生成独立�
     })
     const input = (ownerId: string) => ({
       task: { id: ownerId === owner ? '7' : '8', ownerId, name: '汇报', payload: '', channels: ['web'], deliveryTargets: {},
-        authorizedTools: [], emailAttachmentFileIds: [], workspaceId: null, filesystemGrantId: null },
+        authorizedTools: [], emailAttachmentFilePaths: [], workspaceId: null, filesystemGrantId: null },
       prompt: '合成任务提示词', isTrial: true,
     })
     for (const ownerId of [owner, owner, withoutByok]) {

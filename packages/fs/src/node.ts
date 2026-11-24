@@ -334,14 +334,14 @@ export async function moveLocalEntry(root: string, fromPath: string, toPath: str
 }
 
 /** 读取用户可修改的目录树时，逐段固定目录句柄，拒绝符号链接。 */
-export async function openAnchoredLocalFile(root: string | number, relativePath: string) {
+export async function openAnchoredLocalFile(root: string | number, relativePath: string, directory = false) {
   const parent = await openAnchoredParent(root, relativePath)
   if (!parent) return null
   try {
-    const handle = await open(path.join(parent.parent, parent.name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    const handle = await open(path.join(parent.parent, parent.name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | (directory ? constants.O_DIRECTORY : 0))
     try {
       const info = await handle.stat()
-      if (!info.isFile()) throw new UnsafeLocalPathError()
+      if (!(directory ? info.isDirectory() : info.isFile())) throw new UnsafeLocalPathError()
       return { handle, size: info.size }
     } catch (error) {
       await handle.close()
@@ -350,7 +350,7 @@ export async function openAnchoredLocalFile(root: string | number, relativePath:
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ENOENT') return null
-    if (code === 'ELOOP') throw new UnsafeLocalPathError()
+    if (code === 'ELOOP' || (directory && code === 'ENOTDIR')) throw new UnsafeLocalPathError()
     throw error
   } finally {
     await parent.close()
@@ -451,7 +451,7 @@ async function copyLocalEntry(root: string, source: string, destination: string,
 }
 
 export function createLocalFileTree(storageRoot: string, rootKey: string) {
-  function key(relativePath: string, allowRoot = false) {
+  function path(relativePath: string, allowRoot = false) {
     if (relativePath === '' && allowRoot) return rootKey
     if (relativePath.length > 4096 || relativePath.split('/').some(segment =>
       !segment || segment === '.' || segment === '..' || segment.includes('\\')
@@ -461,9 +461,9 @@ export function createLocalFileTree(storageRoot: string, rootKey: string) {
   }
 
   return {
-    storageKey: key,
+    path,
     copy: (relativePath: string, destination: string, signal: AbortSignal) =>
-      copyLocalEntry(storageRoot, key(relativePath), key(destination), signal),
+      copyLocalEntry(storageRoot, path(relativePath), path(destination), signal),
     async ensureRoot() {
       // 只创建宿主提供的根目录层级，末段仅用于打开父目录句柄。
       const root = await openAnchoredParent(storageRoot, `${rootKey}/.gugu-root`, true)
@@ -472,19 +472,20 @@ export function createLocalFileTree(storageRoot: string, rootKey: string) {
       return true
     },
     async list(relativePath: string) {
-      const entries = await listLocalDirectory(storageRoot, key(relativePath, true))
+      const entries = await listLocalDirectory(storageRoot, path(relativePath, true))
       return entries?.map(entry => ({
         ...entry,
         relativePath: relativePath ? `${relativePath}/${entry.name}` : entry.name,
       })) ?? null
     },
-    open: (relativePath: string) => openAnchoredLocalFile(storageRoot, key(relativePath)),
-    mkdir: (relativePath: string) => createLocalDirectory(storageRoot, key(relativePath)),
+    open: (relativePath: string) => openAnchoredLocalFile(storageRoot, path(relativePath)),
+    openDirectory: (relativePath: string) => openAnchoredLocalFile(storageRoot, path(relativePath, true), true),
+    mkdir: (relativePath: string) => createLocalDirectory(storageRoot, path(relativePath)),
     upload: (relativePath: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal, overwrite = false) =>
-      importLocalFile(storageRoot, key(relativePath), content, signal, overwrite),
+      importLocalFile(storageRoot, path(relativePath), content, signal, overwrite),
     async move(relativePath: string, destination: string) {
-      const from = key(relativePath)
-      const to = key(destination)
+      const from = path(relativePath)
+      const to = path(destination)
       if (to.startsWith(`${from}/`))
         throw Object.assign(new Error('不能移动到自身的子目录'), { code: 'EINVAL' })
       return moveLocalEntry(storageRoot, from, to)

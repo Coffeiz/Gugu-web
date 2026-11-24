@@ -221,7 +221,7 @@ for (const {platform,privateStreaming=false,chart=false,flip=false,plainFlip=fal
     assert.deepEqual([...operations], ['update', 'refresh'])
     if (!group) assert.ok(JSON.stringify(primary!.messages).includes(persona), '必须装配当前owner真实本地persona来源快照')
     const tools = (primary!.tools as { function: { name: string } }[] ?? []).map(tool => tool.function.name)
-    assert.deepEqual(tools.filter(name => name !== 'choose_no_reply'), ['call_tool', 'search_tools', 'use_skill', 'ask_user'])
+    assert.deepEqual(tools.filter(name => name !== 'choose_no_reply'), ['call_tool', 'search_tools', 'use_skill'])
     const catalog = JSON.stringify(primary!.messages)
     if (!group) assert.equal(catalog.includes('`react`'), platform === 'feishu')
     if (probeMcpSchema && !group) for (const name of ownerReadTools)

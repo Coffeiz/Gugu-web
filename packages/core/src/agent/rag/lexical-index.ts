@@ -220,10 +220,9 @@ function patchInMemory(
 
 function matchesScope(document: Document, scope?: RagSearchScope): boolean {
   if (!scope) return true;
-  if (scope.scope_type === "project" || scope.scope_type === "folder") {
+  if (scope.scope_type === "project") {
     if (document.scope_type !== "owner") return false;
-    const field = scope.scope_type === "project" ? "project_id" : "folder_id";
-    return String(document.metadata?.[field] ?? "") === String(scope.scope_id ?? "");
+    return String(document.metadata?.project_id ?? "") === String(scope.scope_id ?? "");
   }
   if (scope.scope_type === "member" && document.scope_type === "group") {
     return document.platform === scope.platform
@@ -240,8 +239,8 @@ function matchesScope(document: Document, scope?: RagSearchScope): boolean {
 function validateScope(scope:RagSearchScope):void {
  if(!scope?.scope_type)throw new Error('RAG 检索范围未指定')
  if(['group','member'].includes(scope.scope_type) && (!scope.platform || !scope.bot_id || !scope.group_id || !scope.scope_id)) throw new Error('RAG 检索范围不完整')
- if(['project','folder'].includes(scope.scope_type) && !scope.scope_id)throw new Error('RAG 检索范围不完整')
- if(!['owner','group','member','project','folder'].includes(scope.scope_type))throw new Error('RAG 检索范围不受支持')
+ if(scope.scope_type === 'project' && !scope.scope_id)throw new Error('RAG 检索范围不完整')
+ if(!['owner','group','member','project'].includes(scope.scope_type))throw new Error('RAG 检索范围不受支持')
 }
 
 function search(

@@ -344,7 +344,7 @@ describe('聊天附件保存工具注册器行为', () => {
     })
     expect(await dispatch({ attach_id: 'attachment-1' })).toMatchObject({ successful: true, mutated: true, value: { file_id: 1 } })
     expect(calls[0]).toEqual({ owner: identity.ownerId, input: { source: 'attach_id', attach_id: 'attachment-1', space: 'personal' } })
-    expect(await dispatch({ source: 'attach_ids', attach_ids: ['attachment-2', 'attachment-3'], space: 'project', project_id: 7, folder_id: 8 }))
+    expect(await dispatch({ source: 'attach_ids', attach_ids: ['attachment-2', 'attachment-3'], space: 'project', project_id: 7, folder_path: '资料' }))
       .toMatchObject({ successful: true, value: { file_id: 2 } })
     expect(await dispatch({ source: 'latest' })).toMatchObject({ successful: true, value: { file_id: 3 } })
     expect(await dispatch({ attach_id: 'folder-path', folder_path: '资料/项目' })).toMatchObject({ successful: true })
@@ -355,7 +355,6 @@ describe('聊天附件保存工具注册器行为', () => {
     expect(await dispatch({ source: 'latest', attach_id: 'must-not-fallback' })).toMatchObject({ successful: false, executed: false })
     expect(await dispatch({ attach_ids: ['same', 'same'] })).toMatchObject({ successful: false, executed: false })
     expect(await dispatch({ attach_id: 'bad-folder', folder_path: '../越界' })).toMatchObject({ successful: false, executed: false })
-    expect(await dispatch({ attach_id: 'ambiguous-folder', folder_id: 1, folder_path: '资料' })).toMatchObject({ successful: false, executed: false })
     expect(await dispatch({ attach_id: 'wrong-scope', space: 'workspace', project_id: 7 })).toMatchObject({ successful: false, executed: false })
     authorized = false
     expect(await dispatch({ attach_id: 'attachment-4' })).toMatchObject({ successful: false, executed: false })
@@ -406,13 +405,13 @@ it('桌面引用回执同时提供文件的真实路径和可点击链接', asyn
   const registry = createToolRegistry({ authorize: async () => true, tools: [createPresentFileTool({
     async resolve(_identity, selector) {
       expect(selector).toEqual({ file: absolute, reference_only: true })
-      return { file: { referenceId: 'drop-synthetic', name: '文件', ext: 'md', path: absolute, surface: 'desktop' } }
+      return { file: { referenceId: 'drop-synthetic', name: '文件', ext: 'md', location: { kind: 'host_absolute', value: absolute }, surface: 'desktop' } }
     },
   })] })
-  const result = await registry.tools.dispatch({ id: 'present-path', name: 'present_file',
-    input: { file: absolute, reference_only: true } }, {
+  const result = await registry.tools.dispatch({ id: 'present-path', name: 'open_item',
+    input: { kind: 'file', item: absolute, reference_only: true } }, {
     identity, roundId: '1', signal: new AbortController().signal, resolution: null,
     async execute() { throw new Error('不执行宿主机命令') },
   })
-  expect(result).toMatchObject({ successful: true, value: { path: absolute, link: 'gugu://open-object/file/drop-synthetic' } })
+  expect(result).toMatchObject({ successful: true, value: { location: { kind: 'host_absolute', value: absolute }, link: 'gugu://open-object/file/drop-synthetic' } })
 })

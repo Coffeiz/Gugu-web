@@ -6,6 +6,8 @@ import { diskTrashApi, type DiskTrashEntry } from '@/services/api'
 import { accountBoundaryEpoch } from '@/utils/accountBoundary'
 import { confirmFileDeletion } from './useFileDeleteConfirm'
 
+export interface EmptyTrashProgress { done: number; total: number; failed: number }
+
 export function useDiskTrash(active: Readonly<Ref<boolean>>) {
   const entries = ref<DiskTrashEntry[]>([])
   const loading = ref(false)
@@ -13,7 +15,7 @@ export function useDiskTrash(active: Readonly<Ref<boolean>>) {
   const busy = ref(false)
   const selectionMode = ref(false)
   const selected = ref(new Set<string>())
-  const progress = ref<{ done: number; total: number; failed: number } | null>(null)
+  const progress = ref<EmptyTrashProgress | null>(null)
   const selectedEntries = computed(() => entries.value.filter(entry => selected.value.has(entry.id)))
   const folderCount = computed(() => selectedEntries.value.filter(entry => entry.kind === 'directory').length)
   const fileCount = computed(() => selectedEntries.value.length - folderCount.value)

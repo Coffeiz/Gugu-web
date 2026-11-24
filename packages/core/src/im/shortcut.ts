@@ -1,8 +1,8 @@
 import { agentCommandHelp, isAgentCommandHelpArgument } from '../agent/commands/help.js'
-import { parseAgentCommand } from '../agent/commands/menu.js'
+import { canonicalAgentCommandName, parseAgentCommand } from '../agent/commands/menu.js'
 import { length, strip } from '../shared/values.js'
 
-export type ImShortcutState = 'idle' | 'thinking' | 'searching' | 'generating' | 'waiting_confirm'
+export type ImShortcutState = 'idle' | 'thinking' | 'searching' | 'generating' | 'waiting_confirm' | 'waiting_agent'
 export type ImShortcutIntent = 'progress' | 'cancel' | 'emotion' | 'ack' | 'run'
 export type ImShortcutCommand = 'stop' | 'status' | 'compact' | 'help'
 export type ImShortcutDecision = { readonly action: 'run' | 'compact' }
@@ -37,7 +37,76 @@ const cancelExact = new Set(['算了', '不用了', '不弄了', '别弄了', '�
 const cancelCommand = new RegExp(`^(?:(?:请|麻烦|帮我|帮忙)${whitespace}*)?(?:取消|停止|终止)(?:${whitespace}*(?:(?:当前|现在|这个|刚才|刚刚|上一个|上一条)?(?:任务|操作|请求|执行|搜索|run)|一下|掉))?(?:${whitespace}*(?:吧|一下|好吗|可以吗))?$`, 'iu')
 const emotionWords = ['急', '快点', '快快', '怎么还没', '怎么这么慢', '太慢', '等不及']
 const emotionLeads = ['', '你', '咕咕', '你这', '咕咕你', '你怎么', '咕咕怎么']
-const replies: Readonly<Record<ImShortcutState, string>> = { idle: '在的，你说～', thinking: '还在想哦，稍等一下下～', searching: '正在查资料，可能还要几秒～', generating: '正在整理内容，马上就好～', waiting_confirm: '在等你确认那一步哦～' }
+const replies: Readonly<Record<ImShortcutState, string>> = { idle: '在的，你说～', thinking: '还在想哦，稍等一下下～', searching: '正在查资料，可能还要几秒～', generating: '正在整理内容，马上就好～', waiting_confirm: '在等你确认那一步哦～', waiting_agent: '正在等待子 Agent 的消息。' }
+
+export function parseImControlCommand(text: string) {
+  const parsed = parseAgentCommand(text)
+  return parsed && (parsed.recognized || parsed.name === 'shell' && /^[/／]shell(?:\s|$)/iu.test(strip(text))) ? parsed : null
+}
+
+/** 帮助和未接通的命令可直接处理，不依赖运行状态或模型。 */
+export function immediateImCommandReply(text: string, available: readonly string[]): string | null {
+  const command = parseImControlCommand(text)
+  if (!command) return null
+  const { name, argument } = command
+  if (name === 'shell' || name === 'help' && canonicalAgentCommandName(argument) === 'shell')
+    return '会话级 /shell 范围切换已退役。发送 /workspace help 查看当前入口支持的工作区和授权操作。'
+  if (!available.includes(name)) return `当前 IM 入口尚未提供 /${name} 命令。发送 /help 查看可用命令。`
+  if (available.includes('workspace') && (
+    name === 'workspace' && isAgentCommandHelpArgument(argument)
+    || name === 'help' && canonicalAgentCommandName(argument) === 'workspace'
+  )) return '在私聊中使用 /workspace 查看当前绑定，/workspace list 列出编号，/workspace <ID> 绑定，/workspace show 查看绑定，/workspace unlink 解除绑定，/workspace delete <ID> 删除工作区登记。'
+  if (name === 'help') return agentCommandHelp(
+    argument ? canonicalAgentCommandName(argument === '?' || argument === '？' ? 'help' : argument) : '', available,
+    { '/workspace': '查看、绑定或解除当前会话的工作区' })
+  return isAgentCommandHelpArgument(argument) ? agentCommandHelp(name, available) : null
+}
+
+/** IM 和桌面共用旧命令的参数语义；无参数只查询。 */
+export async function runImAutomaticModeCommand(argument: string, ports: {
+  owner: boolean; enabled: boolean; read(): Promise<boolean>; write(enabled: boolean): Promise<boolean>
+}): Promise<string> {
+  const value = argument.trim().toLowerCase()
+  if (['', 'status', '状态'].includes(value)) {
+    const active = await ports.read()
+    return !active ? '自动模式：已关闭。' : ports.enabled
+      ? '自动模式：已开启。普通操作确认可自动通过，权限授权和强制确认仍需确认。'
+      : '偏好已开启，管理员当前未开放自动模式。'
+  }
+  if (!ports.owner) return '只有绑定 Bot 的用户可以切换自动模式。'
+  const enable = ['on', '开启', '打开', '开'].includes(value)
+  if (!enable && !['off', '关闭', '关'].includes(value))
+    return '用法：/auto status 查看状态，/auto on 开启，/auto off 关闭。'
+  if (enable && !ports.enabled) return '管理员当前未开放自动模式，暂时不能开启。'
+  return await ports.write(enable) ? '自动模式已开启。权限授权和强制确认仍需确认。' : '自动模式已关闭。'
+}
+
+export async function runImForgetCommand(query: string, owner: boolean, forget: (query: string) => Promise<number>): Promise<string> {
+  if (!owner) return '只有绑定 Bot 的用户可以删除个人记忆。'
+  if (Array.from(query.replace(/[^\p{L}\p{N}]/gu, '')).length < 2 || query.length > 1000)
+    return '请使用 /forget <内容> 指定要忘记的记忆。'
+  const count = await forget(query)
+  return count ? `已忘掉匹配的 ${count} 条记忆。` : '没有找到匹配的记忆。'
+}
+
+export function normalizeImWorkspaceArgument(argument: string): string {
+  const value = argument.trim()
+  const lower = value.toLowerCase()
+  if (['', 'show', '查看', '当前'].includes(lower)) return 'show'
+  if (['list', '列表'].includes(lower)) return 'list'
+  if (['off', 'none', 'unbind', 'unlink', '解除绑定', '取消绑定'].includes(lower)) return 'unlink'
+  return value.replace(/^(STATUS|GOD|REVOKE)(?=\s|$)/iu, name => name.toLowerCase())
+}
+
+export function parseImWorkspaceDeletion(argument: string) {
+  if (!/^(?:delete|rm|remove)(?:\s|$)/iu.test(argument.trim())) return null
+  const [, number = '', confirmation, ...extra] = argument.trim().split(/\s+/u)
+  const id = Number(number)
+  if (!/^[1-9][0-9]*$/u.test(number) || !Number.isSafeInteger(id) || extra.length
+    || (confirmation && !['confirm', 'yes', 'y', '确认', '确定'].includes(confirmation.toLowerCase())))
+    return { kind: 'usage' as const }
+  return { kind: confirmation ? 'confirmed' as const : 'prompt' as const, id }
+}
 
 export function parseImShortcutCommand(text: string, options: Pick<ImShortcutOptions, 'allowLeadingMention'> = {}): { command: ImShortcutCommand | null; argument: string } {
   const value = options.allowLeadingMention ? strip(text).replace(leadingMention, '') : strip(text)

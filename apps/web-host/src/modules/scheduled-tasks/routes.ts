@@ -29,7 +29,7 @@ export function taskResponse(t: TaskRow, filesystemAuthorizationEnabled: boolean
       filesystem_authorized: filesystemAuthorizationEnabled && t.filesystem_authorization_grant_id != null,
       last_run_at: precise(t.precise_last_run, t.last_run_at), last_run_failed: Boolean(t.last_run_failed),
       delivery_targets: t.delivery_targets, authorized_tools: t.authorized_tools || [],
-      email_attachment_file_ids: t.email_attachment_file_ids || [],
+      email_attachment_file_paths: t.email_attachment_file_paths || [],
     }
 }
 
@@ -100,7 +100,7 @@ const schema = z.object({
   cron: z.string().nullable(), interval_minutes: integer.refine(value => value >= 1 && value <= 60).nullable(),
   start_at: datetime.nullable(), end_at: datetime.nullable(), channels: z.array(z.string()),
   enabled: boolean, event_id: integer.nullable(), workspace_id: integer.nullable(),
-  authorized_tools: z.array(z.string()), email_attachment_file_ids: z.array(integer).max(5),
+  authorized_tools: z.array(z.string()), email_attachment_file_paths: z.array(z.string()).max(5),
   qq_delivery: delivery, im_delivery: delivery,
 })
 
@@ -109,7 +109,7 @@ const createSchema = schema.partial().extend({ name: z.string().min(1).max(100),
 const updateSchema = schema.omit({ event_id: true }).partial().extend({
   name: z.string().nullish(), payload: z.string().nullish(), execution_mode: z.enum(['reminder', 'instruction']).optional(), schedule_kind: z.enum(['once', 'cron', 'interval']).nullish(),
   channels: z.array(z.string()).nullish(), enabled: boolean.nullish(), authorized_tools: z.array(z.string()).nullish(),
-  email_attachment_file_ids: z.array(integer).max(5).nullish(),
+  email_attachment_file_paths: z.array(z.string()).max(5).nullish(),
 })
 
 export function registerScheduledTaskWrites(app: FastifyInstance, userFromRequest: UserFromRequest, writes: ReturnType<typeof createPostgresTaskWrites>) {

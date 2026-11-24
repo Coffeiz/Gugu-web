@@ -1,7 +1,10 @@
+import { createLocalFileTree, localEntryKind, moveLocalEntry } from '@gugu/fs/node'
+import { projectFileStorageKey } from '../../files/paths.js'
+import { CoreError } from '@gugu/core'
 import { safeKey, trashKey, withConflictName, projectOriginalStorageKey, type OriginalProjectFileKey, type ProjectTrashPathMetadataReader } from '@gugu/core/project-file-paths'
 import { chmod, chown, lstat, mkdir, realpath, stat, link, unlink } from 'node:fs/promises'
 import path from 'node:path'
-import { type ProjectTrashFile, type ProjectTrashFolder, type ProjectTrashStorage, ProjectTrashStoragePathError } from '@gugu/core/project-trash'
+import { type ProjectTrashFile, type ProjectTrashStorage, ProjectTrashStoragePathError } from '@gugu/core/project-trash'
 import { isPathWithin } from '../../../shared/path-safety.js'
 import type { Pool } from 'pg'
 
@@ -40,6 +43,10 @@ async function inheritGroupAccess(filePath: string): Promise<void> {
     await chown(filePath, current.uid, parent.gid)
     await chmod(filePath, (current.mode & 0o7777) | 0o060)
   } catch { /* 与 Python 存储一致：文件移动成功优先，权限修复为 best-effort */ }
+}
+
+export function projectTrashDirectoryKey(ownerId: string, projectId: number) {
+  return `${ownerId}/.gugu-project-trash/${projectId}`
 }
 
 /** 保留 Local 冲突命名与缺文件语义，物理移动和补偿必须原子拒绝覆盖。 */
@@ -97,24 +104,42 @@ export function createLocalProjectTrashStorage(
   }
 
   return {
+    async moveProjectDirectory(ownerId, project, deleted, beforeMove) {
+      const active = projectFileStorageKey(ownerId, project.id, project.name, project.start_date, project.created_at)
+      const parked = projectTrashDirectoryKey(ownerId, project.id)
+      const [from, to] = deleted ? [active, parked] : [parked, active]
+      const root = absoluteRoot
+      const source = await localEntryKind(root, from)
+      const destination = await localEntryKind(root, to)
+      if ((source && source !== 'directory') || (destination && destination !== 'directory') || (source && destination))
+        throw new CoreError('conflict', '项目目录已变化，请先处理冲突')
+      if (!source) return
+      if (!await createLocalFileTree(root, path.posix.dirname(to)).ensureRoot())
+        throw new CoreError('conflict', '项目目录无法访问')
+      await beforeMove?.(from, to)
+      if (!await moveLocalEntry(root, from, to)) throw new CoreError('conflict', '项目目录已变化')
+      return async () => {
+        if (!await moveLocalEntry(root, to, from)) throw new CoreError('conflict', '项目目录恢复失败')
+      }
+    },
     async moveToTrash(ownerId, file, beforeMove) {
       const root = await rootPath()
       const baseKey = trashKey(ownerId, file)
-      if (file.storage_key === baseKey) return { storageKey: file.storage_key }
+      if (file.path === baseKey) return { storageKey: file.path }
       const available = await findAvailableKey(root, ownerId, baseKey, file.display_name, file.ext)
       let journaled = false
       try {
-        const rollback = await move(file.storage_key, available.key, ownerId, beforeMove && (async (from, to) => { await beforeMove(from, to); journaled = true }))
+        const rollback = await move(file.path, available.key, ownerId, beforeMove && (async (from, to) => { await beforeMove(from, to); journaled = true }))
         return { storageKey: available.key, rollback }
       } catch (error) {
         const missing = ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
         if ((beforeMove && (journaled || !missing)) || error instanceof ProjectTrashStoragePathError) throw error
         // Python 捕获 storage.rename_file 异常，继续提交墓碑并保留原 key。
-        return { storageKey: file.storage_key }
+        return { storageKey: file.path }
       }
     },
-    async restoreFromTrash(ownerId, file, project, folders, beforeMove) {
-      const baseKey = await originalKeyFor(ownerId, file, project, folders)
+    async restoreFromTrash(ownerId, file, project, beforeMove) {
+      const baseKey = await originalKeyFor(ownerId, file, project)
       safeKey(ownerId, baseKey)
       let available: { key: string; name: string }
       let root: string | null
@@ -126,7 +151,7 @@ export function createLocalProjectTrashStorage(
       }
       if (!root) {
         available = { key: baseKey, name: file.display_name }
-      } else if (file.storage_key === baseKey) {
+      } else if (file.path === baseKey) {
         available = { key: baseKey, name: file.display_name }
       } else {
         available = await findAvailableKey(root, ownerId, baseKey, file.display_name, file.ext)
@@ -134,7 +159,7 @@ export function createLocalProjectTrashStorage(
       let rollback: (() => Promise<void>) | undefined
       let journaled = false
       try {
-        if (file.storage_key !== available.key) rollback = await move(file.storage_key, available.key, ownerId, beforeMove && (async (from, to) => { await beforeMove(from, to); journaled = true }))
+        if (file.path !== available.key) rollback = await move(file.path, available.key, ownerId, beforeMove && (async (from, to) => { await beforeMove(from, to); journaled = true }))
       } catch (error) {
         const missing = ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
         if ((beforeMove && (journaled || !missing)) || error instanceof ProjectTrashStoragePathError) throw error
@@ -193,33 +218,6 @@ export function createPostgresProjectTrashPathMetadataReader(pool: QueryPool): P
       return result.rows[0] ? { title: String(result.rows[0].title) } : null
     },
 
-    async resolveOwnedFolderPath(ownerId, folderId, projectId, workspaceDirectoryId) {
-      const result = await pool.query<Row>(
-        `WITH RECURSIVE chain AS (
-           SELECT id, parent_id, name, ARRAY[id]::integer[] AS visited, 0 AS depth
-           FROM folders
-           WHERE id = $1 AND user_id = $2
-             AND project_id IS NOT DISTINCT FROM $3::integer
-             AND workspace_directory_id IS NOT DISTINCT FROM $4::integer
-           UNION ALL
-           SELECT parent.id, parent.parent_id, parent.name,
-                  chain.visited || parent.id, chain.depth + 1
-           FROM folders AS parent
-           JOIN chain ON parent.id = chain.parent_id
-           WHERE parent.user_id = $2
-             AND parent.project_id IS NOT DISTINCT FROM $3::integer
-             AND parent.workspace_directory_id IS NOT DISTINCT FROM $4::integer
-             AND NOT parent.id = ANY(chain.visited)
-         )
-         SELECT name, parent_id
-         FROM chain
-         ORDER BY depth DESC`,
-        [folderId, ownerId, projectId, workspaceDirectoryId],
-      )
-      const rows = result.rows
-      if (!rows.length || rows[0]?.parent_id != null) return null
-      return rows.map((row) => String(row.name)).join('/')
-    },
   }
 }
 

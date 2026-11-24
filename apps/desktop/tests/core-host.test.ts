@@ -1290,6 +1290,85 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     }
   }, 15_000)
 
+  it('桌面按附件 ID 跨会话查看和保存，latest 只查当前会话', async () => {
+    const root = directory()
+    const database = join(root, 'core.db')
+    const runtime = await LocalRuntime.initialize(database, { agentRuntimeModule: desktopAgentRuntimeModule })
+    await runtime.close()
+    const host = await launchCoreHost(process.execPath,
+      resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js'), database)
+    const attachId = randomUUID().replaceAll('-', '')
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jvt0AAAAASUVORK5CYII=', 'base64')
+    let round = 0, writes = 0
+    let crossSession = false
+    const server = createServer((request, response) => {
+      let body = ''
+      request.setEncoding('utf8')
+      request.on('data', chunk => { body += chunk })
+      request.on('end', () => {
+        if (JSON.parse(body).stream !== true) {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ choices: [{ message: { content: '{}' } }] }))
+          return
+        }
+        const tool = crossSession ? [
+          { name: 'view_image', arguments: JSON.stringify({ attach_id: attachId }) },
+          { name: 'save_attachment', arguments: JSON.stringify({ attach_id: attachId }) },
+          { name: 'save_attachment', arguments: JSON.stringify({ source: 'latest' }) },
+        ][round++] : undefined
+        const delta = tool ? { tool_calls: [{ index: 0, id: `历史附件-${round}`, type: 'function', function: tool }] }
+          : { content: '已完成' }
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: tool ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`)
+      })
+    })
+    try {
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('合成模型未监听')
+      const model = { provider: 'local', api_format: 'openai', base_url: `http://127.0.0.1:${address.port}/v1`,
+        api_key: '', model: 'synthetic', context_tokens: 256_000, max_tokens: 512, image: true } as const
+      host.setHostRequestHandler(async ({ method, params }) => {
+        if (method === 'agent.tools.policy') return desktopAgentToolPolicy()
+        if (method.endsWith('.available')) return false
+        if (method === 'agent.im.snapshot') return { feishu: false, qq: false, wechat: false, telegram: false }
+        if (method === 'agent.files.overview') return { total: 0, folders: [], files: [], partial: false }
+        if (method === 'agent.log.append' || method === 'agent.memory.resolveEmbedding') return null
+        if (method === 'agent.memory.resolveReflectionModel') return model
+        if (method === 'agent.files.saveAttachment') {
+          expect(params).toMatchObject({ attachId, space: 'personal', expectedSize: png.length })
+          writes++
+          return { name: '样本.png', path: '/合成目录/样本.png', size_bytes: png.length }
+        }
+        throw new Error('未预期的合成宿主请求')
+      })
+      const source = await host.request<{ id: number }>('agent.sessions.create', { title: '合成附件来源' }, randomUUID())
+      const target = await host.request<{ id: number }>('agent.sessions.create', { title: '合成附件目标' }, randomUUID())
+      mkdirSync(join(root, 'agent-attachments'), { recursive: true })
+      writeFileSync(join(root, 'agent-attachments', attachId), png)
+      await host.request('agent.attachments.stage', { attachment: {
+        attachId, name: '样本', ext: 'png', mime: 'image/png', size: png.length, voice: false,
+      } })
+      const sessions = agentSessionHandlers(host, {
+        resolveRunModelSelection: async () => ({ id: 'synthetic', config: model }),
+      } as ReturnType<typeof createDesktopAgentModelService>)[DESKTOP_CHANNELS.agentSessions]!
+      await sessions({ action: 'send', id: source.id, text: '发送图片', attachments: [attachId], operationId: randomUUID(), stream: true }, () => {})
+      crossSession = true
+      const events: DesktopAgentChatEvent[] = []
+      await sessions({ action: 'send', id: target.id, text: '查看并保存图片', operationId: randomUUID(), stream: true },
+        (event: DesktopAgentChatEvent) => events.push(event))
+      const toolDone = (name: string, status: string) => expect.objectContaining({ type: 'projected',
+        event: expect.objectContaining({ type: 'tool_done', name, status }) })
+      expect(events).toContainEqual(toolDone('view_image', 'success'))
+      expect(events).toContainEqual(toolDone('save_attachment', 'success'))
+      expect(events).toContainEqual(toolDone('save_attachment', 'error'))
+      expect(writes).toBe(1)
+    } finally {
+      await host.close()
+      if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  })
+
   it('桌面会话问答同事务写入 SQLite，重放后只有一组消息', async () => {
     const database = join(directory(), 'core.db')
     const runtime = await LocalRuntime.initialize(database, { agentRuntimeModule: desktopAgentRuntimeModule })

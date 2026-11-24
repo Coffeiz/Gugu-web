@@ -4,7 +4,7 @@ import { projectWindowChannels as channels } from '@gugu/desktop-contracts'
 import { DesktopError, desktopReply } from './core-host.js'
 import { createProjectWindowBoundsStore, desktopWindowMaterial, fitProjectWindowBounds, secureWindow, trustedCaller, windowOptions } from './windows.js'
 
-const projectFileActions = new Set(['list', 'reference', 'mkdir', 'upload', 'copy', 'move', 'trash', 'download', 'reveal', 'open', 'search'])
+const projectFileActions = new Set(['list', 'reference', 'mkdir', 'upload', 'move-dropped', 'copy', 'move', 'trash', 'download', 'reveal', 'open', 'search'])
 
 const projectChannels = new Set<string>([
   DESKTOP_CHANNELS.appearance, DESKTOP_CHANNELS.projects, DESKTOP_CHANNELS.projectBoard,
@@ -19,6 +19,7 @@ export function registerProjectWindows(options: {
   dataDirectory: string
   quitting: () => boolean
   readProject: (id: number) => Promise<unknown>
+  isWorkspaceBoundToProject: (id: number, directoryId: unknown) => Promise<boolean>
 }) {
   const boundsStore = createProjectWindowBoundsStore(options.dataDirectory)
   function saveBounds(window: BrowserWindow) {
@@ -122,14 +123,19 @@ export function registerProjectWindows(options: {
           window.webContents.send(channels.updated, project)
       }
     },
-    trusts(event: IpcMainInvokeEvent, channel: string, argument: unknown) {
+    async trusts(event: IpcMainInvokeEvent, channel: string, argument: unknown) {
       for (const [id, { window, url }] of windows) {
         if (!trustedCaller(event, [window], url)) continue
-        if (channel === DESKTOP_CHANNELS.startFileDrag) return argument === `project:${id}`
+        if (channel === DESKTOP_CHANNELS.startFileDrag)
+          return argument === `project:${id}` || await options.isWorkspaceBoundToProject(id, argument)
         if (channel !== DESKTOP_CHANNELS.files) return projectChannels.has(channel)
-        if (!argument || typeof argument !== 'object' || !('directoryId' in argument) || !('action' in argument)) return false
-        return argument.directoryId === `project:${id}`
-          && typeof argument.action === 'string' && projectFileActions.has(argument.action)
+        if (!argument || typeof argument !== 'object' || !('action' in argument)) return false
+        if (argument.action === 'workspace-add') return Object.keys(argument).length === 1
+        if (argument.action === 'project-workspaces' || argument.action === 'project-workspace-binding')
+          return 'projectId' in argument && argument.projectId === id
+        if (typeof argument.action !== 'string' || !projectFileActions.has(argument.action) || !('directoryId' in argument))
+          return false
+        return argument.directoryId === `project:${id}` || await options.isWorkspaceBoundToProject(id, argument.directoryId)
       }
       return false
     },

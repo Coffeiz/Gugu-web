@@ -7,6 +7,8 @@ export { agentDownloadsLimit }
 export function saveAgentDownload(
   storageRoot: string, name: string, data: AsyncIterable<Uint8Array>, scope: ToolScope, call: ToolCall,
   authorize: () => Promise<boolean>,
+  folderPath?: string,
 ) {
-  return saveToDisk(storageRoot, `${personalFileStorageKey(scope.identity.ownerId)}/下载`, name, data, scope, call, authorize)
+  const folder = folderPath ?? 'download'
+  return saveToDisk(storageRoot, `${personalFileStorageKey(scope.identity.ownerId)}/${folder}`, name, data, scope, call, authorize, `/personal/${folder}`, folderPath === undefined)
 }

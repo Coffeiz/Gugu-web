@@ -1,4 +1,5 @@
-import { createPostgresProjectFileCountReader } from '@gugu/core/project-read-data'
+import { projectFileStorageKey } from '../files/paths.js'
+import { readPathDirectoryOverview } from '../workspaces/files.js'
 import { createProjectListing as createCoreProjectListing, createProjectGetter as createCoreProjectGetter,
   createProjectFileCountListing as createCoreProjectFileCountListing } from '@gugu/core'
 import type { SqlDataRuntime } from '@gugu/core/data'
@@ -10,22 +11,35 @@ export function projectTimestamp(value: unknown): string | null {
   return String(value).replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00')
 }
 
-export async function readProjectFileCount(pool: Pool, ownerId: string, projectId: number): Promise<number> {
-  const counts = await createPostgresProjectFileCountReader(pool).forProjects(ownerId, [projectId])
-  return counts.get(projectId) ?? 0
+function createPathProjectFileCountReader(pool: Pick<Pool, 'query'>, storageRoot: string) {
+  async function read(ownerId: string, ids: readonly number[] | null, signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const { rows } = await pool.query<{ id: number; name: string; start_date: string | null; created_at: Date }>(
+      'SELECT id,name,start_date,created_at FROM projects WHERE user_id=$1 AND ($2::int[] IS NULL OR id=ANY($2)) ORDER BY id',
+      [ownerId, ids],
+    )
+    const counts: Array<{ projectId: number; fileCount: number }> = []
+    for (const row of rows) {
+      signal?.throwIfAborted()
+      const key = projectFileStorageKey(ownerId, row.id, row.name, row.start_date, row.created_at)
+      const { total } = await readPathDirectoryOverview(storageRoot, key, signal)
+      counts.push({ projectId: row.id, fileCount: total })
+    }
+    signal?.throwIfAborted()
+    return counts
+  }
+  return {
+    async forProjects(ownerId: string, ids: readonly number[], signal?: AbortSignal) {
+      if (!ids.length) return new Map<number, number>()
+      return new Map((await read(ownerId, ids, signal)).map(item => [item.projectId, item.fileCount]))
+    },
+    list: (ownerId: string, signal?: AbortSignal) => read(ownerId, null, signal),
+  }
 }
 
-/** 按当前用户的存活项目文件与目录生成上下文概览。 */
-export async function readProjectFileOverview(pool: Pick<Pool, 'query'>, ownerId: string, projectId: number) {
-  const result = await pool.query<{ total_file_count: string; root_file_count: string; total_folder_count: string }>(
-    `SELECT
-       (SELECT count(*) FROM files WHERE user_id=$1 AND project_id=$2 AND space='project' AND deleted_at IS NULL) AS total_file_count,
-       (SELECT count(*) FROM files WHERE user_id=$1 AND project_id=$2 AND space='project' AND folder_id IS NULL AND deleted_at IS NULL) AS root_file_count,
-       (SELECT count(*) FROM folders WHERE user_id=$1 AND project_id=$2 AND deleted_at IS NULL) AS total_folder_count`,
-    [ownerId, projectId],
-  )
-  const row = result.rows[0]!
-  return { total_file_count: Number(row.total_file_count), root_file_count: Number(row.root_file_count), total_folder_count: Number(row.total_folder_count) }
+export async function readProjectFileCount(pool: Pool, storageRoot: string, ownerId: string, projectId: number): Promise<number> {
+  const counts = await createPathProjectFileCountReader(pool, storageRoot).forProjects(ownerId, [projectId])
+  return counts.get(projectId) ?? 0
 }
 
 export async function projectExistsForOwner(
@@ -42,14 +56,14 @@ export async function projectExistsForOwner(
   return result.rowCount === 1
 }
 
-export function createProjectListing(core: SqlDataRuntime, pool: Pool) {
-  return createCoreProjectListing(core, createPostgresProjectFileCountReader(pool))
+export function createProjectListing(core: SqlDataRuntime, pool: Pool, storageRoot: string) {
+  return createCoreProjectListing(core, createPathProjectFileCountReader(pool, storageRoot))
 }
 
-export function createProjectGetter(core: SqlDataRuntime, pool: Pool) {
-  return createCoreProjectGetter(core, createPostgresProjectFileCountReader(pool))
+export function createProjectGetter(core: SqlDataRuntime, pool: Pool, storageRoot: string) {
+  return createCoreProjectGetter(core, createPathProjectFileCountReader(pool, storageRoot))
 }
 
-export function createProjectFileCountListing(pool: Pool) {
-  return createCoreProjectFileCountListing(createPostgresProjectFileCountReader(pool))
+export function createProjectFileCountListing(pool: Pool, storageRoot: string) {
+  return createCoreProjectFileCountListing(createPathProjectFileCountReader(pool, storageRoot))
 }

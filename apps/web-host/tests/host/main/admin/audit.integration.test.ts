@@ -40,7 +40,7 @@ test('生产Host鉴权后执行审计、通知历史、用户设置与引导重�
     const overridePath = join(root, 'config.json')
     await writeFile(overridePath, '{}')
     await pool.query('CREATE TABLE audit_logs(id serial PRIMARY KEY,username varchar(100) NOT NULL,action varchar(50) NOT NULL,description text NOT NULL,ip varchar(60),created_at timestamptz NOT NULL)')
-    await pool.query('CREATE TABLE users(id uuid PRIMARY KEY, username varchar(100) NOT NULL, is_developer boolean NOT NULL DEFAULT false, token_limit_6h bigint, token_limit_weekly bigint, storage_limit_bytes bigint, search_limit_daily integer)')
+    await pool.query('CREATE TABLE users(id uuid PRIMARY KEY, username varchar(100) NOT NULL, is_developer boolean NOT NULL DEFAULT false, token_limit_6h bigint, token_limit_weekly bigint, search_limit_daily integer)')
     await pool.query('CREATE TABLE site_notifications(id serial PRIMARY KEY,title text NOT NULL,content text NOT NULL,color text NOT NULL,target text NOT NULL,created_at timestamptz NOT NULL,created_by text NOT NULL)')
     const userId = '00000000-0000-4000-8000-000000000031'
     await pool.query("INSERT INTO users(id,username) VALUES ($1,'小北')", [userId])

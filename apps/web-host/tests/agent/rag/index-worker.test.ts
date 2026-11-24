@@ -313,7 +313,7 @@ test('生产 Host RAG 生命周期经共享 Core 项目服务重建正式索引�
       user_id: owner, event_id: null, reminder_lead_minutes: null, workspace_id: null, filesystem_authorization_grant_id: null,
       name: '来源验收任务', payload: '定时任务来源正文', cron: '0 9 * * *', schedule_kind: 'cron', interval_minutes: null,
       start_at: null, end_at: null, channels: 'web', enabled: 1 as unknown as boolean, delivery_targets: null, authorized_tools: '[]',
-      email_attachment_file_ids: '[]', last_run_at: null, last_run_failed: null, created_at: now, updated_at: now,
+      email_attachment_file_paths: '[]', last_run_at: null, last_run_failed: null, created_at: now, updated_at: now,
     }).returning(['id']).executeTakeFirstOrThrow()
     const conversation = await runtime.db.insertInto('conversation_sessions').values({
       user_id: owner, title: '来源验收对话', title_locked: 0 as unknown as boolean, summary: '', source: 'web', bot_id: null, chat_id: null,

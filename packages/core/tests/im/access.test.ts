@@ -1,7 +1,9 @@
+import { sceneAllowsTool } from '../../src/agent/scenes/index.js'
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { classifyImGroupInbound, defaultImTools, imActorInputFromPayload, imCanUseGroupOwnerMemory, imCanUseTool, imContextPolicy, imDisplayPolicy, imVisibleToolNames, resolveImAccess, resolveImActor } from '../../src/im/access.js'
-import { userBotGroupFileToolsAllowed, userBotGroupToolAllowed, userBotGroupToolFlags } from '../../src/im/user-bots.js'
+import { classifyImGroupInbound, defaultImTools, imActorInputFromPayload, imDisplayPolicy, resolveImAccess, resolveImActor } from '../../src/im/access.js'
+import { desktopImGroupToolAllowed, imCanUseGroupOwnerMemory, imCanUseTool, imContextPolicy, imVisibleToolNames } from '../../src/agent/scenes/im/index.js'
+import { userBotGroupFileToolsAllowed, userBotGroupToolFlags } from '../../src/im/user-bots.js'
 import type { ImActorInput, ImBotAccess, ImPlatform } from '../../src/im/access.js'
 
 const bot: ImBotAccess = { id: '7', ownerId: 'owner-a', platform: 'qq', ownerPlatformUserId: 'sender-owner', groupAllowedTools: ['web_search'], groupOwnerMemoryEnabled: true }
@@ -61,54 +63,56 @@ test('平台身份与Bot所有者、平台和内部ID共同验证，显示身份
   assert.equal(resolveImAccess(input, { ...bot, ownerPlatformUserId: null }).role, 'unknown')
 })
 
-test('旧群权限保留搜图和发送文件，过滤已退役的文件读取权限', () => {
+test('群权限保留搜图和发送文件，过滤已退役的文件读取权限', () => {
   const scope = { ...input, platformUserId: 'sender-member' }
   assert.deepEqual(resolveImAccess(scope, {
-    ...bot, groupAllowedTools: ['similar_image_search', 'read_file', 'send_file'],
-  }).allowedToolNames, ['similar_image_search', 'send_file'])
+    ...bot, groupAllowedTools: ['similar_image_search', 'read_file', 'send_item'],
+  }).allowedToolNames, ['similar_image_search', 'send_item'])
   assert.deepEqual(resolveImAccess(scope, {
     ...bot, groupAllowedTools: ['similar_image_search'],
   }).allowedToolNames, ['similar_image_search'])
 })
 
 test('共享群工具规则保留搜索到HTTP读取的权限映射，但不开放附件准入', () => {
-  const allTools = ['web_search', 'http_get', 'similar_image_search', 'send_file', 'group_context_search']
+  const allTools = ['web_search', 'http_get', 'similar_image_search', 'send_item', 'group_context_search']
   assert.deepEqual(userBotGroupToolFlags(allTools), {
     groupWebToolsEnabled: true, groupProviderSearchEnabled: true, groupHistorySearchEnabled: true,
   })
-  for (const tool of allTools) assert.equal(userBotGroupToolAllowed(allTools, tool), true)
-  assert.equal(userBotGroupToolAllowed(['web_search'], 'http_get'), true)
-  assert.equal(userBotGroupToolAllowed(['send_file'], 'http_get'), false)
-  assert.equal(userBotGroupToolAllowed(['send_file'], 'list_projects'), false)
-  assert.equal(userBotGroupFileToolsAllowed(['send_file']), true)
+  for (const tool of allTools) assert.equal(desktopImGroupToolAllowed('qq', false, allTools, tool), true)
+  assert.equal(desktopImGroupToolAllowed('qq', false, ['web_search'], 'http_get'), true)
+  assert.equal(desktopImGroupToolAllowed('qq', false, ['send_item'], 'http_get'), false)
+  assert.equal(desktopImGroupToolAllowed('qq', false, ['send_item'], 'list_projects'), false)
+  assert.equal(userBotGroupFileToolsAllowed(['send_item']), true)
   assert.equal(userBotGroupFileToolsAllowed(['web_search']), false)
   assert.equal(userBotGroupFileToolsAllowed(['web_search', 'group_context_search']), false)
   assert.equal(userBotGroupFileToolsAllowed({ groupWebToolsEnabled: false, groupProviderSearchEnabled: true }), false)
   assert.equal(userBotGroupFileToolsAllowed({ groupWebToolsEnabled: true, groupProviderSearchEnabled: false }), true)
 })
 
-test('QQ和Telegram私聊必须核对绑定，飞书和微信保留旧版可信私聊owner语义', () => {
+test('四个平台私聊均须匹配已绑定发言人', () => {
   for (const platform of ['qq', 'telegram', 'feishu', 'wechat'] as const) {
     const ownBot = { ...bot, platform }
     const scope = { ...input, platform, chatType: 'c2c' as const, platformUserId: 'stranger' }
-    assert.equal(resolveImAccess(scope, ownBot).role, platform === 'qq' ? 'member' : platform === 'telegram' ? 'unknown' : 'owner')
+    assert.equal(resolveImAccess(scope, ownBot).role, 'unknown')
+    assert.equal(resolveImAccess({ ...scope, platformUserId: 'sender-owner' }, ownBot).role, 'owner')
+    assert.equal(resolveImAccess({ ...scope, platformUserId: 'sender-owner' }, { ...ownBot, ownerPlatformUserId: null }).role, 'unknown')
     assert.equal(resolveImAccess({ ...scope, ownerId: 'owner-b' }, ownBot).role, 'unknown')
     assert.equal(resolveImAccess(scope, null).role, 'unknown')
   }
 })
 
-test('owner单条提及与完整单发言人批次可保留权限，普通群消息降级但保留已验证身份', () => {
+test('单一已验证 owner 保留权限，提及判定只影响群回复', () => {
   const owner = resolveImActor(input, resolve)
   assert.equal(owner.role, 'owner')
   assert.equal(owner.ownerMentionAuthorized, true)
   const ordinary = resolveImActor({ ...input, botMentioned: false }, resolve)
-  assert.equal(ordinary.role, 'member')
+  assert.equal(ordinary.role, 'owner')
   assert.equal(ordinary.verifiedOwner, true)
   assert.equal(imContextPolicy(ordinary, bot, true).loadOwnerContext, false)
   assert.equal(imContextPolicy(ordinary, bot, true).groupOwnerMemoryEnabled, true)
   assert.equal(resolveImActor({ ...input, botMentioned: false, speakers: [{ platformUserId: input.platformUserId }] }, resolve).role, 'owner')
-  assert.equal(resolveImActor({ ...input, mentionsOtherBot: true }, resolve).role, 'member')
-  assert.equal(resolveImActor({ ...input, batchMessages: [] }, resolve).role, 'member')
+  assert.equal(resolveImActor({ ...input, mentionsOtherBot: true }, resolve).role, 'owner')
+  assert.equal(resolveImActor({ ...input, batchMessages: [] }, resolve).role, 'owner')
 })
 
 test('混合批次按最弱权限执行且与发言顺序无关，不借owner加载私人上下文', () => {
@@ -157,21 +161,26 @@ test('表情回应只向飞书暴露并执行，发现与派发均复用共享�
   for (const platform of ['qq', 'telegram', 'wechat', 'feishu'] as ImPlatform[]) {
     const actor = resolveImActor({ ...input, platform }, scope => resolveImAccess(scope, { ...bot, platform }))
     assert.equal(imCanUseTool(actor, 'react'), platform === 'feishu')
-    assert.deepEqual(imVisibleToolNames(actor, ['react', 'present_file', 'get_current_time']), platform === 'feishu' ? ['react', 'get_current_time'] : ['get_current_time'])
+    assert.deepEqual(imVisibleToolNames(actor, ['react', 'open_item', 'get_current_time']), platform === 'feishu' ? ['react', 'get_current_time'] : ['get_current_time'])
   }
 })
 
 test('群owner私人记忆只能来自匹配Bot服务端设置，禁止跨owner或平台授权', () => {
   const actor = resolveImActor(input, resolve)
-  assert.deepEqual(imContextPolicy(actor, bot, false), { isIm: true, restricted: false, loadOwnerContext: true,
-    memoryEnabled: false, allowContinuityBridge: true, allowMemoryReflection: true, groupOwnerMemoryEnabled: true })
+  assert.deepEqual(imContextPolicy(actor, bot, false), { isIm: true, restricted: true, loadOwnerContext: false,
+    memoryEnabled: false, allowContinuityBridge: false, allowMemoryReflection: false, groupOwnerMemoryEnabled: true })
   assert.equal(imContextPolicy(actor, bot, true).memoryEnabled, true)
   assert.throws(() => imContextPolicy(actor, bot, undefined as unknown as boolean))
-  for (const stored of [null, { ...bot, ownerId: 'owner-b' }, { ...bot, platform: 'telegram' as const }, { ...bot, groupOwnerMemoryEnabled: false }])
+  for (const stored of [null, { ...bot, ownerId: 'owner-b' }, { ...bot, platform: 'telegram' as const }, { ...bot, groupOwnerMemoryEnabled: false }, { ...bot, ownerPlatformUserId: 'sender-new-owner' }])
     assert.equal(imContextPolicy(actor, stored, true).groupOwnerMemoryEnabled, false)
   assert.equal(imContextPolicy(actor, bot, true).groupOwnerMemoryEnabled, true)
   const privateActor = resolveImActor({ ...input, chatType: 'c2c', chatId: null }, resolve)
   assert.equal(imContextPolicy(privateActor, bot, true).groupOwnerMemoryEnabled, false)
+  assert.equal(imContextPolicy(privateActor, bot, true).loadOwnerContext, true)
+  assert.equal(imContextPolicy(privateActor, { ...bot, ownerPlatformUserId: 'sender-new-owner' }, true).loadOwnerContext, false)
+  const unverified = { ...privateActor, verifiedOwner: false }
+  assert.equal(imContextPolicy(unverified, bot, true).loadOwnerContext, false)
+  assert.equal(imCanUseTool(unverified, 'create_skill'), false)
 })
 
 test('快照冻结后后续白名单修改不改变本轮权限，下一次解析可见撤权', () => {
@@ -196,4 +205,13 @@ test('子 Agent 工具只对主人的 IM 私聊开放，即使群聊显式授权
   for (const actor of [memberPrivate, ownerGroup]) {
     for (const tool of delegation) assert.equal(imCanUseTool(actor, tool), false)
   }
+})
+
+test('IM 场景阻止应用内打开和画布定位，保留原生文件交付', () => {
+  for (const name of ['open_item', 'canvas_focus_node']) {
+    assert.equal(sceneAllowsTool('im', name), false)
+    assert.equal(sceneAllowsTool('default', name), true)
+  }
+  assert.equal(sceneAllowsTool('im', 'send_item', 'app_card'), false)
+  assert.equal(sceneAllowsTool('im', 'send_item', 'native'), true)
 })

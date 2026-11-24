@@ -1,7 +1,8 @@
 import type { DesktopFileDirectory } from '@gugu/core/desktop'
+import { resolveRelativeReferences } from '@gugu/core/files/relative-references'
 import { downloadPathFile, pathFilesApi, type PathFileEntry, type PathFileRef } from '@/services/api'
 import type { PathFileAccess } from '@/services/pathFileAccess'
-import { requestDesktopFile } from '@desktop/bridge/bridge'
+import { callDesktopBridge, requestDesktopFile } from '@desktop/bridge/bridge'
 
 type LocalFileRef = PathFileRef & { directoryId: DesktopFileDirectory }
 
@@ -26,9 +27,22 @@ function requestLocalFile<T>(request: Parameters<typeof requestDesktopFile>[0]) 
 }
 
 export const desktopPathFileAccess: PathFileAccess = {
-  reference: file => isLocalFile(file)
-    ? requestLocalFile({ action: 'reference', ...localTarget(file) })
-    : pathFilesApi.reference(file),
+  async resolveRelative(file, paths) {
+    if (!isLocalFile(file)) return pathFilesApi.resolveRelative(file, paths)
+    await requestLocalFile({ action: 'reference', ...localTarget(file), kind: 'file', identity: file.identity })
+    const lookup = async (parts: readonly string[], name: string, kind: 'file' | 'directory') => {
+      const entries = await requestLocalFile<PathFileEntry[]>({ action: 'list', directoryId: file.directoryId, path: parts.join('/') })
+      const entry = entries.find(item => item.name === name && item.kind === kind)
+      return entry ? { relativePath: entry.relativePath, name: entry.name } : null
+    }
+    return resolveRelativeReferences(file.relativePath.split('/').slice(0, -1), paths, {
+      fileAt: (parts, name) => lookup(parts, name, 'file'),
+      folderAt: (parts, name) => lookup(parts, name, 'directory'),
+    })
+  },
+  reference: (file, kind = 'file') => isLocalFile(file)
+    ? requestLocalFile({ action: 'reference', ...localTarget(file), kind, identity: file.identity })
+    : pathFilesApi.reference(file, kind),
   entries: (directoryId, relativePath = '') => typeof directoryId === 'string'
     ? requestLocalFile<PathFileEntry[]>({ action: 'list', directoryId, path: relativePath })
     : pathFilesApi.entries(directoryId, relativePath),
@@ -47,6 +61,13 @@ export const desktopPathFileAccess: PathFileAccess = {
   createFolder: file => isLocalFile(file)
     ? requestLocalFile({ action: 'mkdir', ...localTarget(file) })
     : pathFilesApi.createFolder(file),
+  moveDropped(directoryId, relativePath, decide, progress) {
+    if (typeof directoryId !== 'string' || !('guguDesktop' in window)) return
+    return callDesktopBridge(bridge => {
+      if (!bridge.moveDroppedFiles) throw new Error('请更新并重启咕咕后再拖入文件')
+      return bridge.moveDroppedFiles(directoryId as DesktopFileDirectory, relativePath, decide, progress)
+    })
+  },
   move: (file, destination) => isLocalFile(file)
     ? requestLocalFile({ action: 'move', ...localTarget(file), destination })
     : pathFilesApi.move(file, destination),

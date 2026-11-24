@@ -17,7 +17,9 @@ export type DesktopImMediaRoute = DesktopImMediaRouteBase & (
 )
 
 export function createDesktopImAttachmentSender(directory: string,
-  encryption: Pick<typeof safeStorage, 'decryptStringAsync'>) {
+  encryption: Pick<typeof safeStorage, 'decryptStringAsync'>,
+  onQqUploadFailure?: Parameters<typeof sendImMedia>[0]['onQqUploadFailure'],
+  onQqMessageFailure?: Parameters<typeof sendImMedia>[0]['onQqMessageFailure']) {
   const routes = new Map<string, DesktopImMediaRoute>()
   const key = (platform: string, connectionId: string) => `${platform}:${connectionId}`
   return {
@@ -55,8 +57,10 @@ export function createDesktopImAttachmentSender(directory: string,
         if (typeof filePath === 'string' && readFile) {
           file = await readFile(filePath, active, maxBytes)
         } else {
-          if (typeof attachId !== 'string' || !Array.isArray(envelope.attachments) || !envelope.attachments.includes(attachId)
-            || !attachment || typeof attachment !== 'object') return 'rejected'
+          if (typeof attachId !== 'string' || !attachment || typeof attachment !== 'object') return 'rejected'
+          // 私聊附件已由 Core 按当前会话校验，群聊还须匹配本次入站附件。
+          if (event.scope.chatType === 'group'
+            && (!Array.isArray(envelope.attachments) || !envelope.attachments.includes(attachId))) return 'rejected'
           const received = await readDesktopAgentAttachmentContent(directory, attachId, attachment as Parameters<typeof readDesktopAgentAttachmentContent>[2], maxBytes)
           file = { ...received, name: received.displayName }
         }
@@ -67,7 +71,7 @@ export function createDesktopImAttachmentSender(directory: string,
         if (!file?.data.byteLength || !await canSend()) return 'rejected'
         started = true
         const sent = await sendImMedia({ platform: route.media, scope: event.scope, file, bytes: file.data,
-          wechatContextToken: envelope.replyContext, feishuChatId: envelope.replyContext, signal: active, authorize: canSend })
+          wechatContextToken: envelope.replyContext, feishuChatId: envelope.replyContext, signal: active, authorize: canSend, onQqUploadFailure, onQqMessageFailure })
         return sent?.receipt.outcome ?? 'rejected'
       } catch {
         return started ? 'unknown' : 'rejected'

@@ -244,12 +244,14 @@ export function createSubagentDeliveryStore(db: Kysely<Database>, secret: string
     },
     async readLaunch(parent: RunIdentity, runId: string, includeTerminal = false): Promise<SavedLaunch | null> {
       if (!sessionBackend) return null
-      const { rows: [row] } = await sql<{ nonce: Buffer; payload: Buffer }>`
-        SELECT launch.nonce,launch.payload
+      const { rows: [row] } = await sql<{ nonce: Buffer; payload: Buffer; child_id: string }>`
+        SELECT launch.nonce,launch.payload,agent_subagent_deliveries.child_id
         FROM agent_subagent_executions launch
         JOIN agent_subagent_deliveries USING(child_run_id)
         WHERE ${scope(parent)} AND child_run_id=${runId} AND launch.payload IS NOT NULL AND (${includeTerminal ? 1 : 0}=1 OR status IN ('queued','running'))`.execute(db)
-      return row ? codec.decryptContinuation<SavedLaunch>(deliveryIdentity(parent, runId), launchReference, row.nonce, row.payload) : null
+      if (!row) return null
+      const launch = codec.decryptContinuation<SavedLaunch>(deliveryIdentity(parent, runId), launchReference, row.nonce, row.payload)
+      return { ...launch, childId: row.child_id }
     },
     async continueConversation(parent: RunIdentity, childId: string, callId: string, launch: SavedLaunch) {
       assertRunIdentity(parent)

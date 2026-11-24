@@ -63,7 +63,10 @@ export function visitDurableCanonical(value: Json, decodeToolContent: boolean): 
   if (mediaTypes.has(type) || ['thinking', 'redacted_thinking', 'reasoning_content'].includes(type))
     throw new Error('持久化上下文必须使用授权的稳定引用，不能包含媒体载荷或私有推理')
   if (type === 'attachment_ref') {
-    if (typeof value.attach_id !== 'string' || !value.attach_id || Object.keys(value).some(key => !['type', 'attach_id', 'kind', 'mime', 'ext', 'title', 'name', 'size_bytes'].includes(key)))
+    const hasAttach = typeof value.attach_id === 'string' && !!value.attach_id
+    const hasPath = typeof value.file_path === 'string' && /^\/(?:personal|project|workspace)\/[^\\\p{Cc}]+$/u.test(value.file_path)
+      && value.file_path.slice(1).split('/').every(part => part && part !== '.' && part !== '..')
+    if (hasAttach === hasPath || Object.keys(value).some(key => !['type', 'attach_id', 'file_path', 'kind', 'mime', 'ext', 'title', 'name', 'size_bytes'].includes(key)))
       throw new Error('附件稳定引用字段无效')
   }
   for (const [key, item] of Object.entries(value)) {
@@ -457,6 +460,23 @@ export function normalizePersistentArtifact(value: unknown): PortableValue {
     throw new AgentRunError('invalid_state', '工具制品必须是引用卡片')
   const card = artifact as Readonly<Record<string, PortableValue>>
   assertDurableCanonical({ type: 'tool_result', content: artifact as unknown as Json })
+  if (card.kind === 'object_cards' || card.kind === 'object_card') {
+    const single = card.kind === 'object_card'
+    const items = single ? [card] : card.cards
+    if (!Array.isArray(items) || items.length === 0 || items.length > 10
+      || (!single && Object.keys(card).some(key => key !== 'kind' && key !== 'cards')))
+      throw new AgentRunError('invalid_state', '文件库卡片数量无效')
+    for (const entry of items) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry))
+        throw new AgentRunError('invalid_state', '文件库卡片结构无效')
+      const item = entry as Record<string, unknown>
+      if (Object.keys(item).some(key => key !== 'name' && key !== 'link' && !(single && key === 'kind'))
+        || typeof item.name !== 'string' || item.name.length > 255 || typeof item.link !== 'string'
+        || !/^gugu:\/\/open-object\/(?:file\/(?:path|drop)-|folder\/path-)[A-Za-z0-9_-]{1,24000}$/u.test(item.link))
+        throw new AgentRunError('invalid_state', '文件库卡片引用无效')
+    }
+    return artifact
+  }
   if (card.kind === 'link_buttons') {
     if (Object.keys(card).some((key) => !['kind', 'message', 'buttons'].includes(key)) || typeof card.message !== 'string' || !card.message.trim() || [...card.message].length > 2000 || !Array.isArray(card.buttons) || card.buttons.length < 1 || card.buttons.length > 5)
       throw new AgentRunError('invalid_state', '链接按钮制品形状无效')
@@ -475,11 +495,16 @@ export function normalizePersistentArtifact(value: unknown): PortableValue {
     }
     return artifact
   }
-  const fields = new Set(['type', 'attach_id', 'file_id', 'id', 'rootId', 'root_id', 'relativePath', 'relative_path', 'kind', 'mime', 'ext', 'title', 'name', 'size_bytes', 'sizeBytes', 'img_width', 'img_height', 'duration'])
+  const fields = new Set(['type', 'attach_id', 'file_path', 'kind', 'mime', 'ext', 'title', 'name', 'size_bytes', 'sizeBytes', 'img_width', 'img_height', 'duration'])
   if (Object.entries(card).some(([key, item]) => !fields.has(key) || item !== null && !['string', 'number', 'boolean'].includes(typeof item)))
     throw new AgentRunError('invalid_state', '文件制品只能包含稳定引用及展示元数据')
-  if (card.type === 'attachment_ref' || card.attach_id || card.file_id || card.id
-    || ((card.rootId || card.root_id) && (card.relativePath || card.relative_path)))
+  if (card.attach_id !== undefined && (typeof card.attach_id !== 'string' || !card.attach_id.trim() || card.attach_id.length > 256)
+    || card.file_path !== undefined && (typeof card.file_path !== 'string'
+      || !/^\/(?:personal|project|workspace)\/[^\\\p{Cc}]+$/u.test(card.file_path)
+      || card.file_path.slice(1).split('/').some(part => !part || part === '.' || part === '..'))
+    || Boolean(card.attach_id) === Boolean(card.file_path))
+    throw new AgentRunError('invalid_state', '文件制品引用无效')
+  if (card.type === 'attachment_ref' || card.attach_id || card.file_path)
     return artifact
   throw new AgentRunError('invalid_state', '工具制品缺少稳定FS或附件引用')
 }

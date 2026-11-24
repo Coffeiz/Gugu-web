@@ -10,7 +10,7 @@ import { showAppError } from '@/composables/core/useAppToast'
 import type { ChatMessage, ChatFile, ChatSession, ChatReference, QueuedMessagePayload } from '../chatTypes'
 import { renderMd } from '../markdown'
 import { chatHttpStream, type ChatHttpStreamAccess } from '../chatHttpStream'
-import { FILE_TOOLS, PROJECT_TOOLS, CALENDAR_TOOLS, MCP_TOOLS } from './useChatActions'
+import { FILE_TOOLS, PROJECT_TOOLS, CALENDAR_TOOLS, MCP_TOOLS, MIND_WRITE_TOOLS } from './useChatActions'
 import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 import { createPendingQueueKey, getDraftPendingQueueId, getSessionPendingQueueId, setPendingQueueRecoveryNeeded } from './chatPendingQueueStorage'
@@ -29,26 +29,16 @@ const RESUMED_HISTORY_EVENTS = new Set([
   'display_event', 'interaction_required', 'error',
 ])
 
-interface PresentedFile {
-  file_id: number
-  name?: string
-  ext?: string
-}
-
-function parsePresentedFileResult(result: unknown): PresentedFile | null {
+function parseOpenItemResult(result: unknown) {
   let value = result
   if (typeof value === 'string') {
     try { value = JSON.parse(value) } catch { return null }
   }
   if (!value || typeof value !== 'object') return null
-  const candidate = value as Record<string, unknown>
-  const fileId = Number(candidate.file_id)
-  if (!Number.isSafeInteger(fileId) || fileId <= 0 || candidate.ok !== true) return null
-  return {
-    file_id: fileId,
-    ...(typeof candidate.name === 'string' ? { name: candidate.name } : {}),
-    ...(typeof candidate.ext === 'string' ? { ext: candidate.ext } : {}),
-  }
+  const { ok, open_in_browser, link } = value as Record<string, unknown>
+  if (ok !== true || open_in_browser !== true || typeof link !== 'string') return null
+  const match = /^gugu:\/\/open-object\/(file|folder)\/((?:path|drop)-[A-Za-z0-9_-]{1,24000})$/u.exec(link)
+  return match ? { kind: match[1] as 'file' | 'folder', id: match[2]! } : null
 }
 
 function attachPersistedIdentity(
@@ -141,7 +131,7 @@ export function useChatStream(options: {
   onQueueDispatchError?: (error: unknown) => void
   trackMessageSent?: (turn: number) => void
   onAutomaticModeCommand?: () => Promise<void>
-  onPresentFile?: (file: PresentedFile) => void
+  onOpenItem?: (item: { kind: 'file' | 'folder'; id: string }) => void
 }) {
   let clientMessageSequence = 0
   const liveStore = useLiveStore()
@@ -394,7 +384,13 @@ export function useChatStream(options: {
                 options.clearStatus()
                 options.setStatus(options.thinkingItem())
               }
-              await send(item.text, item.attachments, item.references, item.key, item.viewGeneration, item.sessionId, item.queueId, claimToken, item.modelId)
+              let yielded: (() => void) | undefined
+              const executionSlotReleased = new Promise<void>(resolve => { yielded = resolve })
+              const sending = send(item.text, item.attachments, item.references, item.key, item.viewGeneration,
+                item.sessionId, item.queueId, claimToken, item.modelId, () => {
+                  if (!pendingQueue.value.some(value => queueIdentity(value) === queueIdentity(item))) yielded?.()
+                })
+              await Promise.race([sending, executionSlotReleased])
               if (options.runAccess && claimToken && item.sessionId != null
                 && pendingQueue.value.some(value => queueIdentity(value) === queueIdentity(item))) {
                 // 桌面准入原子消费令牌。仍有效的令牌可释放，已准入或换租令牌的队列不受影响。
@@ -477,6 +473,7 @@ export function useChatStream(options: {
     viewGeneration: number,
     onSessionId?: (id: number, timelineOrder: number, userMessageId?: number) => void,
     runController?: AbortController,
+    onRunWaiting?: () => void,
   ) {
     const decoder = createAgentChatSseDecoder()
     let aiIdx = -1, aiMessageId: number | null = null, aborted = false, interactionPaused = false
@@ -626,14 +623,25 @@ export function useChatStream(options: {
               s.goalActive = Boolean(evt.active)
               s.goalStatus = evt.status === 'active' || evt.status === 'paused' ? evt.status : null
             }
+          } else if (evt.type === 'run_waiting') {
+            if (!live()) continue
+            const reply = messages.value[syncAiIndex()]
+            if (reply) reply.streaming = false
+            options.clearStatus()
+            // 子任务仍在后台运行，保留订阅，同时让输入框可以发送下一条消息。
+            streaming.value = false
+            onRunWaiting?.()
+            void drainPendingQueue().catch(() => {})
           } else if (evt.type === 'round_start') {
             currentRunId = String(evt.core_run_id || evt.run_id || currentRunId)
             currentRoundId = String(evt.round_id || 'round')
             if (options.runAccess && runController && sid != null && currentRunId)
               bindRunId(runController, sid, currentRunId)
             if (live() && sid != null) options.updateSidebarRun?.(sid, currentRunId, true)
-            if (live() && !(runController && cancelRequestedControllers.has(runController)))
+            if (live() && !(runController && cancelRequestedControllers.has(runController))) {
+              streaming.value = true
               options.setStatus(options.thinkingItem())
+            }
           } else if (evt.type === '_new_round') {
             // 兼容旧事件：新版 round_start 已先建立身份，旧客户端只看到这里也不会报错。
             currentRunId = String(evt.core_run_id || evt.run_id || currentRunId)
@@ -670,14 +678,15 @@ export function useChatStream(options: {
               scheduleStreamScroll()
             }
           } else if (evt.type === 'tool_done') {
-            if (evt.name === 'present_file' && evt.status === 'success') {
-              const file = parsePresentedFileResult(evt.result)
-              if (file && live() && evt.origin_client_id === CLIENT_ID) options.onPresentFile?.(file)
+            if (evt.name === 'open_item' && evt.status === 'success') {
+              const item = parseOpenItemResult(evt.result)
+              if (item && onSessionId && live()) options.onOpenItem?.(item)
             }
             if (FILE_TOOLS.has(evt.name)) liveStore.bump('files')
             else if (PROJECT_TOOLS.has(evt.name)) liveStore.bump('projects')
             else if (CALENDAR_TOOLS.has(evt.name)) liveStore.bump('calendar')
             else if (MCP_TOOLS.has(evt.name)) notifyResourceChanged('mcp')
+            else if (evt.status === 'success' && MIND_WRITE_TOOLS.has(evt.name)) liveStore.bump('mind')
           } else if (evt.type === 'interaction_required') {
             const interactionResolved = evt.resolved === true
             if (!interactionResolved) interactionPaused = true
@@ -740,6 +749,7 @@ export function useChatStream(options: {
               options.setStatus({ kind: 'text', label: evt.message })
             }
           } else if (evt.type === 'done') {
+            if (evt.command_reply === true) receivedAssistantContent = true
             // 等待确认只结束本次观察；运行内的展示还未写入终态历史。
             if (evt.waiting_for_interaction === true) {
               interactionPaused = true
@@ -846,7 +856,7 @@ export function useChatStream(options: {
 
   // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
   async function resumeStream(id: number, runId?: string) {
-    if (streaming.value && !runId) return
+    if (abortCtrl.value && (!runId || runIds.get(abortCtrl.value) === runId)) return
     if (sessionId.value !== id) return
     // 已确认时旧流可能仍在结束等待态。切换订阅不取消后端运行。
     if (runId) abortCtrl.value?.abort()
@@ -984,6 +994,7 @@ export function useChatStream(options: {
     queuedQueueId?: string,
     queuedClaimToken?: string | null,
     queuedModelId?: string,
+    onRunWaiting?: () => void,
   ) {
     const viewGeneration = queuedViewGeneration ?? options.getViewGeneration()
     const isQueuedDispatch = queuedItemKey !== undefined
@@ -1058,23 +1069,30 @@ export function useChatStream(options: {
     }
     if (streaming.value) {
       if (queuedItemKey !== undefined) return
-      pendingQueue.value.push({
+      // 等待状态对齐期间，新对话可能已经拿到正式会话 ID。
+      // 入队时从同一个会话状态生成队列标识和归属。
+      const queuedSession = sessionId.value
+      const pendingQueueId = queuedSession == null ? draftPendingQueueId : getSessionPendingQueueId(queuedSession)
+      const item: QueuedMessage = {
         key: createPendingQueueKey(),
-        queue_id: queueId,
-        queueId,
+        queue_id: pendingQueueId,
+        queueId: pendingQueueId,
         text, attachments: atts, references: refs,
         ...(modelId ? { modelId } : {}),
-        sessionId: sessionId.value, viewGeneration: options.getViewGeneration(),
-      })
+        sessionId: queuedSession, viewGeneration,
+      }
+      pendingQueue.value.push(item)
       setPendingQueueRecoveryNeeded(true)
       try {
-        await persistQueueItem(pendingQueue.value[pendingQueue.value.length - 1])
+        await persistQueueItem(item)
       } catch (error) {
         options.onQueuePersistenceError?.(error)
       }
       return
     }
 
+    // 发送新消息只切换订阅，旧 Run 由宿主继续等待和接收结果。
+    abortCtrl.value?.abort()
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
     const requestController = new AbortController()
     abortCtrl.value = requestController
@@ -1162,7 +1180,7 @@ export function useChatStream(options: {
           _timelineOrder: timelineOrder,
         }
         messages.value.push(optimisticUserMessage)
-      }, requestController)
+      }, requestController, onRunWaiting)
       resolvedSid = r.sid
       // session_id 事件可能在浏览器切换/重连的边界丢失；流本身已经返回真实
       // id，补回会话身份并迁移仍带草稿归属的队列项。

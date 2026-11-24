@@ -6,6 +6,7 @@
   "scope": "/",
   "display": "standalone",
   "icons": [
-    { "src": "/apple-touch-icon.png", "type": "image/png", "sizes": "180x180" }
+    { "src": "/apple-touch-icon.png", "type": "image/png", "sizes": "180x180" },
+    { "src": "/brand/app-icon-light.svg", "type": "image/svg+xml", "sizes": "any" }
   ]
 }

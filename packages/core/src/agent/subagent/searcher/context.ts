@@ -11,8 +11,8 @@ export async function prepareSearcherContext(launch: DelegatedAgentLaunch, signa
   signal.throwIfAborted()
   const prompt = await readFile(new URL('./prompt.md', import.meta.url), { encoding: 'utf8', signal })
   const { system, turn } = compileContextFragments([
-    { id: searcherModuleIds[0], version: 2, region: 'system', kind: 'instruction', value: prompt.trim() },
-    { id: searcherModuleIds[1], version: 1, region: 'turn', kind: 'data',
+    { id: searcherModuleIds[0], region: 'system', kind: 'instruction', value: prompt.trim() },
+    { id: searcherModuleIds[1], region: 'turn', kind: 'data',
       value: JSON.stringify({ task: launch.input.task, resourceRefs: launch.input.resourceRefs ?? [] }) },
   ])
   return {
@@ -23,6 +23,7 @@ export async function prepareSearcherContext(launch: DelegatedAgentLaunch, signa
 }
 
 export const searcherPreset = {
+  agentId: searcherDefinition.id,
   toolNames: searcherDefinition.toolNames,
   prepareContext: prepareSearcherContext,
 } satisfies DelegatedAgentPreset

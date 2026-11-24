@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import type { CanonicalRunContext, RunCheckpoint } from '@gugu/core/agent'
+import type { CanonicalRunContext, RunCheckpoint, RunEvent } from '@gugu/core/agent'
 import { createAgentRunCodec } from '@gugu/core/agent/run/codec'
 import type { AgentDispatchLease } from '../../../../src/modules/agent/run/dispatch.js'
 import type { WebAgentBinding } from '../../../../src/modules/agent/run/reconstruct.js'
 import { AgentRunReconstructionVersionError as AgentReconstructionVersionError } from '@gugu/core/agent'
 import { createPostgresImAccess } from '../../../../src/modules/im/gateway/inbound/access.js'
-import { createImAgentReconstructor, type ImAgentReconstructorOptions } from '../../../../src/modules/im/gateway/agent/reconstruct.js'
+import { createImAgentReconstructor, followCommittedImEvents, type ImAgentReconstructorOptions } from '../../../../src/modules/im/gateway/agent/reconstruct.js'
 import { createImGroupReplyGate } from '../../../../src/modules/im/gateway/attention/gate.js'
 import type { ImAttentionRecord } from '@gugu/core/im/attention/directive'
 import { createChooseNoReplyTool } from '@gugu/core/tools'
@@ -17,6 +17,30 @@ const owner = '00000000-0000-4000-8000-000000000081'
 const secret = 'synthetic-reconstruction-secret'
 const accessVersion = 'a'.repeat(64)
 const identity = { ownerId: owner, sessionId: '1', runId: 'synthetic-run' }
+
+test('IM 停在发送首条时 Agent 仍能提交后续事件，恢复后按持久顺序读取', async () => {
+  let continueProducing!: () => void
+  const ready = new Promise<void>(resolve => { continueProducing = resolve })
+  const saved: RunEvent[] = []
+  async function* source() {
+    for (const sequence of [1, 2, 3]) {
+      const event: RunEvent = { identity, id: String(sequence), sequence, round: 1, type: 'token', payload: {} }
+      saved.push(event)
+      yield event
+      if (sequence === 1) await ready
+    }
+  }
+  const { events, producer } = followCommittedImEvents(source(), async () => 0,
+    async cursor => saved.filter(event => event.sequence > cursor).slice(0, 1))
+  const consumer = events[Symbol.asyncIterator]()
+  assert.equal((await consumer.next()).value?.sequence, 1)
+  continueProducing()
+  await producer
+  assert.equal(saved.length, 3)
+  assert.equal((await consumer.next()).value?.sequence, 2)
+  assert.equal((await consumer.next()).value?.sequence, 3)
+  assert.equal((await consumer.next()).done, true)
+})
 const lease = (): AgentDispatchLease => ({ identity, token: 'synthetic-lease', fence: 1, mode: 'start', cancelRequested: false,
   input: { v: 3, source: 'im', userMessageId: 7, locale: 'zh-CN', origin: null, accessVersion,
     im: { platform: 'telegram', botId: '81', chatType: 'c2c', chatId: null, platformUserId: 'synthetic-owner' } } })

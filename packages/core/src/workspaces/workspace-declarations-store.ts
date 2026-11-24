@@ -6,7 +6,7 @@ import type { Backend } from '../data/repositories.js'
 type Bool = boolean | number
 interface WorkspaceTable {
   id: Generated<number>; user_id: string; name: string; kind: WorkspaceKind
-  folder_id: number | null; project_id: number | null; directory_id: number | null
+  project_id: number | null; directory_id: number | null
   enabled: Bool; is_default: Bool; created_at: string; updated_at: string
 }
 interface DirectoryTable {
@@ -17,7 +17,6 @@ interface DirectoryTable {
 export interface WorkspaceDeclarationDatabase {
   workspaces: WorkspaceTable
   workspace_directories: DirectoryTable
-  folders: { id: Generated<number>; user_id: string; deleted_at: string | null }
   projects: { id: Generated<number>; user_id: string; deleted_at: string | null }
   conversation_sessions: { id: Generated<number>; user_id: string; workspace_id: number | null }
 }
@@ -28,13 +27,12 @@ export function createKyselyWorkspaceDeclarationRuntime(db: Kysely<WorkspaceDecl
       async relationExists(owner, kind, id) {
         const user = ownerKey(owner)
         if (kind === 'directory') return !!await tx.selectFrom('workspace_directories').select('id').where('user_id', '=', user).where('id', '=', id).where('deleted_at', 'is', null).executeTakeFirst()
-        const table = kind === 'folder' ? 'folders' : 'projects'
-        return !!await tx.selectFrom(table).select('id').where('user_id', '=', user).where('id', '=', id).executeTakeFirst()
+        return !!await tx.selectFrom('projects').select('id').where('user_id', '=', user).where('id', '=', id).executeTakeFirst()
       },
       async insert(owner, value) {
         const now = new Date().toISOString()
         const row = await tx.insertInto('workspaces').values({ user_id: ownerKey(owner), name: value.name, kind: value.kind,
-          folder_id: value.folderId, project_id: value.projectId, directory_id: value.directoryId,
+          project_id: value.projectId, directory_id: value.directoryId,
           enabled: bool(value.enabled), is_default: bool(false), created_at: now, updated_at: now }).returningAll().executeTakeFirstOrThrow()
         return { ...value, id: Number(row.id), isDefault: false, boundSessionCount: 0 }
       },
@@ -43,7 +41,7 @@ export function createKyselyWorkspaceDeclarationRuntime(db: Kysely<WorkspaceDecl
         const row = await tx.selectFrom('workspaces').selectAll().where('user_id', '=', user).where('id', '=', id).executeTakeFirst()
         if (!row) return null
         const count = await tx.selectFrom('conversation_sessions').select(({ fn }) => fn.countAll<string>().as('n')).where('user_id', '=', user).where('workspace_id', '=', id).executeTakeFirstOrThrow()
-        return { id: Number(row.id), name: row.name, kind: row.kind, folderId: row.folder_id, projectId: row.project_id,
+        return { id: Number(row.id), name: row.name, kind: row.kind, projectId: row.project_id,
           directoryId: row.directory_id, enabled: Boolean(row.enabled), isDefault: Boolean(row.is_default), boundSessionCount: Number(count.n) } satisfies WorkspaceDeclaration
       },
       async renameDirectory(owner, id, name) {

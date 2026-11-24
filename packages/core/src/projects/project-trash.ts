@@ -3,36 +3,23 @@ import { projectResponse } from './project-projection.js'
 import { calendarEventSnapshot } from '../calendar/event-projection.js'
 import { scheduledTaskUndoSnapshot } from '../calendar/undo-snapshot.js'
 
-/** 兼容现有 Web 资源快照；id 只关联旧数据库/Undo，物理文件必须按 storage_key 定位。 */
+/** 项目级文件资源以规范路径为唯一身份；其他关联元数据仍来自文件记录。 */
 export interface ProjectTrashFile extends Record<string, unknown> {
-  id: number
   user_id: string
   display_name: string
   ext: string
   space: string
   project_id: number | null
-  folder_id: number | null
   workspace_directory_id: number | null
   stage_name: string | null
   mind_map_id: number | null
-  storage_key: string
+  path: string
   version: number
   size: string
   size_bytes: number
   mime_type: string | null
   img_width: number | null
   img_height: number | null
-  deleted_at: string | null
-}
-
-export interface ProjectTrashFolder extends Record<string, unknown> {
-  id: number
-  user_id: string
-  project_id: number | null
-  workspace_directory_id: number | null
-  parent_id: number | null
-  name: string
-  version: number
   deleted_at: string | null
 }
 
@@ -68,7 +55,6 @@ export interface ProjectTrashTask extends Record<string, unknown> {
 
 export interface ProjectTrashResources {
   files: ProjectTrashFile[]
-  folders: ProjectTrashFolder[]
   events: ProjectTrashEvent[]
   tasks: ProjectTrashTask[]
 }
@@ -78,7 +64,7 @@ export interface ProjectTrashUndoRecord {
   contextId: string
   resource: 'projects'
   action: 'delete'
-  targetRefs: Array<{ kind: string; id: number }>
+  targetRefs: Array<{ kind: string; id: number } | { kind: 'file'; path: string }>
   beforeState: { items: Record<string, Record<string, unknown>> }
   afterState: { items: Record<string, Record<string, unknown>> }
   baseVersions: Record<string, { version: number }>
@@ -89,7 +75,6 @@ export interface ProjectTrashTransaction {
   listProjectResources(ownerId: string, projectId: number, deletedAt?: string): Promise<ProjectTrashResources>
   updateProject(ownerId: string, projectId: number, fields: { deleted_at: string | null; version: number }): Promise<ProjectRecord>
   updateFile(ownerId: string, file: ProjectTrashFile): Promise<void>
-  updateFolder(ownerId: string, folder: ProjectTrashFolder): Promise<void>
   updateEvent(ownerId: string, event: ProjectTrashEvent): Promise<void>
   updateTask(ownerId: string, task: ProjectTrashTask): Promise<void>
   recordUndo(record: ProjectTrashUndoRecord): Promise<void>
@@ -100,8 +85,8 @@ export interface ProjectTrashResourceChangedEvent {
   resource: 'projects' | 'files' | 'calendar' | 'scheduled_tasks'
   origin: string | null
   operation: 'delete' | 'create' | 'update'
-  entityId?: number
-  entityIds?: number[]
+  entityId?: number | string
+  entityIds?: Array<number | string>
   payload?: Record<string, unknown>
 }
 
@@ -113,6 +98,8 @@ export interface ProjectTrashRuntime {
 
 /** Host 注入授权范围内的路径能力，不得把旧资源 ID 当作物理文件身份。 */
 export interface ProjectTrashStorage {
+  moveProjectDirectory?(ownerId: string, project: Pick<ProjectRecord, 'id' | 'name' | 'start_date' | 'created_at'>,
+    deleted: boolean, beforeMove?: (from: string, to: string) => Promise<void>): Promise<(() => Promise<void>) | undefined>
   moveToTrash(ownerId: string, file: ProjectTrashFile, beforeMove?: (from: string, to: string) => Promise<void>): Promise<{
     storageKey: string
     rollback?: () => Promise<void>
@@ -121,7 +108,6 @@ export interface ProjectTrashStorage {
     ownerId: string,
     file: ProjectTrashFile,
     project: ProjectRecord,
-    folders: ProjectTrashFolder[],
     beforeMove?: (from: string, to: string) => Promise<void>,
   ): Promise<{ storageKey: string; displayName: string; rollback?: () => Promise<void> }>
 }
@@ -184,16 +170,14 @@ function projectSnapshot(project: ProjectRecord): Record<string, unknown> {
 
 function fileSnapshot(file: ProjectTrashFile): Record<string, unknown> {
   return {
-    id: file.id,
     display_name: file.display_name,
     ext: file.ext,
     space: file.space,
     project_id: file.project_id,
-    folder_id: file.folder_id,
     workspace_directory_id: file.workspace_directory_id,
     stage_name: file.stage_name,
     mind_map_id: file.mind_map_id,
-    storage_key: file.storage_key,
+    path: file.path,
     version: Number(file.version || 1),
     size: file.size,
     size_bytes: file.size_bytes,
@@ -204,34 +188,22 @@ function fileSnapshot(file: ProjectTrashFile): Record<string, unknown> {
   }
 }
 
-function folderSnapshot(folder: ProjectTrashFolder): Record<string, unknown> {
-  return {
-    id: folder.id,
-    name: folder.name,
-    project_id: folder.project_id,
-    workspace_directory_id: folder.workspace_directory_id,
-    parent_id: folder.parent_id,
-    version: Number(folder.version || 1),
-    deleted_at: nullableDate(folder.deleted_at),
-  }
-}
-
 function state(items: Record<string, Record<string, unknown>>) { return { items } }
 
 function refs(resources: ProjectTrashResources, projectId: number) {
   const result: Record<string, Record<string, unknown>> = { [`project:${projectId}`]: {} }
-  for (const file of resources.files) result[`file:${file.id}`] = fileSnapshot(file)
-  for (const folder of resources.folders) result[`folder:${folder.id}`] = folderSnapshot(folder)
+  for (const file of resources.files) result[`file:${file.path}`] = fileSnapshot(file)
   for (const event of resources.events)
     result[`event:${event.id}`] = calendarEventSnapshot(event, nullableDate)
   for (const task of resources.tasks) result[`task:${task.id}`] = scheduledTaskUndoSnapshot(task, nullableDate)
   return result
 }
 
-function targetRefs(items: Record<string, Record<string, unknown>>) {
+function targetRefs(items: Record<string, Record<string, unknown>>): Array<{ kind: string; id: number } | { kind: 'file'; path: string }> {
   return Object.keys(items).map((ref) => {
-    const [kind, id] = ref.split(':')
-    return { kind: kind!, id: Number(id) }
+    const [kind, ...rest] = ref.split(':')
+    if (kind === 'file') return { kind: 'file', path: rest.join(':') }
+    return { kind: kind!, id: Number(rest[0]) }
   })
 }
 
@@ -279,7 +251,8 @@ function projectTrashSnapshots(targets: readonly ProjectTrashTarget[]) {
 export function projectTrashConfirmationData(targets: readonly ProjectTrashTarget[]) {
   const versions = projectTrashSnapshots(targets)
   const ids: Record<string, number[]> = {}
-  for (const { kind, id } of targetRefs(versions)) (ids[kind + '_id'] ??= []).push(id)
+  for (const target of targetRefs(versions)) if ('id' in target && Number.isSafeInteger(target.id))
+    (ids[target.kind + '_id'] ??= []).push(target.id)
   for (const values of Object.values(ids)) values.sort((a, b) => a - b)
   return { ids, versions }
 }
@@ -287,13 +260,13 @@ export function projectTrashConfirmationData(targets: readonly ProjectTrashTarge
 /** SQL、Undo 与层外调用收据共用事务。文件补偿和提交后的通知由事务拥有者处理。 */
 export async function applyProjectTrashTargets(
   tx: ProjectTrashTransaction,
-  storage: Pick<ProjectTrashStorage, 'moveToTrash'>,
+  storage: Pick<ProjectTrashStorage, 'moveToTrash' | 'moveProjectDirectory'>,
   ownerId: string,
   targets: readonly ProjectTrashTarget[],
   metadata: ProjectTrashMetadata,
   ports: {
     addRollback(rollback: () => Promise<void>): void
-    beforeMove?(fileId: number, from: string, to: string): Promise<void>
+    beforeMove?(from: string, to: string): Promise<void>
     signal?: AbortSignal
     now?(): Date
   },
@@ -309,14 +282,15 @@ export async function applyProjectTrashTargets(
     ports.signal?.throwIfAborted()
     const { project, resources } = structuredClone(target)
     const projectId = project.id
+    const rollbackDirectory = resources.files.length ? undefined : await storage.moveProjectDirectory?.(ownerId, project, true, ports.beforeMove)
+    if (rollbackDirectory) ports.addRollback(rollbackDirectory)
     for (const file of resources.files) {
       ports.signal?.throwIfAborted()
-      if (visited.has(`file:${file.id}`)) continue
-      visited.add(`file:${file.id}`)
+      if (visited.has(`file:${file.path}`)) continue
+      visited.add(`file:${file.path}`)
       try {
-        const moved = await storage.moveToTrash(ownerId, file, ports.beforeMove
-          ? (from, to) => ports.beforeMove!(file.id, from, to) : undefined)
-        file.storage_key = moved.storageKey
+        const moved = await storage.moveToTrash(ownerId, file, ports.beforeMove)
+        file.path = moved.storageKey
         if (moved.rollback) ports.addRollback(moved.rollback)
       } catch (error) {
         if (ports.beforeMove || error instanceof ProjectTrashStoragePathError) throw error
@@ -325,11 +299,6 @@ export async function applyProjectTrashTargets(
       file.deleted_at = stamp
       file.version = Number(file.version || 1) + 1
       await tx.updateFile(ownerId, file)
-    }
-    for (const folder of resources.folders) {
-      folder.deleted_at = stamp
-      folder.version = Number(folder.version || 1) + 1
-      await tx.updateFolder(ownerId, folder)
     }
     for (const event of resources.events) {
       event.deleted_at = stamp
@@ -343,14 +312,13 @@ export async function applyProjectTrashTargets(
     const updated = await tx.updateProject(ownerId, projectId, {
       deleted_at: stamp, version: Number(project.version || 1) + 1,
     })
-    // 同一文件可能同时按 project_id 和其他项目的 folder_id 命中。
     resources.files = resources.files.filter(file => file.deleted_at === stamp)
     afterTargets.push({ project: updated, resources })
     results.push({ success: true, deleted_project_id: projectId, name: project.name, file_count: resources.files.length })
     events.push({ userId: ownerId, resource: 'projects', origin: publishedOrigin, operation: 'delete', entityId: projectId })
-    if (resources.files.length || resources.folders.length) events.push({
+    if (resources.files.length) events.push({
       userId: ownerId, resource: 'files', origin: publishedOrigin, operation: 'delete',
-      entityIds: [...resources.files.map(row => row.id), ...resources.folders.map(row => row.id)],
+      entityIds: resources.files.map(row => row.path),
     })
     if (resources.events.length) events.push({
       userId: ownerId, resource: 'calendar', origin: publishedOrigin, operation: 'delete', entityIds: resources.events.map(row => row.id),
@@ -359,7 +327,7 @@ export async function applyProjectTrashTargets(
       userId: ownerId, resource: 'scheduled_tasks', origin: publishedOrigin, operation: 'update', entityIds: resources.tasks.map(row => row.id),
     })
   }
-  const after = projectTrashSnapshots(afterTargets)
+  const after = Object.fromEntries(afterTargets.flatMap(({ project, resources }) => Object.entries(refs(resources, project.id))))
   const contextId = metadata.undoContextId?.trim().slice(0, 128)
   if (contextId) await tx.recordUndo({
     userId: ownerId, contextId, resource: 'projects', action: 'delete',
@@ -396,21 +364,19 @@ export function createProjectTrashService(runtime: ProjectTrashRuntime, storage:
         // 保留数据库时间戳的原始精度，精确选择同一删除批次。
         const related = await tx.listProjectResources(ownerId, id, project.deleted_at!)
 
+        const rollbackDirectory = related.files.length ? undefined : await storage.moveProjectDirectory?.(ownerId, project, false)
+        if (rollbackDirectory) storageMoves.push(rollbackDirectory)
+
         const updatedProject = await tx.updateProject(ownerId, id, {
           deleted_at: null,
           version: Number(project.version || 1) + 1,
         })
-        for (const folder of related.folders) {
-          folder.deleted_at = null
-          folder.version = Number(folder.version || 1) + 1
-          await tx.updateFolder(ownerId, folder)
-        }
         for (const file of related.files) {
           // 存储端口保留 Python 对普通移动故障的预期路径语义；
           // 元数据解析和不安全路径错误必须中止事务。
-          const restored = await storage.restoreFromTrash(ownerId, file, updatedProject, related.folders)
+          const restored = await storage.restoreFromTrash(ownerId, file, updatedProject)
           if (restored.rollback) storageMoves.push(restored.rollback)
-          file.storage_key = restored.storageKey
+          file.path = restored.storageKey
           file.display_name = restored.displayName
           file.deleted_at = null
           file.version = Number(file.version || 1) + 1
@@ -437,9 +403,9 @@ export function createProjectTrashService(runtime: ProjectTrashRuntime, storage:
       const events: ProjectTrashResourceChangedEvent[] = [{
         userId: ownerId, resource: 'projects', origin, operation: 'create', entityId: id, payload: response,
       }]
-      if (result.resources.files.length || result.resources.folders.length) events.push({
+      if (result.resources.files.length) events.push({
         userId: ownerId, resource: 'files', origin, operation: 'create',
-        entityIds: [...result.resources.files.map((row) => row.id), ...result.resources.folders.map((row) => row.id)],
+        entityIds: result.resources.files.map((row) => row.path),
       })
       if (result.resources.events.length) events.push({
         userId: ownerId, resource: 'calendar', origin, operation: 'create',

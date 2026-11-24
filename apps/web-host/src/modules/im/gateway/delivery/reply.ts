@@ -1,3 +1,4 @@
+import { resolveQqNoticeTarget } from '@gugu/gateway/qq'
 import { createImRequestedReply } from '@gugu/gateway'
 import { createHmac } from 'node:crypto'
 import type { Pool } from 'pg'
@@ -53,7 +54,7 @@ export async function createImRunSender(options: ArtifactOptions & {
   const source = await proof.read()
   const format = scope.platform === 'qq' ? await qqFormat() : null
   const guard = async () => { try { await proof.read(); return format === null || await qqFormat() === format } catch { return false } }
-  async function text(input: Parameters<ImRunDeliveryPorts<unknown>['sender']['text']>[0], extraAuthorize?: () => Promise<boolean>, kind: 'text' | 'interaction' | 'tool' = 'text'): ReturnType<ImRunDeliveryPorts<unknown>['sender']['text']> {
+  async function text(input: Parameters<ImRunDeliveryPorts<unknown>['sender']['text']>[0], extraAuthorize?: () => Promise<boolean>, kind: 'text' | 'interaction' | 'tool' | 'compaction' = 'text'): ReturnType<ImRunDeliveryPorts<unknown>['sender']['text']> {
     try {
       if (!same(input.identity, identity)) return 'rejected'
       const sourceMessage = scope.platform === 'qq' ? payload.message_id : payload.platform_message_id ?? payload.message_id
@@ -65,21 +66,40 @@ export async function createImRunSender(options: ArtifactOptions & {
       const wire = options.sender(binding)
       if (!wire || wire.platform !== scope.platform) return 'rejected'
       const { recipient, originalMessageId: original } = reply
-      const evidence = (receipt: Parameters<typeof imAcceptedEvidence>[0]['receipt']) => kind === 'tool' ? receipt.outcome
+      const evidence = (receipt: Parameters<typeof imAcceptedEvidence>[0]['receipt']) => kind === 'tool' || kind === 'compaction' ? receipt.outcome
         : imAcceptedEvidence({ scope, source, recipient, kind, text: reply.text, receipt })
       if (wire.platform === 'telegram') return evidence(await wire.sender.text({ chatId: recipient, chatType: scope.chatType,
         ...(typeof original === 'string' ? { replyToMessageId: original } : {}) }, reply.text, { authorize }))
       if (wire.platform === 'feishu') return evidence(await wire.sender.text(recipient, reply.text, undefined, authorize))
-      if (wire.platform === 'qq') return evidence(await wire.sender.text({ id: recipient, chatType: scope.chatType,
-        messageFormat: format!, messageId: kind !== 'tool' && typeof original === 'string' ? original : undefined,
-        ...(scope.chatType === 'group' ? { mentionUserId: actor.platformUserId } : {}) }, reply.text, undefined, authorize))
+      if (wire.platform === 'qq') {
+        const target = kind === 'tool' || kind === 'compaction'
+          ? resolveQqNoticeTarget(kind, original) : undefined
+        if (target?.mode === 'rejected') return 'rejected'
+        const members = scope.chatType === 'group' && /[@＠]/u.test(reply.text)
+          ? await options.pool.query<{ id: string; name: string | null }>(`SELECT id,name FROM (
+              SELECT DISTINCT ON (m.platform_user_id) m.platform_user_id AS id,
+                NULLIF(btrim(m.platform_user_name),'') AS name,m.conversation_seq
+              FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id
+              WHERE s.id=$1 AND s.user_id=$2 AND s.source='qq' AND s.bot_id=$3 AND s.chat_id=$4 AND s.chat_type='group'
+                AND m.role='user' AND m.platform_user_id IS NOT NULL AND m.im_sender_is_bot IS NOT TRUE
+              ORDER BY m.platform_user_id,m.conversation_seq DESC
+            ) members ORDER BY conversation_seq DESC LIMIT 256`,
+            [identity.sessionId, identity.ownerId, scope.botId, scope.chatId]).then(result => result.rows, () => [])
+          : []
+        const name = members.find(member => member.id === actor.platformUserId)?.name
+        const mentionUserName = name && members.filter(member => member.name === name).length === 1 ? name : undefined
+        return evidence(await wire.sender.text({ id: recipient, chatType: scope.chatType,
+          messageFormat: format!, messageId: target?.mode === 'active' ? undefined : original,
+          ...(scope.chatType === 'group' ? { mentionUserId: actor.platformUserId, mentionUserName,
+            knownMemberIds: members.map(member => member.id) } : {}) }, reply.text, undefined, authorize))
+      }
       if (scope.chatType !== 'c2c' || typeof payload.context_token !== 'string' || !payload.context_token) return 'rejected'
       return evidence(await wire.sender.text({ userId: scope.platformUserId, contextToken: payload.context_token }, reply.text, undefined, authorize))
     } catch { return 'unknown' }
   }
   return {
     text,
-    compactionNotice: input => text(input, undefined, 'tool'),
+    compactionNotice: input => text(input, undefined, 'compaction'),
     toolNotice: input => scope.chatType === 'c2c' && (scope.platform === 'qq' || scope.platform === 'wechat')
       ? text(input, undefined, 'tool') : Promise.resolve('rejected'),
     artifact: createImRunArtifactSender(options),

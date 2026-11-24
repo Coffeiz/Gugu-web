@@ -2,16 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import type { Pool, PoolClient } from 'pg'
 import { isPostgresUniqueViolation } from '../../../adapters/database/postgres-errors.js'
-import { ensureRegistrationFileLibraryQuota } from '../../files/storage/quota.js'
 import type { PublicUserRecord } from '../session/token.js'
 import {
   RegistrationRequestError,
   type RegistrationCodeProof,
   type RegistrationInput,
 } from './routes.js'
-
-const defaultWorkspaceDirectoryName = 'default'
-const defaultWorkspaceName = '默认工作区'
 
 export interface RegistrationCodeTransactionPort {
   remainingTtlMs(email: string): Promise<number>
@@ -22,10 +18,6 @@ export interface RegistrationCodeTransactionPort {
 }
 
 export interface PostgresRegistrationDependencies {
-  defaultStorageLimitBytes: number | null
-  workspaceShellSupported: () => boolean | Promise<boolean>
-  /** Required for Local storage; must safely prepare the user's default workspace root and ACL. */
-  prepareDefaultWorkspaceRoot: (userId: string, directoryName: string) => void | Promise<void>
   /** Required even for deployments with verification disabled; no implicit in-memory fallback. */
   registrationCodes: RegistrationCodeTransactionPort
   /** Must write only a safe diagnostic marker and must not expose email/code values. */
@@ -47,10 +39,6 @@ interface InsertedUser {
   created_at: Date | string
   timezone: string | null
   email_subscribed: boolean
-}
-
-interface InsertedDirectory {
-  id: number
 }
 
 interface RegistrationOperations {
@@ -84,7 +72,7 @@ function publicUser(row: InsertedUser): PublicUserRecord {
   }
 }
 
-/** 同事务创建账号、基础文件配额、偏好和默认工作区记录。 */
+/** 同事务创建账号和偏好。 */
 export function createPostgresRegistrationOperations(
   pool: Pick<Pool, 'connect' | 'query'>,
   dependencies: PostgresRegistrationDependencies,
@@ -138,35 +126,12 @@ export function createPostgresRegistrationOperations(
         )
         const userRow = inserted.rows[0]
         if (!userRow) throw new Error('注册用户插入后未返回记录')
-        await ensureRegistrationFileLibraryQuota(client, userRow.id, dependencies.defaultStorageLimitBytes)
 
         if (input.locale) {
           await client.query(
             `INSERT INTO user_preferences (user_id, data_json, updated_at)
              VALUES ($1, $2, $3)`,
             [userRow.id, JSON.stringify({ locale: input.locale }), timestamp],
-          )
-        }
-
-        const directory = await client.query<InsertedDirectory>(
-          `INSERT INTO workspace_directories (
-             user_id, name, directory_name, is_default, is_system, deleted_at, created_at, updated_at
-           ) VALUES ($1, $2, $3, TRUE, TRUE, NULL, $4, $4)
-           RETURNING id`,
-          [userRow.id, defaultWorkspaceName, defaultWorkspaceDirectoryName, timestamp],
-        )
-        const directoryId = directory.rows[0]?.id
-        if (!directoryId) throw new Error('默认 Workspace 目录插入后未返回记录')
-
-        const shellSupported = await dependencies.workspaceShellSupported()
-        if (shellSupported) {
-          await dependencies.prepareDefaultWorkspaceRoot(userRow.id, defaultWorkspaceDirectoryName)
-          await client.query(
-            `INSERT INTO workspaces (
-               user_id, name, kind, folder_id, project_id, directory_id,
-               enabled, is_default, created_at, updated_at
-             ) VALUES ($1, $2, 'directory', NULL, NULL, $3, TRUE, FALSE, $4, $4)`,
-            [userRow.id, defaultWorkspaceName, directoryId, timestamp],
           )
         }
 

@@ -1,137 +1,79 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { computed, nextTick, reactive, watchEffect } from 'vue'
+import { filesApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
-import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
-import type { CursorPage } from '@/services/api'
+import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 
-vi.mock('@/services/api', () => ({
-  filesApi: { get: vi.fn() },
-  foldersApi: { get: vi.fn() },
-}))
+vi.mock('@/services/api', () => ({ filesApi: { get: vi.fn() } }))
 vi.mock('@/stores/live', async () => {
   const { reactive } = await import('vue')
-  const live = reactive({ resourceEvent: null, rev: { files: 0 } })
+  const live = reactive({ resourceEvent: null })
   return { useLiveStore: () => live }
 })
 vi.mock('@/utils/accountBoundary', () => ({ getAccountBoundaryEpoch: () => 0 }))
 
-function file(id: number, overrides: Partial<FileMeta> = {}): FileMeta {
+function file(filePath: string, overrides: Partial<FileMeta> = {}): FileMeta {
   return {
-    id, displayName: `文件 ${id}`, ext: 'png', space: 'personal',
+    filePath, displayName: filePath.split('/').at(-1) ?? '合成文件', ext: 'png', space: 'personal',
     workspaceDirectoryId: null, projectId: null, projectName: null, projectColor: null,
-    stageName: '', folderId: null, folderName: null, mindMapId: null,
-    size: '1 KB', sizeBytes: 1, mimeType: 'image/png', createdAt: '2026-09-09',
-    deletedAt: null, imgWidth: null, imgHeight: null, version: 1, ...overrides,
+    stageName: '', mindMapId: null, size: '1 KB', sizeBytes: 1,
+    mimeType: 'image/png', createdAt: '2026-09-09', deletedAt: null,
+    imgWidth: null, imgHeight: null, version: 1, ...overrides,
   } as FileMeta
 }
-function folder(id: number, overrides: Partial<FolderMeta> = {}): FolderMeta {
-  return { id, name: `目录 ${id}`, projectId: null, workspaceDirectoryId: null,
-    parentId: null, fileCount: 0, version: 1, ...overrides } as FolderMeta
-}
-const page = <T>(items: T[]): CursorPage<T> => ({ items, next_cursor: null, has_more: false })
 
-describe('filesCache 有界目录页与 ID 缓存', () => {
+describe('filesCache 文件元数据缓存', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    const live = useLiveStore()
-    live.resourceEvent = null
-    live.rev.files = 0
+    vi.mocked(filesApi.get).mockReset()
+    useLiveStore().resourceEvent = null
   })
 
-  it('目录页按 personal/project/workspace 与父目录隔离', () => {
+  it('并发详情读取共享一次请求并缓存文件结果', async () => {
+    const path = '/personal/图片.png'
+    const value = file(path)
+    vi.mocked(filesApi.get).mockResolvedValue(value as never)
     const store = useFilesCacheStore()
-    const personal = file(1)
-    const root = file(2, { space: 'workspace', workspaceDirectoryId: 34 })
-    const child = file(3, { space: 'workspace', workspaceDirectoryId: 34, folderId: 20 })
-    const rootFolder = folder(20, { workspaceDirectoryId: 34 })
-    const childFolder = folder(21, { workspaceDirectoryId: 34, parentId: 20 })
-    store.setDirectoryPage({ space: 'personal' }, page([personal]), page([]))
-    store.setDirectoryPage({ space: 'workspace', workspaceDirectoryId: 34 }, page([root]), page([rootFolder]))
-    store.setDirectoryPage({ space: 'workspace', workspaceDirectoryId: 34, folderId: 20 }, page([child]), page([childFolder]))
 
-    expect(store.getPersonalRootFiles()).toEqual([personal])
-    expect(store.getWorkspaceFiles(34)).toEqual([root])
-    expect(store.getWorkspaceFiles(34, 20)).toEqual([child])
-    expect(store.getWorkspaceFolders(34)).toEqual([rootFolder])
-    expect(store.getWorkspaceFolders(34, 20)).toEqual([childFolder])
+    const first = store.ensureFile(path)
+    const second = store.ensureFile(path)
+    await expect(Promise.all([first, second])).resolves.toEqual([value, value])
+    expect(filesApi.get).toHaveBeenCalledExactlyOnceWith(path)
+    expect(store.getFile(path)).toEqual(value)
   })
 
-  it('实体变更使目录 cursor 链失效，但按 ID 详情仍可读取', () => {
+  it('文件变更只更新文件详情缓存', () => {
     const store = useFilesCacheStore()
-    const original = file(1)
-    store.setDirectoryPage({ space: 'personal' }, page([original]), page([]))
-    store.updateFile(1, { space: 'workspace', workspaceDirectoryId: 34 })
-
-    expect(store.getDirectory({ space: 'personal' })).toBeNull()
-    expect(store.getFile(1)?.workspaceDirectoryId).toBe(34)
+    const path = '/personal/文件.png'
+    store.addFile(file(path))
+    store.updateFile(path, { version: 2 })
+    expect(store.getFile(path)?.version).toBe(2)
+    store.removeFile(path)
+    expect(store.getFile(path)).toBeNull()
   })
 
-  it('文件版本变化会使缓存目录失效，并在重新读取前保留旧快照', async () => {
+  it('只接受文件实体事件，不再处理目录实体事件', () => {
     const store = useFilesCacheStore()
-    const scope = { space: 'project' as const, projectId: 42 }
-    const previous = file(42, { space: 'project', projectId: 42 })
-    store.setDirectoryPage(scope, page([previous]), page([]))
+    const fileEvent = {
+      resource: 'files', operation: 'create', entity_id: '/personal/文件 9.png',
+      payload: { kind: 'file', entity: file('/personal/文件 9.png') },
+    } as never
+    const folderEvent = {
+      resource: 'files', operation: 'create', entity_id: '/personal/旧目录',
+      payload: { kind: 'folder', entity: { name: '旧目录' } },
+    } as never
 
-    const live = useLiveStore()
-    live.rev.files++
-    await nextTick()
-
-    expect(store.getDirectory(scope)).toBeNull()
-    expect(store.getDirectorySnapshot(scope)?.files).toEqual([previous])
-
-    const created = file(43, { space: 'project', projectId: 42 })
-    store.setDirectoryPage(scope, page([previous, created]), page([]))
-    expect(store.getDirectorySnapshot(scope)?.files).toEqual([previous, created])
+    expect(store.applyCanonicalEvent(fileEvent)).toBe(true)
+    expect(store.getFile('/personal/文件 9.png')?.displayName).toBe('文件 9.png')
+    expect(store.applyCanonicalEvent(folderEvent)).toBe(false)
+    expect(store.getFile('/personal/旧目录')).toBeNull()
   })
 
-  it('computed 渲染目录缓存时只因数据写入更新，不因 LRU 读取再次触发', async () => {
+  it('账号切换清空缓存文件', () => {
     const store = useFilesCacheStore()
-    const rootFiles = computed(() => store.getProjectRootFiles(42))
-    let effectRuns = 0
-    const stop = watchEffect(() => {
-      rootFiles.value
-      effectRuns += 1
-    })
-
-    store.setDirectoryPage({ space: 'project', projectId: 42 }, page([file(42)]), page([]))
-    await nextTick()
-    stop()
-
-    expect(rootFiles.value.map(item => item.id)).toEqual([42])
-    expect(effectRuns).toBe(2)
-  })
-
-  it('读取目录仍会更新 LRU 次序，后续写入淘汰最久未访问的目录', () => {
-    const store = useFilesCacheStore()
-    for (let id = 1; id <= 8; id++) {
-      store.setDirectoryPage({ space: 'project', projectId: id }, page([]), page([]))
-    }
-    store.getDirectory({ space: 'project', projectId: 1 })
-    store.setDirectoryPage({ space: 'project', projectId: 9 }, page([]), page([]))
-
-    expect(store.getDirectory({ space: 'project', projectId: 1 })).not.toBeNull()
-    expect(store.getDirectory({ space: 'project', projectId: 2 })).toBeNull()
-  })
-
-  it('目录页缓存按 LRU 限制在 8 个 scope，淘汰不表示 ID 详情不存在', () => {
-    const store = useFilesCacheStore()
-    const first = file(1)
-    for (let id = 1; id <= 9; id++) {
-      store.setDirectoryPage({ space: 'project', projectId: id }, page([file(id)]), page([]))
-    }
-    expect(store.directories.size).toBe(8)
-    expect(store.getDirectory({ space: 'project', projectId: 1 })).toBeNull()
-    expect(store.getFile(first.id)).toEqual(first)
-  })
-
-  it('账号切换清空 ID、目录页和进行中的请求引用', () => {
-    const store = useFilesCacheStore()
-    store.addFile(file(1))
-    store.setDirectoryPage({ space: 'personal' }, page([file(1)]), page([]))
+    store.addFile(file('/personal/文件.png'))
     store.resetAccountState()
-    expect(store.getFile(1)).toBeNull()
-    expect(store.directories.size).toBe(0)
+    expect(store.getFile('/personal/文件.png')).toBeNull()
   })
 })

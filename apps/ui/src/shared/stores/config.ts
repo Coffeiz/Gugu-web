@@ -114,7 +114,6 @@ export const useConfigStore = defineStore('config', () => {
     quota: {
       default_token_limit_6h: null,
       default_token_limit_weekly: null,
-      default_storage_limit_bytes: null,
       default_search_limit_daily: null,
     },
     search: {

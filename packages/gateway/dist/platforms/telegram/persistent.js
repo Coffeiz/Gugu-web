@@ -210,7 +210,7 @@ export function createPersistentTelegramProjection(options) {
                 state.roundHasText = true;
         };
         const resetDraft = () => { state.draftId = randomInt(1, 2 ** 48 - 1); state.draftText = ''; state.lastDraftText = ''; state.lastDraftAt = 0; state.separator = false; };
-        const projector = createFeishuRunEventProjector({ checkpoint: state.parser, renderCharts: options.renderCharts, signal: options.signal });
+        const projector = createFeishuRunEventProjector({ checkpoint: state.parser, renderCharts: options.renderCharts, signal: options.signal, toolSummary: options.toolSummary });
         try {
             const projectedEvents = await projector.push(event);
             for (const projected of projectedEvents) {
@@ -219,7 +219,7 @@ export function createPersistentTelegramProjection(options) {
                     await draft();
                 }
                 else if (projected.type === 'tool_done' && options.toolSummary) {
-                    const text = formatImToolReceipt(projected, options.toolSummary.sanitize);
+                    const text = formatImToolReceipt(projected, options.toolSummary.sanitize, options.toolSummary.locale);
                     if (text) {
                         state.separator = !!state.draftText.trim();
                         append(text, false);

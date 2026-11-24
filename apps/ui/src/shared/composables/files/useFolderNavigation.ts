@@ -1,17 +1,16 @@
 import { computed, nextTick, ref, shallowRef } from 'vue'
-import type { FolderMeta } from '@/stores/filesCache'
 
-type FolderIdentity = { id: number | string }
+type NavigationEntry = { id: string }
 
-export interface FolderNavigationOptions<Folder extends FolderIdentity = FolderMeta> {
-  initial?: Folder[]
+export interface FolderNavigationOptions<Entry extends NavigationEntry> {
+  initial?: Entry[]
   onChange?: () => void
 }
 
-/** 文件浏览通用的目录栈与前进/后退历史，不负责加载内容或权限判断。 */
-export function useFolderNavigation<Folder extends FolderIdentity = FolderMeta>(options: FolderNavigationOptions<Folder> = {}) {
-  const folderStack = shallowRef<Folder[]>([...(options.initial ?? [])])
-  const history = shallowRef<Folder[][]>([[...folderStack.value]])
+/** 路径浏览器共享的导航栈与前进/后退历史，不负责加载内容或权限判断。 */
+export function useFolderNavigation<Entry extends NavigationEntry>(options: FolderNavigationOptions<Entry>) {
+  const folderStack = shallowRef<Entry[]>([...(options.initial ?? [])])
+  const history = shallowRef<Entry[][]>([[...folderStack.value]])
   const cursor = ref(0)
   let replaying = false
 
@@ -25,7 +24,7 @@ export function useFolderNavigation<Folder extends FolderIdentity = FolderMeta>(
     cursor.value = history.value.length - 1
   }
 
-  function enterFolder(folder: Folder) {
+  function enterFolder(folder: Entry) {
     folderStack.value = [...folderStack.value, folder]
     pushHistory()
     options.onChange?.()
@@ -55,18 +54,11 @@ export function useFolderNavigation<Folder extends FolderIdentity = FolderMeta>(
     nextTick(() => { replaying = false })
   }
 
-  function pruneHistoryForFolders(folderIds: Iterable<Folder['id']>) {
-    const ids = new Set(folderIds)
-    const kept = history.value.filter(snapshot => !snapshot.some(folder => ids.has(folder.id)))
-    history.value = kept.length ? kept : [[]]
-    cursor.value = Math.min(cursor.value, history.value.length - 1)
-  }
-
   function reset() {
     folderStack.value = []
     history.value = [[]]
     cursor.value = 0
   }
 
-  return { folderStack, canGoBack, canGoForward, enterFolder, navigateTo, goBack, goForward, pruneHistoryForFolders, reset }
+  return { folderStack, canGoBack, canGoForward, enterFolder, navigateTo, goBack, goForward, reset }
 }

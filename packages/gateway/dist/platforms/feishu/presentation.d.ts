@@ -5,6 +5,7 @@ export type FeishuToolEvent = {
     name?: string;
     label?: string;
     status?: string;
+    display?: unknown;
     input?: unknown;
     result?: unknown;
 };
@@ -12,10 +13,12 @@ export type FeishuToolEvent = {
 export type FeishuToolSummaryPolicy = {
     chatType: 'group';
     includeDetails?: false;
+    locale?: string | null;
     sanitize(text: string): string;
 } | {
     chatType: 'p2p';
     includeDetails?: boolean;
+    locale?: string | null;
     sanitize(text: string): string;
 };
 /** 同一卡片里的正文、图片与工具组；顺序由唯一流消费者维护。 */

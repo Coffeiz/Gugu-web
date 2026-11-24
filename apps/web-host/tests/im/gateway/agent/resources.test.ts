@@ -19,13 +19,19 @@ test('IM 简介模式仅列出当前群聊已开放的工具，全量模式省�
   const pool = {
     async query() { return { rows: [{ data_json: { tool_injection_mode: mode } }] } },
   } as unknown as Parameters<typeof createImProductionSkills>[0]['pool']
-  const resources = await createImProductionSkills({ pool, identity, actor, loadOwnerContext: false, authorize: async () => true })
+  const available = new Set(['use_skill'])
+  const resources = await createImProductionSkills({ pool, identity, actor, loadOwnerContext: false,
+    authorize: async () => true, availableTools: async () => available })
   const skills = await resources.registry.catalog(identity)
   const builtins = await createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal)
-  const smartView = builtins.find(skill => skill.key === 'smart-view')
-  assert.ok(smartView)
-  assert.deepEqual(skills.map(skill => skill.id), builtins.filter(skill => skill.id !== smartView.id).map(skill => skill.id))
-  await assert.rejects(resources.registry.load(smartView.id, identity, new AbortController().signal), { code: 'unavailable' })
+  const weather = builtins.find(skill => skill.key === 'weather')
+  assert.ok(weather)
+  assert.ok(!skills.some(skill => skill.id === weather.id))
+  await assert.rejects(resources.registry.load(weather.id, identity, new AbortController().signal), { code: 'unavailable' })
+  available.add('http_get')
+  assert.ok((await resources.registry.catalog(identity)).some(skill => skill.id === weather.id))
+  available.delete('http_get')
+  await assert.rejects(resources.registry.load(weather.id, identity, new AbortController().signal), { code: 'unavailable' })
   const chart = skills.find(skill => skill.key === 'chart-and-math')
   assert.ok(chart)
   assert.match((await resources.registry.load(chart.id, identity, new AbortController().signal)).content, /Mermaid/u)

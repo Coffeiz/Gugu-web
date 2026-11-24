@@ -8,6 +8,25 @@ import { createAgentRunner } from "../../../src/agent/index.js"
 import { collect,deferred,fixture,identity,replyFacts,stream,toolCall,usage } from '../run/fixtures.js'
 
 describe('Harness 流式协调、背压与事件顺序', () => {
+  it('子任务终结且回执已消费后，等待收尾的父运行仍能完成', async () => {
+    const f = fixture()
+    const key = f.idKey(identity)
+    await collect(f.harness.start(identity))
+    const completed = f.records.get(key)!
+    f.records.set(key, { ...completed, status: 'waiting', phase: 'decision', agentInboxWaiting: true })
+    f.ports.store.readAgentInbox = vi.fn(async () => [])
+    f.ports.store.readSubagentFinals = vi.fn(async () => [])
+    const hasPending = vi.fn(async () => true)
+    f.ports.store.hasPendingSubagents = hasPending
+
+    expect((await collect(createAgentRunner(f.ports).resume(identity))).state.status).toBe('waiting')
+    hasPending.mockResolvedValue(false)
+    vi.mocked(f.ports.provider.stream).mockClear()
+    const result = await collect(createAgentRunner(f.ports).resume(identity))
+    expect(result.state).toMatchObject({ status: 'completed', agentInboxWaiting: false })
+    expect(f.ports.provider.stream).not.toHaveBeenCalled()
+  })
+
   it('取消打断无token的模型等待，只订阅一次，并先写durable标记后通知', async () => {
     const f = fixture()
     const started = deferred<void>()
@@ -29,13 +48,33 @@ describe('Harness 流式协调、背压与事件顺序', () => {
     expect(f.histories).toEqual([])
   })
 
+  it('取消时保存尚在合并窗口中的公开正文', async () => {
+    const f = fixture()
+    const waiting = deferred<void>()
+    f.ports.provider.stream = vi.fn(({ signal }) => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'token', text: '部分回复' } as const
+        waiting.resolve()
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+      },
+    }))
+    const task = collect(f.harness.start(identity))
+    await waiting.promise
+    expect(await f.harness.cancel(identity)).toBe(true)
+    const result = await task
+    expect(result.state.status).toBe('cancelled')
+    expect(result.state.displayTimeline).toMatchObject([{ kind: 'assistant', text: '部分回复' }])
+    expect(f.histories.at(-1)).toMatchObject({ outcome: 'interruption', text: '部分回复' })
+  })
+
   it('流式消费自然背压，不拉取下一token直到消费者再次推进', async () => {
     const f = fixture()
     const next = vi.fn()
     f.ports.provider.stream = vi.fn(() => ({
       async *[Symbol.asyncIterator]() {
         next()
-        yield { type: 'token', text: '第一段' } as const
+        // 触发即时提交，避免测到合并窗口内允许的预读。
+        yield { type: 'token', text: '第一段'.repeat(100) } as const
         next()
         yield { type: 'complete', text: '最终正文', calls: [] } as const
       }

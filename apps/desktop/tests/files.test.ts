@@ -1,6 +1,8 @@
+import { createProjectWorkspaceBindingTool } from '../../../packages/core/src/agent/tools/workspaces.js'
+import { createToolRegistry } from '../../../packages/core/src/agent/tools/registry.js'
 import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
 import { createHash } from 'node:crypto'
-import { lstat, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, beforeEach, expect, it } from 'vitest'
@@ -41,6 +43,23 @@ beforeEach(async () => {
 })
 afterEach(async () => rm(directory, { recursive: true, force: true }))
 
+it('文件夹引用可以搜索和打开，目录被同名替换后失效', async () => {
+  const root = await files.personalRoot()
+  await mkdir(join(root, '参考目录'))
+  const target = { directoryId: 'personal', path: '参考目录' }
+  const reference = await call({ action: 'reference', kind: 'folder', ...target }) as { type: string; id: string }
+  expect(reference).toMatchObject({ type: 'folder', label: '参考目录' })
+  expect(await call({ action: 'search', query: '参考目录' })).toEqual(expect.arrayContaining([expect.objectContaining(reference)]))
+  const resolved = await files.resolveWorkspaceReference(reference.id)
+  expect(resolved).toMatchObject({ type: 'folder', path: join(root, target.path) })
+  const verified = { action: 'reference', kind: 'folder', ...target, identity: resolved?.fileIdentity }
+  await expect(call(verified)).resolves.toEqual(reference)
+  await rename(join(root, target.path), join(root, '原目录'))
+  await mkdir(join(root, target.path))
+  expect(await files.resolveWorkspaceReference(reference.id)).toBeNull()
+  await expect(call(verified)).rejects.toMatchObject({ code: 'not_found' })
+})
+
 it('拖出解析已选工作区的文件和目录，拒绝链接和越界路径', async () => {
   const root = await files.personalRoot()
   const file = join(root, '合成.txt')
@@ -57,7 +76,7 @@ it('拖出解析已选工作区的文件和目录，拒绝链接和越界路径'
   }
 })
 
-it('工具搜索支持 AND、沙盒逻辑路径和工作区边界', async () => {
+it('工具搜索支持 AND、本机绝对路径和工作区边界', async () => {
   const root = await files.personalRoot()
   await mkdir(join(root, '样本目录'))
   await writeFile(join(root, '样本目录', '会议.txt'), '合成内容')
@@ -65,9 +84,9 @@ it('工具搜索支持 AND、沙盒逻辑路径和工作区边界', async () => 
   await writeFile(join(directory, '样本会议.txt'), '库外')
   const found = await files.globalFileSearch(['样本', '会议'], 'AND', 20)
   expect(found.groups).toMatchObject([{ type: 'file', items: [
-    { title: '会议.txt', path_file: { directoryId: 'personal', sandboxPath: '/personal/样本目录/会议.txt' } },
+    { title: '会议.txt', path_file: { directoryId: 'personal', location: { kind: 'host_absolute', value: join(root, '样本目录/会议.txt') } } },
   ] }])
-  const exact = await files.globalFileSearch(['/personal/样本目录/会议.txt'])
+  const exact = await files.globalFileSearch([join(root, '样本目录/会议.txt')])
   expect(exact.groups[0]?.items).toHaveLength(1)
   expect(exact.groups[0]?.items[0]?.path_file.relativePath).toBe('样本目录/会议.txt')
 })
@@ -93,17 +112,18 @@ it('保存已授权聊天附件时原子写入、保留同名文件并恢复重�
     expect.objectContaining({ name: '资料.txt', size_bytes: source.byteLength, replayed: true }),
   ]))
   const root = await files.personalRoot()
-  expect(await readFile(join(root, '资料.txt'), 'utf8')).toBe('附件正文')
+  expect(await readFile(join(root, 'download', '资料.txt'), 'utf8')).toBe('附件正文')
+  await expect(readFile(join(root, '资料.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
   const first = concurrent.find(result => result.replayed === false)!
   const replay = await files.agentSaveAttachment(params, AbortSignal.timeout(5_000))
   expect(replay).toMatchObject({ ...first, replayed: true })
-  await expect(readFile(join(root, '资料 (2).txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(readFile(join(root, 'download', '资料 (2).txt'))).rejects.toMatchObject({ code: 'ENOENT' })
 
-  await writeFile(join(root, '同名.txt'), '已有内容')
+  await writeFile(join(root, 'download', '同名.txt'), '已有内容')
   const second = await files.agentSaveAttachment({ ...params, operationId: 'd'.repeat(64), name: '同名.txt' }, AbortSignal.timeout(5_000))
   expect(second).toMatchObject({ name: '同名 (2).txt', replayed: false })
-  expect(await readFile(join(root, '同名.txt'), 'utf8')).toBe('已有内容')
-  expect(await readFile(join(root, '同名 (2).txt'), 'utf8')).toBe('附件正文')
+  expect(await readFile(join(root, 'download', '同名.txt'), 'utf8')).toBe('已有内容')
+  expect(await readFile(join(root, 'download', '同名 (2).txt'), 'utf8')).toBe('附件正文')
 
   await mkdir(join(root, '资料'))
   const nested = await files.agentSaveAttachment({ ...params, operationId: 'f'.repeat(64), name: '子目录.txt', folderPath: '资料' }, AbortSignal.timeout(5_000))
@@ -153,7 +173,8 @@ it('工作区引用解析原文件的绝对路径，原件移动后拒绝同名�
     return excerpt ? { ...file, ...excerpt } : null
   })
   const context = await render()
-  expect(context).toContain(`【绝对路径】${JSON.stringify(path)}`)
+  expect(context).toContain(`【路径】${JSON.stringify(path)}`)
+  expect(context).toContain('【路径类型】"host_absolute"')
   expect(context).toContain(`【父目录】${JSON.stringify(root)}`)
   expect(context).toContain(`【相对路径】${JSON.stringify(relativePath)}`)
   await rename(path, join(root, '改名.md'))
@@ -251,15 +272,54 @@ it('Agent 下载只提交到绑定的个人下载目录，拒绝覆盖和失效�
   const params = { stage: basename(staged), filename: '合成下载.txt', target }
   const signal = new AbortController().signal
   await files.agentCommitDownload(dataRoot, params, signal)
-  const saved = join(personal, '下载', params.filename)
+  const saved = join(personal, 'download', params.filename)
   expect(await readFile(saved, 'utf8')).toBe('合成下载内容')
   await writeFile(body, '不应覆盖')
   await expect(files.agentCommitDownload(dataRoot, params, signal)).rejects.toMatchObject({ code: 'EEXIST' })
   expect(await readFile(saved, 'utf8')).toBe('合成下载内容')
+  const folderPath = '素材'
+  const customDirectory = join(personal, folderPath)
+  await mkdir(customDirectory)
+  const custom = { ...params, folderPath, target: await files.agentDownloadTarget(folderPath) }
+  await files.agentCommitDownload(dataRoot, custom, signal)
+  expect(await readFile(join(customDirectory, params.filename), 'utf8')).toBe('不应覆盖')
+  await rename(customDirectory, join(personal, '素材备份'))
+  await mkdir(customDirectory)
+  await expect(files.agentCommitDownload(dataRoot, custom, signal)).rejects.toMatchObject({ code: 'conflict' })
   await rename(personal, join(directory, '原个人目录'))
   await mkdir(personal)
   await expect(files.agentCommitDownload(dataRoot, params, signal)).rejects.toMatchObject({ code: 'conflict' })
   await expect(readFile(saved)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('并行读取缩略图复用生成结果，文件更新或移除后重新校验', async () => {
+  let generated = 0
+  files = desktopFiles(join(directory, 'Gugu-data'), {
+    ...native,
+    async thumbnail(content) {
+      generated += 1
+      return content
+    },
+  })
+  const path = join(await files.personalRoot(), '封面.png')
+  await writeFile(path, '原图')
+  const url = new URL('https://example.com/content')
+  url.search = new URLSearchParams({ path: '封面.png', thumbnail: '1' }).toString()
+  const read = () => files.content(url, null)
+
+  const responses = await Promise.all([read(), read(), read()])
+  expect(await Promise.all(responses.map(response => response.text()))).toEqual(['原图', '原图', '原图'])
+  expect(responses[0]?.headers.get('Cache-Control')).toBe('no-store')
+  expect(await (await read()).text()).toBe('原图')
+  expect(generated).toBe(1)
+
+  await writeFile(path, '更新后的图')
+  expect(await (await read()).text()).toBe('更新后的图')
+  expect(generated).toBe(2)
+
+  await rm(path)
+  await expect(read()).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(generated).toBe(2)
 })
 
 it('上传、查找和引用文件，删除交给系统回收站', async () => {
@@ -360,10 +420,81 @@ it('Agent 逻辑路径解析已绑定工作区和 owner 项目目录', async () 
   }))
   await call({ action: 'mkdir', directoryId: 'project:12', path: '资料' })
   await call({ action: 'upload', directoryId: 'project:12', path: '资料/嵌套.txt', data: bytes('嵌套文件') })
-  await expect(files.agentProjectFileOverview(12, new AbortController().signal)).resolves.toEqual({
+  await expect(files.agentProjectFileOverview(12, new AbortController().signal)).resolves.toMatchObject({
     total_file_count: 2, root_file_count: 1, total_folder_count: 1,
   })
   expect(await files.agentResolveFile('/project/小北项目 #99/项目说明.txt')).toBeNull()
+  const hit = (await files.globalFileSearch(['小北项目'])).groups.find(group => group.type === 'folder')?.items[0]
+  expect(hit).toMatchObject({ title: '小北项目', path_file: { directoryId: 'project:12', relativePath: '' } })
+  const id = hit && 'link' in hit ? hit.link?.split('/').at(-1) : undefined
+  expect(id).toBeTruthy()
+  await expect(files.resolveWorkspaceReference(id!)).resolves.toMatchObject({ type: 'folder', directoryId: 'project:12', relativePath: '' })
+
+})
+
+it('关联工作区会切换当前目录，切回或解除关联后保留共享文件', async () => {
+  const workspace = join(directory, '共享目录')
+  await mkdir(workspace)
+  await writeFile(join(workspace, '样本.txt'), '样本内容')
+  picked = workspace
+  const root = join(directory, 'Gugu-data')
+  const registry = join(directory, 'app', 'workspaces.json')
+  const readProject = async () => ({ name: '样本项目', startDate: '2026-11-20', createdAt: '2026-11-20', deletedAt: null })
+  files = desktopFiles(root, native, registry, undefined, readProject)
+  const { id: directoryId } = await call({ action: 'workspace-add' }) as { id: string }
+  await Promise.all([12, 13].map(projectId => call({ action: 'project-workspace-binding', projectId, directoryId, bound: true })))
+  files = desktopFiles(root, native, registry, undefined, readProject)
+  const summary = [{ id: directoryId, name: '共享目录', available: true, location: { kind: 'host_absolute', value: await realpath(workspace) } }]
+  const overview = (id: number) => files.agentProjectFileOverview(id, new AbortController().signal)
+  await expect(overview(12)).resolves.toMatchObject({ workspaces: summary })
+  await expect(call({ action: 'project-workspaces', projectId: 12 })).resolves.toMatchObject([{ id: directoryId, active: true }])
+  await expect(call({ action: 'project-workspaces', projectId: 13 })).resolves.toMatchObject([{ id: directoryId, active: true }])
+  await expect(overview(12)).resolves.toMatchObject({ total_file_count: 1, location: summary[0]!.location })
+  await expect(files.agentProjectFilePath(12)).resolves.toBe(summary[0]!.location.value)
+  await call({ action: 'project-workspace-binding', projectId: 12, directoryId: 'project:12', bound: true })
+  await expect(overview(12)).resolves.toMatchObject({ total_file_count: 0, workspaces: summary })
+  await expect(call({ action: 'project-workspace-binding', projectId: 12, directoryId, bound: true })).resolves.toMatchObject({ changed: true })
+  await expect(call({ action: 'project-workspace-binding', projectId: 12, directoryId, bound: true })).resolves.toMatchObject({ changed: false })
+  const hits = (await files.globalFileSearch(['样本项目'])).groups.find(group => group.type === 'folder')?.items
+  expect(hits).toHaveLength(1)
+  expect(hits?.[0]).toMatchObject({ title: '样本项目', path_file: { directoryId, relativePath: '', location: summary[0]!.location } })
+
+  await expect(files.isWorkspaceBoundToProject(99, directoryId)).resolves.toBe(false)
+
+  let allowed = false
+  const toolRegistry = createToolRegistry({
+    authorize: async () => allowed,
+    tools: [createProjectWorkspaceBindingTool(async (_identity, input) => {
+      const result = await call({ action: 'project-workspace-binding', projectId: input.project_id,
+        directoryId: input.workspace_id, bound: input.bound }) as { changed: boolean }
+      return result.changed
+    })],
+  })
+  const dispatch = (id: string, bound: boolean, workspaceId = directoryId) => toolRegistry.tools.dispatch({
+    id, name: 'set_project_workspace', input: { project_id: 12, workspace_id: workspaceId, bound },
+  }, {
+    identity: { ownerId: '48b87fdd-16a7-4934-8d1d-ed1ef33e9ac8', sessionId: '1', runId: '1' },
+    roundId: '1', signal: new AbortController().signal, resolution: null,
+    execute: async () => { throw new Error('不应调用执行后端') },
+  })
+  await expect(dispatch('denied', false)).resolves.toMatchObject({ kind: 'completed', successful: false })
+  await expect(files.isWorkspaceBoundToProject(12, directoryId)).resolves.toBe(true)
+  allowed = true
+  await expect(dispatch('unlink', false)).resolves.toMatchObject({ kind: 'completed', successful: true, mutated: true })
+  await expect(dispatch('repeat', false)).resolves.toMatchObject({ kind: 'completed', successful: true, mutated: false })
+  await expect(files.isWorkspaceBoundToProject(12, directoryId)).resolves.toBe(false)
+  await expect(overview(12)).resolves.not.toHaveProperty('workspaces')
+  await expect(files.agentProjectFilePath(12)).resolves.not.toBe(summary[0]!.location.value)
+  await expect(overview(13)).resolves.toMatchObject({ workspaces: summary })
+  const alternative = join(directory, '备用目录')
+  await mkdir(alternative)
+  picked = alternative
+  const { id: alternativeId } = await call({ action: 'workspace-add' }) as { id: string }
+  await expect(dispatch('bind-alternative', true, alternativeId)).resolves.toMatchObject({ successful: true, mutated: true })
+  await expect(dispatch('bind-shared', true)).resolves.toMatchObject({ successful: true, mutated: true })
+  await expect(dispatch('unlink-inactive', false, alternativeId)).resolves.toMatchObject({ successful: true, mutated: true })
+  await expect(files.agentProjectFilePath(12)).resolves.toBe(summary[0]!.location.value)
+  await expect(readFile(join(workspace, '样本.txt'), 'utf8')).resolves.toBe('样本内容')
 })
 
 it('系统默认应用只接收当前目录内已校验的文件', async () => {
@@ -425,7 +556,7 @@ it('绑定和重新定位保留工作区 ID，解除绑定后保留文件且拒�
 
   const moved = join(directory, '已移动')
   await rename(picked, moved)
-  await expect(call({ action: 'list', directoryId: id, path: '' })).rejects.toMatchObject({ code: 'not_found' })
+  await expect(call({ action: 'list', directoryId: id, path: '' })).rejects.toMatchObject({ code: 'workspace_unavailable' })
   picked = moved
   await expect(call({ action: 'workspace-relink', directoryId: id })).resolves.toEqual({ id })
   expect(await (await files.content(url, null)).text()).toBe('外部')
@@ -501,4 +632,122 @@ it('在系统中显示空项目时，定位到新建的项目根目录', async (
   }))
   await expect(call({ action: 'reveal', directoryId: 'project:12', path: '' })).resolves.toEqual({ ok: true })
   expect(shown).toEqual([join(root, 'project', '2026', '11', '小北 #12')])
+})
+
+it('拖入大文件和嵌套目录会移动原件，遇到同名项会保留两边', async () => {
+  const root = await files.personalRoot()
+  const size = 33 * 1024 * 1024
+  const large = join(directory, '合成大文件.bin')
+  const folder = join(directory, '合成目录')
+  await writeFile(large, '')
+  await truncate(large, size)
+  await mkdir(join(folder, '子目录'), { recursive: true })
+  await writeFile(join(folder, '子目录', '内容.txt'), '合成内容')
+  await call({ action: 'move-dropped', directoryId: 'personal', path: '', sources: [large, folder] })
+  expect((await lstat(join(root, basename(large)))).size).toBe(size)
+  expect(await readFile(join(root, basename(folder), '子目录', '内容.txt'), 'utf8')).toBe('合成内容')
+  await expect(lstat(large)).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(lstat(folder)).rejects.toMatchObject({ code: 'ENOENT' })
+
+  await writeFile(large, '同名原件')
+  await expect(call({ action: 'move-dropped', path: '', sources: [large] })).rejects.toMatchObject({ code: 'conflict' })
+  expect(await readFile(large, 'utf8')).toBe('同名原件')
+  expect((await lstat(join(root, basename(large)))).size).toBe(size)
+})
+
+it('原生拖入查询同名项后可保留两份或替换原文件', async () => {
+  const root = await files.personalRoot()
+  const source = join(directory, '同名.txt')
+  const target = join(root, '同名.txt')
+  const command = { action: 'move-dropped', path: '', sources: [source] }
+  await writeFile(source, '拖入内容')
+  await writeFile(target, '现有内容')
+  const preview = await call({ ...command, negotiate: true }) as {
+    conflict: { filename: string; canOverwrite: boolean; identity: string }
+  }
+  expect(preview.conflict).toMatchObject({ filename: '同名.txt', canOverwrite: true })
+  expect(await readFile(source, 'utf8')).toBe('拖入内容')
+
+  await call({ ...command, choice: 'keep_both' })
+  expect(await readFile(target, 'utf8')).toBe('现有内容')
+  expect(await readFile(join(root, '同名 (2).txt'), 'utf8')).toBe('拖入内容')
+
+  await writeFile(source, '替换内容')
+  await call({ ...command, choice: 'overwrite', identity: preview.conflict.identity })
+  expect(await readFile(target, 'utf8')).toBe('替换内容')
+  await expect(lstat(source)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('项目删除移动完整目录，恢复移回原位，提交失败时回滚', async () => {
+  const root = join(directory, 'Gugu-data')
+  let project = { name: '交付', startDate: '2026-11-20', createdAt: '2026-11-20', deletedAt: null as string | null }
+  files = desktopFiles(root, native, undefined, undefined, async () => project)
+  await call({ action: 'upload', directoryId: 'project:12', path: '图稿.md', data: bytes('原文件') })
+  const active = join(root, 'project', '2026', '11', '交付 #12', '图稿.md')
+  const parked = join(root, '.gugu-project-trash', '12', '图稿.md')
+
+  await expect(files.changeProjectDirectory(12, 'delete', async () => { throw new Error('提交失败') })).rejects.toThrow('提交失败')
+  expect(await readFile(active, 'utf8')).toBe('原文件')
+  const remove = () => files.changeProjectDirectory(12, 'delete', async () => {
+    project = { ...project, deletedAt: '2026-11-23' }
+  })
+  await remove()
+  await expect(readFile(active)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await readFile(parked, 'utf8')).toBe('原文件')
+  await files.changeProjectDirectory(12, 'restore', async () => {
+    project = { ...project, deletedAt: null }
+  })
+  expect(await readFile(active, 'utf8')).toBe('原文件')
+  await remove()
+  await files.changeProjectDirectory(12, 'purge', async () => {})
+  await expect(readFile(parked)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('保护个人下载目录本身，目录内的文件仍可移动和删除', async () => {
+  await call({ action: 'mkdir', directoryId: 'personal', path: 'download' })
+  await call({ action: 'upload', directoryId: 'personal', path: 'download/资料.txt', data: bytes('正文') })
+  await expect(call({ action: 'move', directoryId: 'personal', path: 'download', destination: '其他' }))
+    .rejects.toMatchObject({ code: 'forbidden' })
+  await expect(call({ action: 'trash', directoryId: 'personal', path: 'download' }))
+    .rejects.toMatchObject({ code: 'forbidden' })
+  await call({ action: 'move', directoryId: 'personal', path: 'download/资料.txt', destination: 'download/新名称.txt' })
+  await call({ action: 'trash', directoryId: 'personal', path: 'download/新名称.txt' })
+  expect((await lstat(join(await files.personalRoot(), 'download'))).isDirectory()).toBe(true)
+})
+
+it('旧工作区登记迁移出稳定数字编号，删除后新增不复用旧号', async () => {
+  const root = join(directory, 'Gugu-data')
+  const registry = join(directory, 'app', 'workspaces.json')
+  const older = join(directory, '旧目录')
+  const newer = join(directory, '新目录')
+  await mkdir(older)
+  await mkdir(newer)
+  const id = 'desktop:11111111-1111-4111-8111-111111111111'
+  await writeFile(registry, JSON.stringify([{ id, name: '旧目录', root: older }]))
+  files = desktopFiles(root, native, registry, join(directory, 'app'))
+  await expect(files.agentWorkspaceList()).resolves.toMatchObject([{ id, commandNumber: 1 }])
+  files = desktopFiles(root, native, registry, join(directory, 'app'))
+  await expect(files.agentWorkspaceList()).resolves.toMatchObject([{ id, commandNumber: 1 }])
+  await call({ action: 'workspace-remove', directoryId: id })
+  picked = newer
+  await call({ action: 'workspace-add' })
+  await expect(files.agentWorkspaceList()).resolves.toMatchObject([{ name: '新目录', commandNumber: 2 }])
+})
+
+it('文件库可撤回删除和重做，恢复时保留同名文件', async () => {
+  const path = '示例.txt'
+  const location = join(await files.personalRoot(), path)
+  await call({ action: 'upload', path, data: bytes('旧版本') })
+  await call({ action: 'trash', path, undoable: true })
+  await expect(lstat(location)).rejects.toMatchObject({ code: 'ENOENT' })
+  await writeFile(location, '新版本')
+  await expect(call({ action: 'undo-trash' })).rejects.toMatchObject({ code: 'conflict' })
+  expect(await readFile(location, 'utf8')).toBe('新版本')
+  await rename(location, join(await files.personalRoot(), '另存.txt'))
+  await expect(call({ action: 'undo-trash' })).resolves.toEqual({ changed: true })
+  expect(await readFile(location, 'utf8')).toBe('旧版本')
+  await expect(call({ action: 'redo-trash' })).resolves.toEqual({ changed: true })
+  await expect(lstat(location)).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(call({ action: 'undo-trash' })).resolves.toEqual({ changed: true })
+  expect(await readFile(location, 'utf8')).toBe('旧版本')
 })

@@ -30,7 +30,7 @@ import { filesApi } from '@/services/api'
 import { readSpreadsheetZoom, saveSpreadsheetZoom } from '@/utils/spreadsheetZoomPreference'
 import ViewerToolbar from '../ViewerToolbar.vue'
 
-const props = defineProps<{ blobUrl?: string; ext: string; fileId?: number; fileVersion?: number }>()
+const props = defineProps<{ blobUrl?: string; ext: string; filePath?: string; fileVersion?: number }>()
 const emit = defineEmits<{
   (e: 'content-size', width: number, height: number): void
   (e: 'csv-render-failed'): void
@@ -73,7 +73,7 @@ function resetSheetZoom() {
 }
 
 async function renderXlsx(buffer: ArrayBuffer | null) {
-  const cacheKey = `${props.ext.toLowerCase()}:${props.fileId != null ? `file:${props.fileId}:${props.fileVersion ?? 0}` : props.blobUrl}`
+  const cacheKey = `${props.ext.toLowerCase()}:${props.filePath != null ? `file:${props.filePath}:${props.fileVersion ?? 0}` : props.blobUrl}`
   const cached = xlsxRenderCache.get(cacheKey)
   if (cached) {
     sheetHtml = cached.sheetHtml
@@ -81,7 +81,7 @@ async function renderXlsx(buffer: ArrayBuffer | null) {
     if (!activeSheet.value || !cached.tabs.includes(activeSheet.value)) activeSheet.value = cached.tabs[0] ?? ''
     return
   }
-  const preview = props.fileId != null && !isCsv.value ? await filesApi.xlsxPreview(props.fileId) : null
+  const preview = props.filePath != null && !isCsv.value ? await filesApi.xlsxPreview(props.filePath) : null
   const previewData = preview?.sheets.map(sheet => sheet.data)
   if (previewData?.some(data => data?.cells)) {
     sheetHtml = {}
@@ -270,9 +270,9 @@ let xlsxImageScrollRoot: HTMLElement | null = null
 let xlsxImageScrollHandler: (() => void) | null = null
 
 async function loadXlsxImage(image: HTMLImageElement, imageId: number) {
-  const fileId = props.fileId
-  if (fileId == null) return
-  const cacheKey = `file:${fileId}:${props.fileVersion ?? 0}:image:${imageId}`
+  const filePath = props.filePath
+  if (filePath == null) return
+  const cacheKey = `file:${filePath}:${props.fileVersion ?? 0}:image:${imageId}`
   const cached = xlsxImageUrls.get(cacheKey)
   if (cached) {
     image.src = cached
@@ -285,7 +285,7 @@ async function loadXlsxImage(image: HTMLImageElement, imageId: number) {
     if (url) image.src = url
     return
   }
-  const load = filesApi.xlsxPreviewImage(fileId, imageId, props.fileVersion ?? 0).then(blob => {
+  const load = filesApi.xlsxPreviewImage(filePath, imageId, props.fileVersion ?? 0).then(blob => {
     const url = URL.createObjectURL(blob)
     xlsxImageUrls.set(cacheKey, url)
     while (xlsxImageUrls.size > XLSX_IMAGE_CACHE_MAX) {
@@ -313,7 +313,7 @@ function observeXlsxImages(container: HTMLElement) {
   }
   xlsxImageScrollRoot = null
   xlsxImageScrollHandler = null
-  if (props.fileId == null) return
+  if (props.filePath == null) return
   const root = container.parentElement
   if (typeof IntersectionObserver !== 'undefined') {
     xlsxImageObserver = new IntersectionObserver(entries => {
@@ -330,7 +330,7 @@ function observeXlsxImages(container: HTMLElement) {
   }
   for (const image of container.querySelectorAll<HTMLImageElement>('img[data-xlsx-image-id]')) {
     const imageId = Number(image.dataset.xlsxImageId)
-    const cacheKey = `file:${props.fileId}:${props.fileVersion ?? 0}:image:${imageId}`
+    const cacheKey = `file:${props.filePath}:${props.fileVersion ?? 0}:image:${imageId}`
     const cached = xlsxImageUrls.get(cacheKey)
     if (cached) image.src = cached
     else xlsxImageObserver?.observe(image)
@@ -363,7 +363,7 @@ async function render() {
   container.replaceChildren()
   const ext = props.ext.toLowerCase()
   try {
-    await renderXlsx(props.fileId != null && ext !== 'csv' ? null : await fetchBuffer())
+    await renderXlsx(props.filePath != null && ext !== 'csv' ? null : await fetchBuffer())
     if (ext === 'csv') sheetTabs.value = []
     renderSheet(activeSheet.value, container)
   } catch (cause) {
