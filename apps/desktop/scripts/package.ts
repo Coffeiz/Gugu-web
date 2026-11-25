@@ -1,3 +1,4 @@
+import { buildSync } from 'esbuild'
 import { execFileSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, existsSync, lstatSync, rmSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
@@ -34,6 +35,13 @@ try {
   ])
   cpSync(resolve(root, 'apps/ui/dist-desktop'), join(stage, 'ui'), {
     recursive: true,
+  })
+  buildSync({
+    entryPoints: [join(root, 'packages/cli/src/bin.ts')],
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    outfile: join(stage, 'dist', 'cli', 'gugu.cjs'),
   })
   cpSync(join(root, 'LICENSE'), join(stage, 'LICENSE'))
   // 打包前重新生成 macOS 图标，保证 icns 与主图标一致且结构规范。

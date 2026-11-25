@@ -562,7 +562,7 @@ async function setPriority(n: number) {
   cursor: pointer; transition: background 0.12s, opacity 0.12s;
 }
 .proj-stage:hover, .proj-stage.open { background: rgba(0,0,0,0.06); opacity: 1; }
-.ps-label { overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+.ps-label { overflow: hidden; text-overflow: ellipsis; max-width: 130px; line-height: 1.5; }
 .ps-count { font-size: 9px; line-height: 1.15; opacity: 0.8; font-variant-numeric: tabular-nums; }
 .ps-caret { opacity: 0.5; flex-shrink: 0; transition: transform 0.16s; }
 .proj-stage.open .ps-caret { transform: translateY(-0.35px) rotate(180deg); }
@@ -708,7 +708,7 @@ html[data-theme][data-family] .todo-pop-popup .tp-del:hover {
   color: var(--status-danger); background: var(--status-danger-bg);
 }
 html[data-theme][data-family] .todo-pop-popup .tp-add {
-  color: var(--content-secondary); background: transparent; border-color: var(--border-subtle);
+  color: var(--content-secondary); background: transparent; border-color: color-mix(in srgb, var(--content-primary) 35%, transparent);
 }
 html[data-theme][data-family] .todo-pop-popup .tp-add:hover {
   color: var(--action-primary); background: var(--action-soft); border-color: var(--action-outline);

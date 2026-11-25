@@ -37,7 +37,7 @@
 
   <!-- 悬浮球 -->
   <GuguChatFab
-    v-if="!standalone" ref="fabRef" :class="{ 'gugu-chat-native-fab-placeholder': hideFab }"
+    v-if="!standalone && !hideFab" ref="fabRef" :drag-fab="dragFab"
     :ripple-active="rippleActive" :fab-z="fabZ"
     :has-audio-file="!!audioStore.file" :spinning-back="spinningBack"
     :fab-jumping="fabJumping" :audio-playing="audioPlaying"
@@ -151,6 +151,8 @@ import { usePreviewStore } from '@/stores/preview'
 import { agentApi, filesApi, pathFilesApi, workspacesApi } from '@/services/api'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import GuguChatFab from './GuguChatFab.vue'
+import GuguChatDropOverlay from './GuguChatDropOverlay.vue'
+import { animateSourceReturn, useRuntimeReferenceResolver } from './chatRuntimeReference'
 import GuguChatMiniPlayer from './GuguChatMiniPlayer.vue'
 import GuguChatSidebar from './GuguChatSidebar.vue'
 import GuguChatBindDialog from './GuguChatBindDialog.vue'
@@ -286,6 +288,8 @@ onUnmounted(() => {
 // 播放器机制（暂停/进度/音量/语音条播放）全部收在 useChatAudio。
 const props = defineProps<{
   hideFab?: boolean
+  dragFab?: (action: 'down' | 'move' | 'up' | 'cancel', x: number, y: number) => void
+  forwardFabReferences?: (references: readonly ChatReference[]) => void
   standalone?: boolean
   greetingAccess?: ChatGreetingAccess
   readInteractionSession?: (promptId: number) => Promise<{ session_id: number }>
@@ -380,19 +384,34 @@ async function toggleOpen() {
 
 const chatHandoff = ref(false)
 
-async function openFromFab() {
+type ChatHandoff = { session: number | null; text: string; references: ChatReference[]; expanded: boolean }
+
+async function openFromFab(handoff?: ChatHandoff) {
   if (open.value) return
   chatHandoff.value = false
+  if (handoff) {
+    if (handoff.session !== sessionId.value) {
+      if (handoff.session === null) await newSession()
+      else await loadSession(handoff.session)
+    }
+    if (handoff.session === sessionId.value) {
+      inputText.value = handoff.text
+      inputReferences.value = handoff.references
+    }
+  }
   openInLastMode()
+  if (handoff) expanded.value = handoff.expanded
   if (expanded.value) void fetchSessions()
   props.trackChatEvent?.('chat_open')
   await alignNewWindowToBottom()
 }
 
-function closeForHandoff() {
-  if (!open.value && !chatClosing.value) return
+function closeForHandoff(save: (state: ChatHandoff) => void) {
+  if (!open.value) return
+  const state = { session: sessionId.value, text: inputText.value, references: [...inputReferences.value], expanded: expanded.value }
+  save(state)
   chatHandoff.value = true
-  if (open.value) closeChat()
+  closeChat()
   finishChatClose()
 }
 
@@ -420,14 +439,32 @@ function receiveDroppedReference(reply: { ok: true; result: ChatReference } | { 
   if (inputReferences.value.length < 50) composerRef.value?.insertReferenceChip(reply.result)
 }
 
-defineExpose({ openFromFab, closeChat, closeForHandoff, receiveDroppedReference })
+function receiveFabReferences(references: readonly ChatReference[]) {
+  if (!open.value) return
+  for (const reference of references) {
+    if (inputReferences.value.length >= 50) break
+    composerRef.value?.insertReferenceChip(reference)
+  }
+}
+
+defineExpose({ openFromFab, closeChat, closeForHandoff, receiveDroppedReference, receiveFabReferences, onReferenceClick })
 const emit = defineEmits<{ visibility: [open: boolean]; entered: []; left: []; presentation: [expanded: boolean] }>()
+
+const resolveRuntimeReferences = useRuntimeReferenceResolver()
 
 useRuntimeAction(async action => {
   if (action.type !== 'move' && action.type !== 'move-group') return
   if (action.toSurfaceId !== CHAT_REF_FAB_SURFACE_ID) return
-  if (!expanded.value) await enterExpanded()
   const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
+  const forward = props.forwardFabReferences
+  if (forward) {
+    const references = await resolveRuntimeReferences(objectIds)
+    if (!references.length) return
+    forward(references.slice(0, 50))
+    for (const objectId of objectIds) animateSourceReturn(objectId)
+    return
+  }
+  if (!expanded.value) await enterExpanded()
   await composerRef.value?.handleRuntimeReferenceDrop?.(objectIds)
 })
 
@@ -581,7 +618,7 @@ const conversation = useChatConversation({
   onQueuePersistenceError: () => showAppError(t('chatUi.pendingQueuePersistFailed')),
   onQueueDispatchError: () => showAppError(t('chatUi.networkError')),
   onOpenItem: ({ kind, id }) => {
-    void openMindRef(kind, id).catch(() => _chatTip(t('mindUi.referenceMissing')))
+    void onReferenceClick({ type: kind, id })
   },
 })
 const {
@@ -1047,6 +1084,5 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
 </script>
 
 <style scoped>
-.gugu-chat-native-fab-placeholder { opacity: 0; pointer-events: none; }
-.gugu-chat-native-fab-placeholder:focus-within { opacity: 1; }
+
 </style>

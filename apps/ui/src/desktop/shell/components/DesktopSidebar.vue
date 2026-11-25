@@ -40,8 +40,8 @@ const emit = defineEmits<{
       <div class="nav-group">
         <span class="nav-group-label">{{ t('navigation.collaboration') }}</span>
         <button type="button" class="nav-item" :class="{ active: activeSection === 'mail' }" :aria-label="t('navigation.mail')" @click="emit('navigate', 'mail')"><Icon name="admin.mail" size="sm" /><span class="nav-label">{{ t('navigation.mail') }}</span></button>
-        <button type="button" class="nav-item nav-item-disabled" :class="{ active: activeSection === 'contacts' }" :aria-label="t('navigation.customers')" @click="emit('navigate', 'contacts')"><Icon name="communication.customer" size="sm" /><span class="nav-label">{{ t('navigation.customers') }}</span></button>
-        <button type="button" class="nav-item nav-item-disabled" :class="{ active: activeSection === 'team' }" :aria-label="t('navigation.team')" @click="emit('navigate', 'team')"><Icon name="communication.team" size="sm" /><span class="nav-label">{{ t('navigation.team') }}</span></button>
+        <div class="nav-item soon-item" :aria-label="`${t('navigation.customers')} ${t('common.states.comingSoon')}`"><Icon name="communication.customer" size="sm" /><span class="nav-label">{{ t('navigation.customers') }}</span><span class="soon-badge">{{ t('common.states.comingSoon') }}</span></div>
+        <div class="nav-item soon-item" :aria-label="`${t('navigation.team')} ${t('common.states.comingSoon')}`"><Icon name="communication.team" size="sm" /><span class="nav-label">{{ t('navigation.team') }}</span><span class="soon-badge">{{ t('common.states.comingSoon') }}</span></div>
       </div>
       <div class="nav-group">
         <span class="nav-group-label">{{ t('navigation.notifications') }}</span>
@@ -91,12 +91,14 @@ const emit = defineEmits<{
 .nav-item:hover:not(.active) { color: var(--content-primary, var(--text-primary)); background: var(--sidebar-item-hover); }
 .nav-item.active { color: var(--sidebar-item-active-fg); background: var(--sidebar-item-active); border-color: var(--sidebar-item-active-border); box-shadow: var(--sidebar-item-selected-shadow); font-weight: 650; }
 .nav-item-disabled { color: var(--text-secondary); }
+.nav-item.soon-item { color: var(--content-disabled); cursor: default; pointer-events: none; }
+.soon-badge { margin-left: auto; flex-shrink: 0; padding: 2px 7px; border: 1px solid var(--border-hairline); border-radius: var(--radius-pill); background: var(--surface-soft); color: var(--content-tertiary); font-size: 9px; font-weight: 600; letter-spacing: .04em; white-space: nowrap; }
 .sidebar-footer { position: relative; flex: none; display: flex; align-items: center; gap: 8px; padding: var(--sidebar-footer-inset); border: 1px solid var(--sidebar-user-border); border-radius: var(--radius-sm); background: var(--surface-card-solid); color: var(--content-primary); box-shadow: var(--sidebar-item-active-shadow); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .sidebar-footer:hover { background: color-mix(in srgb, var(--surface-card-solid) 95%, rgb(from var(--content-primary) r g b / 1)); }
 .settings-avatar { display: grid; place-items: center; width: var(--sidebar-avatar-size); height: var(--sidebar-avatar-size); flex: none; border-radius: 50%; background: var(--avatar-fallback-bg); color: var(--content-on-accent); }
 .settings-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .desktop-sidebar.is-compact { --sidebar-footer-overlap: calc(var(--sidebar-avatar-size) / 2); padding-right: 7px; padding-left: 7px; }
-.desktop-sidebar.is-compact .nav-label,.desktop-sidebar.is-compact .nav-group-label { display: none; }
+.desktop-sidebar.is-compact .nav-label,.desktop-sidebar.is-compact .nav-group-label,.desktop-sidebar.is-compact .soon-badge { display: none; }
 .desktop-sidebar.is-compact .nav-item { justify-content: center; padding-right: 0; padding-left: 0; }
 .desktop-sidebar.is-compact .nav-group { padding-bottom: 7px; }
 .desktop-sidebar.is-compact .settings-label { display: none; }
@@ -107,7 +109,7 @@ const emit = defineEmits<{
 .sidebar-resize:focus-visible { outline: none; }
 @media (max-width: 760px) {
   .desktop-sidebar { --sidebar-footer-overlap: calc(var(--sidebar-avatar-size) / 2); padding: calc(var(--desktop-topbar-height) + 2px) 7px var(--sidebar-bottom-inset); }
-  .sidebar-brand,.nav-label,.nav-group-label { display: none; }
+  .sidebar-brand,.nav-label,.nav-group-label,.soon-badge { display: none; }
   .nav-item { justify-content: center; padding: 0; }
   .settings-label { display: none; }
   .sidebar-footer { align-self: center; justify-content: center; inline-size: var(--sidebar-avatar-size); block-size: var(--sidebar-avatar-size); padding: 0; border: 0; border-radius: 50%; background: transparent; box-shadow: none; }

@@ -85,7 +85,7 @@ const bridge: DesktopBridge = Object.freeze({
   terminal: (command: Parameters<DesktopBridge['terminal']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.terminal, command),
   personalSmtp: (...args: Parameters<DesktopBridge['personalSmtp']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.personalSmtp, ...args),
   mail: (command: Parameters<DesktopBridge['mail']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.mail, command),
-  createDroppedFileReference: (file: File) => ipcRenderer.invoke(DESKTOP_CHANNELS.createDroppedFileReference, webUtils.getPathForFile(file)),
+  createDroppedFileReference: (file: File, allowFolder?: boolean) => ipcRenderer.invoke(DESKTOP_CHANNELS.createDroppedFileReference, webUtils.getPathForFile(file), allowFolder),
   openDroppedFileReference: (id: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.openDroppedFileReference, id),
   startFileDrag: (directoryId: Parameters<NonNullable<DesktopBridge['startFileDrag']>>[0], path: string, preview?: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.startFileDrag, directoryId, path, preview),
   moveDroppedFiles: async (...[directoryId, path, decide, progress]: Parameters<NonNullable<DesktopBridge['moveDroppedFiles']>>) => {
@@ -250,8 +250,19 @@ contextBridge.exposeInMainWorld('guguChatFabHost', {
   panelEntered: () => ipcRenderer.send(chatFabChannels.panelEntered),
   panelClosing: () => ipcRenderer.send(chatFabChannels.panelClosing),
   panelClose: () => ipcRenderer.send(chatFabChannels.panelClose),
-  setReferenceDrag: (active: boolean) => ipcRenderer.send(chatFabChannels.referenceDrag, active),
+  dragDockedBall: (action: string, x: number, y: number) => ipcRenderer.send(chatFabChannels.gesture, action, x, y),
+  onBallDetached(listener: (detached: boolean) => void) {
+    const receive = (_event: unknown, detached: unknown) => listener(detached === true)
+    ipcRenderer.on(chatFabChannels.ballDetached, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.ballDetached, receive)
+  },
   setChatVisible: (visible: boolean) => ipcRenderer.send(chatFabChannels.chatVisible, visible),
+  dropReferences: (references: unknown) => ipcRenderer.send(chatFabChannels.dropReferences, references),
+  onDroppedReferences(listener: (references: unknown) => void) {
+    const receive = (_event: unknown, references: unknown) => listener(references)
+    ipcRenderer.on(chatFabChannels.droppedReferences, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.droppedReferences, receive)
+  },
   onDroppedReference(listener: (reply: unknown) => void) {
     const receive = (_event: unknown, reply: unknown) => listener(reply)
     ipcRenderer.on(chatFabChannels.droppedReference, receive)
@@ -261,6 +272,12 @@ contextBridge.exposeInMainWorld('guguChatFabHost', {
     const receive = (_event: Electron.IpcRendererEvent, animated?: boolean) => listener(animated === true)
     ipcRenderer.on(chatFabChannels.closeChat, receive)
     return () => ipcRenderer.removeListener(chatFabChannels.closeChat, receive)
+  },
+  openMainReference: (type: unknown, id: unknown) => ipcRenderer.invoke(chatFabChannels.openMainReference, type, id),
+  onOpenMainReference(listener: (type: unknown, id: unknown) => void) {
+    const receive = (_event: unknown, type: unknown, id: unknown) => listener(type, id)
+    ipcRenderer.on(chatFabChannels.openMainReference, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.openMainReference, receive)
   },
   onOpenChat(listener: () => void) {
     const receive = () => listener()

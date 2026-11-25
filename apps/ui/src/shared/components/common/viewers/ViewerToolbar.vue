@@ -160,7 +160,7 @@ function submitPageEdit() {
   backdrop-filter: var(--iv-toolbar-filter);
   -webkit-backdrop-filter: var(--iv-toolbar-filter);
   border: 1px solid var(--iv-toolbar-border);
-  border-radius: var(--card-radius);
+  border-radius: var(--radius-pill);
   padding: 3px 5px;
   pointer-events: auto;
   box-shadow: var(--iv-toolbar-shadow);

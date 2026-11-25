@@ -1,3 +1,6 @@
+import { randomBytes as cliRandomBytes } from 'node:crypto'
+import { publishCliConnection, registerMacCli } from './cli-install.js'
+import { startDesktopCli, type DesktopCliCommand } from './desktop-cli.js'
 import { matchFolderSearchHits } from '@gugu/search'
 import { desktopTrashTarget } from '../../../../packages/core/src/runtime/desktop-shell-trash.js'
 import { applicationMenuChannels, type ApplicationMenuCommand } from '@gugu/desktop-contracts'
@@ -414,7 +417,7 @@ else {
         if (method === 'agent.files.resolveWorkspaceReference' && Object.keys(params).length === 1 && typeof params.id === 'string')
           return files.resolveWorkspaceReference(params.id)
         if (method === 'agent.files.resolveDroppedReference' && Object.keys(params).length === 1 && typeof params.id === 'string')
-          return droppedReferences.resolve(params.id)
+          return droppedReferences.resolve(params.id, true)
         if (method === 'agent.files.resolve' && Object.keys(params).length === 1 && typeof params.path === 'string')
           return files.agentResolveFile(params.path)
         if (method === 'agent.files.libraryFileReference' && Object.keys(params).length === 1
@@ -615,7 +618,7 @@ else {
         uiUrl: trustedUiUrl,
         preload: join(app.getAppPath(), 'dist/preload/chat-fab.cjs'),
         panelPreload: preload,
-        createDroppedReference: droppedReferences.create,
+        createDroppedReference: path => droppedReferences.create(path, undefined, true),
         mainWindow: () => mainWindow,
         enabled: () => !smoke && !closing && !quitting && !process.env.WAYLAND_DISPLAY,
       })
@@ -685,11 +688,11 @@ else {
       }
       let pendingArchive: { id: string; path: string; digest: string } | undefined
       let handlingArchive = false
-      const handlers = {
+      const handlers: import('./ipc/types.js').IpcHandlers = {
         ...desktopLogHandlers(dataDirectory),
-        [DESKTOP_CHANNELS.createDroppedFileReference]: (path: unknown) => {
+        [DESKTOP_CHANNELS.createDroppedFileReference]: (path: unknown, allowFolder: unknown) => {
           if (typeof path !== 'string') throw new DesktopError('invalid_request', '文件路径无效')
-          return droppedReferences.create(path)
+          return droppedReferences.create(path, undefined, allowFolder === true)
         },
         [DESKTOP_CHANNELS.openDroppedFileReference]: droppedReferences.open,
         ...workspaceHandlers(host, () => sandboxDiagnostics(host, report), files.globalFileSearch, async id => {
@@ -802,7 +805,7 @@ else {
       }
       const projectWindows = registerProjectWindows({
         mainWindow: () => mainWindow, uiUrl: trustedUiUrl, preload, quitting: () => quitting,
-        readProject, dataDirectory, isWorkspaceBoundToProject: files.isWorkspaceBoundToProject,
+        trustsChatPanel: chatFab.trustsPanel, readProject, dataDirectory, isWorkspaceBoundToProject: files.isWorkspaceBoundToProject,
       })
       const previewWindowManager = registerPreviewWindows({
         mainWindow: () => mainWindow, uiUrl: trustedUiUrl, preload, dataDirectory,
@@ -853,6 +856,58 @@ else {
             projectWindows.publishUpdate(event.sender, result as Parameters<typeof projectWindows.publishUpdate>[1])
         },
       })
+      if (process.env.GUGU_DESKTOP_CLI_PORT || (app.isPackaged && !smoke)) {
+        const automatic = !process.env.GUGU_DESKTOP_CLI_PORT
+        const token = automatic ? cliRandomBytes(32).toString('base64url') : process.env.GUGU_DESKTOP_CLI_TOKEN ?? ''
+
+        try {
+          const cli = await startDesktopCli(Number(process.env.GUGU_DESKTOP_CLI_PORT ?? 0), token, new Map<string, DesktopCliCommand>([
+            ['projects:GET', (_id, _input, collection, offset) => host.request('projects.board.list', { collection, offset })],
+            ['projects:GET/id', id => host.request('projects.board.get', { id })],
+            ['projects:POST', (_id, fields) => host.request('projects.board.create', { fields })],
+            ['projects:PATCH/id', async (id, { version, ...fields }) => {
+              if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1)
+                throw new DesktopError('invalid_request', '需要当前项目版本')
+              return host.request('projects.board.update', { id, version, fields })
+            }],
+            ['projects:DELETE/id', id => handlers[DESKTOP_CHANNELS.deleteBoardProject]!(id)],
+            ['projects:POST/id/restore', id => handlers[DESKTOP_CHANNELS.restoreBoardProject]!(id)],
+            ['calendar:GET', () => handlers[DESKTOP_CHANNELS.calendar]!()],
+            ['calendar:POST', (_id, { title, date, ...details }) =>
+              handlers[DESKTOP_CHANNELS.createCalendarEvent]!(title, date, details)],
+            ['calendar:PATCH/id', (id, body) => handlers[DESKTOP_CHANNELS.updateCalendarEvent]!(id, body)],
+            ['calendar:DELETE/id', (id, body) => handlers[DESKTOP_CHANNELS.deleteCalendarEvent]!(id, body.version)],
+            ['note:GET', () => handlers[DESKTOP_CHANNELS.notes]!()],
+            ['note:POST', (_id, body) => host.request('mind.notes.create', body)],
+            ['note:PATCH/id', (id, body) => handlers[DESKTOP_CHANNELS.updateNote]!(id, body)],
+            ['note:DELETE/id', id => handlers[DESKTOP_CHANNELS.deleteNote]!(id)],
+            ['canvas:GET', () => handlers[DESKTOP_CHANNELS.canvases]!()],
+            ['canvas:POST', (_id, body) => handlers[DESKTOP_CHANNELS.createCanvas]!(body.title)],
+            ['canvas:PATCH/id', (id, body) => handlers[DESKTOP_CHANNELS.updateCanvas]!(id, body)],
+            ['canvas:DELETE/id', id => handlers[DESKTOP_CHANNELS.deleteCanvas]!(id)],
+            ['canvas:GET/id/items', id => handlers[DESKTOP_CHANNELS.canvasItems]!(id)],
+            ['canvas:GET/id/relations', id => handlers[DESKTOP_CHANNELS.canvasRelations]!(id)],
+            ['schedule:GET', () => handlers[DESKTOP_CHANNELS.scheduleTask]!({ action: 'list' })],
+            ['schedule:GET/id', id => host.request('schedules.get', { id })],
+            ['schedule:POST', (_id, fields) => handlers[DESKTOP_CHANNELS.scheduleTask]!({ action: 'create', fields })],
+            ['schedule:PATCH/id', (id, fields) => handlers[DESKTOP_CHANNELS.scheduleTask]!({ action: 'update', id, fields })],
+            ['schedule:DELETE/id', id => handlers[DESKTOP_CHANNELS.scheduleTask]!({ action: 'delete', id })],
+          ]))
+          let connectionFile: string | undefined
+          app.once('will-quit', () => {
+            cli.close()
+            cli.closeAllConnections()
+            if (connectionFile) void rm(connectionFile, { force: true }).catch(() => undefined)
+          })
+          if (automatic) {
+            connectionFile = await publishCliConnection(cli, dataDirectory, token)
+            if (process.platform === 'darwin')
+              await registerMacCli(app.getPath('home'), process.resourcesPath, connectionFile)
+          }
+        } catch {
+          report('host.start_failed', { error: new Error('桌面 CLI 入口启动失败') })
+        }
+      }
       autoUpdater.autoDownload = false
       autoUpdater.autoInstallOnAppQuit = false
       autoUpdater.allowDowngrade = false

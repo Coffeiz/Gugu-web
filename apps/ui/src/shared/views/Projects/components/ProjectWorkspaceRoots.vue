@@ -2,6 +2,7 @@
 import { computed, onScopeDispose, ref, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SelectPopup from '@/components/common/controls/SelectPopup.vue'
+import WorkspaceCreateDialog from '@/views/Files/components/WorkspaceCreateDialog.vue'
 import { useProjectAccess, type ProjectWorkspaceBinding } from '@/api/projects'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 
@@ -15,11 +16,14 @@ const access = useProjectAccess()
 const { t } = useI18n()
 const rows = ref<ProjectWorkspaceBinding[]>([])
 const busy = ref(false)
+const showCreate = ref(false)
+const addWorkspaceOption = 'add-workspace'
 const projectRoot = computed(() => `project:${props.projectId}` as const)
 const selectedLabel = computed(() => rows.value.find(row => row.id === props.directoryId)?.name)
 const options = computed(() => [
   { value: projectRoot.value, label: t('filesUi.projectFiles') },
   ...rows.value.filter(row => row.available).map(row => ({ value: String(row.id), label: row.name })),
+  ...(access.pickWorkspace ? [{ value: addWorkspaceOption, label: t('filesUi.addDesktopWorkspace') }] : []),
 ])
 let active = true
 onScopeDispose(() => { active = false })
@@ -32,6 +36,10 @@ async function refresh() {
 
 async function select(value: string) {
   if (busy.value) return
+  if (value === addWorkspaceOption) {
+    showCreate.value = true
+    return
+  }
   if (!access.selectWorkspace) return
   busy.value = true
   try {
@@ -48,6 +56,24 @@ async function select(value: string) {
   }
 }
 
+async function addWorkspace() {
+  if (busy.value || !access.pickWorkspace) return
+  busy.value = true
+  let id: `desktop:${string}` | null
+  try {
+    id = await access.pickWorkspace()
+    if (!id || !active) return
+    showCreate.value = false
+    await refresh()
+  } catch (error) {
+    if (active) showAppError(errorMessage(error))
+    return
+  } finally {
+    busy.value = false
+  }
+  if (active) await select(id)
+}
+
 void refresh().then(() => {
   if (!active || busy.value) return
   const selected = rows.value.find(row => row.active)
@@ -59,6 +85,8 @@ void refresh().then(() => {
   <SelectPopup v-if="access.listWorkspaceBindings" class="workspace-selector"
     :model-value="String(directoryId)" :options="options" :disabled="busy"
     :selected-label="selectedLabel" :aria-label="t('projectWorkspaceUi.select')" @update:model-value="select" />
+  <WorkspaceCreateDialog v-if="access.pickWorkspace" local :show="showCreate" :busy="busy"
+    @close="showCreate = false" @submit="addWorkspace" />
 </template>
 
 <style scoped>

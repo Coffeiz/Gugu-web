@@ -3,6 +3,7 @@ productName: 咕咕桌面验证
 artifactName: gugu-desktop-${version}-${os}-${arch}.${ext}
 asar: true
 asarUnpack:
+  - dist/cli/gugu.cjs
   - dist/native/chat-fab-glass.node
 npmRebuild: false
 directories:
@@ -22,10 +23,14 @@ extraResources:
     to: core-sidecar
 publish: null
 win:
+  extraFiles:
+    - from: assets/cli-win
+      to: cli
   target: nsis
   icon: assets/icon.ico
   signExecutable: false
 nsis:
+  include: assets/cli-install.nsh
   oneClick: false
   perMachine: false
   allowElevation: false

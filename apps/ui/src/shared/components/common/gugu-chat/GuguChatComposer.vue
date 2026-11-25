@@ -43,13 +43,18 @@
       <EditorContent v-if="chatEditor" :editor="chatEditor" />
     </div>
     <div v-else class="rec-bar">
-      <span class="rec-dot"></span>
-      <span class="rec-time">{{ recordSecs }}″</span>
-      <span class="rec-hint">{{ t('chat.recording') }}</span>
-      <button class="rec-cancel" @click="onCancelRecord">{{ t('chat.cancel') }}</button>
+      <span class="rec-status" role="status">
+        <span class="rec-dot" aria-hidden="true"></span>
+        {{ t('chat.recording') }}
+      </span>
+      <span class="rec-time">{{ String(Math.floor(recordSecs / 60)).padStart(2, '0') }}:{{ String(recordSecs % 60).padStart(2, '0') }}</span>
+      <button type="button" class="rec-cancel" @click="onCancelRecord">{{ t('chat.cancel') }}</button>
+      <button type="button" class="send-btn" :title="t('chat.sendRecording')" :aria-label="t('chat.sendRecording')" @click="onStopRecord">
+        <Icon name="status.success" :size="14" />
+      </button>
     </div>
-    <div class="chat-composer-tools">
-      <div v-if="!recording && !textOnly" class="chat-composer-tools__group">
+    <div v-if="!recording" class="chat-composer-tools">
+      <div v-if="!textOnly" class="chat-composer-tools__group">
         <SelectPopup :options="addOptions" preferred-placement="top" :aria-label="t('chat.addAttachment')" @update:model-value="addToComposer" @click="loadComposerSkills">
           <template #trigger><Icon name="action.add" :size="16" /></template>
           <template #options="{ select }">
@@ -82,33 +87,32 @@
         </SelectPopup>
       </div>
       <div class="chat-composer-tools__group chat-composer-tools__end">
-        <SelectPopup v-if="!recording && (supportsServerDefault ? !textOnly : byokModels.length > 0)" v-model="modelChoice" :options="modelOptions" preferred-placement="top" :aria-label="t('chatComposer.model')">
+        <SelectPopup v-if="supportsServerDefault ? !textOnly : byokModels.length > 0" v-model="modelChoice" :options="modelOptions" preferred-placement="top" :aria-label="t('chatComposer.model')">
           <template #trigger="{ label }">
-            <Icon name="admin.brain" :size="15" />
             <span class="chat-composer-label">{{ label }}</span>
           </template>
           <template #options="{ select }">
             <button v-if="supportsServerDefault" type="button" class="popup-menu-item chat-composer-option" :class="{ active: !modelChoice }" @click="select('')">
-              <Icon name="admin.brain" :size="15" /><span>{{ t('chatComposer.defaultModel') }}</span>
+              <span>{{ t('chatComposer.defaultModel') }}</span>
             </button>
             <div v-if="supportsServerDefault && byokModels.length" class="chat-model-section">{{ t('chatComposer.byok') }}</div>
             <button v-for="model in byokModels" :key="model.value" type="button" class="popup-menu-item chat-composer-option"
               :class="{ active: modelChoice === model.value }" @click="select(model.value)">
-              <Icon name="admin.brain" :size="15" /><span>{{ model.label }}</span>
+              <span>{{ model.label }}</span>
             </button>
           </template>
         </SelectPopup>
-        <button v-if="voiceInputAvailable && !recording" class="att-btn" @click="onStartRecord" :title="t('chat.voiceInput')" :aria-label="t('chat.voiceInput')">
+        <button v-if="voiceInputAvailable" class="att-btn" @click="onStartRecord" :title="t('chat.voiceInput')" :aria-label="t('chat.voiceInput')">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
         </button>
-        <button v-if="streaming && !recording" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
+        <button v-if="streaming" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
           :title="t('chatUi.interruptRun')" :aria-label="t('chatUi.interruptRun')"
           @click="onStopStreaming()">
           <Icon name="action.stop-fill" :size="expanded ? 14 : 13" />
         </button>
-        <button v-if="!streaming || hasDraft || recording" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
-          @click="recording ? onStopRecord() : onSend()">
-          <Icon :name="recording ? 'status.success' : 'action.next'" :size="expanded ? 14 : 13" />
+        <button v-if="!streaming || hasDraft" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
+          @click="onSend()">
+          <Icon name="action.next" :size="expanded ? 14 : 13" />
         </button>
       </div>
     </div>
@@ -130,12 +134,10 @@ import { mindExtensions, type MindDocNode } from '@/composables/mind/useMindEdit
 import { LAST_SESSION_KEY } from './chatConstants'
 import { chatTextFromDoc } from './chatDocText'
 import { parseChatClipboardText, pastePlainTextClipboard } from './chatPaste'
-import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { useMindStore } from '@/stores/mind'
 import { useProjectStore } from '@/stores/projects'
-import { parseChatRuntimeReference, parseChatRuntimePathFile, parseMindCanvasChatReference } from './chatRuntimeReference'
+import { animateSourceReturn, useRuntimeReferenceResolver } from './chatRuntimeReference'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
@@ -143,11 +145,8 @@ import { parseChatRuntimeReference, parseChatRuntimePathFile, parseMindCanvasCha
  * 编辑器根节点是本组件内部的 DOM——父组件仍通过 expose 调用 focus/测高/重置高度，
  * 不重新拿一份引用，也不让 textarea 与视觉高亮层各自维护一套光标坐标。
  */
-import { showAppNotice } from '@/composables/core/useAppToast'
-import { usePathFileAccess } from '@/services/pathFileAccess'
 import { CHAT_REF_SURFACE_ID, findClickedChatReference, type ChatFile, type ChatReference } from './chatTypes'
 
-const pathFilesApi = usePathFileAccess()
 const { t } = useI18n()
 
 const props = defineProps<{
@@ -191,8 +190,8 @@ const inputRowEl = ref<HTMLElement | null>(null)
 // ── 拖文件卡进聊天 = @ 引用（Runtime 投放目标挂在 GuguChatWindow 的窗口根上）──
 // 这里只消费 Runtime 的 move action：解析 objectIds 还原文件/文件夹引用，插入
 // mindRef chip——references 数组是文档派生物，自动带上且天然去重。
+const resolveRuntimeReferences = useRuntimeReferenceResolver()
 const filesCache = useFilesCacheStore()
-const mindStore = useMindStore()
 const projectStore = useProjectStore()
 
 function insertReferenceChip(reference: ChatReference) {
@@ -219,30 +218,7 @@ function insertReferenceChip(reference: ChatReference) {
 }
 
 async function handleRuntimeReferenceDrop(objectIds: readonly string[]) {
-  const resolved = await Promise.all(objectIds.map(async objectId => {
-    const file = parseChatRuntimePathFile(objectId)
-    const folder = file ? null : parseChatRuntimePathFile(objectId, 'folder')
-    const path = file ?? folder
-    if (path) {
-      try { return await pathFilesApi.reference(path, folder ? 'folder' : 'file') }
-      catch { showAppNotice(t('mindUi.referenceMissing')); return null }
-    }
-
-    const element = runtime.objects.get(objectId)?.element
-    const nodeId = Number(element?.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId)
-    const node = Number.isInteger(nodeId)
-      ? mindStore.canvasItems.find(item => item.nodeId === nodeId)?.node
-      : undefined
-    const reference = parseMindCanvasChatReference(node) ?? parseChatRuntimeReference(objectId)
-    if (reference?.type === 'folder' || reference?.type === 'file') return null
-    if (!reference || reference.label.trim()) return reference
-    const nameSelector = '.fc-name, .lr-filename'
-    const nameElement = element?.querySelector<HTMLElement>(nameSelector)
-    const editingName = nameElement?.querySelector<HTMLInputElement>('input')?.value.trim()
-    const sourceLabel = editingName || nameElement?.textContent?.trim()
-    return sourceLabel ? { ...reference, label: sourceLabel } : reference
-  }))
-  const references = resolved.filter((item): item is ChatReference => item !== null)
+  const references = await resolveRuntimeReferences(objectIds)
   if (!references.length) return
   if (references.some(reference => reference.type === 'project') && !projectStore.projectsLoaded) {
     await projectStore.fetchProjects()
@@ -259,32 +235,6 @@ useRuntimeAction(async action => {
   await handleRuntimeReferenceDrop(action.type === 'move-group' ? action.objectIds : [action.objectId])
 })
 
-/** 落地收尾后源卡片会直接显形，这里等 Runtime 交还视觉所有权，再补一个短促的
- *  缩放淡入（起点与 Runtime dismiss 的 0.72 缩放一致），读感是卡片自己飞回来了。 */
-function animateSourceReturn(objectId: string) {
-  const element = runtime.objects.get(objectId)?.element
-  if (!element) return
-  const tryAnimate = () => {
-    if (runtime.isControlled(objectId)) { requestAnimationFrame(tryAnimate); return }
-    // 跨 Surface 投放可能在 Runtime 的落地/取消收尾中只恢复源节点样式，
-    // 没有把源卡 affordance 子树恢复到 idle。必须等控制权释放后再归一源卡视觉状态，
-    // 清除操作按钮上残留的 runtime-affordances-hidden，再播放归位动画。
-    runtime.applyVisualState(objectId, element, {
-      phase: 'idle',
-      hovered: element.matches(':hover'),
-      selected: element.classList.contains('is-selected'),
-      grabbed: false,
-    })
-    element.animate(
-      [
-        { opacity: 0, transform: 'scale(0.72)' },
-        { opacity: 1, transform: 'none' },
-      ],
-      { duration: 240, easing: 'ease-out' },
-    )
-  }
-  requestAnimationFrame(tryAnimate)
-}
 const { items: referenceItems, loading: referenceLoading, active: referenceActive, search: searchReferences, reset: resetReferences, move: moveReferences } = useReferenceSuggest(180, true, item => (item.type !== 'folder' && item.type !== 'file') || /^(path|drop)-/u.test(String(item.id)))
 const referencePicker = ref({ open: false, query: '', from: 0, to: 0 })
 let lastReferenceQuery: string | null = null
@@ -489,7 +439,9 @@ const chatEditor = useEditor({
 
 watch(() => [props.modelValue, props.references] as const, ([text, references]) => {
   const editor = chatEditor.value
-  if (!editor || chatTextFromDoc(editor.getJSON() as MindDocNode) === text) return
+  if (!editor) return
+  const doc = editor.getJSON() as MindDocNode
+  if (chatTextFromDoc(doc) === text && JSON.stringify(referencesFromDoc(doc)) === JSON.stringify(references)) return
   editor.commands.setContent(chatDoc(text, references) as any, { emitUpdate: false })
   void nextTick(() => fitTextarea())
 })
@@ -761,13 +713,54 @@ defineExpose({
 .chat-command-copy strong { font-size: 12px; font-weight: 650; }
 .chat-command-copy small { overflow: hidden; color: var(--content-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 /* 录音条：录音时替换输入框 */
-.rec-bar { flex: 1; display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-primary); height: 28px; min-width: 0; }   /* 与按钮(28)等高 → flex-end 底对齐时内容也居中对齐，不再偏低 */
-.rec-dot { width: 8px; height: 8px; border-radius: 50%; background: #e15c5c; flex-shrink: 0; animation: rec-pulse 1s ease-in-out infinite; }
-@keyframes rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-.rec-time { font-variant-numeric: tabular-nums; font-weight: 600; color: #e15c5c; }
-.rec-hint { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rec-cancel { margin-left: auto; flex-shrink: 0; border: none; background: color-mix(in srgb, var(--action-primary) 12%, transparent); color: var(--text-secondary); font-size: 12px; padding: 3px 10px; border-radius: 999px; cursor: pointer; }
-.rec-cancel:hover { background: color-mix(in srgb, var(--action-primary) 20%, transparent); }
+.rec-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  padding: var(--space-xs);
+  border: 1px solid var(--popup-surface-border);
+  border-radius: var(--popup-surface-radius);
+}
+.rec-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: 999px;
+  background: var(--status-danger-bg);
+  color: var(--status-danger);
+  font-size: var(--font-size-xs);
+}
+.rec-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  animation: rec-pulse 1.6s ease-in-out infinite;
+}
+@keyframes rec-pulse { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) { .rec-dot { animation: none; } }
+.rec-time {
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--content-primary);
+}
+.rec-cancel {
+  margin-inline-start: auto;
+  flex: none;
+  min-height: 28px;
+  padding-inline: var(--space-sm);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--content-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.rec-cancel:hover { background: var(--surface-glass-hover); color: var(--content-primary); }
 .chat-input-row textarea {
   flex: 1; border: none; background: none;
   font-size: 14px; color: var(--text-primary);

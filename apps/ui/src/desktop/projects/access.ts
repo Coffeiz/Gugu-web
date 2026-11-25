@@ -1,8 +1,16 @@
 import type { ProjectAccess, ProjectWorkspaceBinding } from '@/api/projects'
 import { desktopData, requestDesktopFile } from '../bridge/bridge'
+import { pickDesktopWorkspace } from '../files/useDesktopWorkspaces'
+import { i18n } from '@/i18n'
+import { showAppNotice } from '@/composables/core/useAppToast'
 
 
 export const desktopProjectAccess: ProjectAccess = {
+  pickWorkspace: () => {
+    if ('guguDesktop' in window) return pickDesktopWorkspace()
+    showAppNotice(i18n.global.t('filesUi.addDesktopWorkspaceNative'))
+    return Promise.resolve(null)
+  },
   storesProjectsLocally: true,
   listWorkspaceBindings: async projectId =>
     await requestDesktopFile({ action: 'project-workspaces', projectId }) as ProjectWorkspaceBinding[],

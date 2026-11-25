@@ -64,7 +64,8 @@ export async function resolveDesktopChatReferences(
   let hasProjectReference = false
   for (const ref of references.slice(0, 6)) {
     if (!ref || typeof ref.type !== 'string' || typeof ref.label !== 'string') continue
-    if (ref.type === 'folder' && typeof ref.id === 'string' && workspaceFileReferenceId.test(ref.id)) {
+    if (ref.type === 'folder' && typeof ref.id === 'string'
+      && (workspaceFileReferenceId.test(ref.id) || droppedFileReferenceId.test(ref.id))) {
       const folder = await readReferencedFile?.(ref.id)
       blocks.push(formatAgentReferenceBlock({ kind: 'folder', id: desktopFileReferenceKey(ref.id) }, folder?.isFolder ? {
         名称: clip(folder.name, 255), 相对路径: folder.relativePath, 链接: 'gugu://open-object/folder/' + ref.id,

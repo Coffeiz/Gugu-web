@@ -233,3 +233,9 @@ html[data-theme='dark'][data-family] {
   --sidebar-item-fg: var(--theme-content-primary);
   --sidebar-item-active: var(--surface-raised);
 }
+
+html[data-family='glass'][data-theme] {
+  --glass-card-background: var(--surface-glass);
+  --chrome-glass-bg: var(--surface-glass);
+  --mind-timeline-bg: var(--surface-glass);
+}

@@ -14,6 +14,7 @@ const projectChannels = new Set<string>([
 
 export function registerProjectWindows(options: {
   mainWindow: () => BrowserWindow | undefined
+  trustsChatPanel?: (event: IpcMainInvokeEvent) => boolean
   uiUrl: string
   preload: string
   dataDirectory: string
@@ -50,7 +51,7 @@ export function registerProjectWindows(options: {
     return true
   }
 
-  ipcMain.handle(channels.open, (event, value: unknown) => desktopReply(mainIsTrusted(event), async () => {
+  ipcMain.handle(channels.open, (event, value: unknown) => desktopReply(mainIsTrusted(event) || options.trustsChatPanel?.(event) === true, async () => {
     const id = projectId(value)
     if (focus(id)) return null
     await options.readProject(id)

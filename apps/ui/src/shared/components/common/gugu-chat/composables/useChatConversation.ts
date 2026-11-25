@@ -100,19 +100,19 @@ export function useChatConversation(options: {
   const inputText = ref('')
 
   // ── 输入草稿按会话保留：切走时存、切回时还原，localStorage 持久化（刷新/重开浏览器都在）。
-  // 只保正文文本；引用（inputReferences）是"引用某条消息"的临时上下文，跨会话还原反而容易误导，
-  // 发送/提交后的清空路径不受影响——空文本会顺手把该会话的草稿删掉。
+  // 引用和正文一同保存，恢复时才能重新构造输入框中的引用卡片。
   // 挂载 watcher 在下方 sessionId 声明之后（见 _watchSessionDrafts）。
   const CHAT_DRAFTS_KEY = 'gugu-chat-drafts'
   const CHAT_DRAFTS_MAX = 30   // 只留最近 30 个会话的草稿，防 localStorage 无限增长
-  function _loadDrafts(): Record<string, string> {
+  type ChatDraft = { text: string; references: ChatReference[] }
+  function _loadDrafts(): Record<string, string | ChatDraft> {
     try { return JSON.parse(localStorage.getItem(CHAT_DRAFTS_KEY) || '{}') || {} } catch { return {} }
   }
-  function _saveDraft(sid: number | null, text: string) {
+  function _saveDraft(sid: number | null, text: string, references: ChatReference[]) {
     if (!sid) return   // 新对话（无 id）不落盘
     try {
       const drafts = _loadDrafts()
-      if (text) drafts[sid] = text
+      if (text) drafts[sid] = { text, references }
       else delete drafts[sid]
       const keys = Object.keys(drafts)
       if (keys.length > CHAT_DRAFTS_MAX) {
@@ -275,22 +275,29 @@ export function useChatConversation(options: {
   // bindNewSessionId（下方），不能在这里用 null → id 推断——刷新恢复、侧栏点击
   // 已有会话同样是 null → id，但那两种需要恢复目标会话的草稿，语义相反。
   watch(sessionId, (nv, ov) => {
-    _saveDraft(ov, inputText.value)
-    inputText.value = nv ? (_loadDrafts()[String(nv)] ?? '') : ''
-  })
+    if (_draftTimer) clearTimeout(_draftTimer)
+    _saveDraft(ov, inputText.value, inputReferences.value)
+    const draft = nv ? _loadDrafts()[String(nv)] : undefined
+    inputReferences.value = typeof draft === 'object' && Array.isArray(draft.references) ? draft.references : []
+    inputText.value = typeof draft === 'string' ? draft : draft?.text ?? ''
+  }, { flush: 'sync' })
   // 新对话首条消息：SSE session_id 事件把会话身份落到真实 id。这是同一会话的
   // 指针落地而不是切换——先把当前输入（用户正打的字/刚排队的消息）记到新 id
   // 名下再赋值；随后触发的切换 watcher 按新 id 还原出同一份文本，输入框不动。
   function bindNewSessionId(id: number) {
-    _saveDraft(id, inputText.value)
+    _saveDraft(id, inputText.value, inputReferences.value)
     sessionId.value = id
   }
   // 输入即存（防抖）：只靠切换时存会有脏条目——发送/清空后草稿表里还是旧文，
   // 重开浏览器接续同一会话时会把已发出的内容当草稿复活。
   let _draftTimer: ReturnType<typeof setTimeout> | null = null
-  watch(inputText, (text) => {
+  watch([inputText, inputReferences], () => {
     if (_draftTimer) clearTimeout(_draftTimer)
-    _draftTimer = setTimeout(() => _saveDraft(sessionId.value, text), 300)
+    _draftTimer = setTimeout(() => _saveDraft(sessionId.value, inputText.value, inputReferences.value), 300)
+  })
+  onUnmounted(() => {
+    if (_draftTimer) clearTimeout(_draftTimer)
+    _saveDraft(sessionId.value, inputText.value, inputReferences.value)
   })
 
   // 会话内定位到某条历史消息（全局搜索跳转用）：先按 dbId 找到下标，用虚拟列表的

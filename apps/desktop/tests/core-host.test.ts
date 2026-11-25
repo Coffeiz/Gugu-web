@@ -122,6 +122,24 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       await expect(host.request('agent.sessions.events', { id: 1, after: 0 })).rejects.toMatchObject({ code: 'closed' })
     } finally { await host.close() }
   })
+  it('聊天可接收文件夹引用，目录替换后旧引用失效', async () => {
+    const root = directory()
+    const folder = join(root, '合成目录')
+    mkdirSync(folder)
+    const open = vi.fn(async () => '')
+    const dropped = createDroppedFileReferences(root, open)
+    await expect(dropped.create(folder)).rejects.toMatchObject({ code: 'invalid_request' })
+    const reference = await dropped.create(folder, undefined, true)
+    expect(reference).toMatchObject({ type: 'folder', label: '合成目录' })
+    expect(reference.id).not.toContain(folder)
+    await expect(dropped.resolve(reference.id, true)).resolves.toMatchObject({ type: 'folder', path: realpathSync(folder) })
+    await dropped.open(reference.id)
+    expect(open).toHaveBeenCalledWith(realpathSync(folder))
+    rmSync(folder, { recursive: true })
+    writeFileSync(folder, '替换目录的文件')
+    await expect(dropped.resolve(reference.id, true)).resolves.toBeNull()
+  })
+
   it('本机和工作区文件引用作为画布文件卡持久化，拒绝失效引用', async () => {
     const root = directory()
     const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')

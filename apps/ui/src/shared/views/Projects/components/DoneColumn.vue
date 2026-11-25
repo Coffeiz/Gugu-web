@@ -57,7 +57,7 @@ onUnmounted(() => {
 </script>
 
 <style>
-.done-col { --done-year-chevron-center:10px; --done-year-content-indent:20px; display:flex; flex-direction:column; padding:12px 10px; gap:8px; min-height:0; overflow:hidden; }
+.done-col { --done-year-chevron-center:10px; --done-year-content-indent:20px; display:flex; flex-direction:column; padding:12px 10px 0; gap:8px; min-height:0; overflow:hidden; }
 .done-col .col-header { display:flex; align-items:center; justify-content:space-between; padding:0 4px; flex-shrink:0; }
 .done-col .col-title { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--text-primary); }
 .done-col .col-dot { width:7px; height:7px; border-radius:50%; background:#5a9e88; flex-shrink:0; }

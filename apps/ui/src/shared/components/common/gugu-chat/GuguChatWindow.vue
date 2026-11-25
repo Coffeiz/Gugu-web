@@ -13,24 +13,11 @@
     <!-- 用透明全窗锚点接收 Runtime 落地，避免把聊天窗口自身当作项目卡的 morph 目标。 -->
     <div ref="chatRefTargetEl" class="chat-ref-target" aria-hidden="true"></div>
 
-    <!-- 拖入遮罩（覆盖整个窗口，大小窗通用）-->
     <Transition name="chat-drop-fade">
-      <div v-if="isChatDragging && !dropFilesAsReferences" class="chat-drop-overlay">
-        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 16V6M8 10l4-4 4 4"/><path d="M5 19h14"/>
-        </svg>
-        <span>{{ t('chat.dropAttachment') }}</span>
-      </div>
+      <GuguChatDropOverlay v-if="isChatDragging && !dropFilesAsReferences" kind="attachment" />
     </Transition>
-
-    <!-- 拖文件卡进来 = @ 引用的悬停遮罩（Runtime 投放，视觉与附件遮罩同语言）-->
     <Transition name="chat-drop-fade">
-      <div v-if="refDropHover || (isChatDragging && dropFilesAsReferences)" class="chat-drop-overlay chat-ref-overlay">
-        <svg width="30" height="30" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
-          <path d="M216,68H133.39l-26-29.29a20,20,0,0,0-15-6.71H40A20,20,0,0,0,20,52V200.62A19.41,19.41,0,0,0,39.38,220H216.89A19.13,19.13,0,0,0,236,200.89V88A20,20,0,0,0,216,68ZM44,56H90.61l10.67,12H44ZM212,196H44V92H212Z" />
-        </svg>
-        <span>{{ t('chat.dropReference') }}</span>
-      </div>
+      <GuguChatDropOverlay v-if="refDropHover || (isChatDragging && dropFilesAsReferences)" kind="reference" />
     </Transition>
 
     <!-- 扫码绑定 IM 弹窗 / 侧边栏：由父组件通过插槽填充 -->
@@ -141,6 +128,7 @@
 </template>
 
 <script setup lang="ts">
+import GuguChatDropOverlay from './GuguChatDropOverlay.vue'
 import type { ChatHistoryState } from './composables/useChatHistoryPagination'
 import { ref, computed, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -374,15 +362,6 @@ defineExpose({
 .chat-window.chat-open-enter-from, .chat-window.chat-open-leave-to { opacity: 0; transform: scale(0.78); }
 
 /* ── 拖入附件遮罩 ── */
-.chat-drop-overlay {
-  position: absolute; inset: 0; z-index: 120;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-  pointer-events: none;   /* 让拖拽事件穿透到 .chat-window，drop/dragleave 才能正常触发 */
-  background: color-mix(in srgb, var(--action-primary) 16%, transparent);
-  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
-  border: 2px dashed color-mix(in srgb, var(--action-primary) 60%, transparent); border-radius: var(--card-radius);
-  color: var(--color-primary); font-size: 14px; font-weight: 600;
-}
 .chat-drop-fade-enter-active, .chat-drop-fade-leave-active { transition: opacity 0.15s ease; }
 .chat-drop-fade-enter-from, .chat-drop-fade-leave-to { opacity: 0; }
 

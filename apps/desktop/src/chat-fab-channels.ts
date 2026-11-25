@@ -1,6 +1,8 @@
 export const chatFabChannels = {
   attach: 'gugu:chat-fab:attach',
-  referenceDrag: 'gugu:chat-fab:reference-drag',
+  dropReferences: 'gugu:chat-fab:drop-references',
+  droppedReferences: 'gugu:chat-fab:dropped-references',
+  ballDetached: 'gugu:chat-fab:ball-detached',
   material: 'gugu:chat-fab:material',
   dropFiles: 'gugu:chat-fab:drop-files',
   droppedReference: 'gugu:chat-fab:dropped-reference',
@@ -15,6 +17,7 @@ export const chatFabChannels = {
   panelClose: 'gugu:chat-fab:panel-close',
   chatVisible: 'gugu:chat-fab:chat-visible',
   closeChat: 'gugu:chat-fab:close-chat',
+  openMainReference: 'gugu:chat-fab:open-main-reference',
   openChat: 'gugu:chat-fab:open-chat',
 } as const
 

@@ -23,6 +23,18 @@ function time(value: unknown) {
   return typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : ''
 }
 
+/** 只移除出现在数组内、紧邻下一段之前的不匹配花括号。 */
+function repairSectionClosures(source: string) {
+  const stack: string[] = []
+  return source.replace(/"(?:\\.|[^"\\])*"|[{}\[\]]/gu, (token: string, offset: number) => {
+    if (token === '{' || token === '[') stack.push(token)
+    if (token === '}' && stack.at(-1) === '[' && source.slice(offset - 2, offset) === ']}'
+      && /^\s*,\s*\{\s*"type"\s*:\s*"section"/u.test(source.slice(offset + 1))) return ''
+    if (token === '}' || token === ']') stack.pop()
+    return token
+  })
+}
+
 export function renderSmartView(source: string) {
   const t = (key: string, values: Record<string, unknown> = {}) => escapeHtml(i18n.global.t(`smartView.${key}`, values))
   const unavailable = `<p class="chat-smart-view-notice">${t('unavailable')}</p>`
@@ -39,7 +51,8 @@ export function renderSmartView(source: string) {
     // 跳过字符串内容，只尝试删除一处多余的闭合符，随后仍需通过完整校验。
     let removed = false
     if (/^\s*\{\s*"version"\s*:\s*1\s*,\s*"layout"\s*:/u.test(repaired)) {
-      repaired = repaired.replace(/"(?:\\.|[^"\\])*"|\]\}(\]\})(?=\s*,\s*\{\s*"type"\s*:\s*"section")/gu,
+      const balanced = repairSectionClosures(repaired)
+      repaired = balanced !== repaired ? balanced : repaired.replace(/"(?:\\.|[^"\\])*"|\]\}(\]\})(?=\s*,\s*\{\s*"type"\s*:\s*"section")/gu,
         (match, extra: string | undefined) => {
           if (!extra || removed) return match
           removed = true

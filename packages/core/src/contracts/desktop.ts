@@ -586,7 +586,7 @@ export interface DesktopBridge {
   resources(command: DesktopResourceCommand): Promise<DesktopReply<unknown>>
   scheduleTask(command: DesktopScheduleCommand): Promise<DesktopReply<DesktopScheduleResult>>
   onScheduleChanged(callback: () => void): () => void
-  createDroppedFileReference?(file: File): Promise<DesktopReply<{ type: 'file'; id: string; label: string }>>
+  createDroppedFileReference?(file: File, allowFolder?: boolean): Promise<DesktopReply<{ type: 'file' | 'folder'; id: string; label: string }>>
   openDroppedFileReference?(id: string): Promise<DesktopReply<null>>
   agentUsage(): Promise<DesktopReply<DesktopAgentUsage>>
   dataInventory(): Promise<DesktopReply<Record<string, number>>>

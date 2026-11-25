@@ -83,7 +83,7 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 <style scoped>
 .column {
   display: flex; flex-direction: column;
-  padding: 12px 10px; gap: 8px;
+  padding: 12px 10px 0; gap: 8px;
   min-width: 0; min-height: 0;
   /* 卡片 hover 的外阴影需要越过列的边界绘制；纵向滚动仍由 .col-body 独占。 */
   overflow: visible;

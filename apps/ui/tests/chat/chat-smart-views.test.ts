@@ -550,3 +550,16 @@ it('无效布局和未注册动作不生成控件', () => {
     expect(host.textContent).toContain(i18n.global.t('smartView.unavailable'))
   }
 })
+
+it('修复多个同级段落前多写的花括号并保留图表', () => {
+  const sections = [
+    { type: 'section', title: '概览', children: [{ type: 'text', text: '示例' }] },
+    { type: 'section', title: '数据', children: [{ type: 'chart', kind: 'bar', label: '样本', points: [{ label: '甲', value: 1 }] }] },
+    { type: 'section', title: '来源', children: [{ type: 'text', text: '示例来源' }] },
+  ]
+  const source = '{"version":1,"layout":{"type":"stack","children":[' + sections.map(value => JSON.stringify(value)).join('},') + ']}}'
+  const host = document.createElement('div')
+  host.innerHTML = sanitizeChatHtml(renderMd(['```gugu-ui', source, '```'].join('\n')))
+  expect(host.querySelectorAll('.chat-smart-section')).toHaveLength(3)
+  expect(host.querySelector('[data-smart-chart="bar"]')).not.toBeNull()
+})

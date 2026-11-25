@@ -1,7 +1,6 @@
 import { onMounted, onUnmounted } from 'vue'
+import { chatPanelContentGutter as gutter } from '@gugu/desktop-contracts'
 import { chatFabHost, type PanelBounds, type PanelGeometry } from './bridge'
-
-const gutter = 4
 
 export function usePanelGeometry() {
   const style = document.documentElement.style

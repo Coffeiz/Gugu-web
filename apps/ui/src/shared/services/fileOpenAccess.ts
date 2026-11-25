@@ -9,7 +9,7 @@ type FileOpenAccess = {
   startNativeDrag?(directoryId: LocalDirectory, path: string, preview?: string): Promise<unknown>
   canOpenInSystem(file: PathFileRef | undefined): boolean
   openInSystem(file: PathFileRef): Promise<void>
-  createDroppedReference?(file: File): Promise<{ type: 'file'; id: string; label: string }>
+  createDroppedReference?(file: File): Promise<{ type: 'file' | 'folder'; id: string; label: string }>
   openDroppedReference?(id: string): Promise<null>
   getOpenPreference(): 'preview' | 'system'
 }

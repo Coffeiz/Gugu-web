@@ -4,7 +4,7 @@
   --theme-sidebar: var(--theme-glass);
   --theme-base: color-mix(in srgb,var(--palette-surface-strong) 90%,transparent);
   --theme-chat-main-bg: color-mix(in srgb,var(--palette-surface-strong) 90%,#ffffff 10%);
-  --theme-glass: color-mix(in srgb,var(--theme-action-primary) 2%,color-mix(in srgb,var(--palette-surface) 60%,transparent));
+  --theme-glass: rgb(from var(--palette-surface) r g b / .75);
   --theme-glass-hover: color-mix(in srgb,var(--palette-surface) 75%,transparent);
   --theme-card-solid: color-mix(in srgb,var(--palette-surface) 82%,transparent);
   --theme-soft: color-mix(in srgb,var(--theme-action-primary) 6%,transparent);
@@ -30,7 +30,7 @@
   --theme-sidebar: var(--theme-glass);
   --theme-base: color-mix(in srgb,var(--palette-surface) 86%,transparent);
   --theme-chat-main-bg: color-mix(in srgb,var(--palette-surface) 86%,var(--palette-page-start) 14%);
-  --theme-glass: color-mix(in srgb,var(--palette-surface) 76%,transparent);
+  --theme-glass: rgb(from var(--palette-surface) r g b / .75);
   --theme-glass-hover: color-mix(in srgb,var(--palette-surface-strong) 86%,transparent);
   --theme-card-solid: color-mix(in srgb,var(--palette-surface-strong) 94%,transparent);
   --theme-soft: color-mix(in srgb,var(--theme-action-primary) 5%,transparent);

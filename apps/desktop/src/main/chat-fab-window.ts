@@ -1,19 +1,33 @@
+import { chatPanelContentGutter as gutter } from '@gugu/desktop-contracts'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { BrowserWindow, ipcMain, screen, type Point, type Rectangle } from 'electron'
 import { chatFabChannels as channels } from '../chat-fab-channels.js'
-import { desktopReply } from './core-host.js'
+import { DesktopError, desktopReply } from './core-host.js'
 import { watchWindowsFullscreen } from './foreground-fullscreen.js'
 import { secureWindow, trustedCaller, windowOptions } from './windows.js'
 
-const extent = 72
-const inset = 17
+// 为悬停缩放后的阴影预留原生透明画布。
+const extent = 128
+const ballDiameter = 50
+const ballGutter = (extent - ballDiameter) / 2
+const dockClearance = 28
+const ballHitRadius = 28
 const snapDuration = 220
 const panelResizeDuration = 420
 const floatingWidthRatio = 0.68
-// 球和面板原生窗口的透明留边分别为 11px 和 4px。
-const compactEdgeCorrection = 7
-const compactGap = -5
+const compactGap = 6
+const runtimeReferenceTypes = new Set(['project', 'file', 'folder', 'event', 'canvas_note'])
+type RuntimeReference = { type: string; id: number | string; label: string }
+
+function isRuntimeReference(value: unknown): value is RuntimeReference {
+  if (!value || typeof value !== 'object') return false
+  const { type, id, label } = value as Partial<RuntimeReference>
+  if (typeof type !== 'string' || !runtimeReferenceTypes.has(type) || typeof label !== 'string' || label.length > 4096) return false
+  return type === 'file' || type === 'folder'
+    ? typeof id === 'string' && /^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u.test(id)
+    : typeof id === 'number' && Number.isSafeInteger(id) && id > 0
+}
 
 export function registerChatFabWindow(options: {
   uiUrl: string
@@ -22,7 +36,7 @@ export function registerChatFabWindow(options: {
   mainWindow: () => BrowserWindow | undefined
   enabled: () => boolean
   prewarm?: boolean
-  createDroppedReference?: (path: string) => Promise<{ type: 'file'; id: string; label: string }>
+  createDroppedReference?: (path: string) => Promise<{ type: 'file' | 'folder'; id: string; label: string }>
 }) {
   let preventNativeActivation: ((handle: Buffer) => boolean) | undefined
   let nativeGlass: ((handle: Buffer, enabled: boolean) => boolean) | undefined
@@ -55,28 +69,31 @@ export function registerChatFabWindow(options: {
   let finishPanelGeometry: (() => void) | undefined
   let warmTimer: ReturnType<typeof setTimeout> | undefined
   let droppedPaths: string[] = []
+  let droppedReferences: RuntimeReference[] = []
   let panelReady = false
   let expanded = false
   let floatingSize: { width: number; height: number } | undefined
   let panelRequested = false
   let panelOpenSent = false
   let panelEntered = false
+  let reopenDockedChat = false
   let panelFocusRequested = false
   let ball: BrowserWindow | undefined
+  let ballHitTimer: ReturnType<typeof setInterval> | undefined
+  let ignoreBallMouse = false
   let loading: Promise<boolean> | undefined
   let resolveReady: ((ready: boolean) => void) | undefined
   let mode: 'docked' | 'detached' | 'dragging' | 'snapping' = 'docked'
-  let gesture: { cursor: Point; origin: Point; previous: 'docked' | 'detached' } | undefined
+  let gesture: { cursor: Point; origin: Point; previous: 'docked' | 'detached'; fromMain: boolean } | undefined
   let snapTimer: ReturnType<typeof setInterval> | undefined
   let mainChatVisible = false
-  let referenceDrag = false
 
   let stopFullscreenWatch: (() => void) | undefined
   let fullscreenArea: Rectangle | undefined
 
   function syncDetachedBall() {
     if (mode !== 'detached' || !ball) return
-    const { x, y, width, height } = ball.getBounds()
+    const { x, y, width, height } = ballContentBounds(ball)
     const area = fullscreenArea
     const covered = area && x < area.x + area.width && x + width > area.x
       && y < area.y + area.height && y + height > area.y
@@ -103,6 +120,21 @@ export function registerChatFabWindow(options: {
     clearTimeout(panelResizeTimer)
     panelResizeTimer = undefined
     finishPanelGeometry = undefined
+  }
+
+  function ballContentBounds(window: BrowserWindow): Rectangle {
+    const { x, y } = window.getBounds()
+    return { x: x + ballGutter, y: y + ballGutter, width: ballDiameter, height: ballDiameter }
+  }
+
+  function syncBallHitArea() {
+    if (!ball || ball.isDestroyed() || !ball.isVisible()) return
+    const { x, y, width, height } = ballContentBounds(ball)
+    const cursor = screen.getCursorScreenPoint()
+    const ignore = gesture?.fromMain === true || !gesture && Math.hypot(cursor.x - x - width / 2, cursor.y - y - height / 2) > ballHitRadius
+    if (ignore === ignoreBallMouse) return
+    ignoreBallMouse = ignore
+    ball.setIgnoreMouseEvents(ignore)
   }
 
   function syncPanelHitArea() {
@@ -163,14 +195,14 @@ export function registerChatFabWindow(options: {
   function positionPanel(animate = false, preserveCompactFrame = false) {
     syncPanelDragRegion()
     if (!ball || !panel || panel.isDestroyed()) return
-    const anchor = ball.getBounds()
+    const anchor = ballContentBounds(ball)
     const area = screen.getDisplayNearestPoint({ x: anchor.x + anchor.width / 2, y: anchor.y + anchor.height / 2 }).workArea
     const main = options.mainWindow()
     const docked = mode === 'docked' && main && !main.isDestroyed()
     const minWidth = Math.min(480, area.width)
     const minHeight = Math.min(360, area.height)
-    const right = anchor.x + anchor.width - compactEdgeCorrection
-    const bottom = anchor.y + anchor.height - compactEdgeCorrection
+    const right = anchor.x + anchor.width + gutter
+    const bottom = anchor.y + anchor.height + gutter
     const desired = floatingSize ?? { width: Math.round(area.height * floatingWidthRatio), height: Math.round(area.height * 0.78) }
     const wide = Math.min(area.width, Math.max(minWidth, Math.min(desired.width, right - area.x)))
     const tall = Math.min(area.height, Math.max(minHeight, Math.min(desired.height, bottom - area.y)))
@@ -208,7 +240,7 @@ export function registerChatFabWindow(options: {
     const contains = (outer: Rectangle, inner: Rectangle) =>
       inner.x >= outer.x && inner.y >= outer.y &&
       inner.x + inner.width <= outer.x + outer.width && inner.y + inner.height <= outer.y + outer.height
-    if (preserveCompactFrame && !expanded && panelVisualBounds && panel.isVisible() && contains(bounds, compact)) {
+    if (preserveCompactFrame && !expanded && panelVisualBounds && panel.isVisible() && contains(bounds, frame)) {
       const previous = panelVisualBounds
       // 交接期间保留原生视口，避免短暂用新边界裁切旧内容。
       setPanelBounds(panel, compact, bounds, false, 1, 1,
@@ -220,15 +252,15 @@ export function registerChatFabWindow(options: {
       // 在停靠的小窗中预留脱离后的展开空间，松手时无需再扩大视口。
       const maxHeight = Math.max(...screen.getAllDisplays().map(display => display.workArea.height))
       const reserve = floatingSize ?? { width: Math.round(maxHeight * floatingWidthRatio), height: Math.round(maxHeight * 0.78) }
-      const left = Math.min(compact.x, right - Math.max(minWidth, reserve.width))
-      const top = Math.min(compact.y, bottom - Math.max(minHeight, reserve.height))
+      const left = Math.min(frame.x, right - Math.max(minWidth, reserve.width))
+      const top = Math.min(frame.y, bottom - Math.max(minHeight, reserve.height))
       frame = {
         x: left, y: top,
-        width: Math.max(compact.x + compact.width, right) - left,
-        height: Math.max(compact.y + compact.height, bottom) - top,
+        width: Math.max(frame.x + frame.width, right) - left,
+        height: Math.max(frame.y + frame.height, bottom) - top,
       }
     }
-    if (!docked && animate && contains(bounds, frame)) frame = bounds
+    if (animate && contains(bounds, frame)) frame = bounds
     const resizable = expanded && !docked
     setPanelBounds(panel, expanded ? large : compact, frame, resizable,
       resizable ? minWidth : 1, resizable ? minHeight : 1, animate)
@@ -244,6 +276,10 @@ export function registerChatFabWindow(options: {
       syncPanelHitArea()
     }
     focusPanel()
+    if (droppedReferences.length) {
+      panel.webContents.send(channels.droppedReferences, droppedReferences)
+      droppedReferences = []
+    }
     const paths = droppedPaths
     droppedPaths = []
     if (paths.length) void deliverDroppedPaths(panel, paths, () => panelRequested)
@@ -289,10 +325,10 @@ export function registerChatFabWindow(options: {
     syncPanelHitArea()
   }
 
-  function openPanel() {
+  function openPanel(requestFocus = true) {
     clearTimeout(warmTimer)
     panelRequested = true
-    panelFocusRequested = mode !== 'dragging'
+    if (requestFocus) panelFocusRequested = mode !== 'dragging'
     if (panel) showPanel()
     else createPanel()
   }
@@ -383,6 +419,7 @@ export function registerChatFabWindow(options: {
       panelNativeChange = undefined
       panel = undefined
       droppedPaths = []
+      droppedReferences = []
       expanded = false
       panelReady = false
       panelRequested = false
@@ -418,6 +455,11 @@ export function registerChatFabWindow(options: {
     panelOpenSent = false
     panelEntered = false
     panelFocusRequested = false
+    if (reopenDockedChat) {
+      reopenDockedChat = false
+      const main = options.mainWindow()
+      if (mode === 'docked' && main && !main.isDestroyed()) main.webContents.send(channels.openChat)
+    }
     syncPanelHitArea()
   })
   ipcMain.on(channels.panelClose, event => {
@@ -431,7 +473,7 @@ export function registerChatFabWindow(options: {
 
   function dockPoint(main: BrowserWindow): Point {
     const { x, y, width, height } = main.getContentBounds()
-    return { x: x + width - extent - inset, y: y + height - extent - inset }
+    return { x: x + width - ballDiameter - ballGutter - dockClearance, y: y + height - ballDiameter - ballGutter - dockClearance }
   }
 
   function setGlass(enabled: boolean) {
@@ -488,8 +530,15 @@ export function registerChatFabWindow(options: {
     else ball.setPosition(x, y)
     jointMotion = undefined
     mode = 'docked'
-    if (main.isVisible() && !main.isMinimized() && !referenceDrag) ball.showInactive()
-    else ball.hide()
+    ball.hide()
+    main.webContents.send(channels.ballDetached, false)
+    if (docking && panelRequested) {
+      panelRequested = false
+      panel?.hide()
+      reopenDockedChat = panelOpenSent
+      if (reopenDockedChat) panel?.webContents.send(channels.closeChat, false)
+      else main.webContents.send(channels.openChat)
+    }
     syncPanelWindow()
     positionPanel(docking, docking)
   }
@@ -510,8 +559,9 @@ export function registerChatFabWindow(options: {
     main.on('enter-full-screen', sync)
     main.on('leave-full-screen', sync)
     main.once('closed', () => {
-      referenceDrag = false
       mainChatVisible = false
+      reopenDockedChat = false
+      if (mode === 'detached') syncPanelWindow()
       if (mode === 'snapping') {
         stopSnap()
         mode = 'detached'
@@ -528,6 +578,13 @@ export function registerChatFabWindow(options: {
       webPreferences: windowOptions(options.preload).webPreferences,
     })
     ball = window
+    ignoreBallMouse = false
+    window.on('show', () => {
+      clearInterval(ballHitTimer)
+      syncBallHitArea()
+      ballHitTimer = setInterval(syncBallHitArea, 16)
+    })
+    window.on('hide', () => clearInterval(ballHitTimer))
     secureWindow(window)
     if (process.platform === 'darwin') {
       window.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false, skipTransformProcessType: true })
@@ -539,11 +596,14 @@ export function registerChatFabWindow(options: {
       stopSnap()
       clearTimeout(warmTimer)
       stopWatchingFullscreen()
+      clearInterval(ballHitTimer)
       ball = undefined
       gesture = undefined
       jointMotion = undefined
       if (panel && !panel.isDestroyed()) panel.destroy()
       mode = 'docked'
+      const main = options.mainWindow()
+      if (main && !main.isDestroyed()) main.webContents.send(channels.ballDetached, false)
     })
     const ready = new Promise<boolean>(resolve => { resolveReady = resolve })
     const timeout = setTimeout(() => resolveReady?.(false), 10_000)
@@ -570,7 +630,10 @@ export function registerChatFabWindow(options: {
     const main = options.mainWindow()
     if (!options.enabled() || !main || !trustedCaller(event, [main], options.uiUrl)) return false
     if (loading) return loading
-    if (ball) return true
+    if (ball) {
+      main.webContents.send(channels.ballDetached, mode === 'detached')
+      return true
+    }
     loading = create(main).finally(() => { loading = undefined })
     return loading
   })
@@ -619,10 +682,10 @@ export function registerChatFabWindow(options: {
   function release(cursor: Point, cancelled: boolean) {
     if (!ball || !gesture) return
     if (!cancelled) move(cursor)
-    const { previous, origin } = gesture
+    const { previous, origin, fromMain } = gesture
     gesture = undefined
     if (mode !== 'dragging') {
-      if (!cancelled) toggleChat()
+      if (!cancelled && !fromMain) toggleChat()
       return
     }
     const main = options.mainWindow()
@@ -630,14 +693,18 @@ export function registerChatFabWindow(options: {
     const destination = cancelled ? origin : { x, y }
     const center = { x: destination.x + extent / 2, y: destination.y + extent / 2 }
     const bounds = main?.getContentBounds()
+    const dropPoint = fromMain ? cursor : center
     const inside = main && main.isVisible() && !main.isMinimized() && bounds
-      && center.x >= bounds.x && center.x < bounds.x + bounds.width
-      && center.y >= bounds.y && center.y < bounds.y + bounds.height
+      && dropPoint.x >= bounds.x && dropPoint.x < bounds.x + bounds.width
+      && dropPoint.y >= bounds.y && dropPoint.y < bounds.y + bounds.height
     // 改父窗口会中断部分平台的指针捕获，等松手处理完落点再做。
     if (ball.getParentWindow()) ball.setParentWindow(null)
     if (preventNativeActivation) preventNativeActivation(ball.getNativeWindowHandle())
     ball.setAlwaysOnTop(true, 'floating')
-    if (main && (cancelled ? previous === 'docked' : inside)) snap(main)
+    if (main && (cancelled ? previous === 'docked' : inside)) {
+      if (fromMain) dock()
+      else snap(main)
+    }
     else {
       const { workArea } = screen.getDisplayNearestPoint(center)
       moveBallAndPanel(
@@ -646,6 +713,9 @@ export function registerChatFabWindow(options: {
       )
       jointMotion = undefined
       mode = 'detached'
+      ball.showInactive()
+      syncBallHitArea()
+      main?.webContents.send(channels.ballDetached, true)
       if (process.platform === 'win32' && !stopFullscreenWatch) {
         stopFullscreenWatch = watchWindowsFullscreen(bounds => {
           if (!stopFullscreenWatch) return
@@ -673,6 +743,7 @@ export function registerChatFabWindow(options: {
       if (!panelRequested) return
       panelRequested = false
       droppedPaths = []
+      droppedReferences = []
       panelFocusRequested = false
       if (panelOpenSent) panel?.webContents.send(channels.closeChat, true)
       return
@@ -692,11 +763,47 @@ export function registerChatFabWindow(options: {
     }
   })
 
-  ipcMain.on(channels.referenceDrag, (event, active: unknown) => {
+  ipcMain.handle(channels.openMainReference, (event, type: unknown, id: unknown) =>
+    desktopReply(trustsPanel(event), async () => {
+      const validId = (typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
+        || (typeof id === 'string' && /^[1-9][0-9]{0,15}$/u.test(id) && Number.isSafeInteger(Number(id)))
+      switch (type) {
+        case 'event':
+        case 'canvas_note':
+        case 'scheduled_task':
+          if (validId) break
+          throw new DesktopError('invalid_request', '引用标识无效')
+        case 'folder':
+          if (typeof id === 'string' && /^path-[A-Za-z0-9_-]{1,24000}$/u.test(id)) break
+          throw new DesktopError('invalid_request', '文件夹引用无效')
+        case 'skill':
+        case 'mcp':
+          if (typeof id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/u.test(id)) break
+          throw new DesktopError('invalid_request', '资源引用无效')
+        default:
+          throw new DesktopError('invalid_request', '引用类型无效')
+      }
+      const main = options.mainWindow()
+      if (!main || main.isDestroyed()) throw new DesktopError('not_found', '主窗口不可用')
+      if (main.isMinimized()) main.restore()
+      main.webContents.send(channels.openMainReference, type, id)
+      if (main.isVisible()) main.focus()
+      else main.show()
+      return null
+    }),
+  )
+
+  ipcMain.on(channels.dropReferences, (event, references: unknown) => {
     const main = options.mainWindow()
-    if (!main || !trustedCaller(event, [main], options.uiUrl) || typeof active !== 'boolean') return
-    referenceDrag = active
-    if (ball && mode === 'docked' && !loading) dock()
+    if (!options.enabled() || !ball || !main || !trustedCaller(event, [main], options.uiUrl)
+      || !Array.isArray(references) || !references.length || references.length > 50
+      || !references.every(isRuntimeReference)) return
+    if (mainChatVisible) {
+      main.webContents.send(channels.droppedReferences, references)
+      return
+    }
+    droppedReferences = [...droppedReferences, ...references].slice(0, 50)
+    openPanel(false)
   })
 
   ipcMain.on(channels.dropFiles, (event, paths: unknown) => {
@@ -713,7 +820,11 @@ export function registerChatFabWindow(options: {
   })
 
   ipcMain.on(channels.gesture, (event, action: unknown, x: unknown, y: unknown) => {
-    if (!options.enabled() || !ball || !trustedCaller(event, [ball], address.href)) return
+    if (!options.enabled() || !ball) return
+    const main = options.mainWindow()
+    const fromMain = !!main && trustedCaller(event, [main], options.uiUrl)
+    if (!fromMain && !trustedCaller(event, [ball], address.href)) return
+    if (fromMain && (action === 'ready' || action === 'open' || (action === 'down' && mode !== 'docked'))) return
     if (action === 'ready') {
       resolveReady?.(true)
       return
@@ -729,7 +840,23 @@ export function registerChatFabWindow(options: {
         mode = 'detached'
       }
       const { x, y } = ball.getBounds()
-      gesture = { cursor, origin: { x, y }, previous }
+      gesture = { cursor, origin: { x, y }, previous, fromMain }
+    }
+    if (gesture && gesture.fromMain !== fromMain) return
+    if (fromMain && (action === 'move' || action === 'up') && gesture) {
+      const bounds = main!.getContentBounds()
+      const outside = cursor.x < bounds.x || cursor.y < bounds.y ||
+        cursor.x >= bounds.x + bounds.width || cursor.y >= bounds.y + bounds.height
+      if (outside) {
+        if (ball.getParentWindow()) ball.setParentWindow(null)
+        ball.setAlwaysOnTop(true, 'floating')
+        if (action === 'move') move(cursor)
+        if (mode === 'dragging' && !ball.isVisible()) {
+          ball.showInactive()
+          syncBallHitArea()
+        }
+        if (action === 'move') return
+      } else if (ball.isVisible()) ball.hide()
     }
     if (action === 'move') move(cursor)
     if (action === 'up' || action === 'cancel') release(cursor, action === 'cancel')

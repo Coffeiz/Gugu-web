@@ -1,7 +1,8 @@
 <template>
-  <div ref="shellRef" class="ai-fab-shell" :class="{ 'ai-fab-shell--playing': rippleActive, 'ai-fab-shell--drop-hover': dropHover }" :style="{ zIndex: fabZ }"
+  <div ref="shellRef" class="ai-fab-shell" :class="{ 'ai-fab-shell--playing': rippleActive, 'ai-fab-shell--drop-hover': dropHover }" :style="{ zIndex: fabZ, translate: dragOffset, opacity: previewOutside ? 0 : undefined, transition: dragging ? 'none' : 'translate 220ms ease-out' }"
     @pointerover="onPointerOver" @pointerleave="dropHover = false">
-    <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" @click="$emit('click')" :title="t('chatUi.gugu')">
+    <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" @click="onClick" @pointerdown="beginDrag" @pointermove="moveDrag" @pointerup="endDrag"
+      @pointercancel="cancelDrag" @lostpointercapture="cancelDrag" :title="t('chatUi.gugu')">
       <span ref="svgRef"
             class="ai-fab-logo"
             :class="{ 'ai-fab-spin': hasAudioFile && !spinningBack, 'ai-fab--typing': fabJumping }"
@@ -19,7 +20,8 @@
 import { ref, computed, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-defineProps<{
+const props = defineProps<{
+  dragFab?: (action: 'down' | 'move' | 'up' | 'cancel', x: number, y: number) => void
   rippleActive: boolean
   fabZ: number
   hasAudioFile: boolean
@@ -29,7 +31,62 @@ defineProps<{
 }>()
 const { t } = useI18n()
 
-defineEmits<{ click: [] }>()
+const emit = defineEmits<{ click: [] }>()
+const dragOffset = ref<string>()
+const dragging = ref(false)
+const previewOutside = ref(false)
+let pointer: { id: number; x: number; y: number } | undefined
+let suppressClick = false
+
+function beginDrag(event: PointerEvent) {
+  if (!props.dragFab || event.button !== 0 || event.pointerType !== 'mouse' || pointer) return
+  suppressClick = false
+  pointer = { id: event.pointerId, x: event.screenX, y: event.screenY }
+  const button = event.currentTarget as HTMLElement
+  button.setPointerCapture(event.pointerId)
+  props.dragFab('down', event.screenX, event.screenY)
+}
+function moveDrag(event: PointerEvent) {
+  if (pointer?.id !== event.pointerId) return
+  const x = event.screenX - pointer.x, y = event.screenY - pointer.y
+  if (!dragging.value && Math.hypot(x, y) < 5) return
+  dragging.value = true
+  previewOutside.value = event.clientX < 0 || event.clientY < 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight
+  dragOffset.value = `${x}px ${y}px`
+  props.dragFab?.('move', event.screenX, event.screenY)
+}
+function finishDrag(action: 'up' | 'cancel', x: number, y: number) {
+  if (!pointer) return
+  pointer = undefined
+  suppressClick = action === 'cancel' || dragging.value
+  props.dragFab?.(action, x, y)
+  dragging.value = false
+  previewOutside.value = false
+  dragOffset.value = '0px 0px'
+}
+function endDrag(event: PointerEvent) {
+  if (pointer?.id !== event.pointerId) return
+  moveDrag(event)
+  finishDrag('up', event.screenX, event.screenY)
+}
+function cancelDrag(event: PointerEvent) {
+  if (pointer?.id === event.pointerId) finishDrag('cancel', event.screenX, event.screenY)
+}
+function cancelOnEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || !pointer) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  finishDrag('cancel', pointer.x, pointer.y)
+}
+function onClick(event: MouseEvent) {
+  if (event.detail === 0 || !suppressClick) emit('click')
+  suppressClick = false
+}
+window.addEventListener('keydown', cancelOnEscape, true)
+onUnmounted(() => {
+  if (pointer) finishDrag('cancel', pointer.x, pointer.y)
+  window.removeEventListener('keydown', cancelOnEscape, true)
+})
 
 const svgRef = ref<HTMLElement | null>(null)
 const shellRef = ref<HTMLElement | null>(null)

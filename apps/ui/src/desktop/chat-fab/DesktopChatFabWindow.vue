@@ -10,7 +10,7 @@ onUnmounted(() => offMaterial?.())
 let pointer: { id: number; x: number; y: number } | undefined
 
 function start(event: PointerEvent) {
-  if (event.button !== 0 || pointer) return
+  if (event.button !== 0 || pointer || !(event.target instanceof Element) || !event.target.closest('.ai-fab')) return
   pointer = { id: event.pointerId, x: event.screenX, y: event.screenY }
   const target = event.currentTarget as Element
   target.setPointerCapture(pointer.id)
