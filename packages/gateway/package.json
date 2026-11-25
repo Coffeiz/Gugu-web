@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@gugu/core": "workspace:*",
+    "@gugu/search": "workspace:*",
     "@zpowertech/audio-player": "0.1.1",
     "@larksuiteoapi/node-sdk": "1.76.0",
     "mime-types": "2.1.35",

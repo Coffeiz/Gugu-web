@@ -1,4 +1,4 @@
-import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
+import { DESKTOP_CHANNELS, type DesktopAgentChatEvent } from '@gugu/core/desktop'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { desktopReply } from '../core-host.js'
 import type { IpcHandlers } from './types.js'
@@ -18,7 +18,11 @@ export function registerDesktopIpc(ipc: Pick<IpcMain, 'handle'>, handlers: IpcHa
           ? await action(command, (percent: number) => {
               if (!event.sender.isDestroyed()) event.sender.send(DESKTOP_CHANNELS.droppedFileProgress, progressId, percent)
             })
-          : await action(...args)
+          : channel === DESKTOP_CHANNELS.agentSessions && (command?.action === 'send' || command?.action === 'resume')
+            ? await action(command, (update: DesktopAgentChatEvent) => {
+                if (!event.sender.isDestroyed()) event.sender.send(DESKTOP_CHANNELS.agentChatEvent, update)
+              })
+            : await action(...args)
         options.onResult(event, channel, result)
         return result
       }),

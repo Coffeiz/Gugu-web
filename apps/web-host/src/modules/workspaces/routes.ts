@@ -1,3 +1,5 @@
+import { localFileRevision } from '@gugu/fs/node'
+import type { createWebProjectWorkspaceSelection } from './project-links.js'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import { CoreError, normalizeWorkspaceDirectoryName } from '@gugu/core'
 import type { UserFromRequest, WebUiOptions } from '../../app.js'
@@ -38,9 +40,11 @@ export function registerWorkspaceRoutes(
     )
   }
   if (createWorkspace) {
-    app.post('/api/v1/workspaces', async (request) =>
-      createWorkspace(userFromRequest(request).requestContext.data.ownerId, request.body),
-    )
+    app.post('/api/v1/workspaces', async (request) => {
+      if (request.body && typeof request.body === 'object' && 'kind' in request.body && request.body.kind === 'project')
+        throw new CoreError('invalid_request', '请使用项目工作区绑定')
+      return createWorkspace(userFromRequest(request).requestContext.data.ownerId, request.body)
+    })
   }
   if (updateWorkspace) {
     app.patch('/api/v1/workspaces/:workspace_id', async (request) => {
@@ -97,6 +101,7 @@ export interface WorkspaceDirectoryCard {
 }
 
 export interface WorkspaceDirectoryOperations {
+  projectSelection?: ReturnType<typeof createWebProjectWorkspaceSelection>
   files?: ReturnType<typeof createWorkspaceFileReads>
   list(ownerId: string): Promise<WorkspaceDirectoryCard[]>
   create(ownerId: string, name: string): Promise<WorkspaceDirectoryCard>
@@ -149,6 +154,20 @@ export function registerWorkspaceDirectoryRoutes(
   app: FastifyInstance,
   options: WorkspaceDirectoryRouteOptions,
 ): void {
+  const selection = options.operations.projectSelection
+  if (selection) {
+    const route = '/api/v1/projects/:project_id/workspace-selection'
+    app.get<{ Params: { project_id: string } }>(route, { preHandler: options.requireUser }, request =>
+      selection.list(options.ownerIdFromRequest(request), pathId(request.params.project_id, '项目 ID')))
+    app.put<{ Params: { project_id: string }; Body: { workspaceId?: unknown } }>(
+      route, { preHandler: options.requireUser }, async request => {
+        const workspaceId = request.body?.workspaceId
+        if (workspaceId !== null && typeof workspaceId !== 'number')
+          throw new CoreError('invalid_request', '工作区 ID 无效')
+        return { changed: await selection.select(options.ownerIdFromRequest(request),
+          pathId(request.params.project_id, '项目 ID'), workspaceId) }
+      })
+  }
   const files = options.operations.files
   if (files) {
     app.get<{ Querystring: { path?: string; download?: string } }>('/api/v1/files/by-path/content', {
@@ -166,7 +185,7 @@ export function registerWorkspaceDirectoryRoutes(
     })
 
     const registerFileRoutes = (prefix: string, directory: (params: { directory_id: string }) => FileDirectory) => {
-      type FileRequest = { Params: { directory_id: string }; Querystring: { path?: string; download?: string; overwrite?: string; identity?: string; kind?: string } }
+      type FileRequest = { Params: { directory_id: string }; Querystring: { path?: string; download?: string; overwrite?: string; metadata?: string; identity?: string; kind?: string } }
       const scope = (request: FastifyRequest<FileRequest>) => {
         const path = request.query.path ?? ''
         if (typeof path !== 'string' || path.length > 4096)
@@ -223,6 +242,17 @@ export function registerWorkspaceDirectoryRoutes(
           throw new CoreError('invalid_request', '文件引用路径层级过多')
         return files.resolveRelative(...scope(request), paths)
       })
+      app.get<FileRequest>(`${prefix}/watch`, { preHandler: options.requireUser }, async (request, reply) => {
+        const stream = await files.watchDirectory(...scope(request))
+        const close = () => stream.destroy()
+        reply.raw.once('close', close)
+        stream.once('close', () => reply.raw.off('close', close))
+        if (reply.raw.destroyed) stream.destroy()
+        return reply.type('application/x-ndjson')
+          .header('Cache-Control', 'private, no-store')
+          .header('X-Accel-Buffering', 'no')
+          .send(stream)
+      })
       app.get<FileRequest>(`${prefix}/entries`, { preHandler: options.requireUser }, request => files.list(...scope(request)))
       app.get<FileRequest>(`${prefix}/reference`, { preHandler: options.requireUser }, request =>
         files.reference(...scope(request), request.query.identity, request.query.kind === 'folder' ? 'folder' : 'file'))
@@ -238,20 +268,31 @@ export function registerWorkspaceDirectoryRoutes(
         if (identity !== undefined && (typeof identity !== 'string' || !/^\d{1,32}\.\d{1,32}\.\d{1,32}$/.test(identity)))
           throw new CoreError('invalid_request', '文件引用无效')
         const source = await files.open(...scope(request), identity)
+        if (request.query.metadata === '1') {
+          try {
+            return reply.header('Cache-Control', 'private, no-store')
+              .send({ revision: localFileRevision(await source.handle.stat({ bigint: true })) })
+          } finally { await source.handle.close() }
+        }
         reply.header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', "sandbox; default-src 'none'")
         return sendContent(reply, request, source, request.query.download === '1' ? 'attachment' : 'inline', 'private, no-store')
       })
       app.post<FileRequest>(`${prefix}/folders`, { preHandler: options.requireUser }, async (request, reply) =>
         reply.code(201).send(await files.mkdir(...scope(request))))
-      type DestinationRequest = FileRequest & { Body: { destination?: unknown } }
+      type DestinationRequest = FileRequest & { Body: { destination?: unknown; trackHistory?: unknown; expectedMoveReceipt?: unknown } }
       function destination(request: FastifyRequest<DestinationRequest>) {
         const path = request.body?.destination
         if (typeof path !== 'string' || !path || path.length > 4096)
           throw new CoreError('invalid_request', '目标路径无效')
         return path
       }
-      app.patch<DestinationRequest>(`${prefix}/entries`, { preHandler: options.requireUser }, request =>
-        files.move(...scope(request), destination(request)))
+      app.patch<DestinationRequest>(`${prefix}/entries`, { preHandler: options.requireUser }, request => {
+        const expected = request.body?.expectedMoveReceipt
+        if (expected !== undefined && (typeof expected !== 'string' || !/^[a-f0-9]{64}$/u.test(expected)))
+          throw new CoreError('invalid_request', '文件历史凭据无效')
+        const track = request.body?.trackHistory === true || expected !== undefined
+        return files.move(...scope(request), destination(request), track ? { expected } : undefined)
+      })
       app.post<DestinationRequest>(`${prefix}/copy`, { preHandler: options.requireUser }, async (request, reply) => {
         const controller = new AbortController()
         const onClose = () => { if (!reply.raw.writableEnded) controller.abort() }
@@ -262,6 +303,14 @@ export function registerWorkspaceDirectoryRoutes(
           reply.raw.off('close', onClose)
         }
       })
+      app.post<FileRequest & { Body: { id?: unknown; receipt?: unknown } }>(`${prefix}/trash-history`,
+        { preHandler: options.requireUser }, request => {
+          const { id, receipt } = request.body ?? {}
+          if ((id !== undefined && (typeof id !== 'string' || receipt === undefined))
+            || (receipt !== undefined && (typeof receipt !== 'string' || !/^[a-f0-9]{64}$/u.test(receipt))))
+            throw new CoreError('invalid_request', '文件历史凭据无效')
+          return files.applyTrashHistory(...scope(request), receipt, id)
+        })
       app.delete<FileRequest>(`${prefix}/entries`, { preHandler: options.requireUser }, request =>
         files.moveToTrash(...scope(request)))
       app.post<FileRequest>(`${prefix}/content`, { preHandler: options.requireUser }, async (request, reply) => {

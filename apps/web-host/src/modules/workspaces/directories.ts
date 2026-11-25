@@ -1,6 +1,6 @@
 import { CoreError, normalizeWorkspaceDirectoryName, validateWorkspaceDirectoryName } from '@gugu/core'
 import { createLocalFileTree } from '@gugu/fs/node'
-import { workspaceDirectoryStorageKey } from './roots.js'
+import { workspaceDirectoryPath } from './roots.js'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { normalizeOwnerId } from '../../shared/owner-context.js'
 import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
@@ -161,7 +161,7 @@ async function countsForDirectories(
   )
   for (const row of rows) {
     const count = { file_count: 0, folder_count: 0, bound_session_count: 0, bound_task_count: 0 }
-    const tree = createLocalFileTree(storageRoot, workspaceDirectoryStorageKey(user, row.directory_name))
+    const tree = createLocalFileTree(storageRoot, workspaceDirectoryPath(user, row.directory_name))
     const pending = ['']
     while (pending.length) {
       const entries = await tree.list(pending.pop()!)

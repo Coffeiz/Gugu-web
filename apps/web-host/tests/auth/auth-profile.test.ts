@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs'
-import { createProfileUpdater, ProfileUpdateError } from '@gugu/core/auth/profile-update'
+import { createProfileUpdater, ProfileUpdateError } from '../../src/modules/auth/account/profile-update.js'
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
 import { Pool } from 'pg'
 import test from 'node:test'
@@ -12,20 +12,26 @@ import { createPostgresProfileUpdateStore } from '../../src/modules/auth/account
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-profile-secret-with-enough-entropy'
 
-test('profile HTTP route maps Core validation errors without reading the profile', async () => {
+test('Users 资料入口拒绝认证和归属字段并映射时区错误', async () => {
   const app = Fastify({ logger: false })
   let lookedUp = false
+  let updates = 0
   registerProfileRoute(app, {
     secret,
     async authenticate() { return { id: randomUUID() } },
-    async updateProfile() { throw new ProfileUpdateError('invalid_timezone') },
+    async updateProfile() { updates++; throw new ProfileUpdateError('invalid_timezone') },
     async lookupUser() { lookedUp = true; return null },
     async bumpContextRevision() {},
     async publishAuthStateChanged() {},
   })
   try {
+    for (const payload of [{ userId: randomUUID() }, { newPassword: 'synthetic-secret' }]) {
+      const rejected = await app.inject({ method: 'PATCH', url: '/api/v1/users/me', payload })
+      assert.equal(rejected.statusCode, 422)
+    }
+    assert.equal(updates, 0)
     const response = await app.inject({
-      method: 'PATCH', url: '/api/v1/auth/profile', payload: { timezone: 'Not/A_Real_Zone' },
+      method: 'PATCH', url: '/api/v1/users/me', payload: { timezone: 'Not/A_Real_Zone' },
     })
     assert.equal(response.statusCode, 400)
     assert.deepEqual(response.json(), { detail: '无效的时区' })
@@ -58,19 +64,31 @@ test('password update returns renewed cookies after commit even when publishing 
     async publishAuthStateChanged(id) { calls.push(`publish:${id}`); throw new Error('synthetic Redis failure') },
   })
   try {
-    const response = await app.inject({
-      method: 'PATCH', url: '/api/v1/auth/profile',
-      payload: { currentPassword: 'old', newPassword: 'new', userId: randomUUID() },
+    const retired = await app.inject({
+      method: 'PATCH', url: '/api/v1/auth/profile', payload: { displayName: '合成资料' },
     })
-    assert.equal(response.statusCode, 200)
-    assert.equal(response.json().id, ownerId)
-    assert.deepEqual(calls, [`update:${ownerId}:new`, `lookup:${ownerId}`, `publish:${ownerId}`])
-    const cookies = response.headers['set-cookie']
-    assert.ok(Array.isArray(cookies))
-    const accessCookie = cookies.find((cookie) => cookie.startsWith('gugu_user_access_token='))
-    assert.ok(accessCookie)
-    const token = accessCookie.split(';', 1)[0].slice('gugu_user_access_token='.length)
-    assert.equal(verifyUserToken(token, secret).securityVersion, 5)
+    assert.equal(retired.statusCode, 404)
+    assert.deepEqual(calls, [])
+    calls.length = 0
+    const invalid = await app.inject({
+      method: 'POST', url: '/api/v1/auth/password/change',
+      payload: { currentPassword: 'old', newPassword: 'synthetic-new', userId: randomUUID() },
+    })
+    assert.equal(invalid.statusCode, 422)
+    assert.deepEqual(calls, [])
+
+    const changed = await app.inject({
+      method: 'POST', url: '/api/v1/auth/password/change',
+      payload: { currentPassword: 'old', newPassword: 'synthetic-new' },
+    })
+    assert.equal(changed.statusCode, 204)
+    assert.equal(changed.body, '')
+    assert.deepEqual(calls, [`update:${ownerId}:synthetic-new`, `publish:${ownerId}`])
+    const changedCookies = changed.headers['set-cookie']
+    assert.ok(Array.isArray(changedCookies))
+    const changedToken = changedCookies.join(';').match(/gugu_user_access_token=([^;]+)/)?.[1]
+    assert.ok(changedToken)
+    assert.equal(verifyUserToken(changedToken, secret).securityVersion, 5)
   } finally {
     await app.close()
   }
@@ -111,7 +129,7 @@ async function createFixture(options: { failAuthNotification?: boolean; tokenExp
       displayName: row.display_name,
       email: row.email,
       isActive: row.is_active,
-      avatarUrl: row.avatar ? `/api/v1/auth/avatar/${row.id}` : null,
+      avatarUrl: row.avatar ? `/api/v1/users/${row.id}/avatar` : null,
       createdAt: row.created_at,
       timezone: row.timezone,
       emailSubscribed: row.email_subscribed ?? false,
@@ -185,7 +203,7 @@ test('profile update validates timezone and changes only the authenticated user 
   const fixture = await createFixture()
   try {
     const badTimezone = await fixture.app.inject({
-      method: 'PATCH', url: '/api/v1/auth/profile',
+      method: 'PATCH', url: '/api/v1/users/me',
       headers: { authorization: `Bearer ${fixture.tokenFor(fixture.ownerId, 4)}` },
       payload: { timezone: 'Not/A_Real_Zone' },
     })
@@ -194,11 +212,10 @@ test('profile update validates timezone and changes only the authenticated user 
     assert.deepEqual(fixture.notifications, [])
 
     const response = await fixture.app.inject({
-      method: 'PATCH', url: '/api/v1/auth/profile',
+      method: 'PATCH', url: '/api/v1/users/me',
       headers: { authorization: `Bearer ${fixture.tokenFor(fixture.ownerId, 4)}` },
       payload: {
         displayName: '  小北  ', timezone: ' Asia/Tokyo ', emailSubscribed: true,
-        userId: fixture.otherId,
       },
     })
     assert.equal(response.statusCode, 200)
@@ -208,9 +225,9 @@ test('profile update validates timezone and changes only the authenticated user 
     assert.deepEqual(fixture.notifications, [`revision:${fixture.ownerId}:timezone:Asia/Tokyo`])
 
     const cleared = await fixture.app.inject({
-      method: 'PATCH', url: '/api/v1/auth/profile',
+      method: 'PATCH', url: '/api/v1/users/me',
       headers: { authorization: `Bearer ${fixture.tokenFor(fixture.ownerId, 4)}` },
-      payload: { displayName: '  ', timezone: '', emailSubscribed: false },
+      payload: { displayName: null, timezone: null, emailSubscribed: false },
     })
     assert.equal(cleared.statusCode, 200)
     assert.equal(cleared.json().displayName, null)
@@ -239,15 +256,15 @@ test('password update checks the current password, advances the token version, a
   const fixture = await createFixture({ failAuthNotification: true, tokenExpiresMinutes: 2 })
   try {
     const missingCurrentPassword = await fixture.app.inject({
-      method: 'PATCH', url: '/api/v1/auth/profile',
+      method: 'POST', url: '/api/v1/auth/password/change',
       headers: { authorization: `Bearer ${fixture.tokenFor(fixture.ownerId, 4)}` },
       payload: { newPassword: 'synthetic-new-password' },
     })
-    assert.equal(missingCurrentPassword.statusCode, 400)
-    assert.deepEqual(missingCurrentPassword.json(), { detail: '请输入当前密码' })
+    assert.equal(missingCurrentPassword.statusCode, 422)
+    assert.deepEqual(missingCurrentPassword.json(), { detail: '改密请求字段无效' })
 
     const wrongCurrentPassword = await fixture.app.inject({
-      method: 'PATCH', url: '/api/v1/auth/profile',
+      method: 'POST', url: '/api/v1/auth/password/change',
       headers: { authorization: `Bearer ${fixture.tokenFor(fixture.ownerId, 4)}` },
       payload: { currentPassword: 'wrong-password', newPassword: 'synthetic-new-password' },
     })
@@ -255,14 +272,14 @@ test('password update checks the current password, advances the token version, a
     assert.deepEqual(wrongCurrentPassword.json(), { detail: '当前密码错误' })
 
     const response = await fixture.app.inject({
-      method: 'PATCH', url: '/api/v1/auth/profile',
+      method: 'POST', url: '/api/v1/auth/password/change',
       headers: { authorization: `Bearer ${fixture.tokenFor(fixture.ownerId, 4)}` },
       payload: {
         currentPassword: 'synthetic-current-password',
         newPassword: 'synthetic-new-password',
       },
     })
-    assert.equal(response.statusCode, 200)
+    assert.equal(response.statusCode, 204)
     assert.deepEqual(fixture.notifications, [`auth:${fixture.ownerId}`])
     assert.equal((await fixture.pool.query<{ security_version: number }>(
       'SELECT security_version FROM users WHERE id = $1', [fixture.ownerId],
@@ -278,7 +295,7 @@ test('password update checks the current password, advances the token version, a
     assert.throws(() => verifyUserToken(refreshedToken, secret, Date.now() + 180_000))
 
     const oldSession = await fixture.app.inject({
-      method: 'PATCH', url: '/api/v1/auth/profile',
+      method: 'PATCH', url: '/api/v1/users/me',
       headers: { authorization: `Bearer ${fixture.tokenFor(fixture.ownerId, 4)}` },
       payload: { displayName: '不应写入' },
     })

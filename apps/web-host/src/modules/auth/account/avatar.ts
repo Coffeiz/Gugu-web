@@ -1,22 +1,8 @@
 import '@fastify/multipart'
-import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { PublicUserRecord } from '../session/token.js'
-import { userResponse } from '../user-response.js'
 
-export const AVATAR_MAX_BYTES = 5 * 1024 * 1024
-
-const extensionByMediaType = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-} as const
-
-export type AvatarMediaType = keyof typeof extensionByMediaType
-
-export function avatarFileExtension(mediaType: AvatarMediaType): string {
-  return extensionByMediaType[mediaType]
-}
+import { AVATAR_MAX_BYTES, InvalidAvatarError, isAvatarMediaType, setAvatar, type AvatarMediaType } from '@gugu/users'
 
 export interface UserAvatarImage {
   readonly data: Buffer
@@ -35,7 +21,7 @@ export interface UserAvatarUploadRouteOptions {
 }
 
 export function registerUserAvatarReadRoute(app: FastifyInstance, operations: UserAvatarOperations): void {
-  app.get<{ Params: { user_id: string } }>('/api/v1/auth/avatar/:user_id', async (request, reply) => {
+  app.get<{ Params: { user_id: string } }>('/api/v1/users/:user_id/avatar', async (request, reply) => {
     const userId = request.params.user_id
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
       return reply.code(422).send({ detail: '用户 ID 无效' })
@@ -53,14 +39,17 @@ export function registerUserAvatarUploadRoute(
   app: FastifyInstance,
   options: UserAvatarUploadRouteOptions,
 ): void {
-  app.post('/api/v1/auth/avatar', { preHandler: options.requireUser }, async (request, reply) => {
+  const routeOptions = { preHandler: options.requireUser }
+  app.put('/api/v1/users/me/avatar', routeOptions, upload)
+
+  async function upload(request: FastifyRequest, reply: FastifyReply) {
     const part = await request.file({
       limits: { files: 1, fields: 0, parts: 1, fileSize: AVATAR_MAX_BYTES },
     })
     if (!part || part.fieldname !== 'file') {
       return reply.code(422).send({ detail: '缺少头像文件' })
     }
-    if (!(part.mimetype in extensionByMediaType)) {
+    if (!isAvatarMediaType(part.mimetype)) {
       part.file.resume()
       return reply.code(400).send({ detail: '仅支持 JPEG/PNG/WebP/GIF 格式' })
     }
@@ -76,11 +65,12 @@ export function registerUserAvatarUploadRoute(
       return reply.code(400).send({ detail: '头像文件不能超过 5MB' })
     }
 
-    const user = await options.operations.upload(
-      options.ownerIdFromRequest(request),
-      part.mimetype as AvatarMediaType,
-      data,
-    )
-    return userResponse(user)
-  })
+    try {
+      return await setAvatar(options.ownerIdFromRequest(request), { mediaType: part.mimetype, data },
+        (ownerId, mediaType, bytes) => options.operations.upload(ownerId, mediaType, bytes))
+    } catch (error) {
+      if (error instanceof InvalidAvatarError) return reply.code(400).send({ detail: error.message })
+      throw error
+    }
+  }
 }

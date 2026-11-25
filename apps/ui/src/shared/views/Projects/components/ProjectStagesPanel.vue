@@ -316,7 +316,7 @@ function handleToggleTodo(todo: ProjectTodo) {
 </script>
 
 <style scoped>
-.stages-section { flex: 1; min-height: 80px; display: flex; flex-direction: column; gap: 0; padding-bottom: 0; }
+.stages-section { flex: 1; min-height: 80px; display: flex; flex-direction: column; padding-top: 8px; }
 .stages-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 /* ProjectInfoPanel's .section-label is scoped to that component, so stages must own the same
    typography instead of accidentally falling back to browser <label> styling. */
@@ -336,7 +336,7 @@ function handleToggleTodo(todo: ProjectTodo) {
   transition: color var(--motion-hover-control) var(--motion-ease-standard), opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
 .add-stage-btn:hover { color: var(--action-primary-hover); opacity: .78; }
-.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 11px 4px 8px; margin-right: -3px; }
+.stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 11px 0 8px; margin-right: -3px; }
 .stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity var(--motion-hover-control) var(--motion-ease-standard); padding: 0 0 0 5px; margin-bottom: 2px; }
 .stage-node.stage-dragging { opacity: .15; pointer-events: none; transition: none; }
 .node-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 0; position: relative; }

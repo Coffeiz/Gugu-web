@@ -1,3 +1,4 @@
+import { createWebProjectWorkspaceSelection } from '../modules/workspaces/project-links.js'
 import { hasProjectExpiryJournalSchema, purgeDeletedProject } from '../modules/projects/lifecycle/expiry.js'
 import { DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '@gugu/core/contracts'
 import { createSerialWorker } from '../workers/admission.js'
@@ -6,7 +7,7 @@ import { createWebRuntimeLog } from '../shared/log-files.js'
 import { createGatewayConfigChangePublisher } from '../modules/im/gateway/bot-config.js'
 import bcrypt from 'bcryptjs'
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { createProfileUpdater } from '@gugu/core/auth/profile-update'
+import { createProfileUpdater } from '../modules/auth/account/profile-update.js'
 import { createDataExportCreator } from '@gugu/core/data-portability/create-export'
 import { createDataExportPreviewReader } from '@gugu/core/data-portability/export-preview'
 import { createDataImportResumer } from '@gugu/core/data-portability/resume-import'
@@ -197,7 +198,8 @@ import { Pool, type PoolClient } from 'pg'
 import { type SqlDataRuntime } from '@gugu/core/data'
 import { createDiskFileSearchSources } from '../modules/search/files.js'
 import { createPostgresGlobalSearchSources } from '@gugu/core/search/postgres'
-import { createGlobalSearchOperations, createKyselyPreferenceDocumentStore, type Fields, type RequestContext } from '@gugu/core'
+import { createGlobalSearchOperations } from '@gugu/search'
+import { createKyselyPreferenceDocumentStore, type Fields, type RequestContext } from '@gugu/core'
 import { createApp, type WriteRequestMetadata } from '../app.js'
 import type { UserAuthOptions } from '../modules/auth/contracts.js'
 import { type WebUiConfig } from '../config.js'
@@ -579,11 +581,11 @@ export async function createWebUiApp(
   const workspaceUpdate = createPostgresWorkspaceUpdater(pool)
   const workspaceBindings = createPostgresWorkspaceBindingOperations(pool)
   const workspaceDelete = createPostgresWorkspaceDeleter(pool)
-  const workspaceDirectories = createPostgresWorkspaceDirectoryOperations(pool, {
+  const workspaceDirectories = { ...createPostgresWorkspaceDirectoryOperations(pool, {
     localPath: config.storageLocalPath,
     prepareDirectoryAcl: prepareWorkspaceDirectoryAcl,
     terminateActivePty: createSandboxdWorkspacePtyTerminator(pool, config.sandboxdSocket),
-  })
+  }), projectSelection: createWebProjectWorkspaceSelection(core.db, pool) }
   const runtimeConfigPath = config.configOverridePath ?? resolveConfigOverridePath(env)
   const bubblewrapRootfs = resolveBubblewrapRootfs(env)
   const readBubblewrapReadiness = createIsolatedShellReadiness(bubblewrapRootfs)

@@ -121,7 +121,7 @@ import { usePreviewStore, isPreviewable, isTextMime, isImageExt } from '@/stores
 import { useUiStore } from '@/stores/ui'
 import { isRelativeFileLink } from '@/utils/fileLinks'
 import { createHtmlPreviewDocument } from '@/utils/htmlPreview'
-import { showAppError } from '@/composables/core/useAppToast'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 
 const pathFilesApi = usePathFileAccess()
 
@@ -765,6 +765,13 @@ async function onMdClick(e: MouseEvent) {
   if (!anchor) return
   const href = anchor.getAttribute('href')
   if (!href || !isRelativeFileLink(href)) return
+  const nativeOpen = pathFilesApi.openRelativePreview?.(href)
+  if (nativeOpen) {
+    e.preventDefault()
+    try { await nativeOpen }
+    catch (error) { showAppError(errorMessage(error)) }
+    return
+  }
   const fileContext = props.fileContext
   let source = fileContext?.workspaceFile
   if (!source && typeof fileContext?.filePath === 'string' && pathFilesApi.resolveRelative) {
@@ -1055,15 +1062,13 @@ onBeforeUnmount(() => {
 
 /* ── 代码文件编辑：CodeMirror（字体/字号走 theme 里的 --tv-font-size，容器负责撑满高度） ── */
 .tv-edit-cm-wrap { flex: 1; overflow: hidden; }
-/* 背景只能放在 .cm-editor（层叠上下文根）上：drawSelection 的选区层 .cm-selectionLayer
-   以 z-index:-1 挂在 .cm-scroller 下，画在普通流内元素背景的**下面**——若给
-   .cm-scroller/.cm-content 再铺不透明背景，会把选区带整个盖住（暗色下表现为选区几乎不可见）。 */
-.tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; background: var(--surface-card-solid); color: var(--content-primary); }
+/* 编辑器与 Markdown 预览共用 .tv-wrap 的底色，避免半透明主题重复叠色。
+   保持 .cm-scroller 和 .cm-content 透明，让位于正文下方的选区仍可见。 */
+.tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; background: transparent; color: var(--content-primary); }
 .tv-edit-cm-wrap :deep(.cm-content) { color: var(--content-primary); }
-/* 行号槽令牌化：CodeMirror 默认主题的 gutter 是亮色（白底灰字），暗色模式下是刺眼白条，
-   必须在所有 CodeMirror 场景（代码文件 + Markdown 编辑）覆盖，不能只写在 md-wrap 上。 */
+/* 行号槽沿用文档底色，使用分隔线和弱化文字区分。 */
 .tv-edit-cm-wrap :deep(.cm-gutters) {
-  background: var(--surface-panel);
+  background: transparent;
   border-right: 1px solid var(--content-divider);
   color: var(--content-tertiary);
   /* 行号数字不继承 cm-content 的字体，必须单独指定，否则落在浏览器默认等宽上 */
@@ -1071,7 +1076,7 @@ onBeforeUnmount(() => {
 }
 .tv-editor-loading {
   height: 100%; display: flex; align-items: center; justify-content: center;
-  color: var(--content-secondary); font-size: 12px; background: var(--surface-card-solid);
+  color: var(--content-secondary); font-size: 12px;
 }
 .tv-edit-cm-wrap :deep(.cm-gutterElement) { color: var(--content-tertiary); }
 /* 折叠槽（basicSetup 内置，无法替换扩展，只能样式化）：
@@ -1114,11 +1119,15 @@ onBeforeUnmount(() => {
   background: var(--selection-bg);
   color: var(--content-primary);
 }
+/* 主副选区共用底色；暗色模式降低铺色强度，保留与当前行的区分。 */
+:global(:root[data-theme='dark'] .tv-edit-cm-wrap) {
+  --tv-editor-selection-bg: color-mix(in srgb, var(--selection-text-bg) 52%, transparent);
+  --tv-editor-match-opacity: 13%;
+  --tv-editor-main-match-opacity: 23%;
+}
 .tv-edit-cm-wrap :deep(.cm-selectionBackground),
 .tv-edit-cm-wrap :deep(.cm-focused .cm-selectionBackground) {
-  /* Ctrl+D / Alt+拖拽产生的所有选区（主+副）都画成这个类，统一令牌色。
-     浓度必须明显高于 activeLine 的 5%，否则选区和「当前行高亮」分不出。 */
-  background: var(--selection-text-bg) !important;
+  background: var(--tv-editor-selection-bg, var(--selection-text-bg)) !important;
 }
 /* 光标：CM 的明暗判定是 darkTheme 开关（我们没开，它默认亮色主题），
    亮色默认是黑边框光标，暗色模式下直接隐形，必须显式覆盖成正文色。 */
@@ -1140,10 +1149,10 @@ onBeforeUnmount(() => {
    默认写死半透明绿 #99ff7780，与主题无关、暗色下跟选区色混在一起难以分辨。
    主匹配略浓、其余匹配略淡，都从主色派生以区分于普通选区。 */
 .tv-edit-cm-wrap :deep(.cm-selectionMatch) {
-  background: color-mix(in srgb, var(--action-primary) 22%, transparent);
+  background: color-mix(in srgb, var(--action-primary) var(--tv-editor-match-opacity, 22%), transparent);
 }
 .tv-edit-cm-wrap :deep(.cm-selectionMatch-main) {
-  background: color-mix(in srgb, var(--action-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--action-primary) var(--tv-editor-main-match-opacity, 45%), transparent);
 }
 /* CodeMirror 的 classHighlighter 使用稳定的 tok-* 类名，颜色贴近 VS Code Light。 */
 .tv-edit-cm-wrap :deep(.tok-heading),
@@ -1205,16 +1214,6 @@ onBeforeUnmount(() => {
 .tv-md :deep(p)  { margin: 0.8em 0; }
 .tv-md :deep(a)  { color: var(--action-primary); text-decoration: none; }
 .tv-md :deep(a:hover) { text-decoration: underline; }
-/* 行内代码 */
-.tv-md :deep(code) {
-  font-family: var(--font-family-mono);
-  font-size: 0.875em;
-  background: var(--action-soft);
-  border-radius: 4px;
-  padding: 0.15em 0.4em;
-  color: var(--action-primary);
-}
-
 /* 代码块容器 */
 .tv-md :deep(.md-pre) {
   position: relative;

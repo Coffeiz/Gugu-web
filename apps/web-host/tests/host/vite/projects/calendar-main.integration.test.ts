@@ -84,12 +84,13 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
         UNIQUE(user_id,idempotency_key)
       );
       CREATE TABLE files (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, display_name varchar(300) NOT NULL,
+        user_id uuid NOT NULL, path varchar(500) NOT NULL, display_name varchar(300) NOT NULL,
         ext varchar(20) NOT NULL, space varchar(20) NOT NULL, project_id integer,
         workspace_directory_id integer, stage_name varchar(100), mind_map_id integer,
-        storage_key varchar(500) NOT NULL, version integer NOT NULL, size varchar(50),
+        version integer NOT NULL, size varchar(50),
         size_bytes bigint NOT NULL, mime_type varchar(200), img_width integer, img_height integer,
-        created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz
+        created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz,
+        PRIMARY KEY(user_id,path)
       );
       CREATE TABLE calendar_events (
         id serial PRIMARY KEY, user_id uuid NOT NULL, title varchar(300) NOT NULL,
@@ -194,9 +195,9 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
     await writeFile(projectFilePath, '合成项目文件')
     await pool.query(
       `INSERT INTO files (
-         user_id,display_name,ext,space,project_id,stage_name,storage_key,version,
+         user_id,path,display_name,ext,space,project_id,stage_name,version,
          size,size_bytes,mime_type,created_at,updated_at
-       ) VALUES ($1,'关联文档','md','project',$2,'',$3,1,'18 B',18,'text/markdown',$4,$4)`,
+       ) VALUES ($1,$3,'关联文档','md','project',$2,'',1,'18 B',18,'text/markdown',$4,$4)`,
       [ownerId, projectId, projectFileKey, stamp],
     )
 
@@ -479,7 +480,7 @@ test('Vite→生产 main.ts→Node Host→隔离 PostgreSQL 完成项目与日�
       }>(
         `SELECT project.name AS project_name, project.version AS project_version,
                 project.deleted_at AS project_deleted, event.version AS event_version,
-                event.deleted_at AS event_deleted, file.storage_key AS file_key,
+                event.deleted_at AS event_deleted, file.path AS file_key,
                 file.version AS file_version
          FROM projects AS project
          JOIN calendar_events AS event ON event.project_id=project.id

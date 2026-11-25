@@ -1,4 +1,4 @@
-import { casefoldSearchText } from '../../search/unicode.js'
+import { casefoldSearchText } from '@gugu/search'
 import type { AttentionMessage } from './types.js'
 
 /** 与 Python 相同的 NFKC/casefold 相似度视图，标点与空白不参与匹配。 */

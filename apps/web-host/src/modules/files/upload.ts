@@ -15,7 +15,7 @@ import { writeRequestMetadata } from '../../http/request.js'
 import { runBestEffort } from '../../shared/best-effort.js'
 import { isPathWithin } from '../../shared/path-safety.js'
 import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
-import { isOwnedFileStorageKey, normalizeFileOwnerId } from './store.js'
+import { isOwnedFilePath, normalizeFileOwnerId } from './store.js'
 import { sandboxTarget } from '../workspaces/roots.js'
 
 export interface FileUploadInput {
@@ -384,7 +384,7 @@ interface UploadStoreState {
 
 function validateOverwriteTarget(before: FileRow, upload: StagedUpload, ownerId: string, target: Target, displayName: string, ext: string): void {
   const { input } = upload
-  if (!isOwnedFileStorageKey(ownerId, before.path)) throw new CoreError('not_found', '文件不存在')
+  if (!isOwnedFilePath(ownerId, before.path)) throw new CoreError('not_found', '文件不存在')
   const imported = before.path.startsWith(`${ownerId.replaceAll('-', '')}/.data-portability/imported/`)
   if (before.space !== input.space
     || (before.project_id === null ? null : Number(before.project_id)) !== input.projectId
@@ -398,7 +398,7 @@ function validateOverwriteTarget(before: FileRow, upload: StagedUpload, ownerId:
 async function loadOverwriteTarget(client: PoolClient, userId: string, upload: StagedUpload): Promise<FileRow | null> {
   if (upload.input.onConflict !== 'overwrite') return null
   const storageKey = upload.input.overwriteFilePath
-  if (!storageKey || !isOwnedFileStorageKey(userId, storageKey)) throw new CoreError('not_found', '要覆盖的文件不存在')
+  if (!storageKey || !isOwnedFilePath(userId, storageKey)) throw new CoreError('not_found', '要覆盖的文件不存在')
   const result = await client.query<FileRow>(
     'SELECT * FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE',
     [storageKey, userId],
@@ -422,7 +422,7 @@ async function storeOverwrite(
   userId: string, upload: StagedUpload, metadata: { undoContextId: string | null },
   target: Target, before: FileRow,
 ): Promise<FileRow> {
-  if (!isOwnedFileStorageKey(userId, before.path)) throw new CoreError('not_found', '文件不存在')
+  if (!isOwnedFilePath(userId, before.path)) throw new CoreError('not_found', '文件不存在')
   const destination = (await storagePath(options.storageRoot, before.path)).target
   state.finalPath = destination
   const stagedPath = await stageForStorage(upload.path, destination, state)

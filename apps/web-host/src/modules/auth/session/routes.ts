@@ -1,5 +1,6 @@
+import { login, logout } from '@gugu/auth'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import type { RemoteLoginResponse } from '@gugu/core/auth/contracts'
+import type { RemoteLoginResponse } from '@gugu/auth/contracts'
 import { createCsrfToken, createUserToken, type PublicUserRecord } from './token.js'
 import type { UserAuthOptions } from '../contracts.js'
 import { RateLimitError } from '../rate-limit.js'
@@ -28,15 +29,16 @@ export function registerLoginRoute(app: FastifyInstance, auth: UserAuthOptions):
       return reply.code(error.statusCode).send({ detail: error.message })
     }
 
-    const user = await authenticateCredentials(input.username, input.password)
-    if (!user) return reply.code(401).send({ detail: '用户名或密码错误' })
-    if (!user.isActive)
-      return reply.code(403).send({ detail: '账号已停用，请联系管理员' })
-
-    await recordLogin(user.id)
-    const securityVersion = user.securityVersion || 1
     const expiresMinutes = auth.tokenExpiresMinutes ?? 10080
-    const token = createUserToken(user.id, securityVersion, auth.secret, Date.now(), expiresMinutes)
+    const outcome = await login(input, {
+      authenticateCredentials,
+      recordLogin,
+      issueCredential: user => createUserToken(user.id, user.securityVersion || 1, auth.secret, Date.now(), expiresMinutes),
+    })
+    if (outcome.status === 'invalid_credentials') return reply.code(401).send({ detail: '用户名或密码错误' })
+    if (outcome.status !== 'authenticated')
+      return reply.code(403).send({ detail: '账号已停用，请联系管理员' })
+    const { user, credential: token } = outcome
     const maxAge = expiresMinutes * 60
     const forwardedProtocol = request.headers['x-forwarded-proto']
     const secure = request.protocol === 'https'
@@ -61,6 +63,7 @@ export function registerCurrentUserRoute(
   userFromRequest: (request: FastifyRequest) => PublicUserRecord,
 ): void {
   app.get('/api/v1/auth/me', (request) => userResponse(userFromRequest(request)))
+  app.get('/api/v1/users/me', (request) => userResponse(userFromRequest(request)))
 }
 
 export interface LogoutUser {
@@ -85,12 +88,7 @@ export function registerLogoutRoute(app: FastifyInstance, options: LogoutRouteOp
     if (!user) return
 
     await options.removePush?.(user.id, request.headers['x-gugu-push-subscription'])
-    await options.revokeUserSessions(user.id)
-    try {
-      await options.publishAuthStateChanged(user.id)
-    } catch {
-      // Session revocation is already durable; a missed live notification must not undo it.
-    }
+    await logout(user.id, options)
 
     reply.header('set-cookie', [
       'gugu_user_access_token=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax',

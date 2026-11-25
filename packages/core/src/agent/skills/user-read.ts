@@ -1,6 +1,6 @@
 import { sql, type Kysely } from 'kysely'
 import { dataContext } from '../../contracts/index.js'
-import { casefoldSearchText } from '../../search/unicode.js'
+import { casefoldSearchText } from '@gugu/search'
 import type { SkillMetadata } from './contracts.js'
 
 export interface SkillListEntry {

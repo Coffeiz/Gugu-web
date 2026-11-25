@@ -4,6 +4,9 @@ export const projectWorkspaces = definePostgresMigration({
   revision: '0037_project_workspaces',
   prerequisites: ['projects', 'workspace_directories'],
   tables: ['project_workspace_directories'],
+  downstreamIndexes: ['project_workspace_one_active'],
+  downstreamFields: ['project_workspace_directories.active'],
+  downstreamStages: [{ revision: '0044_active_project_workspace' }],
   sql: `
     CREATE TABLE project_workspace_directories (
       user_id uuid NOT NULL,

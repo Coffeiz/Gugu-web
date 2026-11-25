@@ -141,7 +141,9 @@
   --project-card-highlight-hover: var(--theme-project-highlight-hover);
   --project-card-radius: var(--radius-sm);
   --project-card-motion: var(--card-motion), box-shadow var(--motion-hover-card) ease;
-  --done-group-border: var(--card-advance-border);
+  --tree-guide-opacity: 25%;
+  --tree-guide-color: color-mix(in srgb, var(--content-secondary) var(--tree-guide-opacity), transparent);
+  --tree-guide-width: 2px;
   --card-advance-border: color-mix(in srgb,var(--content-muted) 25%,transparent);
 
   /* Calendar: preserve the original light grid/weekend character while giving dark mode its own

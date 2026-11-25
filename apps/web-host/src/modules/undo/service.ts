@@ -21,11 +21,12 @@ export async function withUndoTransactionClient<T>(tx: UndoAdapterContext['tx'],
   const client = {
     async query(text: string, parameters: unknown[] = []) {
       if (!active || pending) throw new Error('撤销事务查询已结束或正在执行')
+      const normalized = typeof text === 'string' ? text.replace(/\s+/gu, ' ').trim() : ''
       const select = /^SELECT \* FROM (?:calendar_events|scheduled_tasks|projects) WHERE id=\$1 AND user_id=\$2 FOR UPDATE$|^SELECT \* FROM files WHERE path=\$1 AND user_id=\$2 FOR UPDATE$/
       const column = '(?:title|date|time|end_time|type|contact_name|project_id|description|deleted_at|enabled|name|payload|execution_mode|cron|schedule_kind|start_at|reminder_lead_minutes|channels|delivery_targets|summary|status|start_date|deadline|color|progress|current_stage|priority|archived|done_at|stages_json|path|display_name)'
       const assignment = `(?:${column}=\\$[1-9][0-9]*|version=COALESCE\\(version,1\\)\\+1|path=\\$3 \\|\\| substring\\(path from char_length\\(\\$4\\)\\+1\\)|version=version\\+1)`
       const update = new RegExp(`^(?:UPDATE (?:calendar_events|scheduled_tasks|projects) SET ${assignment}(?:, ?${assignment})* WHERE id=\\$1 AND user_id=\\$2|UPDATE files SET ${assignment}(?:, ?${assignment})* WHERE (?:path=\\$1 AND user_id=\\$2|user_id=\\$1 AND project_id=\\$2 AND left\\(path,char_length\\(\\$4\\)\\)=\\$4))(?: RETURNING (?:version|\\*))?$`)
-      if (typeof text !== 'string' || /;|--|\/\*|\*\//.test(text) || !(select.test(text) || update.test(text)) || !Array.isArray(parameters) || parameters.length < 2) throw new Error('撤销事务查询不允许该语句')
+      if (typeof text !== 'string' || /;|--|\/\*|\*\//.test(text) || !(select.test(normalized) || update.test(normalized)) || !Array.isArray(parameters) || parameters.length < 2) throw new Error('撤销事务查询不允许该语句')
       const query = { sql: text, parameters, query: { kind: 'RawNode', sqlFragments: [text], parameters: [] } }
       const current = tx.executeQuery(query as unknown as Parameters<typeof tx.executeQuery>[0])
       pending = current

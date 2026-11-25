@@ -1,5 +1,5 @@
 import { createLocalFileTree, localEntryKind, moveLocalEntry } from '@gugu/fs/node'
-import { projectFileStorageKey } from '../../files/paths.js'
+import { projectFilePath } from '../../files/paths.js'
 import { CoreError } from '@gugu/core'
 import { safeKey, trashKey, withConflictName, projectOriginalStorageKey, type OriginalProjectFileKey, type ProjectTrashPathMetadataReader } from '@gugu/core/project-file-paths'
 import { chmod, chown, lstat, mkdir, realpath, stat, link, unlink } from 'node:fs/promises'
@@ -105,7 +105,7 @@ export function createLocalProjectTrashStorage(
 
   return {
     async moveProjectDirectory(ownerId, project, deleted, beforeMove) {
-      const active = projectFileStorageKey(ownerId, project.id, project.name, project.start_date, project.created_at)
+      const active = projectFilePath(ownerId, project.id, project.name, project.start_date, project.created_at)
       const parked = projectTrashDirectoryKey(ownerId, project.id)
       const [from, to] = deleted ? [active, parked] : [parked, active]
       const root = absoluteRoot

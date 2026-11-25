@@ -43,15 +43,9 @@ html[data-theme][data-family] .proj-card .progress-num {
 }
 html[data-theme][data-family] .proj-card .proj-stage:hover,
 html[data-theme][data-family] .proj-card .proj-stage.open,
-html[data-theme][data-family] .proj-card .file-badge,
-html[data-theme][data-family] .proj-card .card-advance:hover {
+html[data-theme][data-family] .proj-card .file-badge {
   background: var(--surface-soft-hover);
 }
-html[data-theme][data-family] .proj-card .card-advance:not(.card-advance-placeholder) {
-  color: var(--content-tertiary);
-}
-html[data-theme][data-family] .proj-card .card-advance:hover { color: var(--content-primary); }
-html[data-theme][data-family] .proj-card .card-advance:active { background: var(--selection-bg); }
 html[data-theme][data-family] .proj-card .star-btn { color: var(--content-tertiary); }
 html[data-theme][data-family] .proj-card .done-label {
   color: var(--status-success);

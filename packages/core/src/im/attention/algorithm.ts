@@ -1,4 +1,4 @@
-import { casefoldSearchText } from '../../search/unicode.js'
+import { casefoldSearchText } from '@gugu/search'
 import { normalizeAttentionText, buildLogicalCandidates } from './normalization.js'
 import { questionEvidence } from './question.js'
 import { visibleAttentionUnits } from './visible-units.js'

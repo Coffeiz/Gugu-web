@@ -238,11 +238,6 @@ html[data-theme='dark'][data-family] .privacy-page .md-content hr {
   border-top-color: var(--content-divider);
 }
 
-html[data-theme='dark'][data-family] .privacy-page .md-content code {
-  color: var(--content-primary);
-  background: var(--surface-soft);
-}
-
 html[data-theme='dark'][data-family] .privacy-page .md-content th {
   color: var(--content-primary);
   background: var(--surface-soft);

@@ -38,19 +38,21 @@ it.each([true, false])('本机投递先登记并防止发送状态恢复时重�
 
 it('微信回复凭据随事件加密，数据库索引只使用摘要', async () => {
   const { createDesktopImInbox } = await import('../src/main/im/gateway/inbound/inbox.js')
-  const request = vi.fn(async (_method: string, _params: unknown) => null)
-  const encryptStringAsync = vi.fn(async () => Buffer.from([1]))
+  const request = vi.fn(async (_method: string, _params: unknown) => true)
+  const encryptStringAsync = vi.fn(async (_value: string) => Buffer.from([1]))
   const admit = createDesktopImInbox({ request: request as IpcHost['request'] }, {
     encryptStringAsync, async isAsyncEncryptionAvailable() { return true },
   })
   const event = { version: 1, kind: 'message.received', eventId: 'synthetic-context', text: '测试', quotedText: null, botMentioned: false,
     scope: { platform: 'wechat', botId: 'bot', ownerId: 'desktop', chatType: 'c2c' as const, chatId: null, platformUserId: 'user' },
   } as const
-  await admit('connection', event, 'synthetic-context')
+  await admit(event.scope, 'connection', event, 'synthetic-context')
   const otherSender = { ...event, scope: { ...event.scope, platformUserId: 'other-user' } }
-  await admit('connection', otherSender, 'other-context')
+  await admit(event.scope, 'connection', otherSender, 'other-context')
   expect(request.mock.calls[0]?.[1]).not.toMatchObject({ eventKey: desktopImEventKey(otherSender) })
-  expect(encryptStringAsync).toHaveBeenCalledWith(JSON.stringify({ event, replyContext: 'synthetic-context' }))
+  expect(JSON.parse(encryptStringAsync.mock.calls[0]![0])).toEqual({ event, replyContext: 'synthetic-context' })
+  await expect(admit({ ...event.scope, botId: 'other-bot' }, 'connection', event)).rejects.toThrow('连接范围不匹配')
+  expect(request).toHaveBeenCalledTimes(2)
   expect(request).toHaveBeenCalledWith('im.inbox.admit', {
     platform: 'wechat', connectionId: 'connection', eventKey: expect.stringMatching(/^[a-f0-9]{64}$/), sealedEvent: 'AQ==',
   })
@@ -337,8 +339,8 @@ it('桌面 QQ 重复附件收件只清理本次文件，并将原附件交给 Ag
     const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
     const media = { files: [{ name: '测试', ext: 'png', mime: 'image/png', voice: false, bytes }], async authorize() { return true } }
     const connectionId = 'a'.repeat(64)
-    await inbox(connectionId, event, undefined, media)
-    await inbox(connectionId, event, undefined, media)
+    await inbox(connection, connectionId, event, undefined, media)
+    await inbox(connection, connectionId, event, undefined, media)
     const { attachments } = JSON.parse(Buffer.from(sealedEvent!, 'base64').toString())
     expect(await readdir(join(directory, 'agent-attachments'))).toEqual(attachments)
     expect(await readFile(join(directory, 'agent-attachments', attachments[0]))).toEqual(bytes)

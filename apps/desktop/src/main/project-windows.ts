@@ -4,7 +4,7 @@ import { projectWindowChannels as channels } from '@gugu/desktop-contracts'
 import { DesktopError, desktopReply } from './core-host.js'
 import { createProjectWindowBoundsStore, desktopWindowMaterial, fitProjectWindowBounds, secureWindow, trustedCaller, windowOptions } from './windows.js'
 
-const projectFileActions = new Set(['list', 'reference', 'mkdir', 'upload', 'move-dropped', 'copy', 'move', 'trash', 'download', 'reveal', 'open', 'search'])
+const projectFileActions = new Set(['list', 'reference', 'mkdir', 'upload', 'move-dropped', 'copy', 'move', 'trash', 'undo-trash', 'redo-trash', 'download', 'reveal', 'open', 'search'])
 
 const projectChannels = new Set<string>([
   DESKTOP_CHANNELS.appearance, DESKTOP_CHANNELS.projects, DESKTOP_CHANNELS.projectBoard,

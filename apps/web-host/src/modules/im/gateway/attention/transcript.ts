@@ -9,7 +9,7 @@ import {createPostgresImConversationStore} from '../agent/conversations.js'
 import {createImInboundEnvelope} from '../inbound/envelope.js'
 import {imConversationEventId,imConversationDigest,imConversationFingerprint,imConversationScopeHash} from '../agent/identity.js'
 import {imAttachmentScopeKey,type ImAttachmentScope} from '../inbound/attachments.js'
-import {isOwnedFileStorageKey} from '../../../files/store.js'
+import {isOwnedFilePath} from '../../../files/store.js'
 import type {ImAttentionVoiceReadInput,ImAttentionVoiceSource} from './voice.js'
 import {assertImQuotedVoiceSource} from './quote.js'
 
@@ -131,7 +131,7 @@ export function createImAttentionVoiceSource(options:{
         WHERE user_id=$1 AND attach_id=$2 AND platform=$3 AND extra->>'im_ingress_scope'=$4`,[scope.ownerId,attachId,scope.platform,ingressScope])).rows
       if(rows.length!==1)throw invalid()
       const row=rows[0]!,extra=row.extra
-      if(!object(extra)||!isOwnedFileStorageKey(scope.ownerId,row.storage_key)||extra.im_ingress_scope!==ingressScope
+      if(!object(extra)||!isOwnedFilePath(scope.ownerId,row.storage_key)||extra.im_ingress_scope!==ingressScope
        ||typeof extra.im_ingress_source!=='string'||typeof extra.im_ingress_receipt!=='string'||!/^[a-f0-9]{64}$/.test(String(extra.im_ingress_fingerprint))
        ||!Array.from({length:101},(_,index)=>hash([ingressScope,mediaSource,index,extra.quoted===true])).includes(extra.im_ingress_source)
        ||initial.state==='started'&&(row.state!=='draft'||row.message_id!==null||row.fresh!==true)

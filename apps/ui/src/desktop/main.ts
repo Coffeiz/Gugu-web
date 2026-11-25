@@ -36,17 +36,22 @@ import { openPlatformPreviewKey } from '@/stores/preview'
 import { i18n } from '@/i18n'
 import { setupInteractionRuntime } from '@/interaction/runtime/setup'
 import { initializeDesktopTheme } from '@/composables/core/useTheme'
+import { chatFabHost } from './chat-fab/bridge'
 import { installEnterDirective } from '@/directives/enter'
 
 initializeDesktopTheme()
 setupInteractionRuntime()
 const query = new URLSearchParams(location.search)
+const nativeChatPanel = chatFabHost && query.get('chatFabPanel') === '1'
 const nativePreview = previewWindowBridge && query.get('filePreview') === '1'
 const projectId = Number(query.get('projectWindow'))
 const nativeProject = projectWindowBridge && Number.isSafeInteger(projectId) && projectId > 0
 
 export async function mountDesktop() {
-  const app = nativePreview
+  if (nativeChatPanel) document.documentElement.dataset.desktopChatPanel = 'true'
+  const app = nativeChatPanel
+    ? createApp((await import('./shell/components/DesktopGuguChat.vue')).default, { standalone: true })
+    : nativePreview
     ? createApp((await import('./files/DesktopPreviewWindow.vue')).default)
     : nativeProject
     ? createApp((await import('./projects/ProjectWindow.vue')).default, { projectId })

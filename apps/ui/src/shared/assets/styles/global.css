@@ -7,6 +7,28 @@
 @import './filesListRows.css';
 @import './search-highlight.css';
 
+/* FLIP 分组引导线统一在这里绘制，分组只提供锚点。 */
+[data-layout-content][data-layout-guide]::before,
+[data-layout-content][data-layout-guide] > [data-layout-guide-end]::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: calc(var(--tree-guide-anchor) - var(--tree-guide-width) / 2);
+  background: var(--tree-guide-color);
+  pointer-events: none;
+}
+[data-layout-content][data-layout-guide]::before {
+  inset-block: 0;
+  inline-size: var(--tree-guide-width);
+}
+[data-layout-content][data-layout-guide]:has(> [data-layout-guide-end])::before {
+  inset-block-end: 50%;
+}
+[data-layout-content][data-layout-guide] > [data-layout-guide-end]::before {
+  inset-block-start: 50%;
+  inline-size: max(0px, calc(var(--tree-guide-end-anchor) - var(--tree-guide-anchor)));
+  block-size: var(--tree-guide-width);
+}
+
 /* 透明窗口的 Shell tint 为 50%。补足模糊取样的 alpha，避免原始图标边缘透出。 */
 html[data-desktop-shell='true'] { --desktop-backdrop-alpha: url(#desktop-backdrop-alpha); }
 

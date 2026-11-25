@@ -2,7 +2,7 @@ import type { Pool } from 'pg'
 import type { Kysely } from 'kysely'
 import { createWorkspaceShellDirectoryReader, createWorkspaceShellTargetReader } from '@gugu/core/workspaces/shell-target'
 import { readPostgresProjectPathKey } from '../../files/paths.js'
-import { personalFileStorageKey, sandboxTarget, workspaceDirectoryStorageKey } from '../../workspaces/roots.js'
+import { personalFileRootPath, sandboxTarget, workspaceDirectoryPath } from '../../workspaces/roots.js'
 import { CoreError } from '@gugu/core'
 import { posix } from 'node:path'
 import { createLocalFileTree, localEntryKind, readWorkspaceAgentInstructions } from '@gugu/fs/node'
@@ -60,14 +60,14 @@ export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | '
   const target = createWorkspaceShellTargetReader(db, 'postgres')
   const directories = createWorkspaceShellDirectoryReader(db, 'postgres')
   async function resolvePrimary(owner: string, workspaceId: number | null) {
-    if (workspaceId === null) return { selected: null, primary: personalFileStorageKey(owner) }
+    if (workspaceId === null) return { selected: null, primary: personalFileRootPath(owner) }
     const selected = await target(owner, workspaceId)
     if (!selected) return null
     const client = await pool.connect()
     let primary: string
     try {
       if (selected.kind === 'directory') {
-        primary = workspaceDirectoryStorageKey(owner, selected.directoryName)
+        primary = workspaceDirectoryPath(owner, selected.directoryName)
       } else primary = await readPostgresProjectPathKey(client, owner, selected.projectId)
     } finally { client.release() }
     return { selected, primary }
@@ -77,7 +77,7 @@ export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | '
     if (!resolved) throw new Error('当前工作区挂载无法安全解析')
     const { selected, primary } = resolved
     const writable = selected ? [primary] : []
-    const libraryRoots = [personalFileStorageKey(owner), `${owner}/项目文件`]
+    const libraryRoots = [personalFileRootPath(owner), `${owner}/项目文件`]
     // 老账号尚未使用文件库时，声明可能早于实际目录。只补固定根，不重建已丢失的普通目录。
     const initialize = new Set(libraryRoots)
     if (selected?.kind === 'project') initialize.add(primary)
@@ -87,7 +87,7 @@ export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | '
     if (fullUserSandboxWrite) for (const directory of await directories(owner)) {
       if (directory.isDefault && directory.directoryName === 'default'
         && !(selected?.kind === 'directory' && selected.directoryId === directory.id)) continue
-      const key = workspaceDirectoryStorageKey(owner, directory.directoryName)
+      const key = workspaceDirectoryPath(owner, directory.directoryName)
       writable.push(key)
       workspaceIds.set(key, directory.id)
     }

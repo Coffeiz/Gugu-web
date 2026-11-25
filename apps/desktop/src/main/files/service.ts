@@ -1,4 +1,4 @@
-import { readWorkspaceAgentInstructions } from '@gugu/fs/node'
+import { readWorkspaceAgentInstructions, watchDirectoryChanges } from '@gugu/fs/node'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createWriteStream, rmSync, type BigIntStats } from 'node:fs'
 import { chmod, copyFile, cp, link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from 'node:fs/promises'
@@ -7,6 +7,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'nod
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { agentDownloadsLimit } from '@gugu/core/tools'
+import { scanFilesystem } from '@gugu/search'
 import { DesktopError } from '../core-host.js'
 import { fileWorkspaces } from './workspaces.js'
 import { resolveProjectFileRoot, stageDesktopProjectDirectory, type ReadProjectFilesMetadata } from './project-root.js'
@@ -45,11 +46,41 @@ function segments(path: unknown, allowEmpty = false): string[] {
   return parts
 }
 
+type FileMoveHistory = {
+  from: string; to: string; identity: string; fromParent: string; toParent: string; previousIdentity?: string
+}
 const identityOf = (info: { dev: bigint; ino: bigint; birthtimeNs: bigint }) => `${info.dev}.${info.ino}.${info.birthtimeNs}`
 function assertInside(root: string, candidate: string) {
   const path = relative(root, candidate)
   if (isAbsolute(path) || path === '..' || path.startsWith('..' + sep))
     throw new DesktopError('forbidden', '文件不在工作区内')
+}
+
+// SMB 可能禁用硬链接。独占占位后使用同卷重命名，保留文件身份。
+async function renameIntoVacantFile(source: string, target: string) {
+  const placeholder = await open(target, 'wx', 0o600)
+  try {
+    const reserved = identityOf(await placeholder.stat({ bigint: true }))
+    if (identityOf(await lstat(target, { bigint: true })) !== reserved)
+      throw new DesktopError('conflict', '目标文件已变化')
+    try { await rename(source, target) }
+    catch (error) {
+      if (await lstat(target, { bigint: true }).then(info => identityOf(info) === reserved, () => false))
+        await rm(target)
+      throw error
+    }
+  } finally { await placeholder.close() }
+}
+
+async function publishFile(source: string, target: string) {
+  try { await link(source, target) }
+  catch (error) {
+    if (!['ENOTSUP', 'EOPNOTSUPP', 'ENOSYS'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+    await renameIntoVacantFile(source, target)
+    return
+  }
+  try { await rm(source) }
+  catch (error) { await rm(target); throw error }
 }
 
 type NativeFileOperations = {
@@ -147,7 +178,7 @@ async function copyDroppedWithProgress(source: string, target: string, report: (
 type DropOptions = { negotiate?: unknown; choice?: unknown; identity?: unknown }
 
 function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Promise<string>, native?: NativeFileOperations,
-  thumbnailCache?: ReturnType<typeof createThumbnailCache>) {
+  thumbnailCache?: ReturnType<typeof createThumbnailCache>, smb = false) {
   async function locate(parts: string[]) {
     const base = await workspace()
     let path = base
@@ -170,24 +201,24 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
   async function destination(parts: string[]) {
     return join(await locate(parts.slice(0, -1)), parts.at(-1)!)
   }
-  async function list(path: unknown, includeModifiedAt = false, includeCounts = false) {
+  async function list(path: unknown, includeModifiedAt = false, includeCounts = false, lightweight = false) {
     const parts = segments(path, true)
     const directory = await locate(parts)
     const entries = await readdir(directory, { withFileTypes: true })
     const results: Array<{
       name: string; relativePath: string; kind: 'directory' | 'file'; size: number
-      mimeType: string | null; modifiedAt?: number; fileCount?: number; folderCount?: number
+      mimeType: string | null; modifiedAt?: number; revision?: string; fileCount?: number; folderCount?: number
     }> = []
     for (const entry of entries) {
       try { segments(entry.name) } catch { continue }
       if (!entry.isFile() && !entry.isDirectory()) continue
-      const info = await lstat(join(directory, entry.name)).catch(error => {
+      const info = lightweight ? null : await lstat(join(directory, entry.name), { bigint: true }).catch(error => {
         if (error.code === 'ENOENT') return null
         throw error
       })
-      if (!info || (!info.isDirectory() && !info.isFile())) continue
+      if (!lightweight && (!info || (!info.isDirectory() && !info.isFile()))) continue
       let counts: { fileCount: number; folderCount: number } | undefined
-      if (includeCounts && info.isDirectory()) {
+      if (includeCounts && info?.isDirectory()) {
         const children = await list([...parts, entry.name].join('/')).catch(error => {
           if (['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error.code)
             || (error instanceof DesktopError && error.code === 'forbidden')) return null
@@ -201,9 +232,11 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
       results.push({
         ...counts,
         name: entry.name, relativePath: [...parts, entry.name].join('/'),
-        kind: info.isDirectory() ? 'directory' as const : 'file' as const,
-        size: info.isFile() ? info.size : 0, mimeType: info.isFile() ? mime(entry.name) : null,
-        ...(includeModifiedAt && info.isFile() ? { modifiedAt: info.mtimeMs } : {}),
+        kind: lightweight ? entry.isDirectory() ? 'directory' as const : 'file' as const
+          : info!.isDirectory() ? 'directory' as const : 'file' as const,
+        size: info?.isFile() ? Number(info.size) : 0, mimeType: info?.isFile() ? mime(entry.name) : null,
+        ...(info?.isFile() ? { revision: thumbnailKeyOf(info, entry.name) } : {}),
+        ...(includeModifiedAt && info?.isFile() ? { modifiedAt: Number(info.mtimeMs) } : {}),
       })
     }
     return results
@@ -221,16 +254,16 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
   }
 
   async function* scan(budget: { remaining: number }) {
-    const queue = ['']
-    for (const folder of queue) {
-      if (budget.remaining <= 0) return
-      for (const entry of await list(folder)) {
-        if (budget.remaining <= 0) return
-        budget.remaining--
-        if (entry.kind === 'directory') queue.push(entry.relativePath)
-        yield entry
-      }
-    }
+    if (budget.remaining <= 0) return
+    const found: Awaited<ReturnType<typeof list>> = []
+    await scanFilesystem({
+      roots: [{ id: directoryId, label: directoryId }], maxEntries: budget.remaining, concurrency: 4,
+      readDirectory: async (_root, path) => (await list(path, false, false, true)).map(entry => ({
+        name: entry.name, relativePath: entry.relativePath, kind: entry.kind === 'directory' ? 'directory' as const : 'file' as const,
+      })),
+      onEntry: (_root, entry) => { found.push({ ...entry, size: 0, mimeType: null }) },
+    }).then(result => { budget.remaining -= result.scannedEntries })
+    yield* found
   }
 
   async function search(
@@ -317,14 +350,27 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
     } finally { await rm(temp, { force: true }) }
   }
 
-  async function move(path: unknown, next: unknown, copy: boolean) {
+  async function move(path: unknown, next: unknown, copy: boolean, expected?: FileMoveHistory) {
     const from = segments(path), to = segments(next)
     if (directoryId === 'personal' && (to.join('/').toLowerCase() === 'download'
       || !copy && from.join('/').toLowerCase() === 'download'))
       throw new DesktopError('forbidden', '不能移动或替换系统下载目录')
     const source = await locate(from)
     const target = await destination(to)
-    await transfer(source, target, copy)
+    if (source === target) return
+    if (copy) { await transfer(source, target, true); return }
+    const history: FileMoveHistory = {
+      from: from.join('/'), to: to.join('/'),
+      identity: identityOf(await lstat(source, { bigint: true })),
+      fromParent: identityOf(await lstat(dirname(source), { bigint: true })),
+      toParent: identityOf(await lstat(dirname(target), { bigint: true })),
+    }
+    if (expected && (history.identity !== expected.identity
+      || history.fromParent !== expected.fromParent || history.toParent !== expected.toParent))
+      throw new DesktopError('conflict', '文件或目标目录已变化，无法撤销或重做')
+    await transfer(source, target, false)
+    const identity = identityOf(await lstat(target, { bigint: true }))
+    return { ...history, identity, previousIdentity: history.identity }
   }
 
   async function transfer(source: string, target: string, copy: boolean) {
@@ -346,9 +392,7 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
         } catch (error) { await rm(target, { recursive: true, force: true }); throw error }
       } else await cp(source, target, { force: false, errorOnExist: true })
     } else if (info.isFile()) {
-      await link(source, target)
-      try { await rm(source) }
-      catch (error) { await rm(target); throw error }
+      await publishFile(source, target)
     } else {
       await mkdir(target)
       try { await rename(source, target) } catch (error) { await rmdir(target); throw error }
@@ -453,9 +497,9 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
 
   async function content(url: URL, range: string | null, metadata = false) {
     const { handle, size, type, name, thumbnailKey } = await read(url.searchParams.get('path'), url.searchParams.get('identity') || undefined)
-    if (metadata) {
+    if (metadata || url.searchParams.get('metadata') === '1') {
       await handle.close()
-      return Response.json({ name, size }, { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
+      return Response.json({ name, size, ...(!metadata ? { revision: thumbnailKey } : {}) }, { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
     }
     const download = url.searchParams.get('download') === '1'
     const headers = new Headers({
@@ -550,15 +594,31 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
     }
   }
 
-  return { list, scan, reference, search, destination, upload, writeAtomically, move, moveDropped, trash, download, locate, locateFile, content, scanOverview, resolveAgentPath, preview, read }
+  return { smb, list, scan, reference, search, destination, upload, writeAtomically, move, moveDropped, trash, download, locate, locateFile, content, scanOverview, resolveAgentPath, preview, read }
 }
 
 export function createDesktopFileService(root: string, native?: NativeFileOperations, registry?: string, protectedRoot?: string, readProject?: ReadProjectFilesMetadata) {
   const workspaces = fileWorkspaces(root, registry, protectedRoot)
   const thumbnailCache = createThumbnailCache()
   const directoryOperations = new Map<string, Promise<unknown>>()
-  type DeletedFile = { path: string; source: string; parentIdentity: string; identity: string; backup?: string }
-  const fileHistory = new Map<string, { undo: DeletedFile[]; redo: DeletedFile[] }>()
+  type DeletedFile = { path: string; source: string; parentIdentity: string; identity: string; backup?: string; shareTrash?: string; heldIdentity?: string; created?: boolean; directory: boolean }
+  type HistoryEntry = DeletedFile | FileMoveHistory
+  const fileHistory = new Map<string, { undo: HistoryEntry[]; redo: HistoryEntry[] }>()
+  function historyFor(directoryId: unknown) {
+    const key = typeof directoryId === 'string' ? directoryId : 'personal'
+    const history = fileHistory.get(key) ?? { undo: [], redo: [] }
+    return { key, history }
+  }
+  async function recordHistory(directoryId: unknown, entry: HistoryEntry) {
+    const { key, history } = historyFor(directoryId)
+    history.undo.push(entry)
+    const discarded = history.redo.splice(0)
+    fileHistory.set(key, history)
+    const expired = history.undo.length > 20 ? history.undo.shift() : undefined
+    for (const item of expired ? [...discarded, expired] : discarded) {
+      if ('backup' in item && item.backup) await discardFileUndoCopy(dirname(item.backup)).catch(() => {})
+    }
+  }
   const attachmentSaveOperations = new Map<string, Promise<void>>()
   async function withDirectory<T>(directoryId: unknown, operation: () => Promise<T>) {
     if (typeof directoryId !== 'string') return operation()
@@ -583,7 +643,7 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     }
     const binding = await workspaces.get(directoryId)
     if (browse) await workspaces.prepareBrowse(binding)
-    return workspaceFiles(binding.id, () => workspaces.resolveRoot(binding), native, thumbnailCache)
+    return workspaceFiles(binding.id, () => workspaces.resolveRoot(binding), native, thumbnailCache, Boolean(binding.smb))
   }
   async function resolveAgentFile(path: unknown) {
     if (typeof path !== 'string' || path.length > 2048 || !path.startsWith('/') || path.includes('\\') || path.includes('\0')) return null
@@ -752,6 +812,7 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
       }
     }
     const boundProjects = new Set<number>()
+    const scannedRoots = new Set<string>()
     for (const { id, name } of await workspaces.list()) {
       if (readProject && id !== 'personal') {
         for (const projectId of (await workspaces.get(id)).projectIds ?? []) {
@@ -765,12 +826,18 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
       }
       if (budget.remaining <= 0) continue
       const files = await scope(id)
-      if (files) await collect(files, name,
-        async relativePath => ({ directoryId: id, relativePath }))
+      if (files) {
+        const root = await files.locate([])
+        if (scannedRoots.has(root)) continue
+        scannedRoots.add(root)
+        await collect(files, name, async relativePath => ({ directoryId: id, relativePath }))
+      }
     }
     if (readProject && budget.remaining > 0) {
       const { project } = await workspaces.managedRoots()
-      await collect(workspaceFiles('personal', async () => project), '项目文件', projectSearchTarget(readProject), async path => {
+      const projectFiles = workspaceFiles('personal', async () => project)
+      const projectRoot = await projectFiles.locate([])
+      if (!scannedRoots.has(projectRoot)) await collect(projectFiles, '项目文件', projectSearchTarget(readProject), async path => {
         const match = /^(?:\d{4}\/\d{2}\/)?([^/]+) #([1-9]\d*)$/u.exec(path)
         if (!match) return
         const id = Number(match[2])
@@ -911,10 +978,42 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     return id
   }
 
-  async function trashWithHistory(files: NonNullable<Awaited<ReturnType<typeof scope>>>, path: string, expectedIdentity?: string) {
-    const source = await files.locateFile(path, expectedIdentity)
-    const identity = identityOf(await lstat(source, { bigint: true }))
-    const parentIdentity = identityOf(await lstat(dirname(source), { bigint: true }))
+  type ScopedFiles = NonNullable<Awaited<ReturnType<typeof scope>>>
+
+  async function describeHistoryPath(files: ScopedFiles, path: string): Promise<DeletedFile> {
+    const source = await files.locate(segments(path))
+    const info = await lstat(source, { bigint: true })
+    if (!info.isFile() && !info.isDirectory()) throw new DesktopError('forbidden', '不支持此文件类型')
+    return { path, source, identity: identityOf(info), directory: info.isDirectory(),
+      parentIdentity: identityOf(await lstat(dirname(source), { bigint: true })) }
+  }
+
+  function updateRestoredIdentity(entries: HistoryEntry[], previous: string, restored: string) {
+    for (const entry of entries) {
+      if (entry.identity === previous) entry.identity = restored
+      if ('from' in entry) {
+        if (entry.fromParent === previous) entry.fromParent = restored
+        if (entry.toParent === previous) entry.toParent = restored
+      } else if (entry.parentIdentity === previous) entry.parentIdentity = restored
+    }
+  }
+
+  async function trashWithHistory(files: ScopedFiles, path: string, expected?: DeletedFile): Promise<DeletedFile> {
+    const file = await describeHistoryPath(files, path)
+    if (expected && (file.identity !== expected.identity || file.parentIdentity !== expected.parentIdentity || file.source !== expected.source))
+      throw new DesktopError('conflict', '文件或目录已变化，无法撤销或重做')
+    if (files.smb) {
+      const holding = await mkdtemp(join(dirname(file.source), '.gugu-trash-'))
+      const shareTrash = join(holding, basename(file.source))
+      try {
+        await files.locateFile(path, file.identity, file.directory ? 'folder' : 'file')
+        await rename(file.source, shareTrash)
+      } catch (error) {
+        await rmdir(holding)
+        throw error
+      }
+      return { ...file, created: expected?.created, shareTrash, heldIdentity: identityOf(await lstat(shareTrash, { bigint: true })) }
+    }
     const holding = await mkdtemp(join(tmpdir(), 'gugu-file-undo-'))
     fileUndoCopies.add(holding)
     if (!fileUndoCleanupRegistered) {
@@ -927,10 +1026,11 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     }
     const backup = join(holding, 'file')
     try {
-      await copyFile(source, backup, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
-      await files.locateFile(path, identity)
+      if (file.directory) await cp(file.source, backup, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true })
+      else await copyFile(file.source, backup, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
+      await files.locateFile(path, file.identity, file.directory ? 'folder' : 'file')
       await files.trash(path)
-      return { path, source, parentIdentity, identity, backup }
+      return { ...file, created: expected?.created, backup }
     } catch (error) {
       await discardFileUndoCopy(holding).catch(() => {})
       throw error
@@ -990,8 +1090,19 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
           case 'reference': return await files.reference(path, undefined,
             'kind' in command && command.kind === 'folder' ? 'folder' : 'file',
             'identity' in command ? command.identity : undefined)
-          case 'mkdir': await mkdir(await files.destination(segments(path))); break
-          case 'upload': await files.upload(path, 'data' in command ? command.data : undefined, 'overwrite' in command && command.overwrite === true, 'identity' in command && typeof command.identity === 'string' ? command.identity : undefined); break
+          case 'mkdir': {
+            const relativePath = segments(path).join('/')
+            await mkdir(await files.destination(segments(path)))
+            await recordHistory(directoryId, { ...await describeHistoryPath(files, relativePath), created: true })
+            break
+          }
+          case 'upload': {
+            const overwrite = 'overwrite' in command && command.overwrite === true
+            await files.upload(path, 'data' in command ? command.data : undefined, overwrite,
+              'identity' in command && typeof command.identity === 'string' ? command.identity : undefined)
+            if (!overwrite) await recordHistory(directoryId, { ...await describeHistoryPath(files, segments(path).join('/')), created: true })
+            break
+          }
           case 'move-dropped': {
             const sources = 'sources' in command ? command.sources : undefined
             const downloads = join((await workspaces.managedRoots()).personal, 'download')
@@ -1004,48 +1115,103 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
               })
           }
           case 'move':
-          case 'copy': await files.move(path, 'destination' in command ? command.destination : undefined, command.action === 'copy'); break
+          case 'copy': {
+            const moved = await files.move(path, 'destination' in command ? command.destination : undefined, command.action === 'copy')
+            if (moved) {
+              const { history } = historyFor(directoryId)
+              if (moved.previousIdentity !== undefined)
+                updateRestoredIdentity(history.undo, moved.previousIdentity, moved.identity)
+              await recordHistory(directoryId, moved)
+            }
+            else if (command.action === 'copy' && 'destination' in command) {
+              const destination = segments(command.destination).join('/')
+              if (destination !== segments(path).join('/'))
+                await recordHistory(directoryId, { ...await describeHistoryPath(files, destination), created: true })
+            }
+            break
+          }
           case 'trash':
           case 'undo-trash':
           case 'redo-trash': {
-            const key = typeof directoryId === 'string' ? directoryId : 'personal'
             if (command.action === 'trash' && (!('undoable' in command) || command.undoable !== true)) {
               await files.trash(path)
               break
             }
-            if (!native) throw new DesktopError('unsupported', '请在桌面应用中使用文件撤销')
-            const history = fileHistory.get(key) ?? { undo: [], redo: [] }
+            const { history } = historyFor(directoryId)
             if (command.action === 'trash') {
-              const relativePath = segments(path).join('/')
-              history.undo.push(await trashWithHistory(files, relativePath))
-              history.redo.length = 0
-              fileHistory.set(key, history)
-              const expired = history.undo.length > 20 ? history.undo.shift() : undefined
-              if (expired?.backup) await discardFileUndoCopy(dirname(expired.backup)).catch(() => {})
+              if ((directoryId === undefined || directoryId === 'personal') && segments(path).join('/').toLowerCase() === 'download')
+                throw new DesktopError('forbidden', '不能删除系统下载目录')
+              if (!native) throw new DesktopError('unsupported', '请在桌面应用中使用文件撤销')
+              await recordHistory(directoryId, await trashWithHistory(files, segments(path).join('/')))
               break
             }
-            if (command.action === 'undo-trash') {
-              const file = history.undo.at(-1)
-              if (!file?.backup) return { changed: false }
-              const target = await files.destination(segments(file.path))
-              if (target !== file.source || identityOf(await lstat(dirname(target), { bigint: true })) !== file.parentIdentity)
-                throw new DesktopError('conflict', '原目录已移动或替换')
-              const staged = join(dirname(target), `.gugu-restore-${randomUUID()}`)
-              let identity: string
-              try {
-                await copyFile(file.backup, staged, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
-                identity = identityOf(await lstat(staged, { bigint: true }))
-                await link(staged, target)
-              } finally { await rm(staged, { force: true }).catch(() => {}) }
-              history.undo.pop()
-              history.redo.push({ ...file, identity, backup: undefined })
-              await discardFileUndoCopy(dirname(file.backup)).catch(() => {})
-            } else {
-              const file = history.redo.at(-1)
-              if (!file) return { changed: false }
-              history.undo.push(await trashWithHistory(files, file.path, file.identity))
-              history.redo.pop()
+            const undo = command.action === 'undo-trash'
+            const stack = undo ? history.undo : history.redo
+            const entry = stack.at(-1)
+            if (entry && 'from' in entry) {
+              const direction = undo ? { ...entry, from: entry.to, to: entry.from,
+                fromParent: entry.toParent, toParent: entry.fromParent } : entry
+              const moved = await files.move(direction.from, direction.to, false, direction)
+              stack.pop()
+              const other = undo ? history.redo : history.undo
+              if (moved) {
+                updateRestoredIdentity(stack, entry.identity, moved.identity)
+                updateRestoredIdentity(other, entry.identity, moved.identity)
+                entry.identity = moved.identity
+              }
+              other.push(entry)
+              return { changed: true }
             }
+            if (!entry) return { changed: false }
+            const other = undo ? history.redo : history.undo
+            if (undo === Boolean(entry.created)) {
+              if (!native) throw new DesktopError('unsupported', '请在桌面应用中使用文件撤销')
+              other.push(await trashWithHistory(files, entry.path, entry))
+              stack.pop()
+              return { changed: true }
+            }
+
+            if (!entry.backup && !entry.shareTrash) return { changed: false }
+            const target = await files.destination(segments(entry.path))
+            if (target !== entry.source || identityOf(await lstat(dirname(target), { bigint: true })) !== entry.parentIdentity)
+              throw new DesktopError('conflict', '原目录已移动或替换')
+            if (entry.shareTrash) {
+              const held = await lstat(entry.shareTrash, { bigint: true })
+              if (await realpath(dirname(entry.shareTrash)) !== dirname(entry.shareTrash)
+                || identityOf(held) !== entry.heldIdentity || !(entry.directory ? held.isDirectory() : held.isFile()))
+                throw new DesktopError('conflict', '回收项已变化')
+              if (entry.directory) {
+                await mkdir(target)
+                try { await rename(entry.shareTrash, target) } catch (error) { await rmdir(target); throw error }
+              } else await renameIntoVacantFile(entry.shareTrash, target)
+              stack.pop()
+              const identity = identityOf(await lstat(target, { bigint: true }))
+              updateRestoredIdentity(stack, entry.identity, identity)
+              updateRestoredIdentity(other, entry.identity, identity)
+              other.push({ ...entry, identity, shareTrash: undefined, heldIdentity: undefined })
+              await rmdir(dirname(entry.shareTrash)).catch(() => {})
+              return { changed: true }
+            }
+            if (!entry.backup) return { changed: false }
+            const staged = join(dirname(target), `.gugu-restore-${randomUUID()}`)
+            let identity: string
+            try {
+              if (entry.directory) {
+                await cp(entry.backup, staged, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true })
+                identity = identityOf(await lstat(staged, { bigint: true }))
+                await mkdir(target)
+                try { await rename(staged, target) } catch (error) { await rmdir(target); throw error }
+              } else {
+                await copyFile(entry.backup, staged, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
+                identity = identityOf(await lstat(staged, { bigint: true }))
+                await publishFile(staged, target)
+              }
+            } finally { await rm(staged, { recursive: true, force: true }).catch(() => {}) }
+            stack.pop()
+            updateRestoredIdentity(stack, entry.identity, identity)
+            updateRestoredIdentity(other, entry.identity, identity)
+            other.push({ ...entry, identity, backup: undefined })
+            await discardFileUndoCopy(dirname(entry.backup)).catch(() => {})
             return { changed: true }
           }
           case 'download': await files.download(path, 'identity' in command && typeof command.identity === 'string' ? command.identity : undefined); break
@@ -1069,7 +1235,9 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
       if (error instanceof DesktopError) throw error
       const code = (error as NodeJS.ErrnoException).code
       if (code === 'EEXIST' || code === 'ENOTEMPTY') throw new DesktopError('conflict', '已有同名文件或文件夹')
-      if (code === 'EACCES' || code === 'EPERM') throw new DesktopError('forbidden', '无法访问此文件或目录')
+      if (code === 'EXDEV') throw new DesktopError('unsupported', '不能在不同磁盘之间移动此文件')
+      if (code === 'ENOTSUP' || code === 'EOPNOTSUPP') throw new DesktopError('unsupported', '此文件系统不支持该操作')
+      if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') throw new DesktopError('forbidden', '无法访问此文件或目录')
       if (code === 'ENOENT') throw new DesktopError('not_found', '文件或目录不存在')
       throw error
     }
@@ -1396,6 +1564,14 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
       return withDirectory(directoryId, async () => {
         const files = await scope(directoryId)
         if (!files) throw new DesktopError('not_found', '项目目录尚未创建')
+        if (url.searchParams.get('watch') === '1') {
+          if (files.smb) return new Response(null, { status: 204 })
+          const directory = await files.locate(segments(url.searchParams.get('path'), true))
+          if (!(await lstat(directory)).isDirectory()) throw new DesktopError('invalid_request', '请选择文件夹')
+          return new Response(Readable.toWeb(watchDirectoryChanges(directory)) as ReadableStream<Uint8Array>, {
+            headers: { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' },
+          })
+        }
         return files.content(url, range)
       })
     },

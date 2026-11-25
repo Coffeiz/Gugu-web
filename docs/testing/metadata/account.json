@@ -1,10 +1,10 @@
 {
-  "packages/core/tests/account/delete-account.test.ts": {
+  "apps/web-host/tests/auth/delete-account-use-case.test.ts": {
     "domain": "auth",
     "layer": "L1",
-    "owner": "packages/core/src/account/delete-account.ts",
+    "owner": "apps/web-host/src/modules/auth/account/delete-account.ts",
     "productionEntry": "共享账户注销用例与注入的存储、缓存、暂存和持久化适配器",
-    "keyBehavior": "owner 规范化、历史清理顺序、存储失败继续删库、缓存失败中止、用户不存在无副作用",
-    "ci": "core-node"
+    "keyBehavior": "owner 规范化、历史清理顺序、存储失败继续删库、缩略图缓存清理失败中止、用户不存在无副作用",
+    "ci": "node-webui"
   }
 }

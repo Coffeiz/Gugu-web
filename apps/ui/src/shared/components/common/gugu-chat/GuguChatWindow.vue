@@ -321,6 +321,14 @@ defineExpose({
   box-shadow: 0 24px 64px rgba(20,25,50,0.18);
   isolation: isolate;   /* 独立层叠上下文：z-index/合成跟页面其余部分互不干扰，展开/收起动画时不牵连外部重绘 */
 }
+.chat-window--standalone {
+  inset: var(--space-xs);
+  top: var(--native-chat-top, var(--space-xs));
+  left: var(--native-chat-left, var(--space-xs));
+  width: var(--native-chat-width, auto);
+  height: var(--native-chat-height, auto);
+}
+.chat-window--standalone:focus { outline: none; }
 .chat-window::after {
   content: '';
   position: absolute; inset: 0;
@@ -346,7 +354,7 @@ defineExpose({
 }
 
 /* 只有用户主动大/小窗切换才做几何缓动；普通 viewport resize 直接同步 layout。 */
-.chat-window.is-layout-resizing {
+.chat-window.is-layout-resizing:not(.chat-window--standalone) {
   will-change: top, left, right, bottom;
   transition: top 0.42s cubic-bezier(0.16, 1, 0.3, 1),
               left 0.42s cubic-bezier(0.16, 1, 0.3, 1),

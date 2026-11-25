@@ -219,7 +219,7 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { onboardingProjectId } from '@/composables/onboarding/useOnboarding'
 import Icon from '@/components/common/icons/Icon.vue'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
-import { PROJECT_COLOR_PRESETS } from '@/utils/projectColors'
+import { SELECTABLE_PROJECT_COLORS } from '@/utils/projectColors'
 import { projectStatusLabelKey } from '@/utils/projectStages'
 import { useI18n } from 'vue-i18n'
 import { browserDayKey as toIso } from '@/utils/dateAttribution'
@@ -336,7 +336,7 @@ function weekLaterIso() {
   const d = new Date(); d.setDate(d.getDate() + 7); return toIso(d)
 }
 
-const colorPresets = PROJECT_COLOR_PRESETS.map(value => ({ value }))
+const colorPresets = SELECTABLE_PROJECT_COLORS.map(value => ({ value }))
 
 const prefsStore = usePreferencesStore()
 

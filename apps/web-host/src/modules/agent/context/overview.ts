@@ -1,6 +1,6 @@
 import { readPathDirectoryOverview } from '../../workspaces/files.js'
-import { projectFileStorageKey } from '../../files/paths.js'
-import { personalFileStorageKey } from '../../workspaces/roots.js'
+import { projectFilePath } from '../../files/paths.js'
+import { personalFileRootPath } from '../../workspaces/roots.js'
 import type { Pool } from 'pg'
 import type { ContextDataPorts, HistoryIdentity, Json } from '@gugu/core/agent'
 import { agentContextSubject } from './subject.js'
@@ -31,7 +31,7 @@ export function createAgentOverviewSources(pool: QueryPool, storageRoot: string,
         return compare || Number(a.id) - Number(b.id)
       }).slice(0, status === 'pending' ? 5 : status === 'active' ? 10 : 3))
       return await Promise.all(groups.map(async row => {
-        const key = projectFileStorageKey(identity.ownerId, Number(row.id), row.name, row.start_date, row.created_at)
+        const key = projectFilePath(identity.ownerId, Number(row.id), row.name, row.start_date, row.created_at)
         const overview = await readPathDirectoryOverview(storageRoot, key, signal)
         const stages = JSON.parse(row.stages_json) as Array<{done?: boolean}>
         if (!Array.isArray(stages)) throw new Error('项目阶段无效')
@@ -52,7 +52,7 @@ export function createAgentOverviewSources(pool: QueryPool, storageRoot: string,
     },
     async loadFilesOverview(identity, signal) {
       await owned(pool, identity, kind, signal)
-      const { total, folders, files } = await readPathDirectoryOverview(storageRoot, personalFileStorageKey(identity.ownerId), signal)
+      const { total, folders, files } = await readPathDirectoryOverview(storageRoot, personalFileRootPath(identity.ownerId), signal)
       signal?.throwIfAborted()
       return { total, folders, files } as Json
     },

@@ -2,7 +2,7 @@ import { openAnchoredLocalFile } from '@gugu/fs/node'
 import type { ToolDefinition } from '@gugu/core/tools'
 import { z } from 'zod'
 import { saveAgentDownload, agentDownloadsLimit } from '../../../agent/tools/files/downloads.js'
-import { isOwnedFileStorageKey } from '../../../files/store.js'
+import { isOwnedFilePath } from '../../../files/store.js'
 import { imAttachmentScopeKey } from '../inbound/attachments.js'
 import { imConversationScopeHash } from './identity.js'
 import { createImRunScope } from './scope.js'
@@ -51,7 +51,7 @@ export function createImSaveAttachmentTool(options: Parameters<typeof createImRu
       signal.throwIfAborted()
       if (!row && options.ownerAttachment && options.actor.verifiedOwner)
         return options.ownerAttachment.execute({ attach_id: (input as z.infer<typeof schema>).attach_id }, scope, call)
-      if (!row || !isOwnedFileStorageKey(identity.ownerId, row.storage_key)) return unavailable()
+      if (!row || !isOwnedFilePath(identity.ownerId, row.storage_key)) return unavailable()
       const source = await openAnchoredLocalFile(options.storageRoot, row.storage_key)
       if (!source) return unavailable()
       try {

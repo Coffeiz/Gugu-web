@@ -28,7 +28,7 @@ import type { WebCalendarCanvasToolName } from '../../../src/modules/agent/rag/a
 import { createWebAgentToolPorts } from '../../../src/modules/agent/run/reconstruct.js'
 import { createWebAgentRagContextBuilder } from '../../../src/modules/agent/rag/context.js'
 import { createSqlRagPersistentIndexWriter } from '../../../../../packages/core/src/agent/rag/persistent-writer.js'
-import { createGlobalSearchOperations } from '../../../../../packages/core/src/search/global-search.js'
+import { createGlobalSearchOperations } from '@gugu/search'
 import { createKyselySqliteGlobalSearchSources } from '../../../../../packages/core/src/search/sqlite.js'
 import { buildRunRagContext } from '@gugu/core/agent'
 import { recordForwardUndoOperation } from '../../../../../packages/core/src/data/undo.js'

@@ -15,7 +15,7 @@ const viteCli = resolve(ui, 'node_modules/vite/bin/vite.js')
 const electronCli = resolve(desktop, 'node_modules/electron/cli.js')
 const root = resolve(desktop, '../..')
 const tsc = resolve(desktop, 'node_modules/typescript/bin/tsc')
-const compiledPackages = ['sandbox', 'database', 'fs', 'gateway', 'core']
+const compiledPackages = ['sandbox', 'database', 'auth', 'fs', 'search', 'gateway', 'core']
 const hostOutputs = [
   resolve(desktop, 'dist/main/index.cjs'),
   resolve(desktop, 'dist/preload/index.cjs'),
@@ -299,7 +299,7 @@ try {
     for (const source of ['main', 'preload'])
       watchSource(resolve(desktop, 'src', source), 1)
     watchSource(resolve(root, 'packages/desktop-contracts/src'), 1)
-    for (const pkg of ['core', 'database', 'fs', 'gateway', 'log', 'loopscope', 'sandbox', 'charts']) {
+    for (const pkg of ['core', 'database', 'auth', 'fs', 'search', 'gateway', 'log', 'loopscope', 'sandbox', 'charts']) {
       const directory = resolve(desktop, '../../packages', pkg)
       if (pkg === 'loopscope') watchSource(directory, 2)
       else for (const source of ['src', 'native', 'resources']) watchSource(resolve(directory, source), 2)

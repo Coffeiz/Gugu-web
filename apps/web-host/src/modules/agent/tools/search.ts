@@ -7,7 +7,7 @@ import { loadImage } from '@napi-rs/canvas'
 import { CompiledQuery, type Transaction } from 'kysely'
 import type { Database, SqlDataRuntime } from '@gugu/core/data'
 import { openLocalFile } from '@gugu/fs/node'
-import { isOwnedFileStorageKey } from '../../files/store.js'
+import { isOwnedFilePath } from '../../files/store.js'
 import { adminSearchTestSettings } from '../../admin/search.js'
 import { deepResearchProbe, normalizedApiKey, similarImageProbe, type ProviderTransport } from '@gugu/core/providers'
 import type { RunIdentity } from '@gugu/core/agent'
@@ -337,7 +337,7 @@ async function readOwnedSearchImage(pool: Pick<Pool, 'query'>, root: string, own
   )
   signal.throwIfAborted()
   const attachment = result.rows[0]
-  if (!attachment || !isOwnedFileStorageKey(owner, attachment.storage_key)) return { error: '找不到这个图片附件，可能已过期' }
+  if (!attachment || !isOwnedFilePath(owner, attachment.storage_key)) return { error: '找不到这个图片附件，可能已过期' }
   if (attachment.kind !== 'image') return { error: '指定附件不是图片' }
   if (!['jpg', 'jpeg', 'png'].includes(attachment.ext.toLowerCase())) return { error: '相似图搜索只支持 JPG 和 PNG 图片' }
   if (Number(attachment.size) > MAX_SEARCH_IMAGE_BYTES) return tooLarge

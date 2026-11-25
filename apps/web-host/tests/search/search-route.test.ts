@@ -6,7 +6,7 @@ import {
   GLOBAL_SEARCH_TYPES,
   normalizeGlobalSearchQueries,
   parseGlobalSearchQuery,
-} from '@gugu/core'
+} from '@gugu/search'
 
 test('global search normalizes repeated keywords with the Python limits and AND/OR fallback', () => {
   assert.deepEqual(normalizeGlobalSearchQueries('', ['部署', ' 部署 ', '上线']), ['部署', '上线'])

@@ -6,8 +6,8 @@ import test from 'node:test'
 import { createPresentFileTool, createToolRegistry } from '@gugu/core/tools'
 import { createWebAgentFilePresentPort } from '../../../../src/modules/agent/tools/files/present.js'
 import { createMindFileReferenceResolver } from '../../../../src/modules/mind/file-references.js'
-import { projectFileStorageKey } from '../../../../src/modules/files/paths.js'
-import { personalFileStorageKey } from '../../../../src/modules/workspaces/roots.js'
+import { projectFilePath } from '../../../../src/modules/files/paths.js'
+import { personalFileRootPath } from '../../../../src/modules/workspaces/roots.js'
 
 test('Web 只为当前用户的真实路径签发文件链接，校验身份并拒绝数字文件 ID', { skip: process.platform !== 'linux' }, async () => {
   const ownerId = '00000000-0000-4000-8000-000000000001'
@@ -17,14 +17,14 @@ test('Web 只为当前用户的真实路径签发文件链接，校验身份并�
     input: { v: 2 as const, source: 'web' as const, userMessageId: 91, locale: 'zh-CN' as const, origin: 'browser-A', accessVersion: 'b'.repeat(64) } }
   const root = await mkdtemp(join(tmpdir(), 'gugu-file-link-'))
   try {
-    const directory = join(root, personalFileStorageKey(ownerId))
-    const otherDirectory = join(root, personalFileStorageKey(otherOwner))
+    const directory = join(root, personalFileRootPath(ownerId))
+    const otherDirectory = join(root, personalFileRootPath(otherOwner))
     await mkdir(directory, { recursive: true })
     await mkdir(otherDirectory, { recursive: true })
     await writeFile(join(directory, 'voice.mp3'), '测试文件')
     await writeFile(join(otherDirectory, 'private.mp3'), '其他用户的测试文件')
     const project = { id: 12, name: '小北项目', start_date: '2026-11-20', created_at: '2026-11-20' }
-    await mkdir(join(root, projectFileStorageKey(ownerId, project.id, project.name, project.start_date, project.created_at)), { recursive: true })
+    await mkdir(join(root, projectFilePath(ownerId, project.id, project.name, project.start_date, project.created_at)), { recursive: true })
     const pool = { async query(statement: string, args: unknown[]) {
       assert.equal(args.at(-1), ownerId)
       return { rows: statement.includes('FROM projects') ? [project] : [] }

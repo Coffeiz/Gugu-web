@@ -1,6 +1,5 @@
 import { z } from 'zod'
-import { GLOBAL_SEARCH_TYPES, parseGlobalSearchQuery } from '../../search/query.js'
-import type { GlobalSearchOperations } from '../../search/global-search.js'
+import { GLOBAL_SEARCH_TYPES, parseGlobalSearchQuery, type GlobalSearchOperations } from '@gugu/search'
 import type { ToolDefinition } from './contracts.js'
 
 const inputSchema = z.object({

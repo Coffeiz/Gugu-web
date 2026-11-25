@@ -1,4 +1,4 @@
-import { projectFileStorageKey } from '../files/paths.js'
+import { projectFilePath } from '../files/paths.js'
 import { moveLocalEntry } from '@gugu/fs/node'
 import { randomUUID } from 'node:crypto'
 import { recoverProjectFileMoves, type ProjectUndoMove, type ProjectUndoJournalStorage } from '@gugu/core/projects/undo'
@@ -128,7 +128,7 @@ async function recoverForwardDelete(client: PoolClient, storage: ProjectUndoJour
         )
         const project = result.rows[0]
         if (!project || (project.deleted_at !== null) !== committed
-          || move.from !== projectFileStorageKey(owner, projectId, project.name, project.start_date, project.created_at))
+          || move.from !== projectFilePath(owner, projectId, project.name, project.start_date, project.created_at))
           throw new Error('项目删除后的目录记录已变化')
       }
       await recoverProjectFileMoves({ ownerId: owner, beforeStatus: forwardBefore, afterStatus: forwardAfter, moves: journal.moves },

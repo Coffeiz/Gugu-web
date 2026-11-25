@@ -27,7 +27,7 @@ const native = {
   async trash(path: string) {
     trashed.push(path)
     if (trashFailure) throw new Error('合成系统错误')
-    await rename(path, join(directory, '系统回收站测试项'))
+    await rename(path, join(directory, `系统回收站测试项-${trashed.length}`))
   },
 }
 const createFiles = () => desktopFiles(join(directory, 'Gugu-data'), native, join(directory, 'app', 'workspaces.json'), join(directory, 'app'))
@@ -344,7 +344,7 @@ it('上传、查找和引用文件，删除交给系统回收站', async () => {
   trashFailure = false
   await call({ action: 'trash', path })
   expect(trashed).toEqual([join(directory, 'Gugu-data', 'personal', path), join(directory, 'Gugu-data', 'personal', path)])
-  expect(await readFile(join(directory, '系统回收站测试项'), 'utf8')).toBe('读书笔记')
+  expect(await readFile(join(directory, '系统回收站测试项-2'), 'utf8')).toBe('读书笔记')
   expect(await readFile(join(legacy, '历史数据'), 'utf8')).toBe('历史文件')
   await call({ action: 'mkdir', path: '资料/子目录' })
   await call({ action: 'upload', path: '资料/子目录/说明.md', data: bytes('不计入上级') })
@@ -750,4 +750,89 @@ it('文件库可撤回删除和重做，恢复时保留同名文件', async () =
   await expect(lstat(location)).rejects.toMatchObject({ code: 'ENOENT' })
   await expect(call({ action: 'undo-trash' })).resolves.toEqual({ changed: true })
   expect(await readFile(location, 'utf8')).toBe('旧版本')
+})
+
+it('文件库按顺序撤销并重做新建文件夹、上传和复制', async () => {
+  const root = await files.personalRoot()
+  await call({ action: 'mkdir', path: '资料' })
+  await call({ action: 'upload', path: '草稿.txt', data: bytes('正文') })
+  await call({ action: 'copy', path: '草稿.txt', destination: '副本.txt' })
+
+  for (const path of ['副本.txt', '草稿.txt', '资料']) {
+    await expect(call({ action: 'undo-trash' })).resolves.toEqual({ changed: true })
+    await expect(lstat(join(root, path))).rejects.toMatchObject({ code: 'ENOENT' })
+  }
+  for (const path of ['资料', '草稿.txt', '副本.txt']) {
+    await expect(call({ action: 'redo-trash' })).resolves.toEqual({ changed: true })
+    await expect(lstat(join(root, path))).resolves.toBeDefined()
+  }
+  expect(await readFile(join(root, '副本.txt'), 'utf8')).toBe('正文')
+})
+
+it('恢复已改名的文件后仍可撤销改名和原始上传', async () => {
+  const root = await files.personalRoot()
+  await call({ action: 'upload', path: '草稿.txt', data: bytes('正文') })
+  await call({ action: 'move', path: '草稿.txt', destination: '定稿.txt' })
+  await call({ action: 'trash', path: '定稿.txt', undoable: true })
+  await expect(call({ action: 'undo-trash' })).resolves.toEqual({ changed: true })
+  await expect(call({ action: 'undo-trash' })).resolves.toEqual({ changed: true })
+  expect(await readFile(join(root, '草稿.txt'), 'utf8')).toBe('正文')
+  await expect(call({ action: 'undo-trash' })).resolves.toEqual({ changed: true })
+  await expect(lstat(join(root, '草稿.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+  for (let step = 0; step < 3; step++)
+    await expect(call({ action: 'redo-trash' })).resolves.toEqual({ changed: true })
+  await expect(lstat(join(root, '定稿.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('本地图片等长改写和同名替换都会更新列表与预览版本', async () => {
+  const root = await files.personalRoot()
+  const path = '示例.png'
+  const url = new URL('gugu-desktop://app/__local-files/content')
+  url.search = new URLSearchParams({ path, metadata: '1' }).toString()
+  async function revision() {
+    const entries = await call({ action: 'list', path: '' }) as Array<{ name: string; revision: string }>
+    const metadata = await (await files.content(url, null)).json()
+    expect(metadata.revision).toBe(entries.find(entry => entry.name === path)?.revision)
+    expect(metadata.revision).toEqual(expect.any(String))
+    return metadata.revision
+  }
+  await writeFile(join(root, path), 'aaa')
+  const original = await revision()
+  await writeFile(join(root, path), 'bbb')
+  const modified = await revision()
+  expect(modified).not.toBe(original)
+  await writeFile(join(root, '替换.png'), 'ccc')
+  await rename(join(root, '替换.png'), join(root, path))
+  expect(await revision()).not.toBe(modified)
+})
+
+it('本地目录监听推送外部保存事件，同名替换后仍能收到通知', async () => {
+  const root = await files.personalRoot()
+  const path = join(root, '示例.png')
+  await writeFile(path, '初始内容')
+  const url = new URL('gugu-desktop://app/__local-files/content?path=&watch=1')
+  const response = await files.content(url, null)
+  const watcher = response.body!.getReader()
+  async function expectNotification() {
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      const result = await Promise.race([
+        watcher.read(),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('未收到目录变更事件')), 3000) }),
+      ])
+      expect(result.done).toBe(false)
+    } finally { clearTimeout(timeout) }
+  }
+  try {
+    await expectNotification()
+    await writeFile(path, '原地修改')
+    await expectNotification()
+    const replacement = join(root, '编辑器临时文件.png')
+    await writeFile(replacement, '替换内容')
+    await rename(replacement, path)
+    await expectNotification()
+  } finally {
+    await watcher.cancel()
+    watcher.releaseLock()
+  }
 })

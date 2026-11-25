@@ -1,5 +1,4 @@
-import { remoteServerOrigin } from '../auth/client.js'
-import { remoteSessionSchema, type RemoteSession } from '../auth/contracts.js'
+import type { BindRemoteRequest } from '../shared/remote-request.js'
 import { desktopDeepResearchInput, desktopDeepResearchResult, desktopSimilarImageInput, type DesktopDeepResearchInput, type DesktopDeepResearchResult, type DesktopSimilarImageInput } from './search-contracts.js'
 
 export class RemoteAgentSearchError extends Error {
@@ -39,17 +38,17 @@ async function readResult(response: Response, signal: AbortSignal): Promise<unkn
   }
 }
 
-export function createRemoteAgentSearchAvailabilityClient(request: typeof fetch = fetch) {
-  return async (session: RemoteSession, capability: 'deep-research' | 'similar-image', signal?: AbortSignal) => {
-    const auth = remoteSessionSchema.safeParse(session)
-    if (!auth.success || remoteServerOrigin(auth.data.origin) !== auth.data.origin) return false
+export function createRemoteAgentSearchAvailabilityClient<Session>(bind: BindRemoteRequest<Session>) {
+  return async (session: Session, capability: 'deep-research' | 'similar-image', signal?: AbortSignal) => {
+    const request = bind(session)
+    if (!request) return false
     const deadline = AbortSignal.timeout(5_000)
     const connection = signal ? AbortSignal.any([signal, deadline]) : deadline
     try {
       connection.throwIfAborted()
-      const response = await request(new URL(`/api/v1/agent/desktop-search/${capability}`, auth.data.origin), {
+      const response = await request(`/api/v1/agent/desktop-search/${capability}`, {
         credentials: 'omit', redirect: 'error', signal: connection,
-        headers: { Authorization: `Bearer ${auth.data.token}`, Accept: 'application/json' },
+        headers: { Accept: 'application/json' },
       })
       if (!response.ok) {
         void response.body?.cancel().catch(() => {})
@@ -64,24 +63,24 @@ export function createRemoteAgentSearchAvailabilityClient(request: typeof fetch 
   }
 }
 
-async function postSearch(
-  request: typeof fetch,
-  session: RemoteSession,
+async function postSearch<Session>(
+  bind: BindRemoteRequest<Session>,
+  session: Session,
   input: DesktopDeepResearchInput | DesktopSimilarImageInput | undefined,
   capability: 'deep-research' | 'similar-image',
   signal?: AbortSignal,
 ): Promise<DesktopDeepResearchResult> {
-  const auth = remoteSessionSchema.safeParse(session)
+  const request = bind(session)
   const research = capability === 'deep-research'
   const label = research ? '深度研究' : '相似图片搜索'
-  if (!auth.success || remoteServerOrigin(auth.data.origin) !== auth.data.origin || !input)
+  if (!request || !input)
     throw new RemoteAgentSearchError('invalid_request', research ? '远程搜索请求或会话无效' : '远程图片搜索请求或会话无效')
   signal?.throwIfAborted()
   const deadline = AbortSignal.timeout(120_000)
   const connection = signal ? AbortSignal.any([signal, deadline]) : deadline
-  const response = await request(new URL(`/api/v1/agent/desktop-search/${capability}`, auth.data.origin), {
+  const response = await request(`/api/v1/agent/desktop-search/${capability}`, {
     method: 'POST', credentials: 'omit', redirect: 'error', signal: connection,
-    headers: { Authorization: `Bearer ${auth.data.token}`, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   }).catch(() => {
     signal?.throwIfAborted()
@@ -113,12 +112,12 @@ async function postSearch(
   return result.data
 }
 
-export function createRemoteAgentDeepResearchClient(request: typeof fetch = fetch) {
-  return (session: RemoteSession, input: DesktopDeepResearchInput, signal?: AbortSignal) =>
-    postSearch(request, session, desktopDeepResearchInput.safeParse(input).data, 'deep-research', signal)
+export function createRemoteAgentDeepResearchClient<Session>(bind: BindRemoteRequest<Session>) {
+  return (session: Session, input: DesktopDeepResearchInput, signal?: AbortSignal) =>
+    postSearch(bind, session, desktopDeepResearchInput.safeParse(input).data, 'deep-research', signal)
 }
 
-export function createRemoteAgentSimilarImageSearchClient(request: typeof fetch = fetch) {
-  return (session: RemoteSession, input: DesktopSimilarImageInput, signal?: AbortSignal) =>
-    postSearch(request, session, desktopSimilarImageInput.safeParse(input).data, 'similar-image', signal)
+export function createRemoteAgentSimilarImageSearchClient<Session>(bind: BindRemoteRequest<Session>) {
+  return (session: Session, input: DesktopSimilarImageInput, signal?: AbortSignal) =>
+    postSearch(bind, session, desktopSimilarImageInput.safeParse(input).data, 'similar-image', signal)
 }

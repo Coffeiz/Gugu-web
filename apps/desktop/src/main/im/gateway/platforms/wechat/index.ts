@@ -108,8 +108,8 @@ export function createDesktopWechatGateway(pairing: Pick<ReturnType<typeof creat
         async enqueue(payload, _signal, files) {
           if (!await authorize()) return
           const event = readImReceivedMessage(connection, { ...payload })
-          if (files.length) await admit(connectionId, event, payload.context_token, { files: [...files], authorize })
-          else await admit(connectionId, event, payload.context_token)
+          if (files.length) await admit(connection, connectionId, event, payload.context_token, { files: [...files], authorize })
+          else await admit(connection, connectionId, event, payload.context_token)
         },
       })
       delivery = dispatch({ connection, connectionId, userId: bot.userId, signal: active, authorize, media: { platform: 'wechat', sender },

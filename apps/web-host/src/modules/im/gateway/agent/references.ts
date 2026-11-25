@@ -1,6 +1,6 @@
 import type { Pool } from 'pg'
 import { assertDurableCanonical, type CanonicalMessage, type ContextReferenceCodec, type HistoryIdentity, type Json, type MessageEntry, type RunIdentity } from '@gugu/core/agent'
-import { normalizeFileOwnerId, isOwnedFileStorageKey } from '../../../files/store.js'
+import { normalizeFileOwnerId, isOwnedFilePath } from '../../../files/store.js'
 import { imAttachmentScopeKey, type ImAttachmentScope } from '../inbound/attachments.js'
 
 export class ImContextReferenceError extends Error {
@@ -93,7 +93,7 @@ export function createImContextReferenceCodec(options: {
         for (const ref of refs) {
           const row = byId.get(ref.attach_id as string), size = Number(row?.size)
           if (!row || row.state !== 'attached' || row.platform !== scope.platform || row.extra?.im_ingress_scope !== scopeKey
-            || !isOwnedFileStorageKey(identity.ownerId, row.storage_key) || !Number.isSafeInteger(size) || size < 1
+            || !isOwnedFilePath(identity.ownerId, row.storage_key) || !Number.isSafeInteger(size) || size < 1
             || ref.kind !== undefined && ref.kind !== row.kind || ref.mime !== undefined && ref.mime !== row.mime
             || ref.ext !== undefined && ref.ext !== row.ext || ref.name !== undefined && ref.name !== row.name
             || ref.title !== undefined && ref.title !== row.name || ref.size_bytes !== undefined && ref.size_bytes !== size)

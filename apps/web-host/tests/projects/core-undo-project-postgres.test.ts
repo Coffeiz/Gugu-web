@@ -30,13 +30,13 @@ test('Core PG 引擎与显式目录端口协调改名、锁和未知提交 journ
       ADD COLUMN done_at timestamptz, ADD COLUMN deleted_at timestamptz,
       ADD COLUMN updated_at timestamptz DEFAULT '2026-01-01T00:30:00.123456+08:00'`)
 
-    await pool.query(`CREATE TABLE files (id integer PRIMARY KEY,user_id text,project_id integer,path text)`)
+    await pool.query(`CREATE TABLE files (user_id text,project_id integer,path text,version integer,PRIMARY KEY(user_id,path))`)
     await pool.query(`CREATE TABLE undo_operations (id text PRIMARY KEY,user_id text,undo_context_id text,group_id text,resource text,action text,target_refs json,before_state json,after_state json,actor_type text,status varchar(16),created_at timestamptz,expires_at timestamptz,undone_at timestamptz,failure_code text)`)
     await pool.query(`CREATE TABLE project_undo_journals (id uuid PRIMARY KEY,user_id text,operation_id text,before_status text,after_status text,moves json,created_at timestamptz)`)
     const oldKey = '11111111-1111-4111-8111-111111111111/项目文件/2026/01/旧 #1', newKey = '11111111-1111-4111-8111-111111111111/项目文件/2026/01/新 #1'
     const directories = directoryPort(newKey, '内容')
     await pool.query(`INSERT INTO projects (id,user_id,name,start_date,created_at,version,stages_json) VALUES (1,'11111111-1111-4111-8111-111111111111','新','2026-01-01','2026-01-01T00:30:00.123000+08:00',2,'[]')`)
-    await pool.query(`INSERT INTO files VALUES (1,'11111111-1111-4111-8111-111111111111',1,$1)`, [`${newKey}/a.txt`])
+    await pool.query(`INSERT INTO files VALUES ('11111111-1111-4111-8111-111111111111',1,$1,1)`, [`${newKey}/a.txt`])
     await pool.query(`INSERT INTO undo_operations VALUES ('op','11111111-1111-4111-8111-111111111111','ctx','g','projects','update','[]',$1::json,$2::json,'web','active',now(),now()+interval '1 day',NULL,NULL)`, [JSON.stringify({ items: { 'project:1': { name: '旧', stages: [] } } }), JSON.stringify({ items: { 'project:1': { name: '新', stages: [], version: 2 } } })])
     const notifications: Record<string, unknown>[] = []
     const reread = async () => projectResponse((await pool.query(`SELECT *, contact_name AS client,

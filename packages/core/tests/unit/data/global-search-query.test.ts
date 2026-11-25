@@ -9,8 +9,8 @@ import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
 import { createKyselySqliteGlobalSearchSources } from '../../../src/search/sqlite.js'
 import { createGlobalSearchOperations } from '../../../src/search/global-search.js'
-import { parseGlobalSearchQuery } from '../../../src/search/query.js'
-import { casefoldSearchText } from '../../../src/search/unicode.js'
+import { parseGlobalSearchQuery } from '@gugu/search'
+import { casefoldSearchText } from '@gugu/search'
 import { strip } from '../../../src/shared/values.js'
 
 interface Result { queries: readonly string[]; total: number; mode: string; groups: Array<{ type: string; items: Array<Record<string, unknown>> }> }

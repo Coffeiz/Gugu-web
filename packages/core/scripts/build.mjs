@@ -52,7 +52,7 @@ export async function buildCore(consume) {
   })
   try {
     const tsc = require.resolve('typescript/bin/tsc')
-    for (const name of ['sandbox', 'database'])
+    for (const name of ['sandbox', 'database', 'search'])
       await compile([tsc, '-p', resolve(coreRoot, `../${name}/tsconfig.json`)])
 
     const output = resolve(coreRoot, 'dist')

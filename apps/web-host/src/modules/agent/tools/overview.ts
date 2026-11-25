@@ -9,9 +9,10 @@ export function createProjectFileOverviewPort(pool: Pick<Pool, 'query'>, storage
   return async (identity: RunIdentity, projectId: number, signal: AbortSignal) => {
     signal.throwIfAborted()
     try {
-      const key = await resolveFileDirectoryRoot(pool, identity.ownerId, { projectId })
-      const counts = await readPathDirectoryOverview(storageRoot, key, signal)
       const workspaces = await readWebProjectWorkspaceLinks(pool, identity.ownerId, projectId)
+      const active = workspaces.find(workspace => workspace.active)
+      const key = await resolveFileDirectoryRoot(pool, identity.ownerId, active?.directoryId ?? { projectId })
+      const counts = await readPathDirectoryOverview(storageRoot, key, signal)
       return { ...(workspaces.length ? { workspaces } : {}), total_file_count: counts.total, root_file_count: counts.rootFiles, total_folder_count: counts.totalFolders, location: { kind: 'sandbox' as const, value: sandboxTarget(key) } }
     }
     finally { signal.throwIfAborted() }

@@ -14,7 +14,7 @@ const owner: PublicUserRecord = {
   isActive: true,
   accountStatus: 'active',
   securityVersion: 1,
-  avatarUrl: `/api/v1/auth/avatar/${ownerId}?v=first-upload`,
+  avatarUrl: `/api/v1/users/${ownerId}/avatar?v=first-upload`,
   createdAt: '2026-11-01T00:00:00.000Z',
   timezone: 'Asia/Shanghai',
   emailSubscribed: false,
@@ -54,9 +54,9 @@ test('public avatar reads return stored bytes and not-found results without requ
   }
   const app = appWithAvatar(operations)
 
-  const image = await app.inject({ method: 'GET', url: `/api/v1/auth/avatar/${ownerId}?v=123` })
-  const missing = await app.inject({ method: 'GET', url: '/api/v1/auth/avatar/00000000-0000-4000-8000-000000000099' })
-  const malformed = await app.inject({ method: 'GET', url: '/api/v1/auth/avatar/not-a-user-id' })
+  const image = await app.inject({ method: 'GET', url: `/api/v1/users/${ownerId}/avatar?v=123` })
+  const missing = await app.inject({ method: 'GET', url: '/api/v1/users/00000000-0000-4000-8000-000000000099/avatar' })
+  const malformed = await app.inject({ method: 'GET', url: '/api/v1/users/not-a-user-id/avatar' })
   await app.close()
 
   assert.equal(image.statusCode, 200)
@@ -77,14 +77,19 @@ test('avatar upload is authenticated, derives owner from Host identity, and retu
     async read() { return null },
   })
 
+  const retiredUpload = await app.inject({ method: 'POST', url: '/api/v1/auth/avatar' })
+  const retiredRead = await app.inject({ method: 'GET', url: `/api/v1/auth/avatar/${ownerId}` })
+  assert.equal(retiredUpload.statusCode, 404)
+  assert.equal(retiredRead.statusCode, 404)
+
   const denied = await app.inject({
-    method: 'POST',
-    url: '/api/v1/auth/avatar',
+    method: 'PUT',
+    url: '/api/v1/users/me/avatar',
     ...multipartPayload('image/png', Buffer.from('private avatar')),
   })
   const uploaded = await app.inject({
-    method: 'POST',
-    url: '/api/v1/auth/avatar',
+    method: 'PUT',
+    url: '/api/v1/users/me/avatar',
     headers: {
       ...multipartPayload('image/png', Buffer.from('private avatar')).headers,
       authorization: `Bearer ${createUserToken(ownerId, 1, secret)}`,
@@ -104,12 +109,12 @@ test('avatar upload rejects unsupported media types and payloads larger than fiv
   const authorization = `Bearer ${createUserToken(ownerId, 1, secret)}`
   const unsupportedPayload = multipartPayload('image/svg+xml', Buffer.from('<svg/>'))
   const unsupported = await app.inject({
-    method: 'POST', url: '/api/v1/auth/avatar', headers: { ...unsupportedPayload.headers, authorization },
+    method: 'PUT', url: '/api/v1/users/me/avatar', headers: { ...unsupportedPayload.headers, authorization },
     payload: unsupportedPayload.payload,
   })
   const oversizedPayload = multipartPayload('image/jpeg', Buffer.alloc(5 * 1024 * 1024 + 1))
   const oversized = await app.inject({
-    method: 'POST', url: '/api/v1/auth/avatar', headers: { ...oversizedPayload.headers, authorization },
+    method: 'PUT', url: '/api/v1/users/me/avatar', headers: { ...oversizedPayload.headers, authorization },
     payload: oversizedPayload.payload,
   })
   await app.close()

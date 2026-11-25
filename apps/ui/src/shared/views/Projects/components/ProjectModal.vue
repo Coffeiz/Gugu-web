@@ -46,7 +46,7 @@
               v-model:client="localClient"
               v-model:start-date="localStartDate"
               v-model:deadline="localDeadline"
-              :color="localColor"
+              :color="projectColorSelection(localColor)"
               :info-expanded="infoExpanded"
               :color-presets="colorPresets"
               @set-color="setColor"
@@ -68,9 +68,9 @@
 
         <ProjectDiskFiles v-if="project" :key="project.id"
           :project-id="project.id" :project-directory-key="desktop ? JSON.stringify([project.name, project.startDate]) : undefined"
-          :native-window="nativeWindow" :desktop="desktop" :workspace-available="!desktop && workspaceAvailable"
-          :workspace-exists="Boolean(projectWorkspace)" :stages-expanded="stagesExpanded"
-          @workspace="toggleProjectWorkspace" @close="closeProjectModal" @toggle-stages="togglePmStages"
+          :native-window="nativeWindow" :desktop="desktop"
+          :stages-expanded="stagesExpanded"
+          @close="closeProjectModal" @toggle-stages="togglePmStages"
           @selection-change="fileSelectionActive = $event" />
   </ProjectModalShell>
 
@@ -82,16 +82,13 @@ import { ref, computed, watch, toRef, nextTick, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/stores/projects'
 import { usePreferencesStore } from '@/stores/preferences'
-import { useUiStore } from '@/stores/ui'
-import { PROJECT_COLOR_PRESETS } from '@/utils/projectColors'
+import { projectColorSelection, SELECTABLE_PROJECT_COLORS } from '@/utils/projectColors'
 import type { Project } from '@/types/project'
 import ProjectModalShell from '@/views/Projects/components/ProjectModalShell.vue'
 import ProjectInfoPanel from '@/views/Projects/components/ProjectInfoPanel.vue'
 import ProjectStagesPanel from '@/views/Projects/components/ProjectStagesPanel.vue'
 import ProjectDiskFiles from '@/views/Projects/components/ProjectDiskFiles.vue'
 import Icon from '@/components/common/icons/Icon.vue'
-import { workspacesApi } from '@/services/api'
-import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { useProjectDraft } from '@/composables/projects/useProjectDraft'
 import { useProjectStages } from '@/composables/projects/useProjectStages'
 import { projectProgress } from '@/utils/projectProgress'
@@ -110,68 +107,10 @@ function onModalClose() { closeProjectModal() }
 
 const projectStore = useProjectStore()
 const prefsStore       = usePreferencesStore()
-const uiStore          = useUiStore()
-const workspaceSupported = ref(false)
-const projectWorkspace = ref<{ id: number } | null>(null)
-const workspaceLoading = ref(false)
 const desktop = useProjectAccess().storesProjectsLocally
 const fileSelectionActive = ref(false)
-const workspaceAvailable = computed(() => prefsStore.shellEnabled && workspaceSupported.value && !workspaceLoading.value)
 watch(() => props.project?.id, () => { fileSelectionActive.value = false })
 
-async function refreshProjectWorkspace() {
-  const projectId = props.project?.id
-  if (desktop || !projectId) {
-    workspaceSupported.value = false
-    projectWorkspace.value = null
-    return
-  }
-  workspaceLoading.value = true
-  try {
-    const status = await workspacesApi.status()
-    workspaceSupported.value = status.workspaceSupported === true
-    const items = Array.isArray(status.items) ? status.items as Array<{ id: number; kind?: string; projectId?: number | null }> : []
-    projectWorkspace.value = items.find(item => item.kind === 'project' && item.projectId === projectId) ?? null
-  } catch {
-    workspaceSupported.value = false
-    projectWorkspace.value = null
-  } finally {
-    workspaceLoading.value = false
-  }
-}
-
-watch(() => props.project?.id, refreshProjectWorkspace, { immediate: true })
-
-async function toggleProjectWorkspace() {
-  const project = props.project
-  if (!project || !workspaceSupported.value || workspaceLoading.value) return
-  workspaceLoading.value = true
-  try {
-    if (projectWorkspace.value) {
-      if (!await confirmDialog({
-        title: t('files.deleteWorkspaceTitle'),
-        message: t('files.deleteWorkspaceMessage', { name: project.name }),
-        tone: 'danger',
-        confirmText: t('files.deleteWorkspace'),
-      })) return
-      await workspacesApi.delete(projectWorkspace.value.id)
-      projectWorkspace.value = null
-    } else {
-      await workspacesApi.create({ name: project.name, kind: 'project', projectId: project.id })
-      await refreshProjectWorkspace()
-    }
-    uiStore.pushNotification({
-      title: t('files.workspace'),
-      content: t(projectWorkspace.value ? 'files.workspaceCreated' : 'files.workspaceDeleted', { name: project.name }),
-      bubble: true,
-      persist: false,
-    })
-  } catch {
-    uiStore.pushNotification({ title: t('files.workspace'), content: t('files.workspaceCreateFailed'), bubble: true, persist: false })
-  } finally {
-    workspaceLoading.value = false
-  }
-}
 const {
   localName,
   localStages,
@@ -256,7 +195,7 @@ const headerProgress = computed(() => {
   )
 })
 
-const colorPresets = [...PROJECT_COLOR_PRESETS]
+const colorPresets = [...SELECTABLE_PROJECT_COLORS]
 
 function setStage(key: string) {
   const transition = projectStages.transitionStage(key)
@@ -276,7 +215,6 @@ function setStage(key: string) {
 }
 .modal button { outline: none; }
 .modal.project-modal-native .modal-left { width: var(--desktop-project-sidebar-width); }
-.project-modal-native .left-content { padding-bottom: 68px; }
 
 /* ── 左栏 ── */
 .modal-left {
@@ -368,12 +306,11 @@ function setStage(key: string) {
 
 /* 可滚动内容区 */
 .left-content {
-  flex: 1; overflow-y: auto; padding: 12px 16px;
+  flex: 1; overflow-y: auto; padding: 12px 16px 0;
   display: flex; flex-direction: column; gap: 0; min-height: 0;
   scrollbar-gutter: auto;
 }
 
-.section { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; }
 .section-label {
   font-size: 10px; font-weight: 600; color: var(--text-secondary);
   text-transform: uppercase; letter-spacing: 0.07em;

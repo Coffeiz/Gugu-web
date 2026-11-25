@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import type { ProfileUpdatePorts, ProfileUpdatePatch, ProfileUpdateTransaction } from '@gugu/core/auth/profile-update'
+import type { ProfileUpdatePorts, ProfileUpdatePatch, ProfileUpdateTransaction } from './profile-update.js'
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 
 interface ProfileRow {

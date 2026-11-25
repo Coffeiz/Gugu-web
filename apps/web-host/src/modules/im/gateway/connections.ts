@@ -6,6 +6,7 @@ import { parseQqMessage, type ParsedQqMessage } from '@gugu/gateway/qq'
 import type { RedisCommandClient } from '../../../workers/redis-stream-queue.js'
 import type { TrustedGatewayBot } from './bot-config.js'
 import { createNodeImInbox, type NodeImBotBinding } from './inbound/inbox.js'
+import type { createPostgresImInbox } from './inbound/postgres-queue.js'
 import { createImInboundEnvelope } from './inbound/envelope.js'
 import { createTelegramInbox } from './platforms/telegram/inbox.js'
 import { createFeishuClient } from '@gugu/gateway/feishu'
@@ -22,7 +23,7 @@ import { createWechatMedia } from '@gugu/gateway/wechat'
 import { WECHAT_MISSING_VOICE_NOTICE, createWechatSender } from '@gugu/gateway/wechat'
 import { connectWechatPolling } from '@gugu/gateway/wechat'
 import { createPlatformMedia, type PlatformAttachmentStore } from './media/platform.js'
-import { createImInboundPreflight, type ImPreflightPorts, type ImPreflightScope, GatewayConnectionCleanupError, parseGatewayInteraction, readImConversationScope, readImReceivedMessage, type GatewayClock, type GatewayConnection } from '@gugu/gateway'
+import { createImInboundPreflight, type ImPreflightPorts, type ImPreflightScope, GatewayConnectionCleanupError, parseGatewayInteraction, readImConversationScope, readImReceivedMessage, receiveMessage, type GatewayClock, type GatewayConnection } from '@gugu/gateway'
 import { ImGatewayAdmissionError, type ImGatewayAdmissionPort } from './inbound/admission.js'
 import { chooseImInstantReactionEmoji } from '@gugu/core/im/shortcut'
 
@@ -62,6 +63,7 @@ function trustedScope(spec: TrustedGatewayBot, payload: Payload): Scope {
 /** Supervisor实际连接工厂：平台协议→Core预检→真实媒体暂存→密封→Node专属队列。 */
 export function createPlatformConnections(options: {
   redis: RedisCommandClient
+  inbound?: Pick<ReturnType<typeof createPostgresImInbox>, 'enqueue' | 'telegram'>
   secretKey: string
   services(spec: TrustedGatewayBot): GatewayConnectionServices | Promise<GatewayConnectionServices>
   sanitizeText(text: string): string
@@ -75,7 +77,7 @@ export function createPlatformConnections(options: {
   report?(code: string, error?: unknown): void
 }) {
   if (!options.secretKey || typeof options.services !== 'function' || typeof options.sanitizeText !== 'function') throw invalid()
-  const envelope = createImInboundEnvelope(options.secretKey), inbox = createNodeImInbox(options.redis)
+  const envelope = createImInboundEnvelope(options.secretKey), inbox = options.inbound ?? createNodeImInbox(options.redis)
   const active = new Map<string, { ownerId: string; value: GatewayPlatformSender }>()
   const opening = new Set<string>()
   const blocked = new Set<string>()
@@ -140,7 +142,12 @@ export function createPlatformConnections(options: {
     const enqueue = async (payload: Payload, signal: AbortSignal) => {
       signal.throwIfAborted(); trustedScope(spec, payload)
       if (!Array.isArray(payload.attachments) || payload.attachments.some(id => typeof id !== 'string' || !id)) throw invalid()
-      await inbox.enqueue(binding, envelope.sealAdmitted(binding, payload))
+      await receiveMessage(binding, readImReceivedMessage(binding, payload), {
+        async recordInbound() {
+          const id = await inbox.enqueue(binding, envelope.sealAdmitted(binding, payload))
+          return { status: id === null ? 'duplicate' : 'queued' }
+        },
+      })
     }
     async function finish(): Promise<void> {
       if (stopped) return stopped
@@ -165,8 +172,9 @@ export function createPlatformConnections(options: {
           ...(quote ? { replyToMessageId: String(p.message_id) } : {}) }, value, { signal, authorize }); if (result.outcome !== 'accepted') throw invalid() }
         // 长轮询逐消息串行；仅保存当前事件路由和可信收据guard，不保存正文或平台媒体材料。
         let mediaFeedback: { route: Payload; authorize(): Promise<boolean> } | undefined
+        const previousInbox = createTelegramInbox(options.redis, spec.id, spec.owner, options.secretKey)
         connection = await connect({ botId: spec.id, ownerId: spec.owner,
-          inbox: createTelegramInbox(options.redis, spec.id, spec.owner, options.secretKey), signal,
+          inbox: options.inbound?.telegram(binding, previousInbox) ?? previousInbox, signal,
           sleep: options.clock ? (ms, signal) => options.clock!.sleep(ms, signal) : undefined,
           preflight: (p, signal) => { mediaFeedback = undefined
             return preflight(p, p.attachments.length > 0 || p.quoted_attachments.length > 0, signal,

@@ -1,9 +1,7 @@
-/**
- * 项目预设色板：唯一数据源。新建/编辑弹窗、Store 兜底默认值都从这里引用，
- * 不再各自维护一份色值列表——后端 backend/app/core/project_colors.py 是同一份
- * 色板的后端副本，改配色时两边要一起改。
- */
-export const PROJECT_COLOR_PRESETS: readonly string[] = [
+const LEGACY_SUNSET_COLOR = 'linear-gradient(135deg,#be8b8f,#c8aa72)'
+
+/** 项目弹窗提供的可选颜色。 */
+export const SELECTABLE_PROJECT_COLORS: readonly string[] = [
   'linear-gradient(135deg,#c8aa72,#b88060)',
   'linear-gradient(135deg,#8fbe8b,#7ab8a8)',
   'linear-gradient(135deg,#7ab8a8,#7ab8c8)',
@@ -11,8 +9,17 @@ export const PROJECT_COLOR_PRESETS: readonly string[] = [
   'linear-gradient(135deg,#5e73b2,#7b7fb2)',
   'linear-gradient(135deg,#7b7fb2,#c4afc8)',
   'linear-gradient(135deg,#c4afc8,#b07090)',
-  'linear-gradient(135deg,#be8b8f,#c8aa72)',
 ]
+
+/** 已保存项目使用的预设色，包含历史上的第八色。 */
+export const PROJECT_COLOR_PRESETS: readonly string[] = [
+  ...SELECTABLE_PROJECT_COLORS,
+  LEGACY_SUNSET_COLOR,
+]
+
+export function projectColorSelection(color: string): string {
+  return color === LEGACY_SUNSET_COLOR ? SELECTABLE_PROJECT_COLORS[0] : color
+}
 
 export const DEFAULT_PROJECT_COLOR: string = PROJECT_COLOR_PRESETS[5]
 

@@ -11,7 +11,7 @@ import { createPostgresGlobalSearchSources } from '../../../src/search/postgres.
 import { createSqliteConversationSearch } from '../../../src/search/sqlite-conversations.js'
 import { createKyselySqliteGlobalSearchSources } from '../../../src/search/sqlite.js'
 import { createGlobalSearchOperations } from '../../../src/search/global-search.js'
-import { parseGlobalSearchQuery } from '../../../src/search/query.js'
+import { parseGlobalSearchQuery } from '@gugu/search'
 
 const url = process.env.GUGU_CORE_TEST_POSTGRES_URL
 const stamp = (microsecond: number) => `2026-01-01 00:00:00.${String(microsecond).padStart(6, '0')}`

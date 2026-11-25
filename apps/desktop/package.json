@@ -17,9 +17,9 @@
     "dev:prepare": "node scripts/prepare-sidecar.mjs && node scripts/build.mjs",
     "dev:web": "node scripts/dev.mjs --open",
     "build": "node scripts/package.ts",
-    "build:host": "pnpm --filter @gugu/core build && pnpm --filter @gugu/gateway build && pnpm --filter @gugu/fs build && node scripts/build.mjs",
+    "build:host": "pnpm --filter @gugu/auth build && pnpm --filter @gugu/search build && pnpm --filter @gugu/core build && pnpm --filter @gugu/gateway build && pnpm --filter @gugu/fs build && node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "pretest": "pnpm --filter @gugu/core build && pnpm --filter @gugu/gateway build && pnpm --filter @gugu/fs build && node scripts/build-agent-runtime.mjs",
+    "pretest": "pnpm --filter @gugu/auth build && pnpm --filter @gugu/search build && pnpm --filter @gugu/core build && pnpm --filter @gugu/gateway build && pnpm --filter @gugu/fs build && node scripts/build-agent-runtime.mjs",
     "test": "vitest run",
     "smoke": "node scripts/smoke.ts",
     "probe:mxc": "node scripts/probe-mxc.mjs",
@@ -36,9 +36,11 @@
     "electron-updater": "6.8.11"
   },
   "devDependencies": {
+    "@gugu/auth": "workspace:*",
     "@gugu/core": "workspace:*",
     "@gugu/desktop-contracts": "workspace:*",
     "@gugu/fs": "workspace:*",
+    "@gugu/search": "workspace:*",
     "@gugu/gateway": "workspace:*",
     "@gugu/log": "workspace:*",
     "@microsoft/mxc-sdk": "1.1.0",

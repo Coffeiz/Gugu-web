@@ -1,3 +1,4 @@
+import type { ChangePasswordBody } from '@gugu/auth/contracts'
 import { post, request } from '@/api/client'
 import { getAuthDeviceId } from '@/utils/authDevice'
 
@@ -5,7 +6,8 @@ export const authApi = {
   sendRegistrationCode: (email: string) => post<{ ok: boolean }>(
     '/auth/registration-code', { email }, { headers: { 'X-Device-ID': getAuthDeviceId() } },
   ),
-  updateProfile: (data: any) => request('PATCH', '/auth/profile', data),
+  changePassword: (data: ChangePasswordBody) => request<void>('POST', '/auth/password/change', data),
+  updateProfile: (data: any) => request('PATCH', '/users/me', data),
   requestEmailChange: (data: { newEmail: string; currentPassword: string }) => request('POST', '/auth/email-change/request', data),
   resendEmailChange: () => request('POST', '/auth/email-change/resend'),
   cancelEmailChange: () => request('POST', '/auth/email-change/cancel'),
@@ -37,6 +39,6 @@ export const authApi = {
   uploadAvatar: (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    return request('POST', '/auth/avatar', form, true)
+    return request('PUT', '/users/me/avatar', form, true)
   },
 }

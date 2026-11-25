@@ -46,7 +46,6 @@ const html = computed(() => sanitizeHtml(marked(privacyPolicy[locale.value as ke
 .md-content :deep(li) { margin-bottom: 3px; }
 .md-content :deep(blockquote) { margin: 4px 0 20px; padding: 0; border: none; font-size: 12px; color: var(--text-secondary, #6b7280); }
 .md-content :deep(strong) { font-weight: 600; }
-.md-content :deep(code) { font-family: var(--font-family-mono); font-size: 12px; background: rgba(0,0,0,0.05); border-radius: 4px; padding: 1px 5px; }
 .md-content :deep(table) { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0 14px; }
 .md-content :deep(th) { text-align: left; font-weight: 600; padding: 7px 12px; background: rgba(0,0,0,0.04); border-bottom: 1px solid rgba(0,0,0,0.08); }
 .md-content :deep(td) { padding: 7px 12px; border-bottom: 1px solid rgba(0,0,0,0.05); color: var(--text-primary, #1a1d27); }

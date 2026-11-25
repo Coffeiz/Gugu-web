@@ -7,7 +7,7 @@ import type { AgentDispatchLease } from '../../run/dispatch.js'
 import type { FileDeleteAgentResult, FileDeleteOperations, FileDeleteReceipt } from '../../../files/trash/service.js'
 import type { RunIdentity } from '@gugu/core/agent'
 import { createWebAgentRagRunAuthorization } from '../../rag/authorize.js'
-import { isOwnedFileStorageKey } from '../../../files/store.js'
+import { isOwnedFilePath } from '../../../files/store.js'
 
 function sameLease(identity: RunIdentity, expected: RunIdentity): boolean {
   return identity.ownerId === expected.ownerId && identity.sessionId === expected.sessionId && identity.runId === expected.runId
@@ -42,7 +42,7 @@ export function createWebAgentFileDeletePort(
     if (!files || !sameLease(identity, expected)) return null
     const rows = (await files.list(identity, signal)).filter(file => file.path === path)
     signal.throwIfAborted()
-    return rows.length === 1 ? rows[0]!.storageKey : null
+    return rows.length === 1 ? rows[0]!.filePath : null
   }
   return { async resolveFilePath(identity, path, signal) {
     return await resolveStorageKey(identity, path, signal)
@@ -50,7 +50,7 @@ export function createWebAgentFileDeletePort(
     signal.throwIfAborted()
     if (!sameLease(identity, expected) || !await authorization.authorize(identity, 'delete_file', signal))
       throw new Error('文件删除授权已失效')
-    if (!isOwnedFileStorageKey(expected.ownerId, path)) throw new Error('文件不存在')
+    if (!isOwnedFilePath(expected.ownerId, path)) throw new Error('文件不存在')
     try {
       const outcome = await operations.remove(expected.ownerId, path, expected.sessionId, null, {
         receipt: fileReceipt({ ...identity, roundId }, call), signal,
@@ -71,7 +71,7 @@ export function createWebAgentFileDeletePort(
     if (!sameLease(identity, expected) || !await authorization.authorize(identity, 'delete_file', signal))
       throw new Error('文件删除授权已失效')
     if (!operations.removeMany) throw new Error('文件批量删除能力不可用')
-    if (!paths.length || paths.length > 50 || paths.some(path => !isOwnedFileStorageKey(expected.ownerId, path))
+    if (!paths.length || paths.length > 50 || paths.some(path => !isOwnedFilePath(expected.ownerId, path))
       || new Set(paths).size !== paths.length) throw new Error('文件路径列表无效')
     try {
       const outcome = await operations.removeMany(expected.ownerId, [...paths], expected.sessionId, null, {

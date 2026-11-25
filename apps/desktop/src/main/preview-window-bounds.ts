@@ -5,6 +5,7 @@ import { isTextExt } from '@gugu/desktop-contracts/file-preview'
 export function desktopPreviewBounds(
   file: Pick<DesktopPreviewMetadata, 'ext' | 'mimeType'>,
   area: { x: number; y: number; width: number; height: number },
+  saved?: { width: number; height: number },
 ) {
   const ext = file.ext.toLowerCase()
   const [preferredWidth, preferredHeight] = ['csv', 'xlsx', 'xls'].includes(ext) ? [1080, 660]
@@ -12,8 +13,8 @@ export function desktopPreviewBounds(
     : ['doc', 'docx', 'pdf', 'md', 'markdown', 'rtf'].includes(ext) || isTextExt(ext, file.mimeType) ? [680, 850]
     : [900, 670]
   const scale = Math.min(1, area.width / preferredWidth, area.height / preferredHeight)
-  const width = Math.floor(preferredWidth * scale)
-  const height = Math.floor(preferredHeight * scale)
+  const width = saved ? Math.min(area.width, Math.max(360, saved.width)) : Math.floor(preferredWidth * scale)
+  const height = saved ? Math.min(area.height, Math.max(260, saved.height)) : Math.floor(preferredHeight * scale)
   return {
     width, height, minWidth: Math.min(360, width), minHeight: Math.min(260, height),
     x: area.x + Math.floor((area.width - width) / 2),

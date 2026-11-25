@@ -1,5 +1,4 @@
-import { parseGlobalSearchQuery } from '@gugu/core'
-import type { GlobalSearchOperations } from '@gugu/core'
+import { parseGlobalSearchQuery, type GlobalSearchOperations } from '@gugu/search'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 
 export interface GlobalSearchRouteOptions {

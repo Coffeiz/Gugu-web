@@ -1,6 +1,6 @@
 import { CoreError } from '@gugu/core'
 import { resolveRelativeReferences } from '@gugu/core/files/relative-references'
-import { createLocalFileTree, localFileIdentity, moveLocalEntry, removeLocalTree, UnsafeLocalPathError } from '@gugu/fs/node'
+import { createLocalFileTree, localFileIdentity, moveLocalEntry, removeLocalTree, UnsafeLocalPathError, watchDirectoryChanges } from '@gugu/fs/node'
 import { randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -14,14 +14,14 @@ import { MAX_COMPRESS_SOURCE_BYTES, splitArchiveFilename, supportedArchiveFormat
 import { lookup } from 'mime-types'
 import type { Pool } from 'pg'
 import { normalizeOwnerId } from '../../shared/owner-context.js'
-import { projectFileStorageKey, readPostgresProjectPathKey } from '../files/paths.js'
+import { projectFilePath, readPostgresProjectPathKey } from '../files/paths.js'
 import { createDiskTrash } from '../files/trash/disk.js'
-import { personalFileStorageKey, sandboxTarget, workspaceDirectoryStorageKey } from './roots.js'
+import { personalFileRootPath, sandboxTarget, workspaceDirectoryPath } from './roots.js'
 
 export type FileDirectory = number | 'personal' | { projectId: number }
 
 export async function resolveFileDirectoryRoot(pool: Pick<Pool, 'query'>, owner: string, directory: FileDirectory) {
-  if (directory === 'personal') return personalFileStorageKey(owner)
+  if (directory === 'personal') return personalFileRootPath(owner)
   if (typeof directory === 'object')
     return readPostgresProjectPathKey(pool, owner, directory.projectId)
   const { rows: [row] } = await pool.query<{ directory_name: string }>(
@@ -29,7 +29,7 @@ export async function resolveFileDirectoryRoot(pool: Pick<Pool, 'query'>, owner:
      WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, [directory, owner],
   )
   if (!row) throw new CoreError('not_found', '工作区不存在')
-  return workspaceDirectoryStorageKey(owner, row.directory_name)
+  return workspaceDirectoryPath(owner, row.directory_name)
 }
 
 export async function readPathDirectoryOverview(storageRoot: string, key: string, signal?: AbortSignal) {
@@ -81,6 +81,7 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
       if (await operation() !== false) return { ok: true }
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ESTALE') throw new CoreError('conflict', '文件或目标目录已变化，无法撤销或重做')
       if (code === 'EEXIST' || code === 'ENOTEMPTY')
         throw new CoreError('conflict', '目标位置已存在同名文件或文件夹')
       if (code === 'EINVAL' || code === 'EXDEV')
@@ -90,11 +91,20 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
     throw new CoreError('not_found', '文件或目录不存在')
   }
 
+  async function writeCreated(fs: ReturnType<typeof createLocalFileTree>, path: string, operation: () => Promise<unknown>) {
+    let creationReceipt: string | undefined
+    const result = await write(async () => {
+      if (await operation() === false) return false
+      creationReceipt = await fs.trashReceipt(path)
+    })
+    return { ...result, creationReceipt }
+  }
+
   const trash = createDiskTrash(storageRoot, rootKey)
 
   function protectDownloadDirectory(directory: FileDirectory, path: string) {
     if (directory === 'personal' && path === 'download')
-      throw new CoreError('forbidden', '不能移动、替换或删除系统下载目录')
+      throw new CoreError('invalid_request', '不能移动、替换或删除系统下载目录')
   }
 
   const storeTrashPath = (owner: string, directory: FileDirectory, path: string, root: string) => {
@@ -117,11 +127,11 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
           'SELECT id,directory_name FROM workspace_directories WHERE user_id=$1 AND deleted_at IS NULL', [owner]),
       ])
       const roots: Array<{ directory: FileDirectory; key: string }> = [
-        { directory: 'personal', key: personalFileStorageKey(owner) },
+        { directory: 'personal', key: personalFileRootPath(owner) },
         ...projects.rows.map(row => ({ directory: { projectId: Number(row.id) } as const,
-          key: projectFileStorageKey(owner, Number(row.id), row.name, row.start_date, row.created_at) })),
+          key: projectFilePath(owner, Number(row.id), row.name, row.start_date, row.created_at) })),
         ...directories.rows.map(row => ({ directory: Number(row.id) as FileDirectory,
-          key: workspaceDirectoryStorageKey(owner, row.directory_name) })),
+          key: workspaceDirectoryPath(owner, row.directory_name) })),
       ]
       const matches = roots.flatMap(root => {
         const prefix = sandboxTarget(root.key)
@@ -156,6 +166,20 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
         fileAt: (parts, name) => lookup(parts, name, 'file'),
         folderAt: (parts, name) => lookup(parts, name, 'directory'),
       })
+    },
+    async watchDirectory(ownerId: string, directory: FileDirectory, relativePath: string) {
+      const owner = normalizeOwnerId(ownerId)
+      const root = await rootKey(owner, directory)
+      const fs = createLocalFileTree(storageRoot, root)
+      const opened = await read(() => fs.openDirectory(relativePath))
+      try {
+        return watchDirectoryChanges(`/proc/self/fd/${opened.handle.fd}`, () => {
+          void opened.handle.close().catch(() => {})
+        }, async () => await rootKey(owner, directory) === root)
+      } catch (error) {
+        await opened.handle.close()
+        throw error
+      }
     },
     async list(ownerId: string, directory: FileDirectory, relativePath: string) {
       const fs = await tree(ownerId, directory)
@@ -215,7 +239,7 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
     },
     async mkdir(ownerId: string, directory: FileDirectory, path: string) {
       const fs = await tree(ownerId, directory)
-      return write(async () => {
+      return writeCreated(fs, path, async () => {
         if (typeof directory !== 'number' && !await fs.ensureRoot()) return false
         return fs.mkdir(path)
       })
@@ -263,8 +287,8 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
         await writeZipStreams(sources, output)
         signal.throwIfAborted()
         if (root !== await rootKey(owner, directory)) throw new CoreError('conflict', '目标目录已变化')
-        await write(() => fs.upload(relativePath, createReadStream(output), signal))
-        return { relativePath }
+        const result = await writeCreated(fs, relativePath, () => fs.upload(relativePath, createReadStream(output), signal))
+        return { relativePath, creationReceipt: result.creationReceipt }
       } finally { await rm(temporary, { recursive: true, force: true }) }
     },
     async extractArchive(ownerId: string, directory: FileDirectory, path: string, folderName: string, signal: AbortSignal) {
@@ -327,8 +351,8 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
             }
             if (root !== await rootKey(owner, directory)) throw new CoreError('conflict', '目标目录已变化')
             signal.throwIfAborted()
-            await write(() => moveLocalEntry(storageRoot, stagedKey, fs.path(relativePath)))
-            return { relativePath, skipped: extracted.skipped }
+            const result = await writeCreated(fs, relativePath, () => moveLocalEntry(storageRoot, stagedKey, fs.path(relativePath)))
+            return { relativePath, skipped: extracted.skipped, creationReceipt: result.creationReceipt }
           } finally { await removeLocalTree(storageRoot, stagedKey) }
         } finally { await rm(temporary, { recursive: true, force: true }) }
       } finally { await source.handle.close() }
@@ -338,28 +362,54 @@ export function createWorkspaceFileReads(pool: Pick<Pool, 'query'>, storageRoot:
       const owner = normalizeOwnerId(ownerId)
       const root = await rootKey(owner, directory)
       const fs = createLocalFileTree(storageRoot, root)
-      return write(async () => {
-        if (!overwrite && typeof directory !== 'number' && !await fs.ensureRoot()) return false
-        await fs.upload(path, content, signal, overwrite)
+      if (overwrite) return write(() => fs.upload(path, content, signal, true))
+      return writeCreated(fs, path, async () => {
+        if (typeof directory !== 'number' && !await fs.ensureRoot()) return false
+        return fs.upload(path, content, signal)
       })
     },
-    async move(ownerId: string, directory: FileDirectory, path: string, destination: string) {
+    async move(ownerId: string, directory: FileDirectory, path: string, destination: string, track?: { expected?: string }) {
       protectDownloadDirectory(directory, path)
       protectDownloadDirectory(directory, destination)
       const owner = normalizeOwnerId(ownerId)
       const root = await rootKey(owner, directory)
-      return write(() => createLocalFileTree(storageRoot, root).move(path, destination))
+      const history = track && { ...track, reverse: undefined as string | undefined }
+      const result = await write(() => createLocalFileTree(storageRoot, root).move(path, destination, history))
+      return history?.reverse ? { ...result, moveReceipt: history.reverse } : result
     },
     async copy(ownerId: string, directory: FileDirectory, path: string, destination: string, signal: AbortSignal) {
       protectDownloadDirectory(directory, destination)
       const fs = await tree(ownerId, directory)
-      return write(() => fs.copy(path, destination, signal))
+      return writeCreated(fs, destination, () => fs.copy(path, destination, signal))
     },
     async moveToTrash(ownerId: string, directory: FileDirectory, path: string, options?: { expectedRoot: string }) {
       const owner = normalizeOwnerId(ownerId)
       const root = await rootKey(owner, directory)
       if (options && options.expectedRoot !== root) throw new CoreError('conflict', '文件目录授权已变化')
       return write(() => storeTrashPath(owner, directory, path, root))
+    },
+    async applyTrashHistory(ownerId: string, directory: FileDirectory, path: string, expected?: string, id?: string) {
+      protectDownloadDirectory(directory, path)
+      const owner = normalizeOwnerId(ownerId)
+      const root = await rootKey(owner, directory)
+      const source = createLocalFileTree(storageRoot, root).path(path)
+      const history = { expected, reverse: undefined as string | undefined }
+      if (id !== undefined) {
+        const entry = await trash.info(owner, id)
+        if (!entry || entry.relativePath !== path || root !== await rootKey(owner, entry.directory))
+          throw new CoreError('conflict', '回收项已变化')
+        const tracking = { ...history, trash: 'restore' as const }
+        await write(() => trash.restore(owner, id, root, tracking))
+        return { receipt: tracking.reverse }
+      }
+      const tracking = { ...history, trash: 'store' as const }
+      let trashId: string | undefined
+      await write(async () => {
+        const entry = await trash.store(owner, directory, path, source, new Date().toISOString(), tracking)
+        if (!entry) return false
+        trashId = entry.id
+      })
+      return { id: trashId, receipt: tracking.reverse }
     },
     async trashPath(ownerId: string, directory: FileDirectory, path: string, expectedRoot: string) {
       const owner = normalizeOwnerId(ownerId)

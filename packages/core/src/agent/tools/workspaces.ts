@@ -89,12 +89,8 @@ export interface WorkspaceCreatePort {
 /** 创建工作区声明；目录和项目的实际创建/归属由 Host 共享服务完成。 */
 export function createWorkspaceTool(port:WorkspaceCreatePort):ToolDefinition{
  const schema=z.object({workspace_name:z.string().refine(value=>value.trim().length>0&&[...value].length<=200),
-  kind:z.enum(['project','directory']),project_id:z.number().int().positive().safe().optional(),enabled:z.boolean().optional()})
-  .strict().superRefine((value,ctx)=>{
-   if(value.kind==='directory'&&value.project_id!==undefined)ctx.addIssue({code:'custom',message:'kind=directory 只填写 workspace_name，不接受 project_id'})
-   if(value.kind==='project'&&value.project_id===undefined)ctx.addIssue({code:'custom',message:'kind=project 需要 project_id',path:['project_id']})
-  })
- return {definition:{name:'create_workspace',schema:{type:'function',function:{name:'create_workspace',description:'创建工作区目标：kind=directory 创建顶层物理目录，kind=project 使用 project_id。可用 enabled 指定新绑定状态。',parameters:{type:'object',properties:{workspace_name:{type:'string',minLength:1,maxLength:200},kind:{type:'string',enum:['project','directory']},project_id:{type:'integer'},enabled:{type:'boolean'}},required:['workspace_name','kind'],additionalProperties:false}}}},
+  kind:z.literal('directory'),enabled:z.boolean().optional()}).strict()
+ return {definition:{name:'create_workspace',schema:{type:'function',function:{name:'create_workspace',description:'创建文件库顶层工作区。使用 set_project_workspace 将已有工作区绑定到项目。',parameters:{type:'object',properties:{workspace_name:{type:'string',minLength:1,maxLength:200},kind:{type:'string',enum:['directory']},enabled:{type:'boolean'}},required:['workspace_name','kind'],additionalProperties:false}}}},
   effect:'write',validate:input=>schema.safeParse(input),async execute(input,scope,call){
    scope.signal.throwIfAborted()
    return port.create({identity:scope.identity,roundId:scope.roundId,toolCallId:call.id,args:input as WorkspaceCreateInput['args'],signal:scope.signal})

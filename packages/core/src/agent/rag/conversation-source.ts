@@ -1,6 +1,6 @@
 import { sql, type Kysely } from 'kysely'
 import { dataContext } from '../../contracts/index.js'
-import { normalizeGlobalSearchQueries } from '../../search/query.js'
+import { normalizeGlobalSearchQueries } from '@gugu/search'
 import { rankCandidates } from './ranking/rank-candidates.js'
 import type { RagRankCandidate } from './contracts.js'
 import type { RunIdentity } from '../models.js'

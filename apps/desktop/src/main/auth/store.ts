@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { open, readFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { safeStorage } from 'electron'
-import { remoteServerOrigin } from '@gugu/core/auth/client'
-import { remoteSessionSchema, type RemoteSession } from '@gugu/core/auth/contracts'
+import { remoteServerOrigin } from '@gugu/auth/client'
+import { remoteSessionSchema, type RemoteSession } from '@gugu/auth/contracts'
 import { DesktopError } from '../core-host.js'
 
 type Encryption = Pick<typeof safeStorage, 'isAsyncEncryptionAvailable' | 'decryptStringAsync' | 'encryptStringAsync'>

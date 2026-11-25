@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Pool } from 'pg'
-import { GLOBAL_SEARCH_TYPES, type GlobalSearchOperations } from '@gugu/core'
+import { GLOBAL_SEARCH_TYPES, type GlobalSearchOperations } from '@gugu/search'
 import { createMindReferenceSuggester } from '../../../../packages/core/src/mind/ref-suggest.js'
 import { createPostgresMindReferenceSuggestionPorts } from '../../src/modules/mind/references.js'
 

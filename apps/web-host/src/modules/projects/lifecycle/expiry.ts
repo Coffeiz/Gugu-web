@@ -3,13 +3,13 @@ import { CoreError } from '@gugu/core'
 import type { Pool, PoolClient } from 'pg'
 import { randomUUID } from 'node:crypto'
 import { createLocalFileTree, localEntryKind, moveLocalEntry, removeLocalTree } from '@gugu/fs/node'
-import { projectFileStorageKey } from '../../files/paths.js'
+import { projectFilePath } from '../../files/paths.js'
 import { enqueueScheduledTaskRagRebuild } from '../../scheduled-tasks/store.js'
 
 type ProjectDirectoryRow = { id: number; user_id: string; name: string; start_date: unknown; created_at: unknown }
 
 function directoryKey(project: ProjectDirectoryRow) {
-  return projectFileStorageKey(project.user_id, project.id, project.name, project.start_date, project.created_at)
+  return projectFilePath(project.user_id, project.id, project.name, project.start_date, project.created_at)
 }
 
 function stagingKey(owner: string, journalId: string) {

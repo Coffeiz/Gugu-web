@@ -28,6 +28,9 @@ importers:
         specifier: 6.8.11
         version: 6.8.11
     devDependencies:
+      '@gugu/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@gugu/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -43,6 +46,9 @@ importers:
       '@gugu/log':
         specifier: workspace:*
         version: link:../../packages/log
+      '@gugu/search':
+        specifier: workspace:*
+        version: link:../../packages/search
       '@microsoft/mxc-sdk':
         specifier: 1.1.0
         version: 1.1.0
@@ -139,6 +145,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.10
         version: 6.43.10
+      '@gugu/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@gugu/charts':
         specifier: workspace:*
         version: link:../../packages/charts
@@ -326,6 +335,9 @@ importers:
       '@fastify/static':
         specifier: 10.1.5
         version: 10.1.5
+      '@gugu/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@gugu/charts':
         specifier: workspace:*
         version: link:../../packages/charts
@@ -350,6 +362,12 @@ importers:
       '@gugu/sandbox':
         specifier: workspace:*
         version: link:../../packages/sandbox
+      '@gugu/search':
+        specifier: workspace:*
+        version: link:../../packages/search
+      '@gugu/users':
+        specifier: workspace:*
+        version: link:../../packages/users
       '@larksuiteoapi/node-sdk':
         specifier: 1.76.0
         version: 1.76.0
@@ -565,6 +583,16 @@ importers:
         specifier: ~5.8.0
         version: 5.8.3
 
+  packages/auth:
+    dependencies:
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   packages/charts:
     dependencies:
       '@mermaid-js/mermaid-zenuml':
@@ -589,6 +617,8 @@ importers:
         specifier: 0.1.28
         version: 0.1.28
 
+  packages/cli: {}
+
   packages/core:
     dependencies:
       '@gugu/charts':
@@ -609,6 +639,9 @@ importers:
       '@gugu/sandbox':
         specifier: workspace:*
         version: link:../sandbox
+      '@gugu/search':
+        specifier: workspace:*
+        version: link:../search
       '@modelcontextprotocol/client':
         specifier: 2.4.0
         version: 2.4.0
@@ -715,6 +748,9 @@ importers:
 
   packages/desktop-contracts:
     devDependencies:
+      '@gugu/auth':
+        specifier: workspace:*
+        version: link:../auth
       '@gugu/core':
         specifier: workspace:*
         version: link:../core
@@ -736,6 +772,9 @@ importers:
       '@gugu/core':
         specifier: workspace:*
         version: link:../core
+      '@gugu/search':
+        specifier: workspace:*
+        version: link:../search
       '@larksuiteoapi/node-sdk':
         specifier: 1.76.0
         version: 1.76.0
@@ -778,6 +817,21 @@ importers:
       '@microsoft/mxc-sdk':
         specifier: 1.1.0
         version: 1.1.0
+
+  packages/search:
+    devDependencies:
+      '@types/node':
+        specifier: 26.6.6
+        version: 26.6.6
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  packages/users:
+    devDependencies:
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
 packages:
 

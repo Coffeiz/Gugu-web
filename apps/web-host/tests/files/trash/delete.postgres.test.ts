@@ -190,11 +190,12 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
   try {
     await pool.query(`
       CREATE TABLE files (
-        id serial PRIMARY KEY, user_id uuid NOT NULL, display_name text NOT NULL, ext text NOT NULL,
+        user_id uuid NOT NULL, display_name text NOT NULL, ext text NOT NULL,
         space text NOT NULL, project_id integer, workspace_directory_id integer,
         stage_name text NOT NULL, mind_map_id integer, path text NOT NULL, version integer NOT NULL,
         size text NOT NULL, size_bytes bigint NOT NULL, mime_type text, img_width integer, img_height integer,
-        created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz
+        created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz,
+        PRIMARY KEY(user_id,path)
       );
       CREATE TABLE undo_operations (
         id text PRIMARY KEY, user_id uuid NOT NULL, undo_context_id text, group_id text, resource text,
@@ -229,24 +230,26 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
     const foreignSource = path.join(root, otherOwnerId, '个人文件', '私有.txt')
     await mkdir(path.dirname(foreignSource), { recursive: true })
     await writeFile(foreignSource, '其他用户正文')
+    const deletedPaths = new Map([
+      [`${ownerId}/个人文件/资料/笔记.md`, `${ownerId}/trash/资料/笔记.md`],
+      [`${ownerId}/个人文件/a.txt`, `${ownerId}/trash/a.txt`],
+      [`${ownerId}/个人文件/z.txt`, `${ownerId}/trash/z.txt`],
+    ])
     const operations = createPostgresFileDeleteOperations(pool, {
       storageRoot: root,
       async publishChanged(event) {
         const committed = await pool.query<{ deleted_at: Date | null; path: string }>(
-          'SELECT deleted_at,path FROM files WHERE id=$1 AND user_id=$2', [event.entityId, ownerId],
+          'SELECT deleted_at,path FROM files WHERE path=$1 AND user_id=$2', [deletedPaths.get(event.entityId), ownerId],
         )
         assert.ok(committed.rows[0]?.deleted_at)
-        const expectedKey = new Map<number, string>([
-          [1, `${ownerId}/trash/资料/笔记.md`], [2, `${ownerId}/trash/a.txt`], [4, `${ownerId}/trash/z.txt`],
-        ]).get(event.entityId)
-        assert.equal(committed.rows[0]?.path, expectedKey)
+        assert.equal(committed.rows[0]?.path, deletedPaths.get(event.entityId))
         events.push(event.entityId)
       },
     })
 
+    const sourceKey = `${ownerId}/个人文件/资料/笔记.md`
     const lockHolder = await pool.connect()
     try {
-      const sourceKey = `${ownerId}/个人文件/资料/笔记.md`
       await lockHolder.query('BEGIN')
       await lockFileSyncPath(lockHolder, ownerId, sourceKey)
       let settled = false
@@ -254,7 +257,7 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
       const receiptOperation = { receipt: { operationId: randomUUID(), fingerprint: 'a'.repeat(64), method: 'agent.file.delete_file' as const },
         signal: new AbortController().signal, async authorize() {} }
       let result: unknown
-      const removal = operations.remove(ownerId, 1, 'editor-tab', 'renderer', receiptOperation).then((value) => {
+      const removal = operations.remove(ownerId, sourceKey, 'editor-tab', 'renderer', receiptOperation).then((value) => {
         result = value
         settled = true
       }, (error: unknown) => {
@@ -266,10 +269,10 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
       await lockHolder.query('COMMIT')
       await removal
       if (operationError) throw operationError
-      assert.deepEqual(result, { replayed: false, result: { success: true, file_id: 1, name: '笔记.md',
-        note: '已移入回收站，30 天内可还原', _file_op: { op: 'remove', kind: 'file', id: 1 } } })
+      assert.deepEqual(result, { replayed: false, result: { success: true, name: '笔记.md',
+        note: '已移入回收站，30 天内可还原' } })
       assert.equal((await pool.query('SELECT operation_id FROM core_operation_receipts WHERE owner_id=$1', [ownerId])).rowCount, 1)
-      assert.deepEqual(await operations.remove(ownerId, 1, 'editor-tab', 'renderer', receiptOperation),
+      assert.deepEqual(await operations.remove(ownerId, sourceKey, 'editor-tab', 'renderer', receiptOperation),
         { replayed: true, result: (result as { result: Record<string, unknown> }).result })
     } finally {
       await lockHolder.query('ROLLBACK').catch(() => undefined)
@@ -277,7 +280,7 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
     }
 
     const file = await pool.query<{ path: string; version: number; deleted_at: Date | null }>(
-      'SELECT path,version,deleted_at FROM files WHERE id=1 AND user_id=$1', [ownerId],
+      'SELECT path,version,deleted_at FROM files WHERE path=$1 AND user_id=$2', [`${ownerId}/trash/资料/笔记.md`, ownerId],
     )
     assert.equal(file.rows[0]?.path, `${ownerId}/trash/资料/笔记.md`)
     assert.equal(file.rows[0]?.version, 5)
@@ -287,41 +290,49 @@ test('PostgreSQL Local 删除等待 filesync 路径锁，再移动正文、记�
     const undo = await pool.query<{ before_state: { items: Record<string, { version: number }> } }>(
       'SELECT before_state FROM undo_operations WHERE user_id=$1 AND undo_context_id=$2', [ownerId, 'editor-tab'],
     )
-    assert.equal(undo.rows[0]?.before_state.items['file:1']?.version, 4)
+    assert.equal(undo.rows[0]?.before_state.items[`file:${sourceKey}`]?.version, 4)
     await pool.query(`
       CREATE FUNCTION reject_second_batch_delete() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN IF NEW.id=4 THEN RAISE EXCEPTION 'synthetic batch update failure'; END IF; RETURN NEW; END $$;
+      BEGIN IF NEW.path='${ownerId}/trash/z.txt' THEN RAISE EXCEPTION 'synthetic batch update failure'; END IF; RETURN NEW; END $$;
       CREATE TRIGGER reject_second_batch_delete BEFORE UPDATE ON files
       FOR EACH ROW EXECUTE FUNCTION reject_second_batch_delete();
     `)
-    await assert.rejects(operations.removeMany!(ownerId, [2, 4], 'failed-batch-tab', 'renderer'), /synthetic batch update failure/)
+    const firstBatchKey = `${ownerId}/个人文件/a.txt`
+    const secondBatchKey = `${ownerId}/个人文件/z.txt`
+    await assert.rejects(operations.removeMany!(ownerId, [firstBatchKey, secondBatchKey], 'failed-batch-tab', 'renderer'), /synthetic batch update failure/)
     assert.equal(await readFile(firstBatchSource, 'utf8'), '批量正文 A')
     assert.equal(await readFile(secondBatchSource, 'utf8'), '批量正文 Z')
-    const rolledBack = await pool.query<{ id: number; deleted_at: Date | null; path: string }>(
-      'SELECT id,deleted_at,path FROM files WHERE id=ANY($1::integer[]) ORDER BY id', [[2, 4]],
+    const rolledBack = await pool.query<{ deleted_at: Date | null; path: string }>(
+      'SELECT deleted_at,path FROM files WHERE path=ANY($1::text[]) ORDER BY path', [[firstBatchKey, secondBatchKey]],
     )
-    assert.deepEqual(rolledBack.rows.map((row) => [row.id, row.deleted_at, row.path]), [
-      [2, null, `${ownerId}/个人文件/a.txt`], [4, null, `${ownerId}/个人文件/z.txt`],
+    assert.deepEqual(rolledBack.rows.map((row) => [row.deleted_at, row.path]), [
+      [null, firstBatchKey], [null, secondBatchKey],
     ])
-    assert.deepEqual(events, [1])
+    assert.deepEqual(events, [sourceKey])
     await pool.query('DROP TRIGGER reject_second_batch_delete ON files; DROP FUNCTION reject_second_batch_delete()')
-    await operations.removeMany!(ownerId, [2, 3, 4], 'batch-editor-tab', 'renderer')
+    await operations.removeMany!(ownerId, [firstBatchKey, `${otherOwnerId}/个人文件/私有.txt`, secondBatchKey], 'batch-editor-tab', 'renderer').then(
+      () => assert.fail('跨 owner 路径必须整体拒绝'),
+      error => assert.match(String(error), /文件不存在/),
+    )
+    assert.equal(await readFile(firstBatchSource, 'utf8'), '批量正文 A')
+    assert.equal(await readFile(secondBatchSource, 'utf8'), '批量正文 Z')
+    await operations.removeMany!(ownerId, [firstBatchKey, secondBatchKey], 'batch-editor-tab', 'renderer')
     assert.equal(await readFile(path.join(root, ownerId, 'trash', 'a.txt'), 'utf8'), '批量正文 A')
     assert.equal(await readFile(path.join(root, ownerId, 'trash', 'z.txt'), 'utf8'), '批量正文 Z')
     assert.equal(await readFile(foreignSource, 'utf8'), '其他用户正文')
     const batchUndo = await pool.query<{
-      target_refs: Array<{ kind: string; id: number }>
+      target_refs: Array<{ kind: string; path: string }>
       before_state: { items: Record<string, { version: number }> }
     }>(
       'SELECT target_refs,before_state FROM undo_operations WHERE user_id=$1 AND undo_context_id=$2',
       [ownerId, 'batch-editor-tab'],
     )
-    assert.deepEqual(batchUndo.rows[0]?.target_refs, [{ kind: 'file', id: 2 }, { kind: 'file', id: 4 }])
-    assert.equal(batchUndo.rows[0]?.before_state.items['file:2']?.version, 1)
-    assert.equal(batchUndo.rows[0]?.before_state.items['file:4']?.version, 1)
-    assert.deepEqual(events, [1, 2, 4])
-    const corrupt = await pool.query<{id:number}>(`INSERT INTO files(user_id,display_name,ext,space,stage_name,path,version,size,size_bytes,mime_type,created_at,updated_at) VALUES($1,'私有','txt','personal','',$2,1,'4 B',4,'text/plain',now(),now()) RETURNING id`,[ownerId,`${otherOwnerId}/个人文件/私有.txt`])
-    await assert.rejects(operations.removeMany!(ownerId,[corrupt.rows[0]!.id],null,null),/文件不存在/)
+    assert.deepEqual(batchUndo.rows[0]?.target_refs, [
+      { kind: 'file', path: firstBatchKey }, { kind: 'file', path: secondBatchKey },
+    ])
+    assert.equal(batchUndo.rows[0]?.before_state.items[`file:${firstBatchKey}`]?.version, 1)
+    assert.equal(batchUndo.rows[0]?.before_state.items[`file:${secondBatchKey}`]?.version, 1)
+    assert.deepEqual(events, [sourceKey, firstBatchKey, secondBatchKey])
     assert.equal(await readFile(foreignSource,'utf8'),'其他用户正文')
   } finally {
     await pool.end()
@@ -338,7 +349,7 @@ test('并发删除重名文件时两份正文都保存在回收站', { skip: !da
   const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 3 })
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-delete-race-'))
   try {
-    await pool.query(`CREATE TABLE files (id serial PRIMARY KEY,user_id uuid,display_name text,ext text,space text,project_id int,workspace_directory_id int,stage_name text,mind_map_id int,path text,version int,size text,size_bytes bigint,mime_type text,img_width int,img_height int,deleted_at timestamptz,updated_at timestamptz);
+    await pool.query(`CREATE TABLE files (user_id uuid,display_name text,ext text,space text,project_id int,workspace_directory_id int,stage_name text,mind_map_id int,path text,version int,size text,size_bytes bigint,mime_type text,img_width int,img_height int,deleted_at timestamptz,updated_at timestamptz,PRIMARY KEY(user_id,path));
       INSERT INTO files(user_id,display_name,ext,space,stage_name,path,version,size,size_bytes) VALUES
       ('${ownerId}','memo','txt','personal','','${ownerId}/个人文件/notes/memo.txt',1,'1 B',1),
       ('${ownerId}','memo','txt','project','','${ownerId}/项目文件/notes/memo.txt',1,'1 B',1)`)
@@ -363,8 +374,10 @@ test('并发删除重名文件时两份正文都保存在回收站', { skip: !da
       return client
     } } as unknown as Pool
     const ops = createPostgresFileDeleteOperations(wrapped, { storageRoot: root, async publishChanged() {} })
-    await Promise.all([ops.remove(ownerId, 1, null, null), ops.remove(ownerId, 2, null, null)])
-    const rows = await pool.query<{path:string}>('SELECT path FROM files ORDER BY id')
+    const personalKey = `${ownerId}/个人文件/notes/memo.txt`
+    const projectKey = `${ownerId}/项目文件/notes/memo.txt`
+    await Promise.all([ops.remove(ownerId, personalKey, null, null), ops.remove(ownerId, projectKey, null, null)])
+    const rows = await pool.query<{path:string}>('SELECT path FROM files ORDER BY path')
     assert.equal(new Set(rows.rows.map(row => row.path)).size, 2)
     const contents = await Promise.all(rows.rows.map(row => readFile(path.join(root, ...row.path.split('/')), 'utf8')))
     assert.deepEqual(contents.sort(), ['A', 'B'])

@@ -1,5 +1,7 @@
+import { updateProfile as updateUserProfile } from '@gugu/users'
+import { changePasswordBodySchema } from '@gugu/auth/contracts'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { ProfileUpdateError, type ProfileUpdateInput, type ProfileUpdateResult } from '@gugu/core/auth/profile-update'
+import { ProfileUpdateError, type ProfileUpdateInput, type ProfileUpdateResult } from './profile-update.js'
 import { createCsrfToken, createUserToken } from '../session/token.js'
 
 export interface ProfileUser {
@@ -33,47 +35,14 @@ export interface ProfileRouteOptions {
   readonly publishAuthStateChanged: (userId: string) => Promise<unknown>
 }
 
-function field(body: Record<string, unknown>, camel: string, snake: string): unknown {
-  return body[camel] === undefined ? body[snake] : body[camel]
-}
-
-function parseProfileUpdate(body: unknown): ProfileUpdateInput | null {
+function parseUsersProfileUpdate(body: unknown): ProfileUpdateInput | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null
-  const value = body as Record<string, unknown>
-  const displayName = field(value, 'displayName', 'display_name')
-  const timezone = value.timezone
-  const emailSubscribed = field(value, 'emailSubscribed', 'email_subscribed')
-  const currentPassword = field(value, 'currentPassword', 'current_password')
-  const newPassword = field(value, 'newPassword', 'new_password')
-  if (displayName !== undefined && displayName !== null && typeof displayName !== 'string') return null
-  if (timezone !== undefined && timezone !== null && typeof timezone !== 'string') return null
-  if (emailSubscribed !== undefined && emailSubscribed !== null && typeof emailSubscribed !== 'boolean') return null
-  if (currentPassword !== undefined && currentPassword !== null && typeof currentPassword !== 'string') return null
-  if (newPassword !== undefined && newPassword !== null && typeof newPassword !== 'string') return null
-  return {
-    ...(typeof displayName === 'string' ? { displayName } : {}),
-    ...(typeof timezone === 'string' ? { timezone } : {}),
-    ...(typeof emailSubscribed === 'boolean' ? { emailSubscribed } : {}),
-    ...(typeof currentPassword === 'string' ? { currentPassword } : {}),
-    ...(typeof newPassword === 'string' ? { newPassword } : {}),
-  }
-}
-
-function userResponse(user: ProfileUser) {
-  return {
-    id: user.id,
-    username: user.username,
-    displayName: user.displayName,
-    email: user.email,
-    isActive: user.isActive,
-    avatarUrl: user.avatarUrl,
-    createdAt: user.createdAt instanceof Date
-      ? user.createdAt.toISOString().slice(0, 10)
-      : user.createdAt?.slice(0, 10) ?? '',
-    imChannels: user.imChannels,
-    timezone: user.timezone,
-    emailSubscribed: user.emailSubscribed,
-  }
+  if (Object.keys(body).some(key => key !== 'displayName' && key !== 'timezone' && key !== 'emailSubscribed')) return null
+  const { displayName, timezone, emailSubscribed } = body as Record<string, unknown>
+  if (displayName != null && typeof displayName !== 'string') return null
+  if (timezone != null && typeof timezone !== 'string') return null
+  if (emailSubscribed !== undefined && typeof emailSubscribed !== 'boolean') return null
+  return { displayName, timezone, emailSubscribed }
 }
 
 function setRenewedAuthCookies(
@@ -99,40 +68,45 @@ function setRenewedAuthCookies(
 }
 
 export function registerProfileRoute(app: FastifyInstance, options: ProfileRouteOptions): void {
-  app.patch('/api/v1/auth/profile', async (request, reply) => {
+  async function renewAfterPasswordChange(
+    request: FastifyRequest, reply: FastifyReply, userId: string, result: ProfileUpdateResult,
+  ) {
+    try {
+      await options.publishAuthStateChanged(userId)
+    } catch {
+      // 密码和安全版本已提交，通知失败不影响续发。
+    }
+    setRenewedAuthCookies(request, reply, userId, result.securityVersion ?? 1,
+      options.secret, options.tokenExpiresMinutes ?? 10080)
+  }
+
+  app.post('/api/v1/auth/password/change', async (request, reply) => {
     const identity = await options.authenticate(request, reply)
     if (!identity) return
-    const update = parseProfileUpdate(request.body)
-    if (!update) return reply.code(422).send({ detail: '个人资料请求字段无效' })
+    const input = changePasswordBodySchema.safeParse(request.body)
+    if (!input.success) return reply.code(422).send({ detail: '改密请求字段无效' })
     try {
-      const committed = await options.updateProfile(identity.id, update)
-      if (committed.timezoneChanged)
-        await options.bumpContextRevision(identity.id, 'timezone')
-
-      const user = await options.lookupUser(identity.id)
-      if (!user) return reply.code(404).send({ detail: '用户不存在' })
-
-      if (committed.passwordChanged) {
-        try {
-          await options.publishAuthStateChanged(identity.id)
-        } catch {
-          // Password and token-version changes are already committed.
-        }
-        setRenewedAuthCookies(
-          request,
-          reply,
-          identity.id,
-          committed.securityVersion ?? 1,
-          options.secret,
-          options.tokenExpiresMinutes ?? 10080,
-        )
-      }
-      return userResponse(user)
+      const result = await options.updateProfile(identity.id, input.data)
+      await renewAfterPasswordChange(request, reply, identity.id, result)
+      return reply.code(204).send()
     } catch (error) {
-      if (error instanceof ProfileUpdateError) {
-        const statusCode = error.code === 'not_found' ? 404 : 400
-        return reply.code(statusCode).send({ detail: error.message })
-      }
+      if (error instanceof ProfileUpdateError)
+        return reply.code(error.code === 'not_found' ? 404 : 400).send({ detail: error.message })
+      throw error
+    }
+  })
+
+  app.patch('/api/v1/users/me', async (request, reply) => {
+    const identity = await options.authenticate(request, reply)
+    if (!identity) return
+    const input = parseUsersProfileUpdate(request.body)
+    if (!input) return reply.code(422).send({ detail: '个人资料请求字段无效' })
+    try {
+      const profile = await updateUserProfile(identity.id, input, options)
+      return profile ?? reply.code(404).send({ detail: '用户不存在' })
+    } catch (error) {
+      if (error instanceof ProfileUpdateError)
+        return reply.code(error.code === 'not_found' ? 404 : 400).send({ detail: error.message })
       throw error
     }
   })

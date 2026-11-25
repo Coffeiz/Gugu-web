@@ -28,14 +28,14 @@ test('替换任务执行期间认证写请求返回423且不进入业务用例',
    async bumpContextRevision(){},async publishAuthStateChanged(){return false}},
  })
  try{
-  assert.equal(requiresDataReplacementWriteGate('GET','/api/v1/auth/profile'),false)
+  assert.equal(requiresDataReplacementWriteGate('GET','/api/v1/users/me'),false)
   assert.equal(requiresDataReplacementWriteGate('POST','/api/v1/data-portability/imports/job/apply'),false)
-  assert.equal(requiresDataReplacementWriteGate('PATCH','/api/v1/auth/profile'),true)
-  const unauthenticated=await app.inject({method:'PATCH',url:'/api/v1/auth/profile',payload:{display_name:'测试'}})
+  assert.equal(requiresDataReplacementWriteGate('PATCH','/api/v1/users/me'),true)
+  const unauthenticated=await app.inject({method:'PATCH',url:'/api/v1/users/me',payload:{displayName:'测试'}})
   assert.equal(unauthenticated.statusCode,401)
   assert.equal(gateChecks,0)
-  const response=await app.inject({method:'PATCH',url:'/api/v1/auth/profile',
-   headers:{authorization:`Bearer ${createUserToken(owner,1,secret)}`},payload:{display_name:'测试'}})
+  const response=await app.inject({method:'PATCH',url:'/api/v1/users/me',
+   headers:{authorization:`Bearer ${createUserToken(owner,1,secret)}`},payload:{displayName:'测试'}})
   assert.equal(response.statusCode,423,response.body)
   assert.equal(response.headers['retry-after'],'5')
   assert.deepEqual(response.json(),{detail:'账号正在替换用户数据，暂时不能修改；请稍后重试'})
@@ -59,7 +59,7 @@ test('替换任务执行期间认证写请求返回423且不进入业务用例',
   assert.equal(rollbackCalls,1)
   assert.equal(recoverCalls,1)
   gateFailure=true
-  const unavailable=await app.inject({method:'PATCH',url:'/api/v1/auth/profile',
+  const unavailable=await app.inject({method:'PATCH',url:'/api/v1/users/me',
    headers:{authorization:`Bearer ${createUserToken(owner,1,secret)}`},payload:{display_name:'不可写'}})
   assert.equal(unavailable.statusCode,503)
   assert.deepEqual(unavailable.json(),{detail:'账号状态暂不可用，请稍后重试'})

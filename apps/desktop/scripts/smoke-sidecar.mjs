@@ -75,7 +75,7 @@ try {
   const eventKey = 'b'.repeat(64)
   const admitted = run([{ v: 2, id: 4, method: 'im.inbox.admit',
     params: { ...connection, eventKey, sealedEvent: 'AQ==' } }])
-  assert.equal(admitted[1].result, null)
+  assert.equal(admitted[1].result, true)
   const loadInbox = () => run([{ v: 2, id: 5, method: 'im.inbox.prepare', params: connection }])[1].result
   const pending = loadInbox()
   assert.equal(pending.eventKey, eventKey)

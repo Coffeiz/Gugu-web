@@ -29,6 +29,7 @@
 - `progress` 用 `label`、数值 `value`，可加 `unit` 和 `max`（默认 100）。静态值须在 0 到 `max` 之间。
 - `list` 用 `items` 放条目。名称用 `label`，可加 `detail`、数值 `value` 和导航 `action`。详情用用户读得懂的状态、阶段和日期，字段多时分行。
 - `chart` 用 `kind`（`line` 折线、`bar` 柱状或 `pie` 饼图）、`label` 和 1–40 个 `points`。每点用 `label` 和数值 `value`，缺测填 `null`。可加 `unit`、`color` 和 `icon`。折线用于有序趋势，柱状用于同口径比较，饼图用于同一整体下互斥类别的占比，数值须非负且至少有一个正值。用 `switch` 切换不同口径的图表。
+  同一横轴和单位下比较多个数值时，折线图或柱状图用 `labels` 和 `series` 替代 `points`。例如最高、最低温共用日期：`{"type":"chart","kind":"line","label":"每日气温","unit":"°C","labels":["周一","周二"],"series":[{"label":"最高温","values":[12,14]},{"label":"最低温","values":[4,6]}]}`。支持 1–6 个系列，每个系列的 `values` 与 `labels` 等长，缺测填 `null`。多系列图表不使用 `filter`。比较多个对象（如项目 A、项目 B）的每月数值时，用 `kind: "bar"` 和共用的月份 `labels`，以对象名作为各系列的 `label`，同月各对象的柱会并排显示。
 - `timeline` 用 `label` 和 1–30 个 `items`。每项必填 `when`、`label`，可加 `detail`、`icon`、`action` 和 `status`（`done`、`current`、`planned`）。按条目顺序显示，以真实记录和已知计划为依据。
 
 ### 交互

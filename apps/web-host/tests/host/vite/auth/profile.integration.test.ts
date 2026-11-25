@@ -1,3 +1,5 @@
+import { createProfileUpdater } from '../../../../src/modules/auth/account/profile-update.js'
+import { createPostgresProfileUpdateStore } from '../../../../src/modules/auth/account/profile-store.js'
 import assert from 'node:assert/strict'
 import bcrypt from 'bcryptjs'
 import { randomUUID } from 'node:crypto'
@@ -37,7 +39,7 @@ test('Vite forwards cookie-authenticated profile edits and password rotation thr
       isActive: row.is_active,
       accountStatus: row.account_status,
       securityVersion: row.security_version ?? 1,
-      avatarUrl: row.avatar ? `/api/v1/auth/avatar/${row.id}` : null,
+      avatarUrl: row.avatar ? `/api/v1/users/${row.id}/avatar` : null,
       createdAt: row.created_at,
       timezone: row.timezone,
       emailSubscribed: row.email_subscribed ?? false,
@@ -49,7 +51,11 @@ test('Vite forwards cookie-authenticated profile edits and password rotation thr
     async isReady() { return true },
     userAuth: { secret, lookupUser },
     profile: {
-      pool,
+      updateProfile: createProfileUpdater({
+        ...createPostgresProfileUpdateStore(pool),
+        verifyPassword: bcrypt.compare,
+        hashPassword: password => bcrypt.hash(password, 4),
+      }),
       secret,
       lookupUser,
       async bumpContextRevision(userId, resource) {
@@ -120,24 +126,24 @@ test('Vite forwards cookie-authenticated profile edits and password rotation thr
     const initial = await fetch(`${base}/auth/me`, { headers: { cookie } })
     assert.equal(initial.status, 200)
 
-    const profile = await fetch(`${base}/auth/profile`, {
+    const profile = await fetch(`${base}/users/me`, {
       method: 'PATCH',
       headers: { ...csrfHeaders, 'content-type': 'application/json' },
       body: JSON.stringify({ displayName: '  小北  ', timezone: ' Asia/Tokyo ', emailSubscribed: true }),
     })
     assert.equal(profile.status, 200)
     const updatedProfile = await profile.json() as Record<string, unknown>
-    assert.equal(updatedProfile.display_name, '小北')
+    assert.equal(updatedProfile.displayName, '小北')
     assert.equal(updatedProfile.timezone, 'Asia/Tokyo')
-    assert.equal(updatedProfile.email_subscribed, true)
+    assert.equal(updatedProfile.emailSubscribed, true)
     assert.deepEqual(published, [`revision:${ownerId}:Asia/Tokyo`])
 
-    const password = await fetch(`${base}/auth/profile`, {
-      method: 'PATCH',
+    const password = await fetch(`${base}/auth/password/change`, {
+      method: 'POST',
       headers: { ...csrfHeaders, 'content-type': 'application/json' },
       body: JSON.stringify({ currentPassword: originalPassword, newPassword: 'synthetic-next-password' }),
     })
-    assert.equal(password.status, 200)
+    assert.equal(password.status, 204)
     assert.deepEqual(published, [`revision:${ownerId}:Asia/Tokyo`, `auth:${ownerId}:5`])
     const rotatedCookies = password.headers.getSetCookie()
     const nextAccess = rotatedCookies.find((value) => value.startsWith('gugu_user_access_token='))
@@ -150,7 +156,7 @@ test('Vite forwards cookie-authenticated profile edits and password rotation thr
     assert.equal(oldSession.status, 401)
     const renewedSession = await fetch(`${base}/auth/me`, { headers: { cookie: nextCookie } })
     assert.equal(renewedSession.status, 200)
-    assert.equal((await renewedSession.json() as Record<string, unknown>).display_name, '小北')
+    assert.equal((await renewedSession.json() as Record<string, unknown>).displayName, '小北')
 
     const persisted = await pool.query<{
       display_name: string | null; timezone: string | null; email_subscribed: boolean

@@ -287,9 +287,8 @@ onMounted(loadHistory)
 .md-nb :deep(ul), .md-nb :deep(ol) { margin: 4px 0 6px; padding-left: 18px; }
 .md-nb :deep(li) { margin: 2px 0; }
 .md-nb :deep(li > p) { margin: 0; }
-.md-nb :deep(code) { font-family: var(--font-family-mono); font-size: 11px; background: color-mix(in srgb, var(--action-primary) 15%, transparent); color: #5256ab; padding: 1px 5px; border-radius: 5px; }
 .md-nb :deep(pre) { margin: 6px 0; padding: 9px 11px; border-radius: 9px; background: rgba(20,22,40,0.07); overflow-x: auto; }
-.md-nb :deep(pre code) { background: none; color: #2b2d3c; padding: 0; font-size: 11px; line-height: 1.5; }
+.md-nb :deep(pre code) { font-family: var(--font-family-mono); background: none; color: #2b2d3c; padding: 0; font-size: 11px; line-height: 1.5; }
 .md-nb :deep(blockquote) { margin: 6px 0; padding: 2px 0 2px 10px; border-left: 2.5px solid color-mix(in srgb, var(--action-primary) 45%, transparent); color: rgba(40,44,62,0.5); }
 .md-nb :deep(hr) { border: none; border-top: 1px solid var(--content-divider); margin: 8px 0; }
 .md-nb :deep(table) { border-collapse: collapse; margin: 6px 0; font-size: 11px; width: 100%; }

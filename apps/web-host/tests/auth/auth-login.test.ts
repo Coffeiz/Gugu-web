@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createRemoteAuthClient } from '@gugu/core/auth/client'
+import { createRemoteAuthClient } from '@gugu/auth/client'
 import { createApp } from '../../src/app.js'
 import { verifyUserToken, type PublicUserRecord } from '../../src/modules/auth/session/token.js'
 import { createRedisRateLimiter, type RedisRateLimitCommands } from '../../src/modules/auth/rate-limit.js'
@@ -191,6 +191,12 @@ test('桌面认证客户端用真实 Web Host 登录并验证会话撤销', asyn
     assert.equal(account.user.displayName, '合成用户')
     assert.equal(account.session.origin, server)
     assert.deepEqual(await client.restore(account.session), account.user)
+    const headers = { authorization: `Bearer ${account.session.token}` }
+    const profile = await app.inject({ url: '/api/v1/users/me', headers })
+    assert.equal(profile.statusCode, 200)
+    assert.deepEqual(profile.json(), account.user)
+    const anonymousProfile = await app.inject({ url: '/api/v1/users/me' })
+    assert.equal(anonymousProfile.statusCode, 401)
     user.securityVersion++
     await assert.rejects(client.restore(account.session), { code: 'session_expired' })
   } finally { await app.close() }

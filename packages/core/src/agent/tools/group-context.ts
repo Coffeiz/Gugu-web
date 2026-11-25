@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { RunIdentity } from '../models.js'
 import type { ToolDefinition } from './contracts.js'
-import { normalizeGlobalSearchQueries } from '../../search/query.js'
+import { normalizeGlobalSearchQueries } from '@gugu/search'
 
 export interface GroupContextSearchRequest { keyword: string; queries: string[]; mode: 'OR' | 'AND'; limit: number; speaker: string }
 export interface GroupContextSearchPort {

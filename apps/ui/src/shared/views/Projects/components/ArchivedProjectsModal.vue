@@ -25,7 +25,7 @@
               <span class="year-cnt">{{ yg.total }}</span>
             </button>
 
-            <div class="year-body" data-layout-content :data-layout-key="`year-${yg.year}`" :data-layout-open="openYears.has(yg.year) ? 'true' : 'false'">
+            <div class="year-body" data-layout-guide data-layout-content :data-layout-key="`year-${yg.year}`" :data-layout-open="openYears.has(yg.year) ? 'true' : 'false'">
               <div v-for="mg in yg.months" :key="mg.month" class="month-group">
                 <button class="month-row" @click="toggleMonth(yg.year + mg.month)">
                   <Icon name="file.folder-open" v-if="openMonths.has(yg.year + mg.month)" :size="13" style="color:var(--color-primary); opacity:0.85; flex-shrink:0" />
@@ -260,22 +260,12 @@ function formatDate(value: string | null | undefined): string {
 .year-label { font-size: 12px; font-weight: 700; color: var(--content-primary); flex: 1; letter-spacing: 0.03em; }
 .year-cnt { font-size: 10px; color: var(--content-tertiary); }
 .year-body {
+  --tree-guide-anchor: var(--ap-year-chevron-center);
   position: relative;
   padding: 0 0 0 var(--ap-year-content-indent);
   margin-top: 1px;
   min-height: 0; overflow: hidden;
 }
-.year-body::before {
-  content: '';
-  position: absolute;
-  left: var(--ap-year-chevron-center);
-  transform: translateX(-50%);
-  top: 0; bottom: 0;
-  width: 1px;
-  background: var(--done-group-border);
-  pointer-events: none;
-}
-
 /* ── 月目录 ── */
 .month-group { margin-bottom: 0; }
 .month-row {

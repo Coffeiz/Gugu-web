@@ -929,13 +929,11 @@
 "tests/agent/rag/ttl-cache.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/rag/service-cache.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mind/rag-freshness.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
-"tests/account/delete-account.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mcp/test-connection.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mcp/schema-adapter.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/attachments/staging.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/attachments/delete.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/attachments/clear.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
-"tests/auth/profile-update.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/web.test.ts": {
   "markers": [],
   "layer": "L1",

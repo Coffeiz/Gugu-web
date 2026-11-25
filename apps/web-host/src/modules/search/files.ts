@@ -1,12 +1,12 @@
 import { CoreError } from '@gugu/core'
 import { createWorkspaceFileReads } from '../workspaces/files.js'
 import type { ResolvedObjectPath } from '@gugu/core/agent'
-import type { GlobalSearchQuery, GlobalSearchSource } from '@gugu/core'
+import type { GlobalSearchQuery, GlobalSearchSource } from '@gugu/search'
 import { createLocalFileTree, UnsafeLocalPathError } from '@gugu/fs/node'
 import type { Pool } from 'pg'
 import { normalizeOwnerId } from '../../shared/owner-context.js'
-import { projectFileStorageKey } from '../files/paths.js'
-import { personalFileStorageKey, sandboxTarget, workspaceDirectoryStorageKey } from '../workspaces/roots.js'
+import { projectFilePath } from '../files/paths.js'
+import { personalFileRootPath, sandboxTarget, workspaceDirectoryPath } from '../workspaces/roots.js'
 
 interface SearchRoot {
   directoryId: number | 'personal' | `project:${number}`
@@ -35,13 +35,13 @@ export function createDiskFileSearchSources(pool: Pick<Pool, 'query'>, storageRo
         'SELECT id,name,directory_name FROM workspace_directories WHERE user_id=$1 AND deleted_at IS NULL ORDER BY id', [owner]),
     ])
     return [
-      { directoryId: 'personal', name: '个人文件', storageKey: personalFileStorageKey(owner) },
+      { directoryId: 'personal', name: '个人文件', storageKey: personalFileRootPath(owner) },
       ...projects.rows.map((row): SearchRoot => ({
         directoryId: `project:${row.id}`, name: row.name,
-        storageKey: projectFileStorageKey(owner, row.id, row.name, row.start_date, row.created_at),
+        storageKey: projectFilePath(owner, row.id, row.name, row.start_date, row.created_at),
       })),
       ...workspaces.rows.map((row): SearchRoot => ({
-        directoryId: row.id, name: row.name, storageKey: workspaceDirectoryStorageKey(owner, row.directory_name),
+        directoryId: row.id, name: row.name, storageKey: workspaceDirectoryPath(owner, row.directory_name),
       })),
     ]
   }

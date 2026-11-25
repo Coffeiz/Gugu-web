@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { searchSnippet } from '../../../src/search/global-search.js'
-import { lowerSearchText } from '../../../src/search/unicode.js'
+import { lowerSearchText } from '@gugu/search'
 
 interface Example { name: string; text: string; queries: string[]; expected: string }
 const examples = JSON.parse(readFileSync(new URL('../../fixtures/search-snippet.json', import.meta.url), 'utf8')) as Example[]

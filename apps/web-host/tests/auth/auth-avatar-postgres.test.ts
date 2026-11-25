@@ -61,7 +61,7 @@ test('PostgreSQL avatar upload is owner scoped, replaces old local files, and se
     const stored = await pool.query<{ avatar: string }>('SELECT avatar FROM users WHERE id = $1', [ownerId])
     const relative = stored.rows[0]?.avatar
     assert.match(relative ?? '', new RegExp(`^avatars/${ownerId}\\.[0-9a-f]{32}\\.webp$`))
-    assert.match(uploaded.avatarUrl ?? '', new RegExp(`^/api/v1/auth/avatar/${ownerId}\\?v=`))
+    assert.match(uploaded.avatarUrl ?? '', new RegExp(`^/api/v1/users/${ownerId}/avatar\\?v=`))
     assert.equal((await readFile(path.join(storageRoot, relative!))).toString(), 'new-avatar')
     assert.equal((await stat(path.join(storageRoot, relative!))).mode & 0o777, 0o600)
     assert.equal(await readFile(oldPath).then(() => true, () => false), false)

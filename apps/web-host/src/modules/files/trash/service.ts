@@ -5,7 +5,7 @@ import { link, lstat, mkdir, realpath, rm, stat, unlink } from 'node:fs/promises
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { isPathWithin } from '../../../shared/path-safety.js'
-import { isOwnedFileStorageKey, normalizeFileOwnerId } from '../store.js'
+import { isOwnedFilePath, normalizeFileOwnerId } from '../store.js'
 import { lockFileSyncPath, lockFileSyncPaths } from '../storage/sync.js'
 
 export interface FileDeleteReceipt {
@@ -214,7 +214,7 @@ export function createPostgresFileDeleteOperations(
     async remove(rawOwnerId, filePath, undoContextId, clientId, operation) {
       const ownerId = normalizeFileOwnerId(rawOwnerId)
       const targetKey = storageKey(filePath)
-      if (!isOwnedFileStorageKey(ownerId, targetKey)) throw new CoreError('not_found', '文件不存在')
+      if (!isOwnedFilePath(ownerId, targetKey)) throw new CoreError('not_found', '文件不存在')
       const client = await pool.connect()
       let sourcePath: string | null = null
       let destinationPath: string | null = null
@@ -242,7 +242,7 @@ export function createPostgresFileDeleteOperations(
         )
         const before = result.rows[0]
         if (!before) throw new CoreError('not_found', '文件不存在')
-        if (!isOwnedFileStorageKey(ownerId, before.path)) throw new CoreError('not_found', '文件不存在')
+        if (!isOwnedFilePath(ownerId, before.path)) throw new CoreError('not_found', '文件不存在')
         await lockFileSyncPath(client, ownerId, before.path)
         sourcePath = (await safePath(options.storageRoot, before.path)).target
         const destinationKey = await availableTrashKey(
@@ -293,7 +293,7 @@ export function createPostgresFileDeleteOperations(
     async removeMany(rawOwnerId, rawStorageKeys, undoContextId, clientId, operation) {
       const ownerId = normalizeFileOwnerId(rawOwnerId)
       const storageKeys = rawStorageKeys.map(storageKey)
-      if (storageKeys.some(key => !isOwnedFileStorageKey(ownerId, key))) throw new CoreError('not_found', '文件不存在')
+      if (storageKeys.some(key => !isOwnedFilePath(ownerId, key))) throw new CoreError('not_found', '文件不存在')
       if (new Set(storageKeys).size !== storageKeys.length) throw new CoreError('invalid_request', '文件路径不能重复')
       if (!storageKeys.length) return
       const client = await pool.connect()
@@ -322,7 +322,7 @@ export function createPostgresFileDeleteOperations(
         )
         const beforeRows = result.rows
         if (beforeRows.length !== storageKeys.length) throw new CoreError('not_found', '文件不存在')
-        if (beforeRows.some((file) => !isOwnedFileStorageKey(ownerId, file.path)))
+        if (beforeRows.some((file) => !isOwnedFilePath(ownerId, file.path)))
           throw new CoreError('not_found', '文件不存在')
         if (!beforeRows.length) {
           commitAttempted = true
@@ -586,7 +586,7 @@ export function createPostgresFileRestoreOperations(
     async restore(rawOwnerId, rawStorageKey, origin = null) {
       const ownerId = normalizeFileOwnerId(rawOwnerId)
       const targetKey = storageKey(rawStorageKey)
-      if (!isOwnedFileStorageKey(ownerId, targetKey)) throw new CoreError('not_found', '文件不存在')
+      if (!isOwnedFilePath(ownerId, targetKey)) throw new CoreError('not_found', '文件不存在')
       const client = await pool.connect()
       let committed = false
       let commitAttempted = false
@@ -630,7 +630,7 @@ export function createPostgresFileRestoreOperations(
       const ownerId = normalizeFileOwnerId(rawOwnerId)
       if (!Array.isArray(rawStorageKeys)) throw new CoreError('invalid_request', '文件路径列表无效')
       const targetKeys = rawStorageKeys.map(storageKey)
-      if (targetKeys.some(key => !isOwnedFileStorageKey(ownerId, key)) || new Set(targetKeys).size !== targetKeys.length)
+      if (targetKeys.some(key => !isOwnedFilePath(ownerId, key)) || new Set(targetKeys).size !== targetKeys.length)
         throw new CoreError('invalid_request', '文件路径列表无效')
       if (!targetKeys.length) return
       const client = await pool.connect()

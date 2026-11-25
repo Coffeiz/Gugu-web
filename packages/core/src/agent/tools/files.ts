@@ -69,7 +69,7 @@ export interface FileDeletePort {
 
 export interface FilePathCandidate {
   /** Owner 存储根下的路径，用作唯一身份；不得使用数据库行号。 */
-  storageKey: string
+  filePath: string
   name: string
   path: string | null
 }

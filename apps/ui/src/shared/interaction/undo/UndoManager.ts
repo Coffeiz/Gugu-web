@@ -5,9 +5,9 @@ import { undoApi } from '@/services/api'
 export { isEditableTarget } from '@/interaction/keyboardShortcuts'
 import { hasShortcutOverlay, shortcutKey } from '@/interaction/keyboardShortcuts'
 
-export function undoShortcutMode(event: KeyboardEvent): 'undo' | 'redo' | undefined {
+export function undoShortcutMode(event: KeyboardEvent, allowOverlay = false): 'undo' | 'redo' | undefined {
   const key = shortcutKey(event)
-  if (!key || hasShortcutOverlay(event.target)) return
+  if (!key || (!allowOverlay && hasShortcutOverlay(event.target))) return
   if (key === 'y' && !event.shiftKey) return 'redo'
   if (key === 'z') return event.shiftKey ? 'redo' : 'undo'
 }
@@ -16,6 +16,7 @@ export class UndoManager {
   private running = false
   private applying = false
   private readonly onKeyDown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented) return
     const mode = undoShortcutMode(event)
     if (!mode) return
     event.preventDefault()

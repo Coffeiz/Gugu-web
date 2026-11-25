@@ -5,8 +5,8 @@ export const removeFolderIds = definePostgresMigration({
   prerequisites: ['users', 'files', 'workspaces', 'project_file_counts'],
   tables: [],
   createdObjects: [],
-  absentTables: ['folders', 'storage_quota_ledgers', 'storage_quota_events'],
-  absentFields: ['files.folder_id', 'workspaces.folder_id', 'users.storage_limit_bytes'],
+  absentTables: ['folders'],
+  absentFields: ['files.folder_id', 'workspaces.folder_id'],
   sql: `
     CREATE OR REPLACE FUNCTION gugu_project_file_counts_changed() RETURNS trigger
     LANGUAGE plpgsql SET search_path FROM CURRENT AS $$

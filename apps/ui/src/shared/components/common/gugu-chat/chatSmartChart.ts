@@ -1,6 +1,6 @@
 import { watch } from 'vue'
 import {
-  ArcElement, BarController, BarElement, CategoryScale, Chart, LineController, LineElement, LinearScale, PieController, PointElement, Tooltip, type Plugin, type TooltipItem,
+  ArcElement, BarController, BarElement, CategoryScale, Chart, Legend, LineController, LineElement, LinearScale, PieController, PointElement, Tooltip, type Plugin, type TooltipItem,
 } from 'chart.js'
 import { barChartOptions, chartThemeKey, lineChartOptions } from '@/utils/chartKit'
 
@@ -62,7 +62,7 @@ class SmartPieController extends PieController {
   }
 }
 
-Chart.register(SmartPieArc, ArcElement, BarController, BarElement, CategoryScale, LineController, LineElement, LinearScale, SmartPieController, PointElement, Tooltip)
+Chart.register(SmartPieArc, ArcElement, BarController, BarElement, CategoryScale, Legend, LineController, LineElement, LinearScale, SmartPieController, PointElement, Tooltip)
 
 type SmartChartKind = 'line' | 'bar' | 'smartPie'
 
@@ -75,7 +75,7 @@ const barValueLabels: Plugin<SmartChartKind> = {
   id: 'smart-view-bar-values',
   afterDatasetsDraw(chart) {
     const dataset = chart.data.datasets[0]
-    if (dataset?.type !== 'bar' || dataset.data.length > 8) return
+    if (chart.data.datasets.length !== 1 || dataset?.type !== 'bar' || dataset.data.length > 8) return
     const { ctx, chartArea } = chart
     const bars = chart.getDatasetMeta(0).data
     const style = getComputedStyle(chart.canvas)
@@ -112,19 +112,23 @@ export function mountSmartChart(root: HTMLElement) {
     const srgb = /^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)\)$/.exec(computed)
     return srgb ? `rgb(${srgb.slice(1).map(channel => Math.round(Number(channel) * 255)).join(', ')})` : computed
   }
+  const multi = Boolean(root.querySelector('[data-smart-series-label]'))
   const options = () => {
-    const tooltipLabel = ({ raw }: { raw: unknown }) => raw == null ? '—' : `${raw}${unit}`
+    const tooltipLabel = ({ raw, dataset }: Pick<TooltipItem<SmartChartKind>, 'raw' | 'dataset'>) => {
+      const value = raw == null ? '—' : `${raw}${unit}`
+      return multi ? `${dataset.label} · ${value}` : value
+    }
     if (kind === 'smartPie') return {
       responsive: true, maintainAspectRatio: false,
       layout: { padding: 7 },
       animation: window.matchMedia('(prefers-reduced-motion: reduce)').matches
         ? false as const : { duration: 0, animateRotate: false, animateScale: false },
       transitions: { active: { animation: { duration: 180, easing: 'easeOutCubic' as const } } },
-      plugins: { tooltip: { callbacks: {
+      plugins: { legend: { display: false }, tooltip: { callbacks: {
         label: ({ raw, dataset }: TooltipItem<SmartChartKind>) => {
           const total = dataset.data.reduce<number>((sum, value) => sum + (typeof value === 'number' ? value : 0), 0)
-          if (typeof raw !== 'number' || total <= 0) return tooltipLabel({ raw })
-          return `${tooltipLabel({ raw })} (${(raw / total * 100).toFixed(1)}%)`
+          if (typeof raw !== 'number' || total <= 0) return tooltipLabel({ raw, dataset })
+          return `${tooltipLabel({ raw, dataset })} (${(raw / total * 100).toFixed(1)}%)`
         },
       } } },
     }
@@ -133,11 +137,12 @@ export function mountSmartChart(root: HTMLElement) {
     })
     if (kind === 'line') {
       const line = lineChartOptions({ tooltipLabel })
-      return { ...line, scales: { ...line.scales, x: horizontalAxis(line.scales.x) } }
+      return { ...line, plugins: { ...line.plugins, legend: { ...line.plugins.legend, display: multi } }, scales: { ...line.scales, x: horizontalAxis(line.scales.x) } }
     }
     const bar = barChartOptions({ tooltipLabel })
     return {
       ...bar,
+      plugins: { ...bar.plugins, legend: { ...bar.plugins.legend, display: multi } },
       layout: { padding: { top: 8, right: 6 } },
       scales: {
         ...bar.scales,
@@ -171,6 +176,24 @@ export function mountSmartChart(root: HTMLElement) {
     if (legend) chart.setActiveElements([])
     const rows = [...root.querySelectorAll<HTMLElement>(':scope > details > ul > li[data-smart-point]')]
     const points = kind === 'line' ? rows : rows.filter(row => !row.hidden)
+    if (multi) {
+      const cells = points.map(row => [...row.querySelectorAll<HTMLElement>('[data-smart-series-label]')])
+      chart.data.labels = points.map(row => row.firstElementChild?.textContent ?? '')
+      chart.data.datasets = (cells[0] ?? []).map((cell, index) => ({
+        type: kind,
+        label: cell.dataset.smartSeriesLabel,
+        data: cells.map(row => row[index]?.dataset.smartValue === undefined ? null : Number(row[index].dataset.smartValue)),
+        borderColor: piePalette[index],
+        backgroundColor: piePalette[index],
+        ...(kind === 'line' ? { borderWidth: 2, pointRadius: 3, spanGaps: false } : { borderRadius: 6, grouped: true }),
+      }))
+      frame.hidden = !chart.data.datasets.some(series => series.data.some(value => value !== null))
+      const notice = root.querySelector<HTMLElement>(':scope > [data-smart-empty]')
+      if (notice) notice.hidden = !frame.hidden
+      chart.options = options()
+      chart.update('none')
+      return
+    }
     const dataset = chart.data.datasets[0]
     const seriesColor = color()
     chart.data.labels = points.map(row => row.firstElementChild?.textContent ?? '')

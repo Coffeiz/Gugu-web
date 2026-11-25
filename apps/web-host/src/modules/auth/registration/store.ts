@@ -64,7 +64,7 @@ function publicUser(row: InsertedUser): PublicUserRecord {
     isActive: row.is_active,
     accountStatus: row.account_status,
     securityVersion: row.security_version,
-    avatarUrl: row.avatar ? `/api/v1/auth/avatar/${row.id}` : null,
+    avatarUrl: row.avatar ? `/api/v1/users/${row.id}/avatar` : null,
     createdAt: row.created_at,
     timezone: row.timezone,
     emailSubscribed: row.email_subscribed,

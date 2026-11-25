@@ -10,3 +10,5 @@
 @import './forms.css';
 @import './progress.css';
 @import '../file-toolbar-theme-refinements.css';
+
+@import './markdown.css';

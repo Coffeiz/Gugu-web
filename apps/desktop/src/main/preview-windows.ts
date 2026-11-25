@@ -1,21 +1,38 @@
 import { randomUUID } from 'node:crypto'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
+import { resolveRelativeReferences } from '@gugu/core/files/relative-references'
+import { isPreviewable } from '@gugu/desktop-contracts/file-preview'
 import { BrowserWindow, ipcMain, screen, type IpcMainInvokeEvent } from 'electron'
 import { desktopPreviewBounds } from './preview-window-bounds.js'
 import { previewWindowChannels as channels, type DesktopPreviewFile, type DesktopPreviewMetadata, type DesktopPreviewRequest, type DesktopPreviewWindowFile } from '@gugu/desktop-contracts'
 import { DesktopError, desktopReply } from './core-host.js'
-import { desktopWindowMaterial, secureWindow, trustedCaller, windowOptions } from './windows.js'
+import { createMainWindowSizeStore, desktopWindowMaterial, secureWindow, trustedCaller, windowOptions } from './windows.js'
 
 export function registerPreviewWindows(options: {
   mainWindow: () => BrowserWindow | undefined
   uiUrl: string
   preload: string
+  dataDirectory?: string
+  trustsChatPanel?: (event: IpcMainInvokeEvent) => boolean
   trustsProject: (event: IpcMainInvokeEvent, channel: string, argument: unknown) => Promise<boolean>
   reference: (request: unknown) => Promise<unknown>
+  listDirectory?: (directoryId: DesktopPreviewFile['workspaceFile']['directoryId'], path: string) =>
+    Promise<readonly { name: string; relativePath: string; kind: 'file' | 'directory'; mimeType: string | null; size: number }[]>
   resolveLibraryPath?: (path: string) => Promise<{ preview: DesktopPreviewFile } | { error: string }>
   readAttachment?: (id: string) => Promise<{ displayName: string; ext: string; mime: string; data: Uint8Array }>
   reveal: (target: DesktopPreviewFile['workspaceFile']) => Promise<unknown>
 }) {
+  const sizeStore = options.dataDirectory ? createMainWindowSizeStore(options.dataDirectory, 'preview-window-size.json') : undefined
+  let lastSize = sizeStore?.read()
+  let sizeSaveTimer: ReturnType<typeof setTimeout> | undefined
+  function saveSize() {
+    if (!sizeSaveTimer) return
+    clearTimeout(sizeSaveTimer)
+    sizeSaveTimer = undefined
+    try { if (lastSize) sizeStore?.save(lastSize) }
+    catch { console.warn('无法保存文件预览窗口尺寸') }
+  }
+
   const url = new URL(options.uiUrl)
   url.searchParams.set('filePreview', '1')
   const windows = new Map<string, { window: BrowserWindow; file: DesktopPreviewWindowFile; reveal?: () => Promise<unknown> }>()
@@ -52,7 +69,7 @@ export function registerPreviewWindows(options: {
     const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
     const window = new BrowserWindow({
       ...desktopWindowMaterial(),
-      ...desktopPreviewBounds(file, area),
+      ...desktopPreviewBounds(file, area, lastSize),
       title: '咕咕 · 文件预览',
       frame: false,
       show: false,
@@ -61,6 +78,16 @@ export function registerPreviewWindows(options: {
     secureWindow(window)
     const publishState = () => {
       if (!window.isDestroyed()) window.webContents.send(channels.stateChanged, readState(window))
+    }
+    if (sizeStore) {
+      window.on('resize', () => {
+        if (window.isFullScreen() || window.isMaximized() || window.isMinimized()) return
+        const { width, height } = window.getNormalBounds()
+        lastSize = { width, height }
+        clearTimeout(sizeSaveTimer)
+        sizeSaveTimer = setTimeout(saveSize, 150)
+      })
+      window.on('close', saveSize)
     }
     window.on('enter-full-screen', publishState)
     window.on('leave-full-screen', publishState)
@@ -95,7 +122,43 @@ export function registerPreviewWindows(options: {
   ipcMain.handle(channels.open, (event, file: DesktopPreviewRequest | undefined) => {
     const main = options.mainWindow()
     const mainTrusted = !!main && trustedCaller(event, [main], options.uiUrl)
-    if (file && typeof file === 'object' && 'attachmentId' in file) return desktopReply(mainTrusted, async () => {
+    const chatTrusted = options.trustsChatPanel?.(event) === true
+    if (file && typeof file === 'object' && 'relativeHref' in file) {
+      const sourceFile = find(event)?.file
+      const source = sourceFile && 'workspaceFile' in sourceFile && /^(md|markdown)$/i.test(sourceFile.ext)
+        ? sourceFile.workspaceFile : undefined
+      return desktopReply(!!source, async () => {
+        const list = options.listDirectory
+        if (!source || !list || typeof file.relativeHref !== 'string' || file.relativeHref.length > 2048)
+          throw new DesktopError('invalid_request', '预览链接无效')
+        const { directoryId, relativePath, identity } = source
+        await options.reference({ action: 'reference', directoryId, path: relativePath, identity })
+        const entriesByPath = new Map<string, ReturnType<typeof list>>()
+        const lookup = async (parts: readonly string[], name: string, kind: 'file' | 'directory') => {
+          const path = parts.join('/')
+          let entries = entriesByPath.get(path)
+          if (!entries) {
+            entries = list(directoryId, path)
+            entriesByPath.set(path, entries)
+          }
+          return (await entries).find(entry => entry.kind === kind && entry.name === name) ?? null
+        }
+        const [resolved] = await resolveRelativeReferences(relativePath.split('/').slice(0, -1), [file.relativeHref], {
+          fileAt: (parts, name) => lookup(parts, name, 'file'),
+          folderAt: (parts, name) => lookup(parts, name, 'directory'),
+        })
+        const linked = resolved?.file
+        if (!linked) throw new DesktopError('not_found', '找不到链接指向的文件')
+        const ext = linked.name.includes('.') ? linked.name.split('.').at(-1)! : ''
+        if (!isPreviewable(ext, linked.mimeType)) throw new DesktopError('unsupported', '链接指向的文件不支持预览')
+        return open({
+          workspaceFile: { directoryId, relativePath: linked.relativePath },
+          displayName: linked.name, ext,
+          mimeType: linked.mimeType, sizeBytes: linked.size,
+        })
+      })
+    }
+    if (file && typeof file === 'object' && 'attachmentId' in file) return desktopReply(mainTrusted || chatTrusted, async () => {
       if (!options.readAttachment || typeof file.attachmentId !== 'string' || !/^[0-9a-f]{32}$/u.test(file.attachmentId))
         throw new DesktopError('invalid_request', '预览附件无效')
       const key = `attachment:${file.attachmentId}`
@@ -105,7 +168,7 @@ export function registerPreviewWindows(options: {
         async range => attachmentContent(data, mime, range), undefined, key)
       return null
     })
-    if (file && typeof file === 'object' && 'libraryPath' in file) return desktopReply(mainTrusted, async () => {
+    if (file && typeof file === 'object' && 'libraryPath' in file) return desktopReply(mainTrusted || chatTrusted, async () => {
       if (!options.resolveLibraryPath || typeof file.libraryPath !== 'string'
         || !/^\/(?:personal|project|workspace)\//u.test(file.libraryPath))
         throw new DesktopError('invalid_request', '文件库路径无效')
@@ -115,7 +178,7 @@ export function registerPreviewWindows(options: {
     })
     const target = file?.workspaceFile
     const command = { action: 'reference', directoryId: target?.directoryId, path: target?.relativePath }
-    return desktopReply(mainTrusted || options.trustsProject(event, DESKTOP_CHANNELS.files, command), () => open(file))
+    return desktopReply(mainTrusted || chatTrusted || options.trustsProject(event, DESKTOP_CHANNELS.files, command), () => open(file))
   })
 
   ipcMain.handle(channels.read, event => {

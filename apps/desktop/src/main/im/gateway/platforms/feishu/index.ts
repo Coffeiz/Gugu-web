@@ -1,4 +1,4 @@
-import { classifyGatewayGroupMessage } from '@gugu/gateway'
+import { classifyGatewayGroupMessage, type ImReceivedMessage } from '@gugu/gateway'
 import { readImAddressedCommand } from '@gugu/gateway'
 import { desktopImGroupToolAllowed } from '@gugu/core/agent/scenes/im'
 import { redactToolError } from '@gugu/core/agent'
@@ -63,13 +63,13 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
       function startGroupDispatch(groupId: string, ownerPlatformUserId: string) {
         const groupConnection = groupConnectionId(bot.appId, groupId, ownerPlatformUserId)
         const allow = () => authorizeGroup(groupId)
-        const allowMessage = async (message: Parameters<typeof admit>[1]) => {
+        const allowMessage = async (message: ImReceivedMessage) => {
           const current = await readActive()
           return !!current?.userId && current.userId === ownerPlatformUserId && current.groupChatEnabled
             && current.groupReplyMode !== 'record_only'
             && (message.botMentioned || current.groupReplyMode === 'reply_all')
         }
-        const allowFile = async (message: Parameters<typeof admit>[1]) => {
+        const allowFile = async (message: ImReceivedMessage) => {
           const current = await readActive()
           return !!current?.userId && current.userId === ownerPlatformUserId && current.groupChatEnabled
             && userBotGroupFileToolsAllowed(current.groupAllowedTools)
@@ -183,7 +183,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             }
             if (!parsed.mediaItems.length) {
               if (recordOnly) {
-                const recorded = await admit(targetConnection, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
+                const recorded = await admit(connection, targetConnection, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
                 if (recorded && pendingAsk && pendingAsks && projection) {
                   const eventKey = desktopImEventKey(event), eventMs = Date.now()
                   const sealedEvent = await projection.encryption.encryptStringAsync(JSON.stringify({ event, sourceAttentionKind,
@@ -197,7 +197,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
               }
               else {
                 if (isGroup) startGroupDispatch(parsed.payload.chat_id, current.userId!)
-                await admit(targetConnection, event, isGroup ? undefined : parsed.payload.chat_id,
+                await admit(connection, targetConnection, event, isGroup ? undefined : parsed.payload.chat_id,
                   { files: [], sourceAttentionKind: sourceAttentionKind ?? undefined, authorize: eventAuthorize })
               }
               return
@@ -209,10 +209,10 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
               }, async file => { files.push(await transcribeDesktopImFile(file, voice, mediaSignal, authorize)) })
               if (!await eventAuthorize()) return
               try {
-              if (recordOnly) await admit(targetConnection, event, undefined, { files, recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
+              if (recordOnly) await admit(connection, targetConnection, event, undefined, { files, recordOnly, ownerPlatformUserId: current.userId!, authorize: eventAuthorize })
                 else {
                   if (isGroup) startGroupDispatch(parsed.payload.chat_id, current.userId!)
-                  await admit(targetConnection, event, parsed.payload.chat_id, { files, sourceAttentionKind: sourceAttentionKind ?? undefined, authorize: eventAuthorize })
+                  await admit(connection, targetConnection, event, parsed.payload.chat_id, { files, sourceAttentionKind: sourceAttentionKind ?? undefined, authorize: eventAuthorize })
                 }
               } catch (error) {
                 if (!(error instanceof DesktopError && error.code === 'invalid_request')) throw error

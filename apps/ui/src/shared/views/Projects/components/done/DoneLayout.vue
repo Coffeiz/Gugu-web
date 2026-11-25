@@ -5,7 +5,7 @@
       <DoneGroup v-if="recent.items.length" v-memo="groupMemo(recent)" :group="recent" :ownership-version="ownershipVersionFor(recent.items)" :is-project-detached="isProjectDetached" @card-click="$emit('card-click', $event)" />
       <template v-for="group in groups" :key="group.key">
         <DoneGroup v-if="group.type === 'year'" v-memo="groupMemo(group)" :group="group" :ownership-version="0" :is-project-detached="isProjectDetached" @toggle="onToggle" />
-        <div v-if="group.type === 'year'" class="year-folder" :data-layout-key="group.key" data-layout-content :data-layout-open="group.open ? 'true' : 'false'">
+        <div v-if="group.type === 'year'" class="year-folder" data-layout-guide :data-layout-key="group.key" data-layout-content :data-layout-open="group.open ? 'true' : 'false'">
           <DoneGroup v-for="month in group.children" :key="month.key" v-memo="groupMemo(month)" :group="month" :ownership-version="ownershipVersionFor(month.items)" :is-project-detached="isProjectDetached" :is-undated-open="false" @toggle="onToggle" @card-click="$emit('card-click', $event)" />
         </div>
         <DoneGroup v-if="group.type === 'undated'" v-memo="groupMemo(group, isGroupOpen('__undated'))" :group="group" :ownership-version="ownershipVersionFor(group.items)" :is-project-detached="isProjectDetached" :is-undated-open="isGroupOpen('__undated')" @toggle="onToggle" @card-click="$emit('card-click', $event)" />

@@ -35,12 +35,10 @@
 import { useDesktopProfile } from './desktopProfile'
 import { onActivated, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useAuthStore } from '@/stores/auth'
 import { usePreferencesStore } from '@/stores/preferences'
 import { authApi } from '@/api/auth'
 
 const desktop = useDesktopProfile()
-const authStore = useAuthStore()
 const prefsStore = usePreferencesStore()
 const { t } = useI18n()
 const currentPwd = ref('')
@@ -90,7 +88,7 @@ async function save() {
   if (newPwd.value !== confirmPwd.value) { msg.value = t('profileAccountUi.passwordMismatch'); msgType.value = 'err'; return }
   saving.value = true
   try {
-    await authStore.updateProfile({ currentPassword: currentPwd.value, newPassword: newPwd.value })
+    await authApi.changePassword({ currentPassword: currentPwd.value, newPassword: newPwd.value })
     msg.value = t('profileAccountUi.passwordUpdated')
     msgType.value = 'ok'
     currentPwd.value = newPwd.value = confirmPwd.value = ''

@@ -1,5 +1,7 @@
 packages:
   - "packages/core"
+  - "packages/auth"
+  - "packages/users"
   - "packages/desktop-contracts"
   - "packages/database"
   - "packages/charts"
@@ -8,6 +10,8 @@ packages:
   - "packages/log"
   - "packages/loopscope"
   - "packages/sandbox"
+  - "packages/search"
+  - "packages/cli"
   - "apps/desktop"
   - "apps/web-host"
   - "apps/ui"

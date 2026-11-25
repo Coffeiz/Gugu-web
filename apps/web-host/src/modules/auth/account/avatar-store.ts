@@ -3,7 +3,8 @@ import { lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promise
 import path from 'node:path'
 import type { Pool, QueryResultRow } from 'pg'
 import { CoreError } from '@gugu/core'
-import { avatarFileExtension, type AvatarMediaType, type UserAvatarImage, type UserAvatarOperations } from './avatar.js'
+import { avatarFileExtension, type AvatarMediaType } from '@gugu/users'
+import type { UserAvatarImage, UserAvatarOperations } from './avatar.js'
 import { createUserRepository } from './store.js'
 
 interface AvatarRow extends QueryResultRow {
@@ -101,7 +102,7 @@ export function createPostgresUserAvatarOperations(pool: Pool, storageRoot: stri
       if (!user) throw new CoreError('not_found', '用户不存在')
       return {
         ...user,
-        avatarUrl: `/api/v1/auth/avatar/${row.id}?v=${encodeURIComponent(filename)}`,
+        avatarUrl: `/api/v1/users/${row.id}/avatar?v=${encodeURIComponent(filename)}`,
       }
     },
 

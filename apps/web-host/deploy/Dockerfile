@@ -26,6 +26,11 @@ COPY --from=build --chown=node:node /workspace/packages/sandbox/node_modules ./p
 COPY --from=build --chown=node:node /workspace/apps/web-host/package.json ./apps/web-host/package.json
 COPY --from=build --chown=node:node /workspace/apps/web-host/dist ./apps/web-host/dist
 COPY --from=build --chown=node:node /workspace/apps/web-host/assets ./apps/web-host/assets
+COPY --from=build --chown=node:node /workspace/packages/auth/package.json ./packages/auth/package.json
+COPY --from=build --chown=node:node /workspace/packages/auth/dist ./packages/auth/dist
+COPY --from=build --chown=node:node /workspace/packages/users/package.json ./packages/users/package.json
+COPY --from=build --chown=node:node /workspace/packages/users/dist ./packages/users/dist
+COPY --from=build --chown=node:node /workspace/packages/auth/node_modules ./packages/auth/node_modules
 COPY --from=build --chown=node:node /workspace/packages/core/package.json ./packages/core/package.json
 COPY --from=build --chown=node:node /workspace/packages/core/dist ./packages/core/dist
 COPY --from=build --chown=node:node /workspace/packages/core/resources/prompts ./packages/core/resources/prompts
@@ -36,6 +41,8 @@ COPY --from=build --chown=node:node /workspace/packages/sandbox/package.json ./p
 COPY --from=build --chown=node:node /workspace/packages/sandbox/dist ./packages/sandbox/dist
 COPY --from=build --chown=node:node /workspace/packages/gateway/package.json ./packages/gateway/package.json
 COPY --from=build --chown=node:node /workspace/packages/gateway/dist ./packages/gateway/dist
+COPY --from=build --chown=node:node /workspace/packages/search/package.json ./packages/search/package.json
+COPY --from=build --chown=node:node /workspace/packages/search/dist ./packages/search/dist
 COPY --from=build --chown=node:node /workspace/packages/gateway/node_modules ./packages/gateway/node_modules
 COPY --from=build --chown=node:node /workspace/packages/fs/package.json ./packages/fs/package.json
 COPY --from=build --chown=node:node /workspace/packages/fs/dist ./packages/fs/dist

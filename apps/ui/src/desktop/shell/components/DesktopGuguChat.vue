@@ -2,7 +2,11 @@
 import { createDesktopGreetingAccess } from '../greeting-access'
 import { createDesktopChatCommandAccess, listDesktopChatCommands } from '../chat-command-access'
 import { encodeVoiceRecording } from '../voice-recording'
-import { provide } from 'vue'
+import { onMounted, onUnmounted, provide, ref } from 'vue'
+import { usePanelGeometry } from '../../chat-fab/usePanelGeometry'
+import { chatFabHost } from '../../chat-fab/bridge'
+import { runtime } from '@/interaction/runtime'
+import { provideRuntime } from '@/interaction/runtime/vue'
 import { useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { chatAttachmentImageKey, chatCommandCatalogKey, chatModelCatalogKey, chatToolDetailsKey, chatSubagentSnapshotKey } from '@/components/common/gugu-chat/chatPresentationAccess'
@@ -12,6 +16,8 @@ import type { ChatConversationAccess } from '@/components/common/gugu-chat/compo
 import { createDesktopChatImAccess } from '../../im/chat-access'
 import type { ChatInteractionAccess } from '@/components/common/gugu-chat/chatInteractionAccess'
 import GuguChat from '@/components/common/gugu-chat/GuguChat.vue'
+import ConfirmDialog from '@/components/common/overlays/ConfirmDialog.vue'
+import { useConfirmDialog } from '@/composables/core/useConfirmDialog'
 import { desktopData, DesktopBridgeError } from '@desktop/bridge/bridge'
 import { hasDesktopAgentModelBridge, requestDesktopAgentModel, requestDesktopAuxiliaryModel } from '../../account/agent-model-transport'
 import {
@@ -26,6 +32,13 @@ import {
   createDesktopChatEventStream, createDesktopChatSession, cancelDesktopChatSession, deleteDesktopChatSession, getDesktopChatHistory, getDesktopChatHistoryThroughMessage,
   getDesktopRunState, listDesktopChatSessions, readDesktopChatQueue, readDesktopChatToolDetails, readDesktopImportedChatQueues, renameDesktopChatSession,
 } from '../agent-chat'
+
+const props = defineProps<{ standalone?: boolean }>()
+const { settle: settleConfirmDialog } = useConfirmDialog()
+if (props.standalone) {
+  provideRuntime(runtime)
+  usePanelGeometry()
+}
 
 const imAccess = createDesktopChatImAccess()
 const greetingAccess = createDesktopGreetingAccess()
@@ -176,10 +189,63 @@ async function openPlatformReference(reference: Pick<ChatReference, 'type' | 'id
 async function uploadAttachment(file: File, voice = false) {
   return uploadDesktopAgentAttachment(voice ? await encodeVoiceRecording(file) : file, voice)
 }
+const chat = ref<InstanceType<typeof GuguChat> | null>(null)
+const nativeFab = ref(false)
+const referenceDrag = ref(false)
+let disposeFab: (() => void) | undefined
+
+onMounted(() => {
+  if (!chatFabHost) return
+  const offOpen = chatFabHost.onOpenChat(() => { void chat.value?.openFromFab() })
+  const offDrop = chatFabHost.onDroppedReference(reply => chat.value?.receiveDroppedReference(reply))
+  const offClose = chatFabHost.onCloseChat(animated => {
+    if (animated) chat.value?.closeChat()
+    else chat.value?.closeForHandoff()
+  })
+  if (props.standalone) {
+    const offDetached = chatFabHost.onPanelDetached(detached => {
+      document.documentElement.toggleAttribute('data-desktop-chat-detached', detached)
+    })
+    disposeFab = () => { offOpen(); offClose(); offDrop(); offDetached() }
+    chatFabHost.panelReady()
+    return
+  }
+  let activeSession: string | undefined
+  const offRuntime = runtime.subscribe(event => {
+    if (event.type === 'move-visual-update' && event.phase === 'active' && !activeSession) {
+      activeSession = event.sessionId
+      referenceDrag.value = true
+      chatFabHost.setReferenceDrag(true)
+    } else if (event.type === 'move-visual-end' && event.sessionId === activeSession) {
+      activeSession = undefined
+      referenceDrag.value = false
+      chatFabHost.setReferenceDrag(false)
+    }
+  })
+  disposeFab = () => {
+    offOpen()
+    offClose()
+    offDrop()
+    offRuntime()
+    if (activeSession) chatFabHost.setReferenceDrag(false)
+  }
+  void chatFabHost.attach().then(ready => { nativeFab.value = ready }).catch(() => { nativeFab.value = false })
+})
+onUnmounted(() => disposeFab?.())
+
+function onVisibility(visible: boolean) {
+  if (props.standalone) {
+    if (!visible) {
+      settleConfirmDialog(false)
+      chatFabHost?.panelClosing()
+    }
+  } else chatFabHost?.setChatVisible(visible)
+}
 </script>
 
 <template>
-  <GuguChat
+  <GuguChat ref="chat" :standalone="standalone" :hide-fab="nativeFab && !referenceDrag" @visibility="onVisibility" @presentation="chatFabHost?.setExpanded($event)"
+    @entered="standalone && chatFabHost?.panelEntered()" @left="standalone && chatFabHost?.panelClose()"
     :im-access="imAccess"
     :greeting-access="greetingAccess"
     :read-ui-labels="readUiLabels"
@@ -200,4 +266,17 @@ async function uploadAttachment(file: File, voice = false) {
     :delete-draft-attachment="deleteDesktopDraftAttachment"
     :read-attachment="readAttachment"
   />
+  <ConfirmDialog v-if="standalone" teleport-to="body" />
 </template>
+
+<style>
+html[data-desktop-chat-panel] body { margin: 0; background: transparent; }
+html[data-desktop-chat-panel] .chat-window.chat-window--standalone {
+  box-shadow: var(--elevation-card);
+}
+</style>
+
+<style>
+html[data-desktop-chat-detached] .chat-header { app-region: drag; }
+html[data-desktop-chat-detached] .chat-header > * { app-region: no-drag; }
+</style>

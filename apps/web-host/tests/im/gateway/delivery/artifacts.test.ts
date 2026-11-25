@@ -7,13 +7,12 @@ import type { Pool } from 'pg'
 import { resolveImActor } from '@gugu/core/im/access'
 import type { PortableValue } from '@gugu/core/agent'
 import { aggregateImInboundPayloads } from '@gugu/core/im/inbound-batch'
-import { createPostgresFileReadOperations } from '../../../../src/modules/files/browse.js'
 import { createImRunArtifactSender } from '../../../../src/modules/im/gateway/delivery/artifacts.js'
 import { imAttachmentScopeKey, type ImAttachmentScope } from '../../../../src/modules/im/gateway/inbound/attachments.js'
-import { context, receipt, platform, temporary, fakeDatabase, deliveryOutcome, owner, other, data, stored } from '../run-sender.fixtures.js'
+import { context, receipt, platform, temporary, fakeDatabase, deliveryOutcome, owner, data, stored } from '../run-sender.fixtures.js'
 test('真实本地附件→真实Telegram上传，拒绝root路径/歧义引用/跨Run并忽略模型伪造文件名', async () => temporary(async root => {
   const db = fakeDatabase(), p = platform('telegram'), c = context()
-  const send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(db.pool, root),
+  const send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'],
     sender: () => p.sender, authorize: async () => true })
   try {
     const result = await send({ identity: c.identity, deliveryId: 'a', artifact: { attach_id: 'attachment', name: '不可信模型名称' } })
@@ -34,15 +33,14 @@ test('真实本地附件→真实Telegram上传，拒绝root路径/歧义引用/
   } finally { await p.close() }
 }))
 
-test('晚于当前Run水位、跨scope/owner路径、权限撤销及member读取owner兼容file均在网络前拒绝', async () => temporary(async root => {
+test('晚于当前Run水位、跨scope/owner附件、权限撤销及member文件路径投递均在网络前拒绝', async () => temporary(async root => {
   for (const change of ['later', 'wrongScope', 'otherOwner', 'revoke', 'member'] as const) {
     const db = fakeDatabase(), c = context('telegram', change === 'member'), p = platform('telegram')
     if (change === 'later') db.later(); if (change === 'wrongScope') db.wrongScope(); if (change === 'otherOwner') db.otherOwner()
-    let reads = 0
     const send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'], sender: () => p.sender,
-      authorize: async () => change !== 'revoke', files: { async openContent() { reads++; assert.fail('受限输入不能读owner文件') }, async getFile() { reads++; assert.fail('不能探测owner文件') } } })
+      authorize: async () => change !== 'revoke' })
     try { assert.equal(await send({ identity: c.identity, deliveryId: 'bad', artifact: change === 'member' ? { file_id: 1 } : { attach_id: 'attachment' } }), 'rejected');
-      assert.equal(p.requests.length, 0); assert.equal(reads, 0) } finally { await p.close() }
+      assert.equal(p.requests.length, 0) } finally { await p.close() }
   }
 }))
 
@@ -53,7 +51,7 @@ test('四平台制品透传真实调用者取消：上传中止后无后续消�
    const path=new URL(request.url).pathname
    if(kind==='telegram'||kind==='feishu'&&path.endsWith('/files')||kind==='qq'&&path.endsWith('/upload_prepare')||kind==='wechat'&&path.endsWith('/getuploadurl'))controller.abort()
   })
-  const send=createImRunArtifactSender({...c,pool:db.pool,storageRoot:root,messageIds:['11'],files:createPostgresFileReadOperations(db.pool, root),sender:()=>p.sender,authorize:async()=>true})
+  const send=createImRunArtifactSender({...c,pool:db.pool,storageRoot:root,messageIds:['11'],sender:()=>p.sender,authorize:async()=>true})
   try{
    const result=await send({identity:c.identity,deliveryId:'cancelled-upload',artifact:{attach_id:'attachment'}},controller.signal)
    assert.notEqual(deliveryOutcome(result),'accepted',kind)
@@ -78,7 +76,7 @@ test('飞书/QQ/微信上传阶段撤权后不发消息或后续分片确认，�
       if (kind === 'feishu' && path.endsWith('/files') || kind === 'qq' && (phase === 'prepare' ? path.endsWith('/upload_prepare') : request.method === 'PUT')
         || kind === 'wechat' && (phase === 'prepare' ? path.endsWith('/getuploadurl') : path === '/c2c/upload')) allowed = false
     })
-    const send = createImRunArtifactSender({ ...c, pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(db.pool, root),
+    const send = createImRunArtifactSender({ ...c, pool, storageRoot: root, messageIds: ['11'],
       sender: () => p.sender, authorize: async () => allowed })
     try {
       const result = await send({ identity: c.identity, deliveryId: 'withdraw', artifact: { attach_id: 'attachment' } })
@@ -103,7 +101,7 @@ test('Telegram制品在真实sender队列中等待后撤权，出队不再发送
   try {
     await enteredPromise
     const c = context(), db = fakeDatabase(), send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'],
-      files: createPostgresFileReadOperations(db.pool, root), sender: () => p.sender, authorize: async () => allowed })
+      sender: () => p.sender, authorize: async () => allowed })
     const pending = send({ identity: c.identity, deliveryId: 'queued', artifact: { attach_id: 'attachment' } })
     await queuedPromise; allowed = false; release(); await first
     assert.notEqual(deliveryOutcome(await pending), 'accepted')
@@ -113,7 +111,7 @@ test('Telegram制品在真实sender队列中等待后撤权，出队不再发送
 
 test('未知发送错误不重试，不公开源文件内容/路径；本地文件失踪在平台请求前失败', async () => temporary(async root => {
   const db = fakeDatabase(), c = context(), p = platform('telegram', () => { throw new Error('synthetic-private-transport') })
-  const send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'], files: createPostgresFileReadOperations(db.pool, root),
+  const send = createImRunArtifactSender({ ...c, pool: db.pool, storageRoot: root, messageIds: ['11'],
     sender: () => p.sender, authorize: async () => true })
   try {
     assert.equal(await send({ identity: c.identity, deliveryId: 'unknown', artifact: { attach_id: 'attachment' } }), 'unknown')
@@ -125,7 +123,7 @@ test('未知发送错误不重试，不公开源文件内容/路径；本地文�
 }))
 
 const pgUrl = process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL
-test('真实隔离PG/FS→四平台真实sender/client协议，旧file_id只读owned库且Run水位与软删除可复核', {
+test('真实隔离PG/FS→四平台真实sender/client协议，附件引用受Run水位和软删除约束', {
   skip: !pgUrl && '需显式隔离PG；平台仅HTTP传输为可控替身，无真实账号或付费Provider', timeout: 30000,
 }, async () => temporary(async root => {
   const { Pool } = await import('pg'), schema = `im_artifact_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: pgUrl })
@@ -135,13 +133,9 @@ test('真实隔离PG/FS→四平台真实sender/client协议，旧file_id只读o
     await pool.query(`CREATE TABLE conversation_sessions(id integer,user_id uuid,source text,bot_id text,chat_type text,chat_id text);
       CREATE TABLE conversation_messages(id integer,session_id integer,run_id text,role text,chat_type text,platform_user_id text,conversation_seq integer,im_platform_message_id text);
       CREATE TABLE gugu_im_inbound_receipts(user_id uuid,session_id integer,message_id integer,run_id text,state text,platform text,bot_id text,chat_type text,scope_hash text,event_hash text,fingerprint text,sealed_payload jsonb);
-      CREATE TABLE chat_attachments(attach_id text,user_id uuid,message_id integer,state text,platform text,extra jsonb,storage_key text,name text,ext text,mime text,size bigint);
-      CREATE TABLE projects(id integer,user_id uuid,name text,color text);
-      CREATE TABLE files(id integer,user_id uuid,display_name text,ext text,space text,workspace_directory_id integer,storage_key text,project_id integer,stage_name text,
-        mind_map_id integer,size text,size_bytes bigint,mime_type text,created_at timestamptz,deleted_at timestamptz,img_width integer,img_height integer,version integer)`)
+      CREATE TABLE chat_attachments(attach_id text,user_id uuid,message_id integer,state text,platform text,extra jsonb,storage_key text,name text,ext text,mime text,size bigint)`)
     await pool.query("INSERT INTO conversation_sessions VALUES(91,$1,'web',NULL,NULL,NULL)", [owner])
-    await pool.query("INSERT INTO files(id,user_id,display_name,ext,storage_key,size_bytes,mime_type,created_at,version) VALUES(1,$1,'兼容旧文件','txt',$2,$3,'text/plain',clock_timestamp(),1)", [owner, stored, data.length])
-    const db = pool, files = createPostgresFileReadOperations(db, root)
+    const db = pool
     for (const kind of ['telegram', 'feishu', 'qq', 'wechat'] as const) {
       const c = context(kind), p = platform(kind)
       await db.query('DELETE FROM chat_attachments'); await db.query('DELETE FROM gugu_im_inbound_receipts'); await db.query('DELETE FROM conversation_messages')
@@ -149,22 +143,14 @@ test('真实隔离PG/FS→四平台真实sender/client协议，旧file_id只读o
       await db.query("INSERT INTO conversation_messages VALUES(11,91,$1,'user','c2c',$2,3,$3),(12,91,'later','user','c2c',$2,4,'later')", [c.identity.runId, c.scope.platformUserId, proof.im_platform_message_id])
       await db.query("INSERT INTO gugu_im_inbound_receipts VALUES($1,91,11,$2,'dispatched',$3,'91','c2c',$4,$5,$6,$7)", [owner, c.identity.runId, kind, proof.scope_hash, proof.event_hash, proof.fingerprint, proof.sealed_payload])
       await db.query("INSERT INTO chat_attachments VALUES('attachment',$1,11,'attached',$2,$3,$4,'合成报告','txt','text/plain',$5)", [owner, kind, { im_ingress_scope: imAttachmentScopeKey(c.scope) }, stored, data.length])
-      const send = createImRunArtifactSender({ ...c, pool: db, files, storageRoot: root, messageIds: ['11'], sender: () => p.sender, authorize: async () => true })
+      const send = createImRunArtifactSender({ ...c, pool: db, storageRoot: root, messageIds: ['11'], sender: () => p.sender, authorize: async () => true })
       try {
         assert.equal(deliveryOutcome(await send({ identity: c.identity, deliveryId: kind, artifact: { attach_id: 'attachment' } })), 'accepted', kind)
         const count = p.requests.length
         await db.query('UPDATE chat_attachments SET message_id=12')
         assert.equal(await send({ identity: c.identity, deliveryId: 'later', artifact: { attach_id: 'attachment' } }), 'rejected', kind)
         assert.equal(p.requests.length, count)
-        assert.equal(deliveryOutcome(await send({ identity: c.identity, deliveryId: 'legacy', artifact: { file_id: 1 } })), 'accepted', `${kind} legacy`)
-        await db.query('UPDATE files SET deleted_at=clock_timestamp()')
-        const before = p.requests.length
-        assert.equal(await send({ identity: c.identity, deliveryId: 'deleted', artifact: { file_id: 1 } }), 'rejected')
-        assert.equal(p.requests.length, before); await db.query('UPDATE files SET deleted_at=NULL')
         if (kind === 'telegram') {
-          await db.query('UPDATE files SET user_id=$1', [other])
-          assert.equal(await send({ identity: c.identity, deliveryId: 'other-owner', artifact: { file_id: 1 } }), 'rejected')
-          assert.equal(p.requests.length, before); await db.query('UPDATE files SET user_id=$1', [owner])
           const groupScope: ImAttachmentScope = { ...c.scope, chatType: 'group', chatId: '-777' }
           const groupActor = resolveImActor({ ...groupScope, botMentioned: true, mentionsOtherBot: false }, () => ({ role: 'member', allowedToolNames: ['send_file', 'read_file'] }))
           await db.query("UPDATE conversation_sessions SET source='telegram',bot_id='91',chat_type='group',chat_id='-777'")
@@ -174,7 +160,7 @@ test('真实隔离PG/FS→四平台真实sender/client协议，旧file_id只读o
           const groupC = { ...c, actor: groupActor, scope: groupScope, payload: { ...c.payload, chat_type: 'group' as const, chat_id: '-777' } }, groupProof = receipt(groupC)
           await db.query('UPDATE gugu_im_inbound_receipts SET scope_hash=$1,event_hash=$2,fingerprint=$3,sealed_payload=$4', [groupProof.scope_hash, groupProof.event_hash, groupProof.fingerprint, groupProof.sealed_payload])
           const groupSend = createImRunArtifactSender({ ...groupC,
-            pool: db, files, storageRoot: root, messageIds: ['11'], sender: () => p.sender, authorize: async () => true })
+            pool: db, storageRoot: root, messageIds: ['11'], sender: () => p.sender, authorize: async () => true })
           assert.equal(deliveryOutcome(await groupSend({ identity: c.identity, deliveryId: 'group', artifact: { attach_id: 'attachment' } })), 'accepted')
           const groupCount = p.requests.length
           await db.query("UPDATE conversation_sessions SET bot_id='92'")
@@ -193,7 +179,7 @@ test('真实隔离PG/FS→四平台真实sender/client协议，旧file_id只读o
             { eventId: '1791000000001-1', payload: last, anchor: { messageId: 12, conversationSeq: 4 } },
           ])
           assert.equal(aggregate.chat_id, null, '正式私聊聚合最外路由不携带原生chat ID')
-          const batchSender = (payload: Record<string, unknown>) => createImRunArtifactSender({ ...c, payload, pool: db, files, storageRoot: root, messageIds: ['11', '12'], sender: () => p.sender, authorize: async () => true })
+          const batchSender = (payload: Record<string, unknown>) => createImRunArtifactSender({ ...c, payload, pool: db, storageRoot: root, messageIds: ['11', '12'], sender: () => p.sender, authorize: async () => true })
           const accepted = await batchSender(aggregate)({ identity: c.identity, deliveryId: 'batch-feishu', artifact: { attach_id: 'attachment' } })
           assert.equal(deliveryOutcome(accepted), 'accepted')
           const actualMessage = p.requests.filter(r => new URL(r.url).pathname.endsWith('/messages')).at(-1)!
@@ -219,7 +205,7 @@ test('真实隔离PG/FS→四平台真实sender/client协议，旧file_id只读o
           }
           await db.query('UPDATE chat_attachments SET extra=$1', [{ im_ingress_scope: imAttachmentScopeKey(groupScope) }])
           const grouped = aggregateImInboundPayloads(groupFacts.map((payload, index) => ({ payload, eventId: `179100000000${index}-1`, anchor: { messageId: 11 + index, conversationSeq: 3 + index } })))
-          const groupedSender = (payload: Record<string, unknown>) => createImRunArtifactSender({ ...c, scope: groupScope, actor: groupActor, payload, pool: db, files, storageRoot: root, messageIds: ['11', '12'], sender: () => p.sender, authorize: async () => true })
+          const groupedSender = (payload: Record<string, unknown>) => createImRunArtifactSender({ ...c, scope: groupScope, actor: groupActor, payload, pool: db, storageRoot: root, messageIds: ['11', '12'], sender: () => p.sender, authorize: async () => true })
           assert.equal(deliveryOutcome(await groupedSender(grouped)({ identity: c.identity, deliveryId: 'group-batch', artifact: { attach_id: 'attachment' } })), 'accepted')
           const groupMessage = p.requests.filter(r => new URL(r.url).pathname.endsWith('/messages')).at(-1)!
           assert.equal(JSON.parse(Buffer.from(groupMessage.body as Uint8Array).toString()).receive_id, groupScope.chatId)

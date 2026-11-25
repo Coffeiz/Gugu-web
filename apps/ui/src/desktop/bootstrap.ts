@@ -1,3 +1,5 @@
+import { chatFab } from './chat-fab/bridge'
+
 function showBootFailure() {
   const root = document.querySelector('#app')
   if (!root?.querySelector('.desktop-boot-shell')) return
@@ -16,6 +18,11 @@ function showBootFailure() {
 }
 
 const timeout = window.setTimeout(showBootFailure, 20_000)
-void import('./main').then(({ mountDesktop }) => mountDesktop())
+const nativeFab = chatFab && new URLSearchParams(location.search).get('chatFab') === '1'
+if (nativeFab) document.documentElement.dataset.desktopChatFab = 'true'
+const mount = nativeFab
+  ? import('./chat-fab/mount').then(({ mountDesktopChatFab }) => mountDesktopChatFab())
+  : import('./main').then(({ mountDesktop }) => mountDesktop())
+void mount
   .catch(showBootFailure)
   .finally(() => window.clearTimeout(timeout))

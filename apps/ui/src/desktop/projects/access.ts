@@ -1,15 +1,15 @@
 import type { ProjectAccess, ProjectWorkspaceBinding } from '@/api/projects'
 import { desktopData, requestDesktopFile } from '../bridge/bridge'
 
-import { pickDesktopWorkspace } from '../files/useDesktopWorkspaces'
 
 export const desktopProjectAccess: ProjectAccess = {
   storesProjectsLocally: true,
-  pickWorkspace: pickDesktopWorkspace,
   listWorkspaceBindings: async projectId =>
     await requestDesktopFile({ action: 'project-workspaces', projectId }) as ProjectWorkspaceBinding[],
-  selectWorkspace: (projectId, directoryId) =>
-    requestDesktopFile({ action: 'project-workspace-binding', projectId, directoryId, bound: true }),
+  selectWorkspace: (projectId, directoryId) => {
+    if (typeof directoryId !== 'string') throw new Error('桌面工作区标识无效')
+    return requestDesktopFile({ action: 'project-workspace-binding', projectId, directoryId, bound: true })
+  },
   list: (archived = false, deleted = false) => desktopData.projectBoard(archived ? 'archived' : deleted ? 'deleted' : 'active'),
   get: desktopData.projectDetails,
   create: (data, idempotencyKey) =>

@@ -5,6 +5,7 @@ import type { components } from '@/types/api'
 import { BASE_URL, CLIENT_ID, UNDO_CONTEXT_ID, del, get, getCookieValue, getCsrfHeaders, patch, post, put, request, upload, uploadWithProgress } from '@/api/client'
 import type { RequestMeta } from '@/api/client'
 import { getLocale, i18n, type SupportedLocale } from '@/i18n'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { isUnauthorizedResponse } from '@/services/authSession'
 
 export { CLIENT_ID, UNDO_CONTEXT_ID, getCookieValue, getCsrfHeaders, uploadWithProgress }
@@ -477,7 +478,6 @@ export const preferencesApi = {
 
 export const workspacesApi = {
   status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; automaticModeGlobalEnabled: boolean; userAutomaticModeEnabled: boolean; filesystemAuthorizationEnabled: boolean; workspaceSupported: boolean; storageBackend: 'local' | 'oss'; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: unknown[] }>('/workspaces'),
-  create: (data: { name: string; kind: 'project' | 'directory'; projectId?: number; directoryId?: number }) => post('/workspaces', data),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),
   current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),
@@ -524,6 +524,7 @@ function workspaceDirectoryPreviewResponse(row: WorkspaceDirectoryPreviewWire): 
 }
 
 export interface PathFileEntry {
+  revision?: string
   name: string
   kind: 'directory' | 'file'
   relativePath: string
@@ -561,6 +562,66 @@ export function downloadPathFile(file: PathFileRef, url: string) {
   anchor.click()
 }
 
+type PathHistoryEntry =
+  | { kind: 'move'; from: string; to: string; receipt: string }
+  | { kind: 'trash'; path: string; id?: string; receipt: string }
+const pathMoveHistory = new Map<PathDirectory, { undo: PathHistoryEntry[]; redo: PathHistoryEntry[] }>()
+let pathMoveEpoch = getAccountBoundaryEpoch()
+
+function moveHistory(directory: PathDirectory) {
+  const epoch = getAccountBoundaryEpoch()
+  if (pathMoveEpoch !== epoch) {
+    pathMoveHistory.clear()
+    pathMoveEpoch = epoch
+  }
+  return pathMoveHistory.get(directory)
+}
+
+const pathHistoryOperations = new Map<PathDirectory, Promise<unknown>>()
+
+async function withPathHistory<T>(directory: PathDirectory, operation: (epoch: number) => Promise<T>) {
+  const epoch = getAccountBoundaryEpoch()
+  const previous = pathHistoryOperations.get(directory)
+  const next = Promise.resolve(previous).catch(() => undefined).then(() => {
+    if (epoch !== getAccountBoundaryEpoch()) throw new Error(i18n.global.t('sharedUi.cannotOperate'))
+    return operation(epoch)
+  })
+  pathHistoryOperations.set(directory, next)
+  try {
+    return await next
+  } finally {
+    if (pathHistoryOperations.get(directory) === next) pathHistoryOperations.delete(directory)
+  }
+}
+
+function recordPathHistory(directory: PathDirectory, entry: PathHistoryEntry, epoch: number) {
+  if (epoch !== getAccountBoundaryEpoch()) return
+  const history = moveHistory(directory) ?? { undo: [], redo: [] }
+  history.undo.push(entry)
+  if (history.undo.length > 20) history.undo.shift()
+  history.redo.length = 0
+  pathMoveHistory.set(directory, history)
+}
+
+function applyPathTrash(file: PathFileRef, receipt?: string, id?: string) {
+  return post<{ id?: string; receipt?: string }>(pathFileEndpoint(file, 'trash-history'), { id, receipt })
+}
+
+function recordPathCreation<T extends { creationReceipt?: string; relativePath?: string }>(file: PathFileRef, operation: () => Promise<T>) {
+  return withPathHistory(file.directoryId, async epoch => {
+    const result = await operation()
+    if (result?.creationReceipt)
+      recordPathHistory(file.directoryId, { kind: 'trash', path: result.relativePath ?? file.relativePath, receipt: result.creationReceipt }, epoch)
+    return result
+  })
+}
+
+function patchPathMove(file: PathFileRef, destination: string, expectedMoveReceipt?: string) {
+  return patch<{ ok: boolean; moveReceipt?: string }>(pathFileEndpoint(file, 'entries'), {
+    destination, trackHistory: true, expectedMoveReceipt,
+  })
+}
+
 export const pathFilesApi = {
   sandboxContentUrl(path: string, download = false) {
     const query = new URLSearchParams({ path, ...(download ? { download: '1' } : {}) })
@@ -587,27 +648,77 @@ export const pathFilesApi = {
     } finally { URL.revokeObjectURL(url) }
   },
   compressArchive: (directory: PathFileRef, paths: string[], name: string) =>
-    post<{ relativePath: string }>(pathFileEndpoint(directory, 'compress'), { paths, name }),
+    recordPathCreation(directory, () =>
+      post<{ relativePath: string; creationReceipt?: string }>(pathFileEndpoint(directory, 'compress'), { paths, name })),
   extractArchive: (file: PathFileRef, folderName: string) =>
-    post<{ relativePath: string; skipped: number }>(pathFileEndpoint(file, 'extract'), { folderName }),
+    recordPathCreation(file, () =>
+      post<{ relativePath: string; skipped: number; creationReceipt?: string }>(pathFileEndpoint(file, 'extract'), { folderName })),
   resolveRelative: (file: PathFileRef, paths: string[]) =>
     post<Array<{ path: string; file: { relativePath: string; name: string } | null; folder: { relativePath: string; name: string } | null }>>(pathFileEndpoint(file, 'resolve-relative'), { paths }),
   reference: (file: PathFileRef, kind: 'file' | 'folder' = 'file') =>
     get<{ type: 'file' | 'folder'; id: string; label: string }>(pathFileEndpoint(file, 'reference') + (kind === 'folder' ? '&kind=folder' : '')),
   entries: (directoryId: PathDirectory, relativePath = '') =>
     get<PathFileEntry[]>(pathFileEndpoint({ directoryId, relativePath }, 'entries')),
+  watchDirectoryUrl: (file: PathFileRef) => `${BASE_URL}${pathFileEndpoint(file, 'watch')}`,
+  async fileRevision(file: PathFileRef, signal: AbortSignal) {
+    const response = await fetch(pathContentUrl(file) + '&metadata=1', { signal, credentials: 'include', cache: 'no-store' })
+    if (!response.ok) return
+    const { revision } = await response.json()
+    if (typeof revision === 'string') return revision
+  },
   contentUrl: pathContentUrl,
   thumbnailUrl: (file: PathFileRef) => `${BASE_URL}${pathFileEndpoint(file, 'thumb')}`,
-  createFolder: (file: PathFileRef) => post<{ ok: boolean }>(pathFileEndpoint(file, 'folders')),
-  move: (file: PathFileRef, destination: string) =>
-    patch<{ ok: boolean }>(pathFileEndpoint(file, 'entries'), { destination }),
+  createFolder: (file: PathFileRef) => recordPathCreation(file, () =>
+    post<{ ok: boolean; creationReceipt?: string }>(pathFileEndpoint(file, 'folders'))),
+  move(file: PathFileRef, destination: string) {
+    return withPathHistory(file.directoryId, async epoch => {
+      const result = await patchPathMove(file, destination)
+      if (result.moveReceipt)
+        recordPathHistory(file.directoryId, { kind: 'move', from: file.relativePath, to: destination, receipt: result.moveReceipt }, epoch)
+      return result
+    })
+  },
+  hasHistory(directory: PathDirectory, mode: 'undo' | 'redo') {
+    return Boolean(moveHistory(directory)?.[mode].length)
+  },
+  applyHistory(directory: PathDirectory, mode: 'undo' | 'redo') {
+    return withPathHistory(directory, async () => {
+      const history = moveHistory(directory)
+      const entry = history?.[mode].at(-1)
+      if (!history || !entry) return { changed: false }
+      let updated: PathHistoryEntry
+      if (entry.kind === 'move') {
+        const [relativePath, destination] = mode === 'undo' ? [entry.to, entry.from] : [entry.from, entry.to]
+        const result = await patchPathMove({ directoryId: directory, relativePath }, destination, entry.receipt)
+        if (!result.moveReceipt) return { changed: false }
+        updated = { ...entry, receipt: result.moveReceipt }
+      } else {
+        const result = await applyPathTrash({ directoryId: directory, relativePath: entry.path }, entry.receipt, entry.id)
+        if (!result.receipt) return { changed: false }
+        updated = { ...entry, id: result.id, receipt: result.receipt }
+      }
+      if (moveHistory(directory) !== history || history[mode].at(-1) !== entry) return { changed: false }
+      history[mode].pop()
+      history[mode === 'undo' ? 'redo' : 'undo'].push(updated)
+      return { changed: true }
+    })
+  },
   copy: (file: PathFileRef, destination: string) =>
-    post<{ ok: boolean }>(pathFileEndpoint(file, 'copy'), { destination }),
-  moveToTrash: (file: PathFileRef) => del(pathFileEndpoint(file, 'entries')),
+    recordPathCreation({ ...file, relativePath: destination }, () =>
+      post<{ ok: boolean; creationReceipt?: string }>(pathFileEndpoint(file, 'copy'), { destination })),
+  moveToTrash(file: PathFileRef) {
+    return withPathHistory(file.directoryId, async epoch => {
+      const result = await applyPathTrash(file)
+      if (result.receipt && result.id)
+        recordPathHistory(file.directoryId, { kind: 'trash', path: file.relativePath, id: result.id, receipt: result.receipt }, epoch)
+      return result
+    })
+  },
   async upload(file: PathFileRef, content: File, onProgress: (progress: number) => void, overwrite = false) {
     const form = new FormData()
     form.append('file', content)
-    return uploadWithProgress(pathFileEndpoint(file, 'content') + (overwrite ? '&overwrite=1' : ''), form, onProgress)
+    return recordPathCreation(file, () =>
+      uploadWithProgress(pathFileEndpoint(file, 'content') + (overwrite ? '&overwrite=1' : ''), form, onProgress))
   },
   saveText(file: PathFileRef, content: string) {
     const name = file.relativePath.split('/').at(-1) || 'file'

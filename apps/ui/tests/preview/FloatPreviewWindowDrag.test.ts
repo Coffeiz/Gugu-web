@@ -23,13 +23,14 @@ afterEach(() => {
   app = undefined
   host = undefined
   vi.unstubAllGlobals()
+  localStorage.removeItem('gugu-preview-size-floating')
 })
 
-async function mountPreview() {
+async function mountPreview(ext = 'TXT') {
   const fetchMock = vi.fn().mockRejectedValue(new Error('测试不允许网络请求'))
   vi.stubGlobal('fetch', fetchMock)
   const win = reactive({
-    id: 7, file: { id: 7, displayName: '示例文本', ext: 'TXT' },
+    id: 7, file: { id: 7, displayName: '示例文件', ext },
     x: 50, y: 50, w: 480, h: 320, zIndex: 20001, _idx: 0, reloadToken: 0, siblings: [],
     sourceText: '隔离预览', saveSource: () => {},
   })
@@ -96,4 +97,18 @@ it('桌面图片使用本地文件身份读取，读取失败仍显示预览窗�
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('identity=sample-identity'), expect.anything())
     expect(host?.querySelector('.fpw-native.fpw-ready .fpw-error')?.textContent).toContain('HTTP 404')
   })
+})
+
+it('手动调整后打开另一种格式，保留窗口尺寸', async () => {
+  const { root } = await mountPreview()
+  const initialWidth = parseFloat(root.style.width)
+  const initialHeight = parseFloat(root.style.height)
+  await drag(root.querySelector<HTMLElement>('.fpw-resize')!, 60, -24)
+  expect(parseFloat(root.style.width)).toBe(initialWidth + 60)
+  expect(parseFloat(root.style.height)).toBe(initialHeight - 24)
+  app?.unmount()
+  host?.remove()
+  const next = await mountPreview('PNG')
+  expect(parseFloat(next.root.style.width)).toBe(initialWidth + 60)
+  expect(parseFloat(next.root.style.height)).toBe(initialHeight - 24)
 })

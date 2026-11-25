@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useFileViewMode } from '@/composables/files/useFileViewMode'
 import { computed, onMounted, onScopeDispose, ref, useId, watch } from 'vue'
 import { i18n } from '@/i18n'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
@@ -16,15 +17,15 @@ import { projectStatusLabelKey } from '@/utils/projectStages'
 import { useUiStore } from '@/stores/ui'
 import { useProjectStore } from '@/stores/projects'
 import type { DesktopFileDirectory, DesktopProjectDetails } from '@gugu/core/desktop'
-import DesktopFileLocations from './components/DesktopFileLocations.vue'
+import FileLibraryLocations from '@/views/Files/components/FileLibraryLocations.vue'
+import WorkspaceCreateDialog from '@/views/Files/components/WorkspaceCreateDialog.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
-import { undoShortcutMode } from '@/interaction/undo/UndoManager'
 import { hasShortcutOverlay } from '@/interaction/keyboardShortcuts'
 import { usePathFileSelection } from '@/composables/files/usePathFileSelection'
 import { useSorting } from '@/composables/shared/useSorting'
 import { errorMessage, showAppError, showAppNotice } from '@/composables/core/useAppToast'
-import { desktopData, requestDesktopFile } from '@desktop/bridge/bridge'
+import { desktopData } from '@desktop/bridge/bridge'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import { breadcrumbSurfaceId, parseBreadcrumbSurfaceId } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
@@ -43,7 +44,7 @@ const reload = ref(0)
 function refreshFiles() { reload.value++ }
 onMounted(() => window.addEventListener('focus', refreshFiles))
 onScopeDispose(() => window.removeEventListener('focus', refreshFiles))
-const viewMode = ref<'grid' | 'list'>('grid')
+const viewMode = useFileViewMode('library')
 const showNewFolder = ref(false)
 const folderName = ref('')
 const creating = ref(false)
@@ -101,9 +102,6 @@ watch(isProjects, active => { if (active) void loadProjects() })
 const selection = usePathFileSelection({
   target, container: main, getEntries: () => files.value?.selectableEntries() ?? [],
   getSelectedEntries: () => files.value?.selectedEntries() ?? [],
-  trash: (file, entry) => typeof file.directoryId === 'string' && entry.kind === 'file'
-    ? requestDesktopFile({ action: 'trash', directoryId: file.directoryId as DesktopFileDirectory, path: file.relativePath, undoable: true })
-    : pathFilesApi.moveToTrash(file),
   reload: () => { reload.value++ },
 })
 watch(directoryId, () => {
@@ -112,28 +110,8 @@ watch(directoryId, () => {
   showNewFolder.value = false
   folderName.value = ''
 }, { flush: 'sync' })
-let applyingFileHistory = false
-async function applyFileHistory(mode: 'undo' | 'redo', directory: DesktopFileDirectory) {
-  if (applyingFileHistory) return
-  applyingFileHistory = true
-  try {
-    const result = await requestDesktopFile({ action: mode === 'undo' ? 'undo-trash' : 'redo-trash', directoryId: directory }) as { changed: boolean }
-    if (result.changed && directoryId.value === directory) {
-      selection.clearSelection()
-      reload.value++
-    }
-  } catch (error) { showAppError(errorMessage(error)) }
-  finally { applyingFileHistory = false }
-}
-
 function onFileShortcut(event: KeyboardEvent) {
-  if (hasShortcutOverlay(event.target)) return
-  const history = undoShortcutMode(event)
-  const directory = target.value?.directoryId
-  if (history && typeof directory === 'string') {
-    event.preventDefault()
-    void applyFileHistory(history, directory as DesktopFileDirectory)
-  } else selection.handleShortcut(event)
+  if (!hasShortcutOverlay(event.target)) selection.handleShortcut(event)
 }
 onMounted(() => document.addEventListener('keydown', onFileShortcut))
 onScopeDispose(() => document.removeEventListener('keydown', onFileShortcut))
@@ -193,6 +171,11 @@ watch(() => uiStore.pendingFileTarget, target => {
   }
 }, { immediate: true })
 
+const showWorkspaceCreate = ref(false)
+const canManageWorkspace = (entry: FolderCardMeta) => native && entry.id.startsWith('desktop:')
+const renameWorkspace = (id: string, name: string) => rename(id as DesktopFileDirectory, name)
+const unbindWorkspace = (id: string) => remove(id as DesktopFileDirectory)
+
 async function addWorkspace() {
   if (!native) {
     showAppNotice(t('filesUi.addDesktopWorkspaceNative'))
@@ -200,6 +183,7 @@ async function addWorkspace() {
   }
   const id = await pick()
   if (typeof id !== 'string') return
+  showWorkspaceCreate.value = false
   const name = options.value.find(option => option.value === id)?.label
   if (name) openLocation({ id, displayName: name, type: 'workspace', count: null })
 }
@@ -270,7 +254,7 @@ async function createFolder() {
     </template>
 
     <template #toolbar-extra>
-      <ActionButton v-if="!current" fit :disabled="busy" @click="addWorkspace">
+      <ActionButton v-if="!current" variant="primary" fit :disabled="busy" @click="showWorkspaceCreate = true">
         <Icon name="admin.stack" :size="13" />{{ t('filesUi.addDesktopWorkspace') }}
       </ActionButton>
     </template>
@@ -297,15 +281,17 @@ async function createFolder() {
           <ActionButton fit variant="secondary" @click="loadProjects">{{ t('common.actions.retry') }}</ActionButton>
         </div>
         <div v-else-if="isProjects && !visibleLocations.length" class="grid-empty">{{ t('filesUi.desktopNoProjectFolders') }}</div>
-        <DesktopFileLocations v-else :entries="visibleLocations" :view-mode="viewMode"
-          :layout-collection="`${surfaceId}:locations`" :manage-workspaces="native" :busy="busy"
-          :rename-workspace="rename" @unbind="remove" @open="openLocation" />
+        <FileLibraryLocations v-else :entries="visibleLocations" :view-mode="viewMode"
+          :layout-collection="`${surfaceId}:locations`" :can-manage="canManageWorkspace" :busy="busy"
+          :rename-workspace="renameWorkspace" @unbind="unbindWorkspace" @open="openLocation" />
       </template>
     </div>
 
     <FileSelectionToolbar v-if="fileCount + folderCount > 0" path-actions
       :file-count="fileCount" :folder-count="folderCount" @cut="selection.cutSelected()" @copy="selection.copySelected"
       @download="selection.downloadSelected" @delete="selection.trashSelected" @cancel="selection.clearSelection" />
+    <WorkspaceCreateDialog local :show="showWorkspaceCreate" :busy="busy"
+      @close="showWorkspaceCreate = false" @submit="addWorkspace" />
   </FileBrowserPanel>
 </template>
 

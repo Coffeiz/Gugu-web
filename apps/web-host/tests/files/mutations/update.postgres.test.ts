@@ -17,15 +17,15 @@ test('PostgreSQL Local PATCH 保留省略字段、搬迁文件、写撤销记录
   const schema=`gugu_file_update_${randomUUID().replaceAll('-','')}`
   const admin=new Pool({connectionString:databaseUrl,max:1}); await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool=new Pool({connectionString:databaseUrl,options:`-c search_path=${schema}`,max:2})
-  const root=await mkdtemp(path.join(tmpdir(),'gugu-file-update-')); const events:number[]=[]
+  const root=await mkdtemp(path.join(tmpdir(),'gugu-file-update-')); const events:string[]=[]
   try{
     await pool.query(`
       CREATE TABLE projects(id serial PRIMARY KEY,user_id uuid NOT NULL,name text NOT NULL,color text,start_date date,created_at timestamptz DEFAULT CURRENT_TIMESTAMP,deleted_at timestamptz);
       CREATE TABLE workspace_directories(id serial PRIMARY KEY,user_id uuid NOT NULL,directory_name text NOT NULL,deleted_at timestamptz);
-      CREATE TABLE files(id serial PRIMARY KEY,user_id uuid NOT NULL,display_name text NOT NULL,ext text NOT NULL,space text NOT NULL,
+      CREATE TABLE files(user_id uuid NOT NULL,display_name text NOT NULL,ext text NOT NULL,space text NOT NULL,
         project_id int,workspace_directory_id int,stage_name text NOT NULL,mind_map_id int,path text NOT NULL,
         version int NOT NULL,size text NOT NULL,size_bytes bigint NOT NULL,mime_type text,img_width int,img_height int,
-        created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,deleted_at timestamptz);
+        created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,deleted_at timestamptz,PRIMARY KEY(user_id,path));
       CREATE TABLE undo_operations(id text PRIMARY KEY,user_id uuid NOT NULL,undo_context_id text,group_id text,resource text,action text,
         target_refs jsonb,before_state jsonb,after_state jsonb,base_versions jsonb,artifact_refs jsonb,actor_type text,status text,
         created_at timestamptz,expires_at timestamptz,undone_at timestamptz,failure_code text);
@@ -37,31 +37,34 @@ test('PostgreSQL Local PATCH 保留省略字段、搬迁文件、写撤销记录
     const source=path.join(root,owner,'个人文件','笔记.md'); await mkdir(path.dirname(source),{recursive:true}); await writeFile(source,'正文')
     const foreign=path.join(root,other,'个人文件','私有.md'); await mkdir(path.dirname(foreign),{recursive:true}); await writeFile(foreign,'私有')
     const operations=createPostgresFileUpdateOperations(pool,{storageRoot:root,async publishChanged(e){events.push(e.entityId)}})
-    const renamed=await operations.update(owner,1,{version:1,displayName:'新笔记',folderPathSet:false,projectSet:false,workspaceDirectorySet:false},
+    const sourcePath=`${owner}/个人文件/笔记.md`
+    const renamed=await operations.update(owner,sourcePath,{version:1,displayName:'新笔记',folderPathSet:false,projectSet:false,workspaceDirectorySet:false},
       {idempotencyKey:null,undoContextId:'editor',clientId:'test'}) as {displayName:string;version:number;projectId:number|null}
     const renamedPath=path.join(root,owner,'个人文件','新笔记.md')
     assert.equal(renamed.displayName,'新笔记'); assert.equal(renamed.version,2); assert.equal(renamed.projectId,null)
     assert.equal(await readFile(renamedPath,'utf8'),'正文'); await assert.rejects(readFile(source),{code:'ENOENT'})
-    const moved=await operations.update(owner,1,{version:2,projectId:1,projectSet:true,folderPath:'参考/子',folderPathSet:true,workspaceDirectorySet:false},
+    const renamedPathKey=`${owner}/个人文件/新笔记.md`
+    const moved=await operations.update(owner,renamedPathKey,{version:2,projectId:1,projectSet:true,folderPath:'参考/子',folderPathSet:true,workspaceDirectorySet:false},
       {idempotencyKey:null,undoContextId:null,clientId:'test'}) as {space:string;projectId:number;folderPath:string;version:number}
     const movedPath=path.join(root,owner,'项目文件','2026','02','项目甲 #1','参考','子','新笔记.md')
     assert.equal(moved.space,'project'); assert.equal(moved.projectId,1); assert.equal(moved.version,3); assert.equal(moved.folderPath,'参考/子')
     assert.equal(await readFile(movedPath,'utf8'),'正文'); await assert.rejects(readFile(renamedPath),{code:'ENOENT'})
-    await assert.rejects(operations.update(owner,1,{version:2,displayName:'旧版本',folderPathSet:false,projectSet:false,workspaceDirectorySet:false},
+    const movedPathKey=`${owner}/项目文件/2026/02/项目甲 #1/参考/子/新笔记.md`
+    await assert.rejects(operations.update(owner,movedPathKey,{version:2,displayName:'旧版本',folderPathSet:false,projectSet:false,workspaceDirectorySet:false},
       {idempotencyKey:null,undoContextId:null,clientId:null}),/其他端修改/)
-    await assert.rejects(operations.update(other,1,{version:3,displayName:'越权',folderPathSet:false,projectSet:false,workspaceDirectorySet:false},
+    await assert.rejects(operations.update(other,renamedPathKey,{version:3,displayName:'越权',folderPathSet:false,projectSet:false,workspaceDirectorySet:false},
       {idempotencyKey:null,undoContextId:null,clientId:null}),/文件不存在/)
     const undo=await pool.query<{before_state:Record<string,any>}>('SELECT before_state FROM undo_operations WHERE user_id=$1',[owner])
-    assert.equal(undo.rows.length,1); assert.equal(undo.rows[0]!.before_state.items['file:1'].path,`${owner}/个人文件/笔记.md`)
-    assert.deepEqual(events,[1,1])
+    assert.equal(undo.rows.length,1); assert.equal(undo.rows[0]!.before_state.items[`file:${sourcePath}`].path,sourcePath)
+    assert.deepEqual(events,[renamedPathKey,movedPathKey])
     assert.equal(await readFile(foreign,'utf8'),'私有')
     const unknownPool={query:pool.query.bind(pool),async connect(){const client=await pool.connect(),query=client.query.bind(client)
       client.query=(async (...args:Parameters<typeof client.query>)=>{const result=await (query as (...args:any[])=>Promise<any>)(...args);if(args[0]==='COMMIT')throw new Error('模拟提交后断连');return result}) as typeof client.query
       return client}} as unknown as Pool
     const unknownOps=createPostgresFileUpdateOperations(unknownPool,{storageRoot:root,async publishChanged(){}})
-    const recovered=await unknownOps.update(owner,1,{version:3,displayName:'提交后名称',folderPathSet:false,projectSet:false,workspaceDirectorySet:false},{idempotencyKey:null,undoContextId:null,clientId:null}) as {displayName:string;version:number}
+    const recovered=await unknownOps.update(owner,movedPathKey,{version:3,displayName:'提交后名称',folderPathSet:false,projectSet:false,workspaceDirectorySet:false},{idempotencyKey:null,undoContextId:null,clientId:null}) as {displayName:string;version:number}
     assert.equal(recovered.displayName,'提交后名称'); assert.equal(recovered.version,4)
-    const stored=await pool.query<{path:string}>('SELECT path FROM files WHERE id=1')
+    const stored=await pool.query<{path:string}>('SELECT path FROM files WHERE user_id=$1 AND path LIKE $2',[owner,`${owner}/%`])
     const committedPath=path.join(root,...stored.rows[0]!.path.split('/'))
     assert.equal(stored.rows[0]!.path,`${owner}/项目文件/2026/02/项目甲 #1/参考/子/提交后名称.md`)
     assert.equal(await readFile(committedPath,'utf8'),'正文')

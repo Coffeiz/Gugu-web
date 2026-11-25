@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { undoApi } from '@/services/api'
-import { UndoManager, isEditableTarget } from '@/interaction/undo/UndoManager'
+import { UndoManager, isEditableTarget, undoShortcutMode } from '@/interaction/undo/UndoManager'
 
 describe('UndoManager 快捷键边界', () => {
   afterEach(() => vi.restoreAllMocks())
@@ -13,6 +13,21 @@ describe('UndoManager 快捷键边界', () => {
     expect(isEditableTarget(input)).toBe(true)
     expect(isEditableTarget(editor)).toBe(true)
     expect(isEditableTarget(document.body)).toBe(false)
+  })
+
+  it('项目弹层接管文件重做，编辑框保留原生快捷键', () => {
+    const overlay = document.body.appendChild(document.createElement('div'))
+    overlay.className = 'bm-overlay'
+    const input = overlay.appendChild(document.createElement('input'))
+    const listener = (event: KeyboardEvent) => {
+      expect(undoShortcutMode(event)).toBeUndefined()
+      expect(undoShortcutMode(event, true)).toBe(event.target === input ? undefined : 'redo')
+    }
+    overlay.addEventListener('keydown', listener)
+    try {
+      for (const target of [overlay, input])
+        target.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, shiftKey: true, bubbles: true }))
+    } finally { overlay.remove() }
   })
 
   it('Ctrl/Cmd+Z 选择 undo，Shift 组合选择 redo', async () => {

@@ -136,6 +136,7 @@ import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import OfficeViewer from '@/components/common/viewers/OfficeViewer.vue'
 import { CLIENT_ID, filesApi } from '@/services/api'
+import { useImageFileWatch } from '@/composables/files/useImageFileWatch'
 import { usePathFileAccess } from '@/services/pathFileAccess'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { isImageExt, isVideoExt, isTextExt, isOfficeExt, isCsvExt, isPreviewReloadRequested, isPreviewAffectedByFileEvent, isTextFallbackCandidate, normalizeTextBlob, usePreviewStore } from '@/stores/preview'
@@ -146,6 +147,7 @@ import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { registerEsc, registerArrowNav } from '@/composables/core/windowz'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import { readPreviewWindowSize, savePreviewWindowSize } from '@/utils/previewWindowSize'
 import { readDocumentFontSize, saveDocumentFontSize } from '@/utils/documentFontSizePreference'
 
 const pathFilesApi = usePathFileAccess()
@@ -203,8 +205,16 @@ const x = ref(props.win.x)
 const y = ref(Math.max(0, props.win.y))
 // PPTX 由渲染器按容器宽度自适应；首次隐藏渲染也要给它一个接近最终尺寸的
 // 布局盒，避免先按默认小窗口渲染再放大。
-const w = ref(isPptx.value ? Math.round(window.innerWidth * 0.72) : props.win.w)
-const h = ref(isPptx.value ? Math.round(window.innerHeight * 0.64) : props.win.h)
+const savedSize = props.nativeWindow ? undefined : readPreviewWindowSize('floating')
+let keepWindowSize = !!savedSize
+const w = ref(savedSize ? Math.min(savedSize.width, window.innerWidth)
+  : isPptx.value ? Math.round(window.innerWidth * 0.72) : props.win.w)
+const h = ref(savedSize ? Math.min(savedSize.height, window.innerHeight)
+  : isPptx.value ? Math.round(window.innerHeight * 0.64) : props.win.h)
+if (savedSize) {
+  x.value = Math.max(0, Math.round((window.innerWidth - w.value) / 2))
+  y.value = Math.max(0, Math.round((window.innerHeight - h.value) / 2))
+}
 
 // ── 文件类型 ──────────────────────────────────────────────────────────────────
 const isImg  = computed(() => isImageExt(props.win.file.ext))
@@ -289,7 +299,7 @@ const PAD      = 48
 // 即缩略图尺寸 = 原图真实尺寸，可直接当真实尺寸用，不用再套 4K 估算。
 const CARD_THUMB_CAP = 192
 
-const ready        = ref(false)
+const ready        = ref(keepWindowSize)
 const maximized    = ref(false)
 const animating    = ref(false)
 let   savedPos: { x: number; y: number; w: number; h: number } | null = null
@@ -385,6 +395,7 @@ function fitVectorWindow(nw: number, nh: number, url: string, sequence: number, 
 
 // 按内容自然尺寸适配窗口，居中+错位
 function fitWindow(contentW: number, contentH: number) {
+  if (keepWindowSize) { ready.value = true; return }
   const maxW = window.innerWidth  - PAD * 2
   const maxH = window.innerHeight - PAD * 2 - TITLE_H
   let fw = contentW, fh = contentH
@@ -407,6 +418,7 @@ function fitWindow(contentW: number, contentH: number) {
 // 表格宽高不应按图片那样保持整体比例缩放：长表只需要在窗口内纵向滚动，
 // 否则几万像素的总高度会把宽度一起压缩成窄窗。
 function fitSpreadsheetWindow(contentW: number, contentH: number) {
+  if (keepWindowSize) { ready.value = true; return }
   const maxW = window.innerWidth - PAD * 2
   const maxH = window.innerHeight - PAD * 2 - TITLE_H
   const fw = Math.max(320, Math.min(Math.round(contentW), maxW))
@@ -731,10 +743,14 @@ watch(
   () => [props.win.file, props.win.reloadToken] as const,
   ([file, reloadToken], previous) => load(
     file,
-    isPreviewReloadRequested(reloadToken, previous?.[1]),
+    isPreviewReloadRequested(reloadToken, previous?.[1])
+      || (!!file.workspaceFile && isImageExt(file.ext) && !!pathFilesApi.fileRevision),
   ),
   { immediate: true },
 )
+
+useImageFileWatch(pathFilesApi, () => isImg.value ? props.win.file.workspaceFile : undefined,
+  () => load(props.win.file, true))
 
 function onTextContentSaved(content: string, fileKey: string | number | null, version?: number) {
   // 保存成功后当前 TextViewer 已经持有最新文本；这里只替换会话 cache，避免把新的
@@ -887,6 +903,10 @@ function onResizeMove(e: MouseEvent) {
 }
 
 function onResizeUp() {
+  if (resizeOrig && (w.value !== resizeOrig.w || h.value !== resizeOrig.h)) {
+    keepWindowSize = true
+    savePreviewWindowSize('floating', { width: w.value, height: h.value })
+  }
   resizeOrig = null
   window.removeEventListener('mousemove', onResizeMove)
   window.removeEventListener('mouseup',   onResizeUp)

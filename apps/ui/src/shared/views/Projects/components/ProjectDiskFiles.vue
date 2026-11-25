@@ -3,9 +3,9 @@
     <template #toolbar>
       <ProjectFileToolbar :desktop="desktop" :native-window="nativeWindow" :context="toolbarContext" :clipboard="{ canPaste, count: pasteCount }">
         <template #root>{{ rootName || t('sharedUi.projectFiles') }}</template>
-        <ProjectWorkspaceRoots v-if="desktop" :project-id="projectId" :directory-id="target.directoryId"
-          :native="canPickWorkspace" @select="selectProjectRoot" />
-        <DesktopRevealButton v-if="desktop" :directory-id="target.directoryId" :path="target.relativePath" />
+        <ProjectWorkspaceRoots :project-id="projectId" :directory-id="target.directoryId"
+          @select="selectProjectRoot" />
+        <DesktopRevealButton v-if="desktop && typeof target.directoryId === 'string'" :directory-id="target.directoryId" :path="target.relativePath" />
       </ProjectFileToolbar>
     </template>
 
@@ -30,6 +30,7 @@
 </template>
 
 <script setup lang="ts">
+import { useFileViewMode } from '@/composables/files/useFileViewMode'
 import { computed, onMounted, onScopeDispose, ref, toRef, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import DesktopRevealButton from '@/components/common/file-browser/DesktopRevealButton.vue'
@@ -50,10 +51,9 @@ import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 
 const pathFilesApi = usePathFileAccess()
-const canPickWorkspace = typeof window !== 'undefined' && 'guguDesktop' in window
 
-const props = defineProps<{ projectId: number; projectDirectoryKey?: string; desktop?: boolean; nativeWindow?: boolean; workspaceAvailable: boolean; workspaceExists: boolean; stagesExpanded: boolean }>()
-const emit = defineEmits<{ workspace: []; close: []; toggleStages: []; selectionChange: [active: boolean] }>()
+const props = defineProps<{ projectId: number; projectDirectoryKey?: string; desktop?: boolean; nativeWindow?: boolean; stagesExpanded: boolean }>()
+const emit = defineEmits<{ close: []; toggleStages: []; selectionChange: [active: boolean] }>()
 const { t } = useI18n()
 const main = ref<HTMLElement | null>(null)
 const files = ref<InstanceType<typeof PathFiles> | null>(null)
@@ -61,7 +61,7 @@ const navigation = useFolderNavigation<PathFileEntry & { id: string }>({})
 const { folderStack } = navigation
 const reload = ref(0)
 const projectRoot = `project:${props.projectId}` as const
-const directoryId = ref<typeof projectRoot | `desktop:${string}`>(projectRoot)
+const directoryId = ref<typeof projectRoot | `desktop:${string}` | number>(projectRoot)
 const target = computed(() => ({
   directoryId: directoryId.value, relativePath: folderStack.value.at(-1)?.relativePath ?? '',
 }))
@@ -82,7 +82,7 @@ function selectProjectRoot(id: typeof directoryId.value, name?: string) {
 }
 watch(selectionMode, active => emit('selectionChange', active))
 watch(() => props.projectDirectoryKey, () => { reload.value++ })
-const viewMode = ref<'grid' | 'list'>('grid')
+const viewMode = useFileViewMode('project-editor')
 const { SORT_OPTIONS, sortKey, sortDir, onSortSelect } = useSorting('workspace-files')
 const sortOptions = computed(() => SORT_OPTIONS.value.filter(({ key }) => key !== 'stage' && key !== 'createdAt'))
 const showNewFolder = ref(false)
@@ -133,9 +133,6 @@ const toolbarContext = {
   pmSortKey: sortKey,
   pmSortDir: sortDir,
   onPmSortSelect: onSortSelect,
-  workspaceAvailable: toRef(props, 'workspaceAvailable'),
-  workspaceExists: toRef(props, 'workspaceExists'),
-  toggleWorkspace: () => emit('workspace'),
   closeProjectModal: () => emit('close'),
 }
 
@@ -166,7 +163,7 @@ function onKeyDown(event: KeyboardEvent) {
   const projectOverlay = panel.closest<HTMLElement>('.bm-center')
   if (projectOverlay) {
     if (target instanceof Element && target !== document.body && !projectOverlay.contains(target)) return
-    if (target === document.body && Array.from(document.querySelectorAll<HTMLElement>('.bm-center:not(.bm-leave-active)'))
+    if (Array.from(document.querySelectorAll<HTMLElement>('.bm-center:not(.bm-leave-active)'))
       .some(overlay => Number(overlay.style.zIndex) > Number(projectOverlay.style.zIndex))) return
   } else if (hasShortcutOverlay(target)) return
   selection.handleShortcut(event)

@@ -4,7 +4,7 @@ import type { DesktopImMediaRoute } from './attachments.js'
 import { createHash } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { safeStorage } from 'electron'
-import { formatImToolReceipt, replyToImMemoryCommand, readImAddressedCommand, createImRequestedReply, parseImReceivedMessage, type ImConnectionIdentity, type ImReceivedMessage } from '@gugu/gateway'
+import { formatImToolReceipt, replyToImMemoryCommand, readImAddressedCommand, createImRequestedReply, parseImReceivedMessage, type ImConnectionIdentity, type ImInboundConsumption, type ImReceivedMessage } from '@gugu/gateway'
 import { redactToolError, type RunEvent } from '@gugu/core/agent'
 import { immediateImCommandReply, normalizeImWorkspaceArgument, runImAutomaticModeCommand, runImForgetCommand } from '@gugu/core/im/shortcut'
 import { agentCommandMenu, desktopWorkspaceReply, parseAgentGoalArgument, parseDesktopWorkspaceCommand } from '@gugu/core/agent/commands/menu'
@@ -94,6 +94,14 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
         throw error
       }
     }
+    const inbox: ImInboundConsumption<[], Prepared | null,
+      [{ eventKey: string } | { eventKey: string; runId: string; action: Outcome; replyFact?: AcceptedReplyFact }], boolean> = {
+      claimInbound: () => callRpc('im.inbox.prepare', options.group
+        ? { ...scope, chatType: 'group', ownerPlatformUserId: options.group.ownerPlatformUserId } : scope),
+      settleInbound: result => 'runId' in result
+        ? callRpc('im.inbox.delivery', { ...scope, ...result })
+        : callRpc('im.inbox.reject', { ...scope, ...result }),
+    }
     let typing: { runId: string; stop: () => Promise<void> } | undefined
     async function stopTyping() {
       const previous = typing
@@ -108,7 +116,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
         try {
           rpcMethod = undefined
           if (!await options.authorize()) return
-          const item = await callRpc<Prepared | null>('im.inbox.prepare', options.group ? { ...scope, chatType: 'group', ownerPlatformUserId: options.group.ownerPlatformUserId } : scope)
+          const item = await inbox.claimInbound()
           if (item) {
             const { result } = await encryption.decryptStringAsync(Buffer.from(item.sealedEvent, 'base64'))
             let envelope: DesktopImEnvelope | undefined
@@ -133,13 +141,13 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
               : event.scope.chatType === 'c2c' && event.scope.platformUserId === options.userId)
             if (!event || !matches || (!event.text.trim() && !event.quotedText && !envelope?.attachments?.length)) {
               if (!await options.authorize()) return
-              if (!item.runId && await callRpc('im.inbox.reject', { ...scope, eventKey: item.eventKey })) continue
+              if (!item.runId && await inbox.settleInbound({ eventKey: item.eventKey })) continue
               throw new Error('本机 IM 收件与连接不匹配')
             }
             const replyContext = envelope?.replyContext
             if (!await options.authorize()) return
             if (!item.runId && options.group && !await options.group.authorizeMessage(event)) {
-              if (await callRpc('im.inbox.reject', { ...scope, eventKey: item.eventKey })) continue
+              if (await inbox.settleInbound({ eventKey: item.eventKey })) continue
               return
             }
             if (!item.runId) {
@@ -147,14 +155,14 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
               const available = agentCommandMenu().map(item => item.command.slice(1))
               let commandReply = command ? immediateImCommandReply(semantic, available) : null
               if (unaddressed?.name === 'goal') {
-                if (!await callRpc<boolean>('im.inbox.reject', { ...scope, eventKey: item.eventKey })) return
+                if (!await inbox.settleInbound({ eventKey: item.eventKey })) return
                 continue
               }
               const goal = command?.name === 'goal' ? parseAgentGoalArgument(command.argument) : null
               const owner = !options.group || event.scope.platformUserId === options.group.ownerPlatformUserId
               const startGoal = goal === 'create' && owner && !commandReply
               if (command && !startGoal) {
-                if (!await callRpc<boolean>('im.inbox.reject', { ...scope, eventKey: item.eventKey })) return
+                if (!await inbox.settleInbound({ eventKey: item.eventKey })) return
                 if (!commandReply && command.name === 'workspace') {
                   const argument = normalizeImWorkspaceArgument(command.argument)
                   const workspace = parseDesktopWorkspaceCommand(argument)
@@ -288,7 +296,9 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             const clientId = item.clientId
             const target = { ...scope, eventKey: item.eventKey, runId: item.runId }
             const update = (action: 'begin' | Outcome, noticeKey?: string, replyFact?: AcceptedReplyFact) =>
-              callRpc<boolean>('im.inbox.delivery', { ...target, action, ...(noticeKey ? { noticeKey } : {}), ...(replyFact ? { replyFact } : {}) })
+              action === 'begin' || noticeKey
+                ? callRpc<boolean>('im.inbox.delivery', { ...target, action, ...(noticeKey ? { noticeKey } : {}) })
+                : inbox.settleInbound({ eventKey: target.eventKey, runId: target.runId, action, ...(replyFact ? { replyFact } : {}) })
             const preferences = options.group ? undefined : await readPreferences?.()
             const makeReply = (text: string, deliveryId: string, originalMessageId?: string) =>
               createImRequestedReply(event.scope, { ownerId: connection.ownerId, deliveryId, text },

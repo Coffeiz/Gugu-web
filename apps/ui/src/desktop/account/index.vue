@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import Byok from './Byok.vue'
 import { desktopRemoteAccount, hasRemoteAccountBridge, hasRemoteByokBridge } from '@desktop/bridge/bridge'
-import type { RemoteAccountState } from '@gugu/core/auth/contracts'
+import type { RemoteAccountState } from '@gugu/auth/contracts'
 
 const available = hasRemoteAccountBridge()
 const byokAvailable = hasRemoteByokBridge()

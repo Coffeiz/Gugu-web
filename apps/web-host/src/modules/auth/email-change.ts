@@ -1,3 +1,4 @@
+import { EMAIL_CHANGE_TTL_SECONDS, isRecoveryToken, normalizeEmailChangeAddress, validateEmailChange } from '@gugu/auth'
 import { createHash, randomBytes } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
@@ -5,7 +6,7 @@ import type { Pool, PoolClient } from 'pg'
 import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 import { RateLimitError, type RateLimitHandler } from './rate-limit.js'
 
-export const EMAIL_CHANGE_TTL_SECONDS = 30 * 60
+export { EMAIL_CHANGE_TTL_SECONDS, normalizeEmailChangeAddress }
 
 export interface EmailChangeUser {
   readonly id: string
@@ -54,12 +55,6 @@ export interface EmailChangeOptions {
 
 export interface EmailChangeUserRouteOptions extends EmailChangeOptions {
   ownerIdFromRequest(request: FastifyRequest): string
-}
-
-export function normalizeEmailChangeAddress(value: string): string | null {
-  const email = value.trim().toLowerCase()
-  if (email.length > 300 || !/^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$/.test(email)) return null
-  return email
 }
 
 export function hashEmailChangeToken(token: string): string {
@@ -113,15 +108,16 @@ export function registerEmailChangeUserRoutes(app: FastifyInstance, options: Ema
       if (!email) return reply.code(400).send({ detail: '请输入有效的邮箱地址' })
       const user = await options.store.findUser(ownerId)
       if (!user) return reply.code(401).send({ detail: '认证失败' })
-      if (!user.passwordHash || !await bcrypt.compare(body.currentPassword, user.passwordHash))
+      const invalid = await validateEmailChange({ email, currentPassword: body.currentPassword }, user, bcrypt.compare)
+      if (invalid === 'current_password_invalid')
         return reply.code(400).send({ detail: '当前密码错误' })
-      if (email === user.email.trim().toLowerCase())
+      if (invalid === 'same_email')
         return reply.code(400).send({ detail: '新邮箱不能与当前邮箱相同' })
       if (await options.store.emailOccupied(email, ownerId))
         return reply.code(409).send({ detail: '该邮箱已被使用' })
 
       const token = createToken()
-      if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) throw new Error('Email change token generator returned an invalid token')
+      if (!isRecoveryToken(token)) throw new Error('Email change token generator returned an invalid token')
       await options.store.createRequest(ownerId, email, hashEmailChangeToken(token), new Date(Date.now() + EMAIL_CHANGE_TTL_SECONDS * 1000))
       const origin = configuredOrigin(request, options.publicAppUrl)
       if (!origin) return reply.code(503).send({ detail: '邮箱变更功能当前不可用' })
@@ -154,7 +150,7 @@ export function registerEmailChangeUserRoutes(app: FastifyInstance, options: Ema
       const user = await options.store.findUser(ownerId)
       if (!user) return reply.code(401).send({ detail: '认证失败' })
       const token = createToken()
-      if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) throw new Error('Email change token generator returned an invalid token')
+      if (!isRecoveryToken(token)) throw new Error('Email change token generator returned an invalid token')
       const renewed = await options.store.replaceActiveToken(
         ownerId, hashEmailChangeToken(token), new Date(Date.now() + EMAIL_CHANGE_TTL_SECONDS * 1000),
       )

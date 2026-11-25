@@ -22,7 +22,7 @@ function imClientId(platform: string, connectionId: string, eventKey: string) {
   return createHash('sha256').update(JSON.stringify([platform, connectionId, eventKey])).digest('hex')
 }
 
-export async function admitDesktopImEvent(db: Kysely<Database>, ownerId: string, fields: Fields): Promise<null | boolean> {
+export async function admitDesktopImEvent(db: Kysely<Database>, ownerId: string, fields: Fields): Promise<boolean> {
   const owner = ownerId.toLowerCase().replaceAll('-', '')
   const { platform, connectionId } = connectionScope(fields)
   const { eventKey, sealedEvent } = fields
@@ -39,13 +39,12 @@ export async function admitDesktopImEvent(db: Kysely<Database>, ownerId: string,
     const recorded = await sql`SELECT 1 FROM desktop_im_sessions im JOIN conversation_messages m ON m.session_id=im.session_id
       WHERE im.owner_id=${owner} AND im.platform=${platform} AND im.connection_id=${connectionId}
         AND m.client_message_id=${imClientId(platform, connectionId, eventKey)}`.execute(tx)
-    if (recorded.rows.length) return attachments === undefined ? null : false
+    if (recorded.rows.length) return false
     const inserted = await sql`INSERT INTO desktop_im_inbox (owner_id, platform, connection_id, event_key, sealed_event, received_at)
       VALUES (${owner}, ${platform}, ${connectionId}, ${eventKey}, ${sealed}, ${new Date().toISOString()})
       ON CONFLICT(owner_id, platform, connection_id, event_key) DO NOTHING RETURNING event_key`.execute(tx)
-    if (attachments === undefined) return null
     if (!inserted.rows.length) return false
-    for (const input of attachments) {
+    for (const input of attachments ?? []) {
       const file = input as DesktopChatAttachmentInput & { sourceIndex?: number }
       const sourceMessageId = fields.sourceMessageId
       const source = platform === 'telegram' && typeof sourceMessageId === 'string' && sourceMessageId.length <= 256

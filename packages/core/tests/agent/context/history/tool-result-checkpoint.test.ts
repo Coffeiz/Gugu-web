@@ -1,4 +1,4 @@
-import { createGlobalSearchOperations } from '../../../../src/search/global-search.js'
+import { createGlobalSearchOperations } from '@gugu/search'
 import { createGlobalSearchTool } from '../../../../src/agent/tools/global-search.js'
 import { createHash } from 'node:crypto'
 import { describe,expect,it } from 'vitest'

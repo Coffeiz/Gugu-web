@@ -6,7 +6,8 @@ type Schemas = components['schemas']
 type ProjectResponse = Schemas['ProjectResponse']
 
 export interface ProjectWorkspaceBinding {
-  id: `desktop:${string}`
+  id: number | `desktop:${string}`
+  workspaceId?: number
   name: string
   bound: boolean
   active?: boolean
@@ -15,8 +16,7 @@ export interface ProjectWorkspaceBinding {
 
 export interface ProjectAccess {
   listWorkspaceBindings?(id: number): Promise<ProjectWorkspaceBinding[]>
-  pickWorkspace?(): Promise<ProjectWorkspaceBinding['id'] | null>
-  selectWorkspace?(id: number, directoryId: `project:${number}` | ProjectWorkspaceBinding['id']): Promise<unknown>
+  selectWorkspace?(id: number, directoryId: `project:${number}` | ProjectWorkspaceBinding['id'], workspaceId?: number): Promise<unknown>
   storesProjectsLocally: boolean
   list(archived?: boolean, deleted?: boolean): Promise<ProjectResponse[]>
   fileCounts?(): Promise<{ projectId: number; fileCount: number }[]>

@@ -34,9 +34,6 @@
         <Icon name="action.close" :size="13" />
       </ActionButton>
     </div>
-    <ActionButton v-if="showNewWorkspaceButton" :variant="workspaceExists ? 'danger' : 'secondary'" fit :title="workspaceExists ? t('sharedUi.removeWorkspace') : t('sharedUi.addWorkspace')" @click.stop="emit('create-workspace')">
-      <Icon :name="workspaceExists ? 'action.delete' : 'admin.stack'" :size="13" />{{ workspaceExists ? t('sharedUi.removeWorkspace') : t('sharedUi.addWorkspace') }}
-    </ActionButton>
     <SortMenu v-if="showSort" :options="sortOptions" :sort-key="sortKey" :sort-dir="sortDir" @select="emit('sort-select', $event)" />
     <slot name="extra" />
     <slot name="trailing" />
@@ -64,8 +61,6 @@ const props = defineProps({
   showSelection: { type: Boolean, default: true },
   showViewToggle: { type: Boolean, default: true },
   showNewFolderButton: { type: Boolean, default: true },
-  showNewWorkspaceButton: Boolean,
-  workspaceExists: Boolean,
   showSort: { type: Boolean, default: true },
   viewMode: { type: String as PropType<'grid' | 'list'>, default: 'grid' },
   showNewFolder: Boolean,
@@ -83,7 +78,6 @@ const emit = defineEmits<{
   'update:show-new-folder': [value: boolean]
   'update:new-folder-name': [value: string]
   'create-folder': []
-  'create-workspace': []
   'sort-select': [value: any]
   close: []
 }>()

@@ -20,9 +20,6 @@ import { checkRagIndexMigration } from '@gugu/database/postgres/migrations/0011_
 import { checkSearchUsageMigration } from '@gugu/database/postgres/migrations/0010_search_usage'
 import { migrateWebAgentPrompts, webAgentPromptRoot } from '../modules/agent/context/prompts.js'
 import { hasProjectExpiryJournalSchema } from '../modules/projects/lifecycle/expiry.js'
-import { createLocalFileUndoStorage } from '../modules/files/storage/undo.js'
-import { migrateLegacyFileUndoAnchors } from '../modules/undo/legacy-file-anchors.js'
-import { migrateLegacyMindFileAnchors } from '../modules/mind/legacy-file-anchors.js'
 import { createRedisEventPublisher } from '../adapters/cache/redis-events.js'
 import { createAdminAuth, createAdminPromptOptions } from './admin.js'
 import { createPool } from './postgres.js'
@@ -51,9 +48,6 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   const redisEvents = config.redisUrl ? createRedisEventPublisher(config.redisUrl) : undefined
   let core: SqlDataRuntime
   try {
-    // 旧文件行号锚点必须在数据库迁移 0042 删除 files.id 前转换为路径。
-    await migrateLegacyFileUndoAnchors(pool, createLocalFileUndoStorage(config.storageLocalPath))
-    await migrateLegacyMindFileAnchors(pool, config.storageLocalPath)
     core = await createPostgresRuntime({ url: config.databaseUrl, maxConnections: config.postgresPoolMax })
   } catch (error) {
     // 保留 Admin 登录和配置入口，让用户可以修正数据库连接；业务 API 仍由未就绪状态阻断。

@@ -37,7 +37,7 @@
 
   <!-- 悬浮球 -->
   <GuguChatFab
-    ref="fabRef"
+    v-if="!standalone" ref="fabRef" :class="{ 'gugu-chat-native-fab-placeholder': hideFab }"
     :ripple-active="rippleActive" :fab-z="fabZ"
     :has-audio-file="!!audioStore.file" :spinning-back="spinningBack"
     :fab-jumping="fabJumping" :audio-playing="audioPlaying"
@@ -47,13 +47,15 @@
   <!-- 聊天窗口（单一元素，小/大状态通过位置过渡）。窗口外壳/标题栏/消息列表/输入框
        收在 GuguChatWindow.vue；扫码绑定弹窗与侧边栏通过插槽填充（ref 由本组件持有，
        供 useChatImConnect 使用）。 -->
-  <Transition name="chat-open" @after-enter="animateGreeting(() => open)" @after-leave="finishChatClose" @leave-cancelled="chatClosing = false">
+  <Transition name="chat-open" :css="!chatHandoff" @after-enter="onChatEntered" @after-leave="onChatLeft" @leave-cancelled="chatClosing = false">
     <GuguChatWindow
       v-if="open || chatClosing"
       v-show="open"
       :inert="!open"
       ref="windowRef"
-      :window-style="windowStyle" :expanded="expanded" :resizing="resizing"
+      :class="{ 'chat-window--standalone': standalone }"
+      :tabindex="standalone ? -1 : undefined"
+      :window-style="standalone ? { zIndex: chatZ } : windowStyle" :expanded="expanded" :resizing="resizing"
       :owner-z="chatZ"
       :streaming="streaming"
       :is-chat-dragging="isChatDragging" :drop-files-as-references="!!referenceDroppedFile"
@@ -283,6 +285,8 @@ onUnmounted(() => {
 // 悬浮球转场动画在 audioStore.file 清空前触发（拿最后角度做转回归位动画）；
 // 播放器机制（暂停/进度/音量/语音条播放）全部收在 useChatAudio。
 const props = defineProps<{
+  hideFab?: boolean
+  standalone?: boolean
   greetingAccess?: ChatGreetingAccess
   readInteractionSession?: (promptId: number) => Promise<{ session_id: number }>
   readQuota?: () => Promise<QuotaInfo>
@@ -371,11 +375,53 @@ const {
 
 async function toggleOpen() {
   if (open.value) { closeChat(); return }
+  await openFromFab()
+}
+
+const chatHandoff = ref(false)
+
+async function openFromFab() {
+  if (open.value) return
+  chatHandoff.value = false
   openInLastMode()
   if (expanded.value) void fetchSessions()
   props.trackChatEvent?.('chat_open')
   await alignNewWindowToBottom()
 }
+
+function closeForHandoff() {
+  if (!open.value && !chatClosing.value) return
+  chatHandoff.value = true
+  if (open.value) closeChat()
+  finishChatClose()
+}
+
+function onChatEntered(element: Element) {
+  if (!open.value) return
+  if (props.standalone && element instanceof HTMLElement) {
+    if (!element.contains(document.activeElement)) element.focus({ preventScroll: true })
+    emit('entered')
+  }
+  animateGreeting(() => open.value)
+}
+
+function onChatLeft() {
+  finishChatClose()
+  chatHandoff.value = false
+  if (!open.value) emit('left')
+}
+
+function receiveDroppedReference(reply: { ok: true; result: ChatReference } | { ok: false; error: { message: string } }) {
+  if (!open.value) return
+  if (reply.ok === false) {
+    _chatTip(reply.error.message)
+    return
+  }
+  if (inputReferences.value.length < 50) composerRef.value?.insertReferenceChip(reply.result)
+}
+
+defineExpose({ openFromFab, closeChat, closeForHandoff, receiveDroppedReference })
+const emit = defineEmits<{ visibility: [open: boolean]; entered: []; left: []; presentation: [expanded: boolean] }>()
 
 useRuntimeAction(async action => {
   if (action.type !== 'move' && action.type !== 'move-group') return
@@ -501,7 +547,7 @@ const {
         const reference = await props.referenceDroppedFile!(file)
         if (getViewGeneration() !== targetView) return
         if (inputReferences.value.length >= 50) return
-        composerRef.value?.insertReferenceChip(reference)
+        receiveDroppedReference({ ok: true, result: reference })
       } catch (error) {
         if (getViewGeneration() === targetView)
           _chatTip(error instanceof Error ? error.message : t('mindUi.referenceMissing'))
@@ -934,8 +980,13 @@ async function copyMsg(msg: ChatMessage) {
   setTimeout(() => { if (copiedId.value === msg.id) copiedId.value = null }, 1500)
 }
 
+watch([open, expanded], ([visible, expandedMode]) => {
+  if (props.standalone && visible) emit('presentation', expandedMode)
+})
+
 // 任何打开路径（FAB / 通知点开 / 展开）都触发一次
 watch(open, (v) => {
+  emit('visibility', v)
   if (v) { loadBots(); loadQuota(); loadVoiceAvailability(); pickOfflineLabel() }
 })
 
@@ -994,3 +1045,8 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? t('chatU
                                    : t('chatUi.offlineHint'))
 
 </script>
+
+<style scoped>
+.gugu-chat-native-fab-placeholder { opacity: 0; pointer-events: none; }
+.gugu-chat-native-fab-placeholder:focus-within { opacity: 1; }
+</style>

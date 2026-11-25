@@ -2,7 +2,7 @@ import { sql, type Kysely } from 'kysely'
 import { CoreError, dataContext } from '../contracts/index.js'
 import { integer } from '../data/codec.js'
 import { isCanonicalSqliteTime } from '../data/sqlite-time-sql.js'
-import { searchSnippet, type GlobalSearchSource } from './global-search.js'
+import { searchSnippet, type GlobalSearchSource } from '@gugu/search'
 
 function resultError(): never { throw new CoreError('storage_error', '搜索结果格式无效') }
 function jsonRows(value: unknown): Record<string, unknown>[] {

@@ -134,3 +134,31 @@ it('桌面内部等待期间保留原运行的连接并继续接收回复', asyn
     await operation.catch(() => {})
   }
 })
+
+it('原生聊天 IPC 在请求结束前向对应窗口发送文本和工具事件', async () => {
+  const { registerDesktopIpc } = await import('../src/main/ipc/register.js')
+  const register = vi.fn<Pick<import('electron').IpcMain, 'handle'>['handle']>()
+  let complete!: () => void
+  const pending = new Promise<void>(resolve => { complete = resolve })
+  const action = vi.fn(async (_command: unknown, publish: unknown) => {
+    const send = publish as (event: unknown) => void
+    send({ type: 'content', text: '部分回复' })
+    send({ type: 'projected', event: { type: 'tool_done' } })
+    await pending
+  })
+  registerDesktopIpc({ handle: register }, { [DESKTOP_CHANNELS.agentSessions]: action }, {
+    authorize: () => true, onResult: () => {},
+  })
+  const invoke = register.mock.calls[0]![1]
+  const panel = { send: vi.fn(), isDestroyed: () => false }
+  const result = invoke({ sender: panel } as unknown as import('electron').IpcMainInvokeEvent, { action: 'send' })
+  try {
+    await vi.waitFor(() => expect(panel.send.mock.calls).toEqual([
+      [DESKTOP_CHANNELS.agentChatEvent, { type: 'content', text: '部分回复' }],
+      [DESKTOP_CHANNELS.agentChatEvent, { type: 'projected', event: { type: 'tool_done' } }],
+    ]))
+  } finally {
+    complete()
+    await result
+  }
+})

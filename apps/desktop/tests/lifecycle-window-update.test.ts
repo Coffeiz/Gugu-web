@@ -205,6 +205,48 @@ describe('桌面生命周期、窗口与更新边界', () => {
     expect(open({ url: webLink, postBody: {} })).toEqual({ action: 'deny' })
     expect(openExternal.mock.calls).toEqual([[webLink], ['http://example.test/']])
   })
+  it('共享会话只允许已登记主窗口的麦克风，并保留系统授权', async () => {
+    const session = { on: vi.fn(), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
+    const uiUrl = 'gugu-desktop://app/desktop.html'
+    function makeWindow(url: string) {
+      const contents = { session, getURL: vi.fn(() => url), isDestroyed: () => false,
+        on: vi.fn(), setWindowOpenHandler: vi.fn(), ipc: { on: vi.fn() } }
+      return { contents, window: { webContents: contents } as unknown as BrowserWindow }
+    }
+    const main = makeWindow(uiUrl)
+    const preview = makeWindow(uiUrl)
+    const isGranted = vi.fn(() => false)
+    const request = vi.fn(async () => true)
+    secureWindow(main.window, undefined, { uiUrl, isGranted, request })
+    secureWindow(preview.window)
+    const check = session.setPermissionCheckHandler.mock.lastCall![0]
+    const ask = session.setPermissionRequestHandler.mock.lastCall![0]
+    const frame = { requestingUrl: uiUrl, isMainFrame: true }
+    const origin = 'gugu-desktop://app'
+    expect(check(main.contents, 'media', origin, { ...frame, mediaType: 'audio' })).toBe(false)
+    const reply = vi.fn()
+    ask(main.contents, 'media', reply, { ...frame, mediaTypes: ['audio'] })
+    await vi.waitFor(() => expect(reply).toHaveBeenCalledWith(true))
+    expect(request).toHaveBeenCalledTimes(1)
+    isGranted.mockReturnValue(true)
+    expect(check(main.contents, 'media', origin, { ...frame, mediaType: 'audio' })).toBe(true)
+    expect(check(main.contents, 'media', 'https://example.invalid', { ...frame, mediaType: 'audio' })).toBe(false)
+    for (const [contents, permission, details] of [
+      [preview.contents, 'media', { ...frame, mediaTypes: ['audio'] }],
+      [main.contents, 'media', { ...frame, isMainFrame: false, mediaTypes: ['audio'] }],
+      [main.contents, 'media', { ...frame, mediaTypes: ['audio', 'video'] }],
+      [main.contents, 'display-capture', { ...frame, mediaTypes: ['audio'] }],
+      [main.contents, 'media', { ...frame, requestingUrl: 'https://example.invalid/', mediaTypes: ['audio'] }],
+    ] as const) {
+      const denied = vi.fn()
+      ask(contents, permission, denied, details)
+      expect(denied).toHaveBeenCalledWith(false)
+    }
+    request.mockResolvedValue(false)
+    const systemDenied = vi.fn()
+    ask(main.contents, 'media', systemDenied, { ...frame, mediaTypes: ['audio'] })
+    await vi.waitFor(() => expect(systemDenied).toHaveBeenCalledWith(false))
+  })
   it('编辑菜单随当前窗口的文本焦点切换，子 frame 不能改变路由', () => {
     const listeners = new Map<string, (event: { senderFrame: object }, focus: EditingFocus) => void>()
     const mainFrame = {}

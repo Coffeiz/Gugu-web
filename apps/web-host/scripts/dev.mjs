@@ -7,7 +7,7 @@ import { createConnection } from 'node:net'
 const host = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const root = resolve(host, '../..')
 const tsc = resolve(host, 'node_modules/typescript/bin/tsc')
-const packages = ['sandbox', 'database', 'fs', 'core', 'gateway']
+const packages = ['sandbox', 'database', 'auth', 'users', 'fs', 'search', 'core', 'gateway']
 const manifests = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc']
 const hostArgs = ['--import', 'tsx', 'src/main.ts']
 const LOOPSCOPE_ENDPOINT_DEFAULT = 'http://127.0.0.1:4320'

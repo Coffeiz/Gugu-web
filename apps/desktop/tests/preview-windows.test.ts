@@ -1,3 +1,4 @@
+import { desktopPreviewBounds } from '../src/main/preview-window-bounds.js'
 import { beforeEach, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
@@ -133,6 +134,44 @@ it('预览窗口只能在文件管理器中定位自身绑定的文件', async (
   expect(revealExternal).toHaveBeenCalledOnce()
 })
 
+it('独立 Markdown 窗口在同一工作区打开跨目录链接，并拒绝越界与未授权调用', async () => {
+  const reference = vi.fn(async () => null)
+  const directoryId = 'personal'
+  const directory = (name: string, relativePath: string) =>
+    ({ name, relativePath, kind: 'directory' as const, size: 0, mimeType: null })
+  const listDirectory = vi.fn(async (_directoryId: string, path: string) => {
+    if (path === '') return [directory('docs', 'docs')]
+    if (path === 'docs') return [directory('architecture', 'docs/architecture')]
+    if (path === 'docs/architecture') return [{
+      name: 'account-api.md', relativePath: 'docs/architecture/account-api.md',
+      kind: 'file' as const, size: 10, mimeType: 'text/markdown',
+    }]
+    return []
+  })
+  const preview = registerPreviewWindows({
+    mainWindow: () => undefined, uiUrl: 'gugu-desktop://app/desktop.html',
+    preload: '/synthetic/preload.cjs', trustsProject: async () => false,
+    reference, listDirectory, reveal: async () => {},
+  })
+  await preview.open({ workspaceFile: { directoryId, relativePath: 'packages/auth/README.md', identity: '1.2.3' },
+    displayName: 'README.md', ext: 'md' })
+  const open = state.handlers.get(previewWindowChannels.open)!
+  const read = state.handlers.get(previewWindowChannels.read)!
+  const sender = state.windows[0]!.sender
+  const link = { relativeHref: '../../docs/architecture/account-api.md' }
+  await expect(open({ sender: {} }, link)).resolves.toMatchObject({ ok: false })
+  await expect(open({ sender }, { relativeHref: '../../../private.md' })).resolves.toMatchObject({ ok: false })
+  expect(listDirectory).not.toHaveBeenCalled()
+  await expect(open({ sender }, link)).resolves.toEqual({ ok: true, result: null })
+  expect(reference).toHaveBeenCalledWith({
+    action: 'reference', directoryId, path: 'packages/auth/README.md', identity: '1.2.3',
+  })
+  expect(listDirectory.mock.calls.map(([id]) => id)).toEqual([directoryId, directoryId, directoryId])
+  await expect(read({ sender: state.windows[1]!.sender })).resolves.toMatchObject({
+    ok: true, result: { workspaceFile: { directoryId, relativePath: 'docs/architecture/account-api.md' } },
+  })
+})
+
 it('聊天附件由主窗口打开独立预览，重复打开聚焦，内容令牌支持 Range', async () => {
   const sender = {}
   const attachmentId = 'a'.repeat(32)
@@ -187,4 +226,35 @@ it('聊天里的文件库路径解析到与文件库相同的独立预览窗口'
   await preview.open(file)
   expect(state.windows).toHaveLength(1)
   expect(state.windows[0]?.focusCount).toBe(1)
+})
+
+it('受信任的聊天面板能预览附件和文件库卡片', async () => {
+  const sender = {}
+  const readAttachment = vi.fn(async () => ({
+    displayName: '图片', ext: 'png', mime: 'image/png', data: Uint8Array.of(1),
+  }))
+  const resolveLibraryPath = vi.fn(async () => ({
+    preview: { workspaceFile: { directoryId: 'personal' as const, relativePath: '说明.md' }, displayName: '说明', ext: 'md' },
+  }))
+  registerPreviewWindows({
+    mainWindow: () => undefined, uiUrl: 'gugu-desktop://app/desktop.html', preload: '/synthetic/preload.cjs',
+    trustsChatPanel: event => event.sender === sender, trustsProject: async () => false,
+    reference: async () => null, reveal: async () => {}, readAttachment, resolveLibraryPath,
+  })
+  const open = state.handlers.get(previewWindowChannels.open)!
+  const requests = [{ attachmentId: 'a'.repeat(32) }, { libraryPath: '/personal/说明.md' }]
+  for (const request of requests) {
+    await expect(open({ sender: {} }, request)).resolves.toMatchObject({ ok: false, error: { code: 'forbidden' } })
+    await expect(open({ sender }, request)).resolves.toMatchObject({ ok: true })
+  }
+  expect(readAttachment).toHaveBeenCalledOnce()
+  expect(resolveLibraryPath).toHaveBeenCalledOnce()
+  expect(state.windows).toHaveLength(2)
+})
+
+it('原生预览尺寸跨文件格式复用并限制在当前屏幕内', () => {
+  const area = { x: 100, y: 20, width: 800, height: 660 }
+  const lastSize = { width: 920, height: 510 }
+  for (const ext of ['png', 'pdf', 'xlsx'])
+    expect(desktopPreviewBounds({ ext }, area, lastSize)).toMatchObject({ x: 100, y: 95, width: 800, height: 510 })
 })

@@ -138,7 +138,7 @@ const projectInput = z.object({
   project_name: z.string(), start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   client: z.string().optional(), summary: z.string().refine(value => length(value) <= 200).meta({ maxLength: 200 }).nullable().optional(),
   status: z.enum(['pending', 'active', 'done']).optional(), priority: z.enum(['high', 'medium', 'low']).optional(),
-  color: z.enum(['amber', 'sage', 'teal', 'sky', 'indigo', 'lavender', 'rose', 'sunset']).optional(),
+  color: z.enum(PROJECT_COLOR_KEYS).optional(),
   stages: z.array(z.union([z.string().min(1), z.object({ label: z.string().min(1), todos: z.array(z.string().min(1)).optional() }).strict()])).min(1).optional(),
 }).strict()
 export type CreateProjectArguments = z.infer<typeof projectInput>

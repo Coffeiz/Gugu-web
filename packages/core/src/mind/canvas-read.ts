@@ -1,7 +1,7 @@
 import { canvasNoteDisplayTitle } from './note-create.js'
 import { recommendedCanvasSides } from './canvas-layout.js'
 import { strip } from '../shared/values.js'
-import { normalizeGlobalSearchQueries } from '../search/query.js'
+import { normalizeGlobalSearchQueries } from '@gugu/search'
 import { sql, type Kysely, type Selectable } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 import { utc } from '../data/codec.js'

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 import { CoreError } from '@gugu/core'
 import { createLocalFileTree, localEntryKind, moveLocalEntry, removeLocalTree } from '@gugu/fs/node'
@@ -14,11 +14,6 @@ export interface TrashEntry {
 }
 
 const itemId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-
-export function legacyTrashId(owner: string, legacyId: number) {
-  const hash = createHash('sha256').update(`gugu-legacy-trash:${owner}:${legacyId}`).digest('hex')
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`
-}
 
 export function createDiskTrash(
   storage: string,
@@ -57,7 +52,7 @@ export function createDiskTrash(
     })(), new AbortController().signal)
   }
 
-  async function store(owner: string, directory: FileDirectory, relativePath: string, source: string, deletedAt: string) {
+  async function store(owner: string, directory: FileDirectory, relativePath: string, source: string, deletedAt: string, history?: { expected?: string; reverse?: string; trash: 'store' }) {
     const kind = await localEntryKind(storage, source)
     if (!kind) return false
     const id = randomUUID()
@@ -68,43 +63,11 @@ export function createDiskTrash(
     let moved = false
     try {
       await writeDescriptor(tree, entry)
-      moved = await moveLocalEntry(storage, source, `${key}/payload`)
+      moved = await moveLocalEntry(storage, source, `${key}/payload`, history)
       return moved ? entry : false
     } finally {
       if (!moved) await removeLocalTree(storage, key)
     }
-  }
-
-  /** 导入时先写描述再搬正文；旧库写入应在切换窗口暂停。相同清单可从两步之间重试。 */
-  async function importLegacy(owner: string, legacyId: number, directory: FileDirectory, relativePath: string, source: string, deletedAt: string) {
-    const legacyRoot = createLocalFileTree(storage, `${owner}/trash`)
-    const prefix = `${owner}/trash/`
-    if (!Number.isSafeInteger(legacyId) || legacyId <= 0 || !source.startsWith(prefix))
-      throw new CoreError('invalid_request', '旧回收项标识或路径无效')
-    legacyRoot.path(source.slice(prefix.length))
-    createLocalFileTree(storage, await resolveRoot(owner, directory)).path(relativePath)
-    const timestamp = Date.parse(deletedAt)
-    if (!Number.isFinite(timestamp)) throw new CoreError('invalid_request', '旧回收项删除时间无效')
-
-    const id = legacyTrashId(owner, legacyId)
-    const entry: TrashEntry = { id, directory, relativePath, name: posix.basename(relativePath), kind: 'file', deletedAt: new Date(timestamp).toISOString() }
-    const key = item(owner, id)
-    const tree = createLocalFileTree(storage, key)
-    const matches = async () => JSON.stringify(await readDescriptor(owner, id)) === JSON.stringify(entry)
-    if (await info(owner, id)) {
-      if (await matches() && !await localEntryKind(storage, source)) return id
-      throw new CoreError('conflict', '旧回收项与已导入内容冲突')
-    }
-    if (await localEntryKind(storage, source) !== 'file') throw new CoreError('not_found', '旧回收项文件不存在')
-    if (!await tree.ensureRoot()) throw new CoreError('storage_error', '无法初始化回收目录')
-    try { await writeDescriptor(tree, entry) }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      if (!await matches()) throw new CoreError('conflict', '旧回收项与已导入内容冲突')
-    }
-    if (!await moveLocalEntry(storage, source, `${key}/payload`) && !await info(owner, id))
-      throw new CoreError('not_found', '旧回收项文件不存在')
-    return id
   }
 
   return {
@@ -120,8 +83,7 @@ export function createDiskTrash(
     },
     store,
     info,
-    importLegacy,
-    async restore(owner: string, id: string, expectedRoot?: string) {
+    async restore(owner: string, id: string, expectedRoot?: string, history?: { expected?: string; reverse?: string; trash: 'restore' }) {
       const entry = await info(owner, id)
       if (!entry) throw new CoreError('not_found', '回收项不存在')
       const destinationRoot = await resolveRoot(owner, entry.directory)
@@ -130,7 +92,7 @@ export function createDiskTrash(
       const destination = tree.path(entry.relativePath)
       if (!await createLocalFileTree(storage, posix.dirname(destination)).ensureRoot()) return false
       const key = item(owner, id)
-      const restored = await moveLocalEntry(storage, `${key}/payload`, destination)
+      const restored = await moveLocalEntry(storage, `${key}/payload`, destination, history)
       if (restored) await removeLocalTree(storage, key)
       return restored
     },

@@ -1,7 +1,7 @@
-import type { DesktopBridge, DesktopProject, DesktopClient, DesktopCalendarEvent, DesktopCanvas, DesktopCanvasItem, DesktopNote, DesktopReply } from '@gugu/core/desktop'
+import type { DesktopProject, DesktopClient, DesktopCalendarEvent, DesktopCanvas, DesktopCanvasItem, DesktopNote, DesktopReply } from '@gugu/core/desktop'
 import type { DesktopAgentPreferenceKind, DesktopAgentPreferencePatch, DesktopAppearancePreferences, DesktopOnboardingState } from '@gugu/core/desktop'
 import type { DesktopProjectCollection, DesktopProjectDetails, DesktopScheduleCommand, DesktopScheduledTask } from '@gugu/core/desktop'
-import { desktopPreviewRoutes, projectBoardMethods } from '@gugu/desktop-contracts'
+import { desktopPreviewRoutes, projectBoardMethods, type DesktopBridge } from '@gugu/desktop-contracts'
 export type { DesktopTelegramSnapshot, DesktopAgentMediaDimension, DesktopAgentModelCapabilities, DesktopAgentModel, DesktopAgentModelEntry, DesktopAgentModelList, DesktopAgentMessage, DesktopAgentSession, SandboxStatus } from '@gugu/core/desktop'
 export type ProjectRow = DesktopProject
 export type ClientRow = DesktopClient

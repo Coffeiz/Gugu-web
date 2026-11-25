@@ -80,7 +80,7 @@ it('飞书桌面只登记绑定用户私聊，撤权后拒绝入站', async () =
       message: { ...feishuPrivateMessage.message, message_id: 'om_image', parent_id: 'om_other', message_type: 'image', content: '{"image_key":"img_test"}' },
     }
     await connection.onMessage(imageMessage, signal)
-    expect(admit).toHaveBeenNthCalledWith(2, expect.any(String), expect.objectContaining({ eventId: 'om_image', text: '', quotedText: null }),
+    expect(admit).toHaveBeenNthCalledWith(2, expect.objectContaining({ platform: 'feishu', ownerId: 'desktop' }), expect.any(String), expect.objectContaining({ eventId: 'om_image', text: '', quotedText: null }),
       imageMessage.message.chat_id, expect.objectContaining({ files: [expect.objectContaining({ mime: 'image/jpeg', bytes: jpeg })] }))
     const voiceMessage = {
       ...imageMessage,
@@ -91,7 +91,7 @@ it('飞书桌面只登记绑定用户私聊，撤权后拒绝入站', async () =
     expect(transcribe).toHaveBeenCalledWith(expect.objectContaining({
       bytes: expect.any(Uint8Array), mime: 'application/octet-stream', ext: 'opus',
     }), expect.any(AbortSignal), expect.any(Function))
-    expect(admit).toHaveBeenNthCalledWith(3, expect.any(String), expect.objectContaining({ eventId: 'om_voice' }),
+    expect(admit).toHaveBeenNthCalledWith(3, expect.objectContaining({ platform: 'feishu', ownerId: 'desktop' }), expect.any(String), expect.objectContaining({ eventId: 'om_voice' }),
       imageMessage.message.chat_id, expect.objectContaining({ files: [expect.objectContaining({ voice: true, transcript: '飞书语音测试' })] }))
     await connection.onMessage({
       ...imageMessage,
@@ -109,7 +109,7 @@ it('飞书桌面只登记绑定用户私聊，撤权后拒绝入站', async () =
     await connection.onMessage(voiceMessage, signal)
     expect(transcribe).toHaveBeenCalledOnce()
     expect(admit).toHaveBeenCalledTimes(3)
-    expect(admit).toHaveBeenNthCalledWith(1, expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
+    expect(admit).toHaveBeenNthCalledWith(1, expect.objectContaining({ platform: 'feishu', ownerId: 'desktop' }), expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
       eventId: feishuPrivateMessage.message.message_id, text: feishuPrivateText, quotedText: '引用内容',
       scope: expect.objectContaining({ platform: 'feishu', chatType: 'c2c', platformUserId: bot.userId }),
     }), feishuPrivateMessage.message.chat_id, expect.objectContaining({ files: [], authorize: expect.any(Function) }))
@@ -148,7 +148,7 @@ it('飞书桌面按共享群策略登记群收件并启动群会话分发', asyn
     }, new AbortController().signal)
     const dispatch = await groupDispatch.promise
     expect(dispatch.group).toMatchObject({ id: 'oc_group', ownerPlatformUserId: ownerId })
-    expect(admitted).toHaveBeenCalledWith(expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
+    expect(admitted).toHaveBeenCalledWith(expect.objectContaining({ platform: 'feishu', ownerId: 'desktop' }), expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
       eventId: 'om_group_1', scope: expect.objectContaining({ platform: 'feishu', chatType: 'group', chatId: 'oc_group' }),
     }), undefined, expect.objectContaining({ files: [], authorize: expect.any(Function) }))
   } finally { await gateway.stop() }

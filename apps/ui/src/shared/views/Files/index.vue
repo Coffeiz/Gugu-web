@@ -144,6 +144,7 @@
 </template>
 
 <script setup lang="ts">
+import { useFileViewMode } from '@/composables/files/useFileViewMode'
 import SkeletonGate from '@/components/common/feedback/skeleton/SkeletonGate.vue'
 import PageSkeleton from '@/components/common/feedback/skeleton/PageSkeleton.vue'
 
@@ -208,7 +209,7 @@ function navSegmentLabel(segment: NavSeg): string {
 
 // ── 视图状态 ──
 // 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
-const viewMode    = ref<'grid' | 'list'>('grid')
+const viewMode = useFileViewMode('library')
 const loading     = ref(false)
 const mainRef     = ref<HTMLElement | null>(null)
 const workspaceDirectoryPanel = ref<InstanceType<typeof WorkspaceDirectoryPanel> | null>(null)

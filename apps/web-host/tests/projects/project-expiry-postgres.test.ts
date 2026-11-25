@@ -11,23 +11,26 @@ import { readdir } from 'node:fs/promises'
 import { recoverProjectExpiryJournal } from '../../src/modules/projects/lifecycle/expiry.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
-test('隔离数据库中锁被占用时跳过恢复，释放后处理部分清理日志', { skip: !url }, async () => {
+test('隔离数据库中锁被占用时跳过恢复，释放后处理部分清理日志', {
+  skip: !url ? '需要隔离 PostgreSQL' : process.platform !== 'linux' ? '锚定文件系统回归需要 Linux' : false,
+}, async () => {
   const admin = new Pool({ connectionString: url })
   const schema = `expiry_${randomUUID().replaceAll('-', '')}`
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
   const root = await mkdtemp(path.join(tmpdir(), 'gugu-expiry-pg-'))
   const owner = randomUUID(), id = randomUUID()
-  const directory = path.join(root, owner, 'trash'), file = path.join(directory, 'a')
-  const staged = `${file}.gugu-purge-${id}`
+  const sourceDirectory = path.join(root, owner, '.gugu-project-trash', '1')
+  const stagedDirectory = path.join(root, owner, '.gugu-project-purge', id)
+  const file = path.join(sourceDirectory, 'a'), staged = path.join(stagedDirectory, 'a')
   try {
-    await pool.query('CREATE TABLE projects(id int PRIMARY KEY,user_id uuid)')
-    await pool.query('CREATE TABLE files(id int PRIMARY KEY,user_id uuid,path text)')
+    await pool.query('CREATE TABLE projects(id int PRIMARY KEY,user_id uuid,name text,start_date date,created_at timestamptz,deleted_at timestamptz)')
+    await pool.query('CREATE TABLE files(user_id uuid,path text,version int,PRIMARY KEY(user_id,path))')
     await pool.query('CREATE TABLE project_expiry_journals(id uuid PRIMARY KEY,user_id uuid,project_id int,entries json,created_at timestamptz)')
-    await pool.query('INSERT INTO projects VALUES(1,$1)', [owner])
-    await pool.query('INSERT INTO files VALUES(2,$1,$2)', [owner, `${owner}/trash/a`])
-    await pool.query('INSERT INTO project_expiry_journals VALUES($1,$2,1,$3,CURRENT_TIMESTAMP)', [id, owner, JSON.stringify([{ id: 2, path: `${owner}/trash/a` }])])
-    await mkdir(directory, { recursive: true })
+    await pool.query("INSERT INTO projects VALUES(1,$1,'项目','2026-01-01',CURRENT_TIMESTAMP,NULL)", [owner])
+    await pool.query('INSERT INTO files VALUES($1,$2,1)', [owner, `${owner}/trash/a`])
+    await pool.query('INSERT INTO project_expiry_journals VALUES($1,$2,1,$3,CURRENT_TIMESTAMP)', [id, owner, JSON.stringify({ source: `${owner}/.gugu-project-trash/1` })])
+    await mkdir(stagedDirectory, { recursive: true })
     await writeFile(staged, '旧文件')
     const lock = await pool.connect()
     try {
@@ -40,7 +43,8 @@ test('隔离数据库中锁被占用时跳过恢复，释放后处理部分清�
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM project_expiry_journals')).rows[0].n, 0)
     await pool.query('DELETE FROM files')
     await pool.query('DELETE FROM projects')
-    await pool.query('INSERT INTO project_expiry_journals VALUES($1,$2,1,$3,CURRENT_TIMESTAMP)', [id, owner, JSON.stringify([{ id: 2, path: `${owner}/trash/a` }, { id: 3, path: `${owner}/trash/missing` }])])
+    await pool.query('INSERT INTO project_expiry_journals VALUES($1,$2,1,$3,CURRENT_TIMESTAMP)', [id, owner, JSON.stringify({ source: `${owner}/.gugu-project-trash/1` })])
+    await mkdir(stagedDirectory, { recursive: true })
     await writeFile(staged, '待清理')
     let recovered = false
     for (let i = 0; i < 100 && !recovered; i++) {
@@ -59,7 +63,9 @@ test('隔离数据库中锁被占用时跳过恢复，释放后处理部分清�
   }
 })
 
-test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登记文件', { skip: !url, timeout: 30000 }, async () => {
+test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登记文件', {
+  skip: !url ? '需要隔离 PostgreSQL' : process.platform !== 'linux' ? '锚定文件系统回归需要 Linux' : false, timeout: 30000,
+}, async () => {
   const admin = new Pool({ connectionString: url })
   const schema = `expiry_${randomUUID().replaceAll('-', '')}`
   await admin.query(`CREATE SCHEMA "${schema}"`)
@@ -70,7 +76,7 @@ test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登�
   try {
     await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY);
       CREATE TABLE projects(id int PRIMARY KEY,user_id uuid,deleted_at timestamptz);
-      CREATE TABLE files(id int PRIMARY KEY,user_id uuid,project_id int REFERENCES projects(id) ON DELETE CASCADE,path text);
+      CREATE TABLE files(user_id uuid,project_id int REFERENCES projects(id) ON DELETE CASCADE,path text,PRIMARY KEY(user_id,path));
       CREATE TABLE calendar_events(id int PRIMARY KEY,user_id uuid,project_id int);
       CREATE TABLE scheduled_tasks(id int PRIMARY KEY,user_id uuid,event_id int);
       CREATE TABLE rag_index_jobs(id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,pending_source_ids json,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation int NOT NULL,completed_generation int NOT NULL,attempts int NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_error_code text,last_started_at timestamptz,last_succeeded_at timestamptz,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type));
@@ -79,7 +85,7 @@ test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登�
       CREATE TRIGGER pause_delete BEFORE DELETE ON files FOR EACH ROW EXECUTE FUNCTION pause_delete()`)
     await pool.query('INSERT INTO users(id) VALUES($1)', [owner])
     await pool.query("INSERT INTO projects VALUES(1,$1,CURRENT_TIMESTAMP-interval '40 days')", [owner])
-    await pool.query('INSERT INTO files VALUES(2,$1,1,$2)', [owner, `${owner}/trash/a`])
+    await pool.query('INSERT INTO files VALUES($1,1,$2)', [owner, `${owner}/trash/a`])
     await pool.query('INSERT INTO calendar_events VALUES(5,$1,1)', [owner])
     await pool.query('INSERT INTO scheduled_tasks VALUES(6,$1,5)', [owner])
     await mkdir(directory, { recursive: true })
@@ -91,7 +97,7 @@ test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登�
     const exited = new Promise<number | null>(resolve => child!.once('exit', resolve))
     let staged = false
     for (let i = 0; i < 100; i++) {
-      if ((await readdir(directory)).some(name => name.startsWith('a.gugu-purge-'))) { staged = true; break }
+      if ((await readdir(path.join(root, owner, '.gugu-project-purge'))).some(name => name.length === 36)) { staged = true; break }
       await new Promise(resolve => setTimeout(resolve, 50))
     }
     assert.equal(staged, true)
@@ -115,13 +121,13 @@ test('清理进程在暂存后崩溃，恢复后可重新清理并保留未登�
     assert.equal(await readFile(path.join(directory, 'untracked'), 'utf8'), '保留')
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM project_expiry_journals')).rows[0].n, 0)
     await pool.query("INSERT INTO projects VALUES(3,$1,CURRENT_TIMESTAMP-interval '40 days')", [owner])
-    await pool.query('INSERT INTO files VALUES(4,$1,3,$2)', [owner, `${owner}/trash/b`])
+    await pool.query('INSERT INTO files VALUES($1,3,$2)', [owner, `${owner}/trash/b`])
     await writeFile(path.join(directory, 'b'), '正文')
     await pool.query('CREATE TRIGGER pause_delete BEFORE DELETE ON files FOR EACH ROW EXECUTE FUNCTION pause_delete()')
     const cleanup = purgeExpiredProject(pool, root, new Date())
     let secondStaged = false
     for (let i = 0; i < 100; i++) {
-      if ((await readdir(directory)).some(name => name.startsWith('b.gugu-purge-'))) { secondStaged = true; break }
+      if ((await readdir(path.join(root, owner, '.gugu-project-purge'))).some(name => name.length === 36)) { secondStaged = true; break }
       await new Promise(resolve => setTimeout(resolve, 20))
     }
     assert.equal(secondStaged, true)

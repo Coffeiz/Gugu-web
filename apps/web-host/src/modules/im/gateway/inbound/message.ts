@@ -8,7 +8,7 @@ import { assertDurableCanonical, formatGroupMessage, formatQuotedContext, resolv
   type Block, type CanonicalMessage, type ContextReferenceCodec, type CurrentTurnSources, type CurrentUser, type Json, type MessageEntry, type RunIdentity } from '@gugu/core/agent'
 import { createCurrentMessageAttachmentReader } from '../../../agent/context/attachments.js'
 import type { OwnedCurrentMessage } from '../../../agent/context/source.js'
-import { isOwnedFileStorageKey, normalizeFileOwnerId } from '../../../files/store.js'
+import { isOwnedFilePath, normalizeFileOwnerId } from '../../../files/store.js'
 import { imAttachmentScopeKey, type ImAttachmentScope } from './attachments.js'
 import type {ImNativeVoiceTranscript} from '../media/voice.js'
 
@@ -85,13 +85,13 @@ export function createImMessageMaterializer(options: {
     signal?.throwIfAborted()
     if (result.rows.length !== 1) throw new ImMessageMaterializationError()
     const row = result.rows[0]!
-    if (row.attach_id !== attachId || !isOwnedFileStorageKey(identity.ownerId, row.storage_key) || row.extra?.im_ingress_scope !== scopeKey)
+    if (row.attach_id !== attachId || !isOwnedFilePath(identity.ownerId, row.storage_key) || row.extra?.im_ingress_scope !== scopeKey)
       throw new ImMessageMaterializationError()
     return row
   }
   async function readBytes(row: MediaRow, maximum: number, signal?: AbortSignal): Promise<Uint8Array> {
     const size = Number(row.size)
-    if (!Number.isSafeInteger(size) || size < 1 || size > maximum || !isOwnedFileStorageKey(identity.ownerId, row.storage_key)) throw new ImMessageMaterializationError()
+    if (!Number.isSafeInteger(size) || size < 1 || size > maximum || !isOwnedFilePath(identity.ownerId, row.storage_key)) throw new ImMessageMaterializationError()
     const file = await openLocalFile(options.storageRoot, row.storage_key)
     if (!file) throw new ImMessageMaterializationError()
     try {

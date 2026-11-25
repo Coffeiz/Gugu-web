@@ -54,7 +54,7 @@ export function createUserRepository(pool: Pool): {
         accountStatus: row.account_status,
         securityVersion: row.security_version,
         avatarUrl: row.avatar
-          ? `/api/v1/auth/avatar/${row.id}?v=${createHash('sha256').update(row.avatar).digest('hex').slice(0, 16)}`
+          ? `/api/v1/users/${row.id}/avatar?v=${createHash('sha256').update(row.avatar).digest('hex').slice(0, 16)}`
           : null,
         createdAt: row.created_at,
         timezone: row.timezone,

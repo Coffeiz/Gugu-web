@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { normalizeGlobalSearchQueries } from '../../search/query.js'
+import { normalizeGlobalSearchQueries } from '@gugu/search'
 import { strip } from '../../shared/values.js'
 import type { Json, RunIdentity, ToolResult } from '../models.js'
 import type { ToolDefinition } from './contracts.js'

@@ -1,4 +1,4 @@
-import type { DesktopBridge } from '@gugu/core/desktop'
+import type { DesktopBridge } from './account.ts'
 
 export const projectBoardMethods = [
   'projectBoard', 'projectDetails', 'createBoardProject',

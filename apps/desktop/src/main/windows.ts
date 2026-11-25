@@ -6,14 +6,15 @@ import type {
   IpcMainInvokeEvent,
   Rectangle,
   Size,
+  MediaAccessPermissionRequest,
 } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 
-export function createMainWindowSizeStore(directory: string) {
-  const path = join(directory, 'main-window-size.json')
+export function createMainWindowSizeStore(directory: string, filename = 'main-window-size.json') {
+  const path = join(directory, filename)
   return {
     read(): Size | undefined {
       try {
@@ -139,7 +140,26 @@ export function dispatchWindowEdit(contents: Electron.WebContents, action: Appli
   else contents[action]()
 }
 
-export function secureWindow(window: BrowserWindow, openExternal?: (url: string) => void) {
+type MicrophonePermission = {
+  uiUrl: string
+  isGranted: () => boolean
+  request: () => Promise<boolean>
+}
+
+const microphoneWindows = new WeakMap<Electron.WebContents, MicrophonePermission>()
+
+function microphoneFor(contents: Electron.WebContents | null, isMainFrame: boolean | undefined) {
+  if (!contents || !isMainFrame || contents.isDestroyed()) return
+  const permission = microphoneWindows.get(contents)
+  if (permission && contents.getURL() === permission.uiUrl) return permission
+}
+
+function mediaOrigin(value: string) {
+  const url = URL.parse(value)
+  return url ? `${url.protocol}//${url.host}` : undefined
+}
+
+export function secureWindow(window: BrowserWindow, openExternal?: (url: string) => void, microphone?: MicrophonePermission) {
   window.webContents.ipc.on(nativeEditingChannel, (event, focus: unknown) => {
     if (event.senderFrame !== window.webContents.mainFrame) return
     if (focus === 'page' || focus === 'native' || focus === 'editor') editingFocus.set(window.webContents, focus)
@@ -163,11 +183,25 @@ export function secureWindow(window: BrowserWindow, openExternal?: (url: string)
   })
   window.webContents.on('will-navigate', (event) => event.preventDefault())
   window.webContents.on('will-frame-navigate', (event) => event.preventDefault())
-  window.webContents.session.setPermissionRequestHandler(
-    (_contents, _permission, callback) => callback(false),
-  )
-  window.webContents.session.setPermissionCheckHandler(() => false)
   const session = window.webContents.session
+  if (microphone) microphoneWindows.set(window.webContents, microphone)
+  session.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const access = permission === 'media' && microphoneFor(contents, details?.isMainFrame)
+    const media = (details as MediaAccessPermissionRequest | undefined)?.mediaTypes
+    if (!access || details.requestingUrl !== access.uiUrl || media?.length !== 1 || media[0] !== 'audio') {
+      callback(false)
+      return
+    }
+    void access.request().then(
+      granted => callback(granted && microphoneFor(contents, details.isMainFrame) === access),
+      () => callback(false),
+    )
+  })
+  session.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
+    const access = permission === 'media' && microphoneFor(contents, details?.isMainFrame)
+    return !!access && details.mediaType === 'audio'
+      && mediaOrigin(requestingOrigin) === mediaOrigin(access.uiUrl) && access.isGranted()
+  })
   securedDownloadContents.add(window.webContents)
   if (!securedDownloadSessions.has(session)) {
     securedDownloadSessions.add(session)

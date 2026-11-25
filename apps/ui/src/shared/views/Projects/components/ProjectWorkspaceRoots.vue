@@ -3,13 +3,12 @@ import { computed, onScopeDispose, ref, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SelectPopup from '@/components/common/controls/SelectPopup.vue'
 import { useProjectAccess, type ProjectWorkspaceBinding } from '@/api/projects'
-import { errorMessage, showAppError, showAppNotice } from '@/composables/core/useAppToast'
+import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 
 type DirectoryId = `project:${number}` | ProjectWorkspaceBinding['id']
 const props = defineProps({
   projectId: { type: Number, required: true },
-  directoryId: { type: String as PropType<DirectoryId>, required: true },
-  native: Boolean,
+  directoryId: { type: [String, Number] as PropType<DirectoryId>, required: true },
 })
 const emit = defineEmits<{ select: [directoryId: DirectoryId, name?: string] }>()
 const access = useProjectAccess()
@@ -17,12 +16,10 @@ const { t } = useI18n()
 const rows = ref<ProjectWorkspaceBinding[]>([])
 const busy = ref(false)
 const projectRoot = computed(() => `project:${props.projectId}` as const)
-const createOption = 'create-workspace'
 const selectedLabel = computed(() => rows.value.find(row => row.id === props.directoryId)?.name)
 const options = computed(() => [
   { value: projectRoot.value, label: t('filesUi.projectFiles') },
-  ...rows.value.filter(row => row.available).map(row => ({ value: row.id, label: row.name })),
-  { value: createOption, label: t('workspaceUi.createWorkspace') },
+  ...rows.value.filter(row => row.available).map(row => ({ value: String(row.id), label: row.name })),
 ])
 let active = true
 onScopeDispose(() => { active = false })
@@ -38,24 +35,12 @@ async function select(value: string) {
   if (!access.selectWorkspace) return
   busy.value = true
   try {
-    const row = rows.value.find(item => item.id === value && item.available)
-    let id: DirectoryId | undefined = value === projectRoot.value ? projectRoot.value : row?.id
-    if (value === props.directoryId) return
-    if (value === createOption) {
-      if (!props.native) {
-        showAppNotice(t('filesUi.addDesktopWorkspaceNative'))
-        return
-      }
-      id = (await access.pickWorkspace?.()) ?? undefined
-    }
-    if (!id || !active) return
-    await access.selectWorkspace(props.projectId, id)
-    if (!active) return
-    if (id === projectRoot.value || row) emit('select', id, row?.name)
-    else {
-      await refresh()
-      if (active) emit('select', id, rows.value.find(item => item.id === id)?.name)
-    }
+    const row = rows.value.find(item => String(item.id) === value && item.available)
+    const id: DirectoryId | undefined = value === projectRoot.value ? projectRoot.value : row?.id
+    if (id === props.directoryId) return
+    if (id === undefined || !active) return
+    await access.selectWorkspace(props.projectId, id, row?.workspaceId)
+    if (active) emit('select', id, row?.name)
   } catch (error) {
     if (active) showAppError(errorMessage(error))
   } finally {
@@ -72,7 +57,7 @@ void refresh().then(() => {
 
 <template>
   <SelectPopup v-if="access.listWorkspaceBindings" class="workspace-selector"
-    :model-value="directoryId" :options="options" :disabled="busy"
+    :model-value="String(directoryId)" :options="options" :disabled="busy"
     :selected-label="selectedLabel" :aria-label="t('projectWorkspaceUi.select')" @update:model-value="select" />
 </template>
 

@@ -76,8 +76,8 @@ export async function importDesktopBusinessArchive(db: Kysely<Database>, ownerId
           // 旧归档的项目名可能包含路径保留字符，颜色也可能超出当前色板。
           if (typeof fields.name === 'string') fields.name = safeName(fields.name)
           if (typeof fields.color === 'string') {
-            const color = projectColorValue(fields.color)
-            fields.color = projectColorKey(color) ? color : DEFAULT_PROJECT_COLOR
+            const key = projectColorKey(fields.color) ?? projectColorKey(projectColorValue(fields.color))
+            fields.color = projectColorValue(key) ?? DEFAULT_PROJECT_COLOR
           }
           const project = {
             ...prepareProjectCreate(fields), created_at: created,

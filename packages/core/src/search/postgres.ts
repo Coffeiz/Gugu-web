@@ -1,7 +1,5 @@
 import type { Pool } from 'pg'
-import type { GlobalSearchQuery } from './query.js'
-import type { GlobalSearchSource } from './global-search.js'
-import { searchSnippet } from './global-search.js'
+import { searchSnippet, type GlobalSearchQuery, type GlobalSearchSource } from '@gugu/search'
 import { SEARCH_SOURCES } from './sources.js'
 import type { SearchRow, SearchSource } from './sources.js'
 

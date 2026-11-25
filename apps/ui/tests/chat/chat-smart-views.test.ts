@@ -221,6 +221,39 @@ it('多选实时计数和求和，数字与文字输入更新绑定目标', asyn
   }
 })
 
+it.each(['line', 'bar'])('多系列 %s 图表按共用横轴显示各组数值并保留缺测', kind => {
+  const host = render({ version: 1, layout: {
+    type: 'chart', kind, label: '气温', unit: '°C', labels: ['周一', '周二'],
+    series: [{ label: '最高', values: [12, 14] }, { label: '最低', values: [4, null] }],
+  } })
+  const rows = [...host.querySelectorAll('[data-smart-point]')]
+  expect(rows).toHaveLength(2)
+  expect(rows.map(row => row.firstElementChild?.textContent)).toEqual(['周一', '周二'])
+  expect([...rows[0]!.querySelectorAll('[data-smart-series-label]')].map(value => value.textContent)).toEqual(['12°C', '4°C'])
+  expect([...rows[1]!.querySelectorAll('[data-smart-series-label]')].map(value => value.textContent)).toEqual(['14°C', '—'])
+})
+
+it('切换卡片可同时包含单系列柱状图和多系列折线图', () => {
+  const labels = ['周一', '周二']
+  const highest = { label: '最高', values: [12, 14] }
+  const host = render({ version: 1, layout: {
+    type: 'switch', label: '气温', options: [
+      { id: 'overview', label: '总览', children: [
+        { type: 'chart', kind: 'bar', label: '最高温', labels, series: [highest] },
+      ] },
+      { id: 'comparison', label: '对比', children: [
+        { type: 'chart', kind: 'line', label: '温差', labels,
+          series: [highest, { label: '最低', values: [4, 6] }] },
+      ] },
+    ],
+  } })
+  const values = (kind: string) => [...host.querySelectorAll(
+    `[data-smart-chart="${kind}"] [data-smart-point]:first-child [data-smart-series-label]`,
+  )].map(value => value.textContent)
+  expect(values('bar')).toEqual(['12'])
+  expect(values('line')).toEqual(['12', '4'])
+})
+
 it('折线图保留缺测，滑块和数字输入分别筛选绑定图表', async () => {
   const { updateSmartViewControl } = await import('@/components/common/gugu-chat/chatSmartLayout')
   const points = [{ label: '一月', value: 3 }, { label: '二月', value: null }, { label: '三月', value: 7 }]

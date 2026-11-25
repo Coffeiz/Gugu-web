@@ -5,8 +5,8 @@ import { normalizeOwnerId } from '../../shared/owner-context.js'
 import type { FileHandle } from 'node:fs/promises'
 import { openAuthorizedRelativeFile } from '@gugu/core/files/read'
 import { createLocalFileTree, openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
-import { isOwnedFileStorageKey } from './store.js'
-import { projectFileStorageKey } from './paths.js'
+import { isOwnedFilePath } from './store.js'
+import { projectFilePath } from './paths.js'
 import { createDiskTrash } from './trash/disk.js'
 import { readPathDirectoryOverview, resolveFileDirectoryRoot } from '../workspaces/files.js'
 
@@ -229,7 +229,7 @@ const fileProjection = `file.display_name,file.ext,file.space,file.workspace_dir
   file.img_width,file.img_height,file.version`
 
 async function loadFile(pool: Pool, ownerId: string, storageKey: string): Promise<FileRow | null> {
-  if (!isOwnedFileStorageKey(ownerId, storageKey)) return null
+  if (!isOwnedFilePath(ownerId, storageKey)) return null
   const result = await pool.query<FileRow>(
     `SELECT ${fileProjection}
      FROM files file
@@ -248,7 +248,7 @@ export async function openOwnedLocalFile(
   fileName: string,
   mimeType: string,
 ): Promise<FileContentSource | null> {
-  if (!isOwnedFileStorageKey(ownerId, storageKey))
+  if (!isOwnedFilePath(ownerId, storageKey))
     throw new CoreError('not_found', '文件不存在')
 
   const opened = await openAuthorizedRelativeFile(storageKey, key => openLocalFile(storageRoot, key),
@@ -318,7 +318,7 @@ export function createPostgresFileReadOperations(
       let projectFileCount = 0
       let projectFolderCount = 0
       for (const project of projects.rows) {
-        const key = projectFileStorageKey(owner, project.id, project.name, project.start_date, project.created_at)
+        const key = projectFilePath(owner, project.id, project.name, project.start_date, project.created_at)
         const overview = await readPathDirectoryOverview(storageRoot, key)
         projectFileCount += overview.total
         projectFolderCount += overview.totalFolders

@@ -217,10 +217,11 @@ POST /api/v1/auth/login           {username, password} → {access_token, user}
 POST /api/v1/auth/forgot-password
 POST /api/v1/auth/reset-password
 GET  /api/v1/auth/me
-PATCH /api/v1/auth/profile
-POST /api/v1/auth/avatar
+PATCH /api/v1/users/me
+POST /api/v1/auth/password/change
+PUT  /api/v1/users/me/avatar
 GET  /api/v1/auth/quota           查配额（精力系统）
-GET  /api/v1/auth/avatar/{user_id}
+GET  /api/v1/users/{user_id}/avatar
 ```
 
 **管理员认证**（`admin_auth.py`，公开路由）：`POST /admin/auth/login`、`GET /admin/auth/me`。用户名和密码必须通过配置显式提供。

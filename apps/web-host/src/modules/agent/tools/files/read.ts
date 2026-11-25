@@ -2,7 +2,7 @@ import type { Pool, QueryResultRow } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
 import { openLocalFile } from '@gugu/fs/node'
 import type { FilePathLookup, ReadFilePorts } from '@gugu/core/tools'
-import { isOwnedFileStorageKey } from '../../../files/store.js'
+import { isOwnedFilePath } from '../../../files/store.js'
 import type { AgentDispatchLease } from '../../run/dispatch.js'
 
 const TEXT_EXTENSIONS = new Set([
@@ -51,7 +51,7 @@ export function createWebAgentFileReadPort(
       signal.throwIfAborted()
       const row = result.rows[0]
       if (!row || String(row.user_id).toLowerCase() !== expected.ownerId.toLowerCase()
-        || row.attach_id !== attachId || !isOwnedFileStorageKey(expected.ownerId, row.storage_key)) return null
+        || row.attach_id !== attachId || !isOwnedFilePath(expected.ownerId, row.storage_key)) return null
       const sizeBytes = Number(row.size)
       if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) return null
       return {
@@ -74,11 +74,11 @@ export function createWebAgentFileReadPort(
       signal.throwIfAborted()
       if (matched.length !== 1) return null
       const result = await pool.query<FileRow>(`SELECT user_id,path,display_name,ext
-        FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL`, [matched[0]!.storageKey, expected.ownerId])
+        FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL`, [matched[0]!.filePath, expected.ownerId])
       signal.throwIfAborted()
       const row = result.rows[0]
       if (!row || String(row.user_id).toLowerCase() !== expected.ownerId.toLowerCase()
-        || !isOwnedFileStorageKey(expected.ownerId, row.path)) return null
+        || !isOwnedFilePath(expected.ownerId, row.path)) return null
       const type = webAgentFileTextType(String(row.ext ?? ''))
       const base = String(row.display_name ?? '')
       const name = type.extensionless ? base : `${base}.${type.extension}`

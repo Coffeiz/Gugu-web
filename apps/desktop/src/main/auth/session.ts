@@ -1,7 +1,7 @@
 import { createRemoteByokClient, RemoteByokError } from '@gugu/core/byok/client'
 import { byokCommand, byokTarget } from '@gugu/core/byok/contracts'
-import { createRemoteAuthClient, RemoteAuthError } from '@gugu/core/auth/client'
-import { remoteLoginInputSchema, type RemoteAccountState, type RemoteLoginInput } from '@gugu/core/auth/contracts'
+import { bindRemoteSession, createRemoteAuthClient, RemoteAuthError } from '@gugu/auth/client'
+import { remoteLoginInputSchema, type RemoteAccountState, type RemoteLoginInput } from '@gugu/auth/contracts'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import { DesktopError } from '../core-host.js'
 import type { createRemoteSessionStore } from './store.js'
@@ -9,7 +9,7 @@ import type { createRemoteSessionStore } from './store.js'
 export function createRemoteAccountHandlers(
   store: ReturnType<typeof createRemoteSessionStore>,
   client = createRemoteAuthClient(),
-  byok = createRemoteByokClient(),
+  byok = createRemoteByokClient(bindRemoteSession()),
 ) {
   // 登录切换、恢复和退出一次只执行一个，避免旧请求清掉新会话。
   let tail: Promise<unknown> = Promise.resolve()

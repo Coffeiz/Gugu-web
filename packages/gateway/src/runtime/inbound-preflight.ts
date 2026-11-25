@@ -1,7 +1,7 @@
 import { parseImControlCommand } from '@gugu/core/im/shortcut'
 import { handleQqBinding } from '../platforms/qq/binding.js'
 import { handleTelegramBinding } from '../platforms/telegram/binding.js'
-import { casefoldSearchText } from '@gugu/core/search/unicode'
+import { casefoldSearchText } from '@gugu/search'
 import { asciiDecimalDigits, isDecimalDigits } from '@gugu/core/shared/unicode-decimal'
 import type { ImConversationScope } from '../ir/inbound.js'
 

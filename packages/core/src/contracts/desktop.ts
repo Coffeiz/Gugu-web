@@ -1,7 +1,6 @@
 export const DESKTOP_CALENDAR_UNDO_CONTEXT = 'desktop-calendar'
 import type { DisplayItem } from '../agent/models.js'
 import type { ByokCommand, ByokResult, ByokTarget, DesktopAuxiliaryModelCommand, DesktopAuxiliaryModelResult } from '../byok/contracts.js'
-import type { RemoteAccountState, RemoteLoginInput } from '../auth/contracts.js'
 import type { ImGroupAttentionMode, ImGroupReplyMode } from '../im/group-settings.js'
 
 // 仅共享桌面 DTO 和固定能力名称；不依赖 Electron 或 Node。
@@ -575,9 +574,6 @@ export interface DesktopBridge {
   onAgentChatEvent?(callback: (event: DesktopAgentChatEvent) => void): () => void
   terminal(command: DesktopTerminalCommand): Promise<DesktopReply<DesktopTerminalResult>>
   remoteByok(target: ByokTarget, command: ByokCommand): Promise<DesktopReply<ByokResult>>
-  remoteAccount(): Promise<DesktopReply<RemoteAccountState>>
-  remoteLogin(input: RemoteLoginInput): Promise<DesktopReply<RemoteAccountState>>
-  remoteLogout(): Promise<DesktopReply<RemoteAccountState>>
   moveDroppedFiles?(
     directoryId: DesktopFileDirectory, path: string,
     decide: (filename: string, canOverwrite: boolean) => Promise<'skip' | 'keep_both' | 'overwrite'>,

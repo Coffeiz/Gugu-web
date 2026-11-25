@@ -2,7 +2,7 @@ import { normalizeOnboardingState } from '@gugu/core/onboarding'
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 import { enqueuePostgresAgentRagRebuild } from '../agent/rag/jobs.js'
-import { normalizeFileOwnerId, isOwnedFileStorageKey } from '../files/store.js'
+import { normalizeFileOwnerId, isOwnedFilePath } from '../files/store.js'
 import { removeLocalFile } from '../files/storage/removal.js'
 
 interface SeedStateRow extends QueryResultRow { state: unknown }
@@ -34,7 +34,7 @@ export function createPostgresOnboardingReseedOperations(pool: Pick<Pool, 'conne
         const files = await client.query<SeedFileRow>(`SELECT path,size_bytes,deleted_at FROM files
           WHERE user_id=$1 AND project_id=$2 FOR UPDATE`, [ownerId, projectId])
         for (const file of files.rows) {
-          if (!isOwnedFileStorageKey(ownerId, file.path)) throw new Error('引导文件存储归属无效')
+          if (!isOwnedFilePath(ownerId, file.path)) throw new Error('引导文件存储归属无效')
         }
         await client.query('DELETE FROM files WHERE user_id=$1 AND project_id=$2', [ownerId, projectId])
         const deleted = await client.query('DELETE FROM projects WHERE id=$1 AND user_id=$2', [projectId, ownerId])

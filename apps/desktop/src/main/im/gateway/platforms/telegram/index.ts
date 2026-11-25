@@ -273,7 +273,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
           }
           if (admit) {
             if (recordOnly) {
-              const recorded = await admit(eventConnectionId, event, undefined, { files, recordOnly, ownerPlatformUserId: bot.chatId!, authorize: eventAuthorize })
+              const recorded = await admit(connection, eventConnectionId, event, undefined, { files, recordOnly, ownerPlatformUserId: bot.chatId!, authorize: eventAuthorize })
               if (recorded && pendingAsk && pendingAsks && attachmentHost && groupId) {
                 const eventKey = desktopImEventKey(event), eventMs = Date.now()
                 const sealedEvent = await encryption.encryptStringAsync(JSON.stringify({ event, sourceAttentionKind,
@@ -287,10 +287,10 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
             }
             else {
               if (isGroup && groupId) startGroupDispatch(groupId)
-              if (files.length) await admit(eventConnectionId, event, undefined, { files, authorize: eventAuthorize,
+              if (files.length) await admit(connection, eventConnectionId, event, undefined, { files, authorize: eventAuthorize,
                 sourceAttentionKind: sourceAttentionKind ?? undefined, sourceMessageId: payload.attachment_source_message_id ?? undefined })
-              else if (isGroup) await admit(eventConnectionId, event, undefined, { files: [], sourceAttentionKind: sourceAttentionKind ?? undefined, authorize: eventAuthorize })
-              else await admit(eventConnectionId, event)
+              else if (isGroup) await admit(connection, eventConnectionId, event, undefined, { files: [], sourceAttentionKind: sourceAttentionKind ?? undefined, authorize: eventAuthorize })
+              else await admit(connection, eventConnectionId, event)
             }
           }
           return ready

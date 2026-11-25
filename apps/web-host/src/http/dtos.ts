@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export { remoteLoginBodySchema as loginBodySchema } from '@gugu/core/auth/contracts'
+export { remoteLoginBodySchema as loginBodySchema } from '@gugu/auth/contracts'
 
 export const clientCreateBodySchema = z.object({
   name: z.string(),

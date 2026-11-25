@@ -1,12 +1,12 @@
 import type {Pool,PoolClient} from 'pg'
 import type {RunIdentity} from '@gugu/core/agent'
-import {normalizeFileOwnerId,isOwnedFileStorageKey} from '../../../files/store.js'
+import {normalizeFileOwnerId,isOwnedFilePath} from '../../../files/store.js'
 import {withPostgresTransaction} from '../../../../adapters/database/postgres-transaction.js'
 
 export class ImHistoryRetentionError extends Error{constructor(){super('IM 历史保留任务暂不可用');this.name='ImHistoryRetentionError'}}
 const invalid=()=>new ImHistoryRetentionError()
 const sessionNumber=(raw:string|number)=>{const value=Number(raw);if(!/^[1-9]\d*$/.test(String(raw))||!Number.isSafeInteger(value)||value>2147483647)throw invalid();return value}
-function safeKey(owner:string,key:unknown):key is string{return typeof key==='string'&&key.length<=4096&&isOwnedFileStorageKey(owner,key)
+function safeKey(owner:string,key:unknown):key is string{return typeof key==='string'&&key.length<=4096&&isOwnedFilePath(owner,key)
  &&!/[\\\u0000-\u001f]/u.test(key)&&key.split('/').every(part=>part!==''&&part!=='.'&&part!=='..')}
 
 /** 只登记真实删除事务取回的owned附件引用；消息/会话删除失败时本记录也回滚。 */

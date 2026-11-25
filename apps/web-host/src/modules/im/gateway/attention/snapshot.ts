@@ -17,7 +17,7 @@ interface InboundRow { id: number; event_ms: string; sealed_payload: unknown }
 
 /** 真实当前Bot/会话授权 + PG已密封用户事实 + Node加密短窗；未知覆盖不能制造负证据。 */
 export function createPostgresRedisImAttentionSnapshot(options: {
-  pool: Pick<Pool, 'query'>; redis: RedisCommandClient; secretKey: string
+  pool: Pick<Pool, 'query'>; redis: RedisCommandClient; secretKey: string; postgresInbox?: boolean
   acceptedFacts?: ImAttentionAcceptedFacts
 }) {
   const envelope = createImInboundEnvelope(options.secretKey)
@@ -77,20 +77,39 @@ export function createPostgresRedisImAttentionSnapshot(options: {
         }
       } catch { complete = false }
       try {
-        const keys = nodeImAttentionKeys(binding, scope.groupId)
-        // 同一Lua读取marker及窗口，避免分开读取期间trim造成虚假完整。数量超过cap明确截断。
-        const raw = await options.redis.sendCommand(['EVAL', `return {redis.call('GET',KEYS[2]),redis.call('XRANGE',KEYS[1],ARGV[1],ARGV[2],'COUNT',10001)}`,
-          '2', keys.stream, keys.start, `${cutoff}-0`, `${watermarkMs}-18446744073709551615`])
-        if (!Array.isArray(raw) || !Array.isArray(raw[1])) throw invalid()
-        if (typeof raw[0] !== 'string' || !/^\d+$/u.test(raw[0]) || Number(raw[0]) > cutoff) { complete = false; windowTruncated = true }
-        if (raw[1].length > maxRows) { complete = false; windowTruncated = true }
-        for (const row of raw[1].slice(0, maxRows)) {
-          if (!Array.isArray(row) || typeof row[0] !== 'string' || !Array.isArray(row[1])) throw invalid()
-          const fields = row[1] as unknown[], idx = fields.indexOf('data')
-          if (idx < 0 || typeof fields[idx + 1] !== 'string') throw invalid()
-          const sealed: unknown = JSON.parse(fields[idx + 1] as string)
-          if (!object(sealed)) throw invalid()
-          add(row[0], envelope.open(binding, sealed))
+        if (options.postgresInbox) {
+          const rows = await options.pool.query<{ id: string; payload: Record<string, unknown>; first_ms: string | null }>(`
+            SELECT received_ms || '-' || id AS id,payload,
+              (SELECT min(received_ms) FROM gugu_im_inbound_queue
+                WHERE user_id=$1 AND bot_id=$2 AND platform=$3 AND group_id=$4
+                  AND payload IS NOT NULL
+                  AND $5::bigint >= floor(extract(epoch FROM clock_timestamp() - interval '30 minutes') * 1000)) AS first_ms
+            FROM gugu_im_inbound_queue
+            WHERE user_id=$1 AND bot_id=$2 AND platform=$3 AND group_id=$4
+              AND received_ms BETWEEN $5 AND $6 AND payload IS NOT NULL
+            ORDER BY received_ms,id LIMIT 10001`,
+          [scope.ownerId, scope.botId, scope.platform, scope.groupId, cutoff, watermarkMs])
+          if (!rows.rows[0]?.first_ms || Number(rows.rows[0].first_ms) > cutoff || rows.rows.length > maxRows) {
+            complete = false
+            windowTruncated = true
+          }
+          for (const row of rows.rows.slice(0, maxRows)) add(row.id, envelope.open(binding, row.payload))
+        } else {
+          const keys = nodeImAttentionKeys(binding, scope.groupId)
+          // 同一Lua读取marker及窗口，避免分开读取期间trim造成虚假完整。数量超过cap明确截断。
+          const raw = await options.redis.sendCommand(['EVAL', `return {redis.call('GET',KEYS[2]),redis.call('XRANGE',KEYS[1],ARGV[1],ARGV[2],'COUNT',10001)}`,
+            '2', keys.stream, keys.start, `${cutoff}-0`, `${watermarkMs}-18446744073709551615`])
+          if (!Array.isArray(raw) || !Array.isArray(raw[1])) throw invalid()
+          if (typeof raw[0] !== 'string' || !/^\d+$/u.test(raw[0]) || Number(raw[0]) > cutoff) { complete = false; windowTruncated = true }
+          if (raw[1].length > maxRows) { complete = false; windowTruncated = true }
+          for (const row of raw[1].slice(0, maxRows)) {
+            if (!Array.isArray(row) || typeof row[0] !== 'string' || !Array.isArray(row[1])) throw invalid()
+            const fields = row[1] as unknown[], idx = fields.indexOf('data')
+            if (idx < 0 || typeof fields[idx + 1] !== 'string') throw invalid()
+            const sealed: unknown = JSON.parse(fields[idx + 1] as string)
+            if (!object(sealed)) throw invalid()
+            add(row[0], envelope.open(binding, sealed))
+          }
         }
       } catch { complete = false; windowTruncated = true }
       let facts: readonly BotReplyFact[] = []

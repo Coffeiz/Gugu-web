@@ -6,7 +6,7 @@ import {readFile} from 'node:fs/promises'
 import {join} from 'node:path'
 import {createImFileTools} from '../../../../src/modules/im/gateway/agent/files.js'
 import {createImSaveAttachmentTool} from '../../../../src/modules/im/gateway/agent/downloads.js'
-import {personalFileStorageKey} from '../../../../src/modules/workspaces/roots.js'
+import {personalFileRootPath} from '../../../../src/modules/workspaces/roots.js'
 import {createPostgresFileReadOperations} from '../../../../src/modules/files/browse.js'
 import {createImSendFileTool,createToolRegistry} from '@gugu/core/tools'
 import {imAttachmentScopeKey} from '../../../../src/modules/im/gateway/inbound/attachments.js'
@@ -51,7 +51,7 @@ test('QQ 私聊下一轮可保存历史附件，拒绝跨会话、不同机器�
  assert.ok(saved.kind==='completed' && saved.successful)
  const {name,path} = saved.value as {name:string;path:string}
  assert.equal(path,`/personal/下载/${name}`)
- assert.deepEqual(await readFile(join(root,personalFileStorageKey(owner),'下载',name)),data)
+ assert.deepEqual(await readFile(join(root,personalFileRootPath(owner),'下载',name)),data)
  for (const [id,change,restore] of [
    ['another-chat',"UPDATE conversation_messages SET session_id=92 WHERE id=11","UPDATE conversation_messages SET session_id=91 WHERE id=11"],
    ['another-bot',"UPDATE gugu_im_inbound_receipts SET bot_id='92' WHERE message_id=11","UPDATE gugu_im_inbound_receipts SET bot_id='91' WHERE message_id=11"],

@@ -233,9 +233,9 @@ html[data-theme='dark'][data-family] .fpw-body,
 html[data-theme='dark'][data-family] .fp-body {
   background: color-mix(in srgb,var(--surface-base) 88%,#000 12%);
 }
-/* Text/document viewers should follow the shell; image/PDF pixels remain untouched. */
-html[data-theme='dark'][data-family] .fpw-body:has(.tv-wrap) {
-  background: var(--surface-base);
+/* 文本预览和面板留白使用同一层暗色背景。 */
+html[data-theme='dark'][data-family] :is(.fpw-body:has(.tv-wrap), .tv-wrap) {
+  background: var(--glass-card-background);
 }
 html[data-theme='dark'][data-family] .fpw-btn:hover,
 html[data-theme='dark'][data-family] .fp-action-btn:hover {

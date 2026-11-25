@@ -247,10 +247,10 @@ export function createPostgresFileUpdateOperations(pool: Pool, options: {
         committed=true
       } catch (commitError) {
         releaseError=commitError instanceof Error?commitError:new Error('COMMIT 结果未知')
-        const persisted=await pool.query<UpdateRow>('SELECT path,version FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL',[storageKey,userId]).catch(()=>null)
-        const current=persisted?.rows[0]
-        if(String(current?.path??'')===String(after.path)&&Number(current?.version)===Number(after.version)) committed=true
-        else if(String(current?.path??'')===String(before.path)&&Number(current?.version)===Number(before.version)) throw commitError
+        const persisted=await pool.query<UpdateRow>('SELECT path,version FROM files WHERE path=ANY($1::text[]) AND user_id=$2 AND deleted_at IS NULL',[ [...new Set([String(before.path),String(after.path)])],userId]).catch(()=>null)
+        const current=persisted?.rows ?? []
+        if(current.some(row=>String(row.path)===String(after.path)&&Number(row.version)===Number(after.version))) committed=true
+        else if(current.some(row=>String(row.path)===String(before.path)&&Number(row.version)===Number(before.version))) throw commitError
         else {
           preserveMutationForRecovery=true
           throw new CoreError('storage_error','文件修改提交结果暂时无法确认；原文件与目标文件均已保留，请稍后检查文件状态')
@@ -336,7 +336,7 @@ export function createPostgresFileCopyOperations(pool:Pool,options:{storageRoot:
   try{
    await c.query('BEGIN');operation?.signal?.throwIfAborted();await operation?.authorize(c)
    if(operation){await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`${user}:${operation.receipt.operationId}`]);const previous=await readCopyReceipt(c,user,operation.receipt);if(previous){await c.query('COMMIT');committed=true;return {file:previous,replayed:true}}}
-   const srcQ=await c.query<CopyRow>('SELECT * FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE',[storageKey,user]);const src=srcQ.rows[0];if(!src||!isOwnedFileStorageKey(user,String(src.path)))throw new CoreError('not_found','文件不存在')
+   const srcQ=await c.query<CopyRow>('SELECT * FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE',[storageKey,user]);const src=srcQ.rows[0];if(!src||!isOwnedFilePath(user,String(src.path)))throw new CoreError('not_found','文件不存在')
    const projectId=input.projectId,workspaceId=input.workspaceDirectoryId
    if(projectId!==null&&workspaceId!==null)throw new CoreError('invalid_request','项目与 Workspace 目录不能同时指定')
    let project:CopyRow|null=null,workspaceName:string|null=null,space=workspaceId!==null?'workspace':projectId!==null?'project':'personal'
@@ -350,7 +350,7 @@ export function createPostgresFileCopyOperations(pool:Pool,options:{storageRoot:
    if(input.onConflict==='overwrite'){
     const q=await c.query<CopyRow>('SELECT * FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE',[targetPath,user]);target=q.rows[0]??null
     if(!target)throw new CoreError('not_found','要覆盖的文件不存在')
-    if(!isOwnedFileStorageKey(user,String(target.path)))throw new CoreError('not_found','文件不存在')
+    if(!isOwnedFilePath(user,String(target.path)))throw new CoreError('not_found','文件不存在')
     if(String(target.path)===storageKey){
    if(metadata.undoContextId){const ref=`file:${target.path}`,snap={display_name:target.display_name,ext:target.ext,space:target.space,project_id:target.project_id,workspace_directory_id:target.workspace_directory_id,stage_name:target.stage_name,path:target.path,version:Number(target.version),size:target.size,size_bytes:Number(target.size_bytes),mime_type:target.mime_type,img_width:target.img_width,img_height:target.img_height,deleted_at:null};await c.query(`INSERT INTO undo_operations(id,user_id,undo_context_id,group_id,resource,action,target_refs,before_state,after_state,base_versions,artifact_refs,actor_type,status,created_at,expires_at) VALUES($1,$2,$3,$4,'files','create',$5::json,'{}'::json,$6::json,$7::json,'{}'::json,'web','active',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+INTERVAL '30 days')`,[`op-${randomUUID().replaceAll('-','')}`,user,metadata.undoContextId.slice(0,128),`group-${randomUUID().replaceAll('-','')}`,JSON.stringify([{kind:'file',path:target.path}]),JSON.stringify({items:{[ref]:snap}}),JSON.stringify({[ref]:{version:0}})])}
       commitAttempted=true;await c.query('COMMIT');committed=true;const result=response(target,project);await options.publishChanged({ownerId:user,entityId:String(target.path),payload:result,origin:metadata.clientId,operation:'create'}).catch(()=>undefined);return result
@@ -384,7 +384,7 @@ export function normalizeFileOwnerId(value: string): string {
 }
 
 /** 普通存储使用 UUID 路径，旧版数据导入使用同一用户的无连字符目录。 */
-export function isOwnedFileStorageKey(ownerId: string, key: string): boolean {
+export function isOwnedFilePath(ownerId: string, key: string): boolean {
   return key.startsWith(`${ownerId}/`)
     || key.startsWith(`${ownerId.replaceAll('-', '')}/.data-portability/imported/`)
 }

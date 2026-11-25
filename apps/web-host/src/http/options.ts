@@ -140,7 +140,7 @@ import { type FileDeleteOperations, type FileRestoreOperations } from '../module
 import { type FileContentOperations } from '../modules/files/content.js'
 import { type FileUpdateOperations, type FileCopyOperations } from '../modules/files/store.js'
 import { type FileUploadOperations } from '../modules/files/upload.js'
-import type { GlobalSearchOperations } from '@gugu/core'
+import type { GlobalSearchOperations } from '@gugu/search'
 import type { AdminAuthAdapter } from '../modules/admin/auth.js'
 import { type AdminUsersOptions, type AdminUserRiskOptions } from '../modules/admin/users.js'
 import { type AdminUserStatusRouteOptions } from '../modules/admin/users.js'

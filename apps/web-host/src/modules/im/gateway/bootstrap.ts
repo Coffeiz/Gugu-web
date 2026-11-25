@@ -50,6 +50,7 @@ import { createConfiguredImAgentProviderBinding } from './agent/provider.js'
 import { createPostgresImIngress } from './inbound/ingress.js'
 import { createImAgentReconstructor, imActorInputForDispatch } from './agent/reconstruct.js'
 import { createNodeImWorker } from './worker.js'
+import { createPostgresImInbox } from './inbound/postgres-queue.js'
 import { createRedisImPendingAskStore } from './interactions/ask.js'
 import { createPostgresRedisImAttentionSnapshot } from './attention/snapshot.js'
 import { createPostgresImAttentionRuntime } from './attention/runtime.js'
@@ -119,6 +120,7 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
       try {
       const environment = options.environment, redisUrl = options.redisUrl, configPath = options.configOverridePath
       const settings = createImRuntimeSettings(configPath, environment), supportedPlatforms = createImPlatformSettingsReader(environment, configPath)
+      const inbound = createPostgresImInbox(options.pool, options.secretKey)
       const gatewayRedis = createRedisStreamCommands(redisUrl), workerRedis = createRedisStreamCommands(redisUrl)
       cleanup.push(() => gatewayRedis.close(), () => workerRedis.close())
       const access = createPostgresImAccess({ query: (q, p) => options.pool.query(q, p), supportedPlatforms })
@@ -159,7 +161,7 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
         await retired.markLocked(client,ownerId,sessionId)
       }})
       const snapshot = createPostgresRedisImAttentionSnapshot({ pool: options.pool, redis: gatewayRedis, secretKey: options.secretKey,
-        acceptedFacts: createPostgresImAcceptedFactsReader({ pool: options.pool, secretKey: options.secretKey }) })
+        postgresInbox: true, acceptedFacts: createPostgresImAcceptedFactsReader({ pool: options.pool, secretKey: options.secretKey }) })
       const voiceSource = createImAttentionVoiceSource({ pool: options.pool, secretKey: options.secretKey, storageRoot: options.storageRoot, supportedPlatforms })
       const voiceCache = createImVoiceCache({ pool: options.pool, secretKey: options.secretKey, voice,
         async transcribeSelected(source, selected, signal) {
@@ -193,7 +195,7 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
       cleanup.push(() => qq.close())
       const config = createGatewayBotConfig({ pool: options.pool, secretKey: options.secretKey, normalizeOwner: normalizeOwnerId, supportedPlatforms })
       const admission = createPostgresImGatewayAdmission({ pool: options.pool, secretKey: options.secretKey, supportedPlatforms })
-      const connections = createPlatformConnections({ redis: gatewayRedis, secretKey: options.secretKey, sanitizeText: stripThinking,
+      const connections = createPlatformConnections({ redis: gatewayRedis, inbound, secretKey: options.secretKey, sanitizeText: stripThinking,
         qqSocket: createQqSocketFactory({ allowDirect: true }), feishuNetwork: () => createFeishuWsNetwork({ allowDirect: true }),
         ...options.testing?.platform, report,
         services: () => ({ controls: controls.ports, admission, attachments, callback: (...args) => native.callback(...args), prepareQq: qq.prepare,
@@ -404,13 +406,23 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
         invalidateCredential: (ownerId, serverId) => options.mcpRuntime!.invalidate(ownerId, serverId) })
       sessionDelete=createImSessionDelete({pool:options.pool,secretKey:options.secretKey,pendingAsks,cancellation,
         wakeDispatch:()=>runtime.wake('dispatch'),wakeInteractions:()=>runtime.wake('interaction'),wakeMaintenance:()=>runtime.wake('maintenance'),diagnose:report})
-      const worker = createNodeImWorker({ secretKey: options.secretKey, commands: workerRedis, ingress: workerIngress, concurrency: 1,
-        ownership: { runtime: 'node', pythonGatewayStopped: true, pythonImConsumerStopped: true }, diagnose: report })
+      const workerOptions = { secretKey: options.secretKey, ingress: workerIngress, concurrency: 1,
+        ownership: { runtime: 'node' as const, pythonGatewayStopped: true, pythonImConsumerStopped: true }, diagnose: report }
+      const postgresWorker = createNodeImWorker({ ...workerOptions, inbound })
+      const legacyWorker = createNodeImWorker({ ...workerOptions, commands: workerRedis })
+      const worker = {
+        async start() { await legacyWorker.start(); await postgresWorker.start() },
+        async stop() {
+          const results = await Promise.allSettled([legacyWorker.stop(), postgresWorker.stop()])
+          if (results.some(result => result.status === 'rejected')) throw new Error('Node IM 入站消费者停止失败')
+        },
+        health: () => ({ ...postgresWorker.health(), legacy: legacyWorker.health() }),
+      }
       supervisor = createGatewaySupervisor({ read: config.read, subscribe: config.subscribe, connect: connections.connect, report })
       return { supervisor, worker, reflection, pauseIngress: connections.pauseIngress,
         async drainRuns() { await Promise.all([dispatchWorker.close(), scans.close(), interaction.close()]) },
         scanDispatch: scans.scanDispatch, recoverDeliveries: scans.recoverDeliveries,
-        async maintain(signal:AbortSignal){await historyRetention.scan(signal)},
+        async maintain(signal:AbortSignal){await historyRetention.scan(signal); await inbound.clearCompletedPayloads()},
         pumpPending: signal => ingress.pumpPendingAsks(signal).then(() => undefined), pumpInteractions: interaction.pump,
         async close() {
           const results = await Promise.allSettled([...cleanup].reverse().map(close => Promise.resolve().then(close)))

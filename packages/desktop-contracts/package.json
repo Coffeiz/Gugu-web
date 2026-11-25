@@ -8,6 +8,7 @@
     "./file-preview": "./src/file-preview.ts"
   },
   "devDependencies": {
+    "@gugu/auth": "workspace:*",
     "@gugu/core": "workspace:*"
   }
 }

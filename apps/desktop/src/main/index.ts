@@ -1,4 +1,4 @@
-import { matchFolderSearchHits } from '@gugu/core'
+import { matchFolderSearchHits } from '@gugu/search'
 import { desktopTrashTarget } from '../../../../packages/core/src/runtime/desktop-shell-trash.js'
 import { applicationMenuChannels, type ApplicationMenuCommand } from '@gugu/desktop-contracts'
 import { buildApplicationMenu, buildStatusMenu } from './application-menu.js'
@@ -20,7 +20,7 @@ import { createDesktopWechatPairing } from './im/connect/platforms/wechat/index.
 import { createNodeProviderTransport, desktopTransportOptions } from '@gugu/core/providers/node'
 import { createDesktopImDispatch } from './im/gateway/delivery/dispatch.js'
 import { startDesktopPreviewAgent } from './preview-agent.js'
-import { createRemoteAuthClient } from '@gugu/core/auth/client'
+import { bindRemoteSession, createRemoteAuthClient } from '@gugu/auth/client'
 import { createRemoteByokClient } from '@gugu/core/byok/client'
 import { directDesktopFetch } from './network.js'
 import { resolveDesktopSystemProxy } from './proxy.js'
@@ -41,6 +41,7 @@ import { bindDesktopScheduledIm } from './schedules/im.js'
 import { scheduleHandlers } from './schedules/ipc.js'
 import { deliverLocalReminder, startLocalReminders } from './schedules/reminders.js'
 import { DESKTOP_CHANNELS, type DesktopAppearancePreferences, type DesktopProjectDetails } from '@gugu/core/desktop'
+import { registerChatFabWindow } from './chat-fab-window.js'
 import { registerPreviewWindows } from './preview-windows.js'
 import { registerProjectWindows } from './project-windows.js'
 import { createDroppedFileReferences } from './files/dropped-references.js'
@@ -61,6 +62,7 @@ import {
   screen,
   session,
   shell,
+  systemPreferences,
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
@@ -105,6 +107,7 @@ protocol.registerSchemesAsPrivileged([
       standard: true,
       secure: true,
       supportFetchAPI: true,
+      stream: true,
       corsEnabled: true,
     },
   },
@@ -608,9 +611,18 @@ else {
       const mainWindowSize = createMainWindowSizeStore(dataDirectory)
       let mainWindow: BrowserWindow | undefined
       let mainWindowLoad: Promise<void> | undefined
+      const chatFab = registerChatFabWindow({
+        uiUrl: trustedUiUrl,
+        preload: join(app.getAppPath(), 'dist/preload/chat-fab.cjs'),
+        panelPreload: preload,
+        createDroppedReference: droppedReferences.create,
+        mainWindow: () => mainWindow,
+        enabled: () => !smoke && !closing && !quitting && !process.env.WAYLAND_DISPLAY,
+      })
       host.onAgentRunChanged((sessionId, _runId, interactionChanged) => {
         if (mainWindow && !mainWindow.isDestroyed())
           mainWindow.webContents.send(DESKTOP_CHANNELS.agentRunChanged, sessionId, interactionChanged)
+        chatFab.sendToPanel(DESKTOP_CHANNELS.agentRunChanged, sessionId, interactionChanged)
       })
       const createWindow = async () => {
         const size = smoke ? undefined : mainWindowSize.read()
@@ -618,6 +630,7 @@ else {
           windowOptions(preload, smoke, size ? { size, workArea: screen.getPrimaryDisplay().workAreaSize } : undefined),
         )
         mainWindow = window
+        chatFab.watchMain(window)
         if (!smoke) window.on('close', () => {
           try {
             mainWindowSize.save(window.getNormalBounds())
@@ -632,6 +645,10 @@ else {
         })
         secureWindow(window, url => {
           void shell.openExternal(url).catch(() => { console.warn('无法打开外部链接') })
+        }, {
+          uiUrl: trustedUiUrl,
+          isGranted: () => process.platform !== 'darwin' || systemPreferences.getMediaAccessStatus('microphone') === 'granted',
+          request: async () => process.platform !== 'darwin' || await systemPreferences.askForMediaAccess('microphone'),
         })
         try {
           mainWindowLoad = window.loadURL(devUiUrl ?? uiUrl)
@@ -694,9 +711,7 @@ else {
           return updated
         },
         ...resourceHandlers(host, resolveModelProxy),
-        ...agentSessionHandlers(host, agentModel, event => {
-          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(DESKTOP_CHANNELS.agentChatEvent, event)
-        }, resolveEmbedding,
+        ...agentSessionHandlers(host, agentModel, undefined, resolveEmbedding,
           attachIds => removeDesktopAgentAttachmentFiles(dataDirectory, attachIds), workspaceCommands),
         ...agentAttachments,
         ...telegramHandlers(gateway),
@@ -758,7 +773,7 @@ else {
         [DESKTOP_CHANNELS.personalSmtp]: personalSmtp.command,
         ...desktopTerminalHandlers(host, files.personalRoot),
         ...scheduleHandlers(host, deliverLocalReminder),
-        ...createRemoteAccountHandlers(remoteSessionStore, createRemoteAuthClient(remoteFetch), createRemoteByokClient(remoteFetch)),
+        ...createRemoteAccountHandlers(remoteSessionStore, createRemoteAuthClient(remoteFetch), createRemoteByokClient(bindRemoteSession(remoteFetch))),
       }
       if (devUiUrl && previewSocket && previewSecret) {
         const previewAgent = await startDesktopPreviewAgent(previewSocket, previewSecret, handlers, () => app.quit(),
@@ -790,9 +805,11 @@ else {
         readProject, dataDirectory, isWorkspaceBoundToProject: files.isWorkspaceBoundToProject,
       })
       const previewWindowManager = registerPreviewWindows({
-        mainWindow: () => mainWindow, uiUrl: trustedUiUrl, preload,
+        mainWindow: () => mainWindow, uiUrl: trustedUiUrl, preload, dataDirectory,
         trustsProject: projectWindows.trusts,
+        trustsChatPanel: chatFab.trustsPanel,
         reference: command => files.handlers[DESKTOP_CHANNELS.files]!(command),
+        listDirectory: (directoryId, path) => files.handlers[DESKTOP_CHANNELS.files]!({ action: 'list', directoryId, path }) as ReturnType<NonNullable<Parameters<typeof registerPreviewWindows>[0]['listDirectory']>>,
         resolveLibraryPath: files.resolvePresentation,
         readAttachment: id => readDesktopAgentAttachment(host, dataDirectory, id),
         reveal: ({ directoryId, relativePath: path, identity }) =>
@@ -818,9 +835,17 @@ else {
           return null
         })
       })
+      const chatFabPanelChannels = new Set<string>([
+        DESKTOP_CHANNELS.agentSessions, DESKTOP_CHANNELS.agentAttachment, DESKTOP_CHANNELS.agentModel,
+        DESKTOP_CHANNELS.auxiliaryModel, DESKTOP_CHANNELS.files, DESKTOP_CHANNELS.appearance, DESKTOP_CHANNELS.updateAppearance,
+        DESKTOP_CHANNELS.createDroppedFileReference, DESKTOP_CHANNELS.openDroppedFileReference,
+        DESKTOP_CHANNELS.calendar, DESKTOP_CHANNELS.qqPairing, DESKTOP_CHANNELS.feishuPairing,
+        DESKTOP_CHANNELS.wechatPairing, DESKTOP_CHANNELS.telegramGateway,
+      ])
       registerDesktopIpc(ipcMain, handlers, {
         authorize: async (event, channel, args) =>
           (!!mainWindow && trustedCaller(event, [mainWindow], trustedUiUrl))
+          || (chatFab.trustsPanel(event) && chatFabPanelChannels.has(channel))
           || await projectWindows.trusts(event, channel, args[0])
           || previewWindowManager.trusts(event, channel, args[0]),
         onResult: (event, channel, result) => {
@@ -920,7 +945,11 @@ else {
           if (!smoke) await Promise.all(gateways.map(gateway => gateway.resume()))
         }).catch(error => report('host.start_failed', { error }))
       })
-      app.on('activate', () => openMainWindow())
+      app.on('activate', () => {
+        // 独立聊天可见时，应用激活不应额外恢复或聚焦工作台。
+        if (chatFab.hasVisibleDetachedWindow()) return
+        openMainWindow()
+      })
       if (process.platform === 'darwin' || process.platform === 'win32') {
         const assets = join(app.getAppPath(), 'assets')
         const icon = nativeImage.createFromPath(join(assets, 'icon.png'))

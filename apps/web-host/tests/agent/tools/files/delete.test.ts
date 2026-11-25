@@ -26,7 +26,7 @@ test('delete_file 经 Web lease 注册器只软删 owner 文件并保留 Undo �
     await operation?.authorize({ query: async () => ({ rows: [{}], rowCount: 1 }) } as never)
     return { result: resultValue, replayed: false }
   } }
-  const files = { async list() { return [{ storageKey, name: '计划.md', path: '/personal/计划.md' }] } }
+  const files = { async list() { return [{ filePath: storageKey, name: '计划.md', path: '/personal/计划.md' }] } }
   const port = createWebAgentFileDeletePort(pool as never, operations, lease, files)
   const registry = createToolRegistry({ groups: [{ id: 'files', name: '文件', tools: [createDeleteFileTool(port)] }], authorize: async () => true })
   const call = { id: 'delete', name: 'delete_file', input: { file: '/personal/计划.md' } }
@@ -57,7 +57,7 @@ test('delete_file 通过当前 lease 的文件库清单解析逻辑路径，再�
   const files = { async list(current: typeof identity) {
     listed++
     assert.equal(current.ownerId, identity.ownerId)
-    return [{ storageKey, name: '计划.md', path: '/personal/计划.md' }]
+    return [{ filePath: storageKey, name: '计划.md', path: '/personal/计划.md' }]
   } }
   const port = createWebAgentFileDeletePort(pool as never, operations, lease, files)
   const registry = createToolRegistry({ groups: [{ id: 'files', name: '文件', tools: [createDeleteFileTool(port)] }], authorize: async () => true })
@@ -129,7 +129,7 @@ test('delete_file 批量经原子领域端口预校验完整 owner 集合，缺�
       return { result: { success: true, deleted_count: 2, results: [] }, replayed: false }
     },
   }
-  const files = { async list() { return paths.map((value, index) => ({ storageKey: value, name: `${index}.md`, path: `/personal/${index ? 'b' : 'a'}.md` })).slice(0, missing ? 1 : 2) } }
+  const files = { async list() { return paths.map((value, index) => ({ filePath: value, name: `${index}.md`, path: `/personal/${index ? 'b' : 'a'}.md` })).slice(0, missing ? 1 : 2) } }
   const port = createWebAgentFileDeletePort(pool as never, operations, lease, files)
   const registry = createToolRegistry({ groups: [{ id: 'files', name: '文件', tools: [createDeleteFileTool(port)] }], authorize: async () => true })
   const batch = { id: 'batch', name: 'delete_file', input: { files: ['/personal/a.md', '/personal/b.md'] } }

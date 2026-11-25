@@ -125,7 +125,11 @@ export function useChatAttachments(options: {
       _recTimer = setInterval(() => { recordSecs.value++; if (recordSecs.value >= 60) stopRecord() }, 1000)
     } catch (e: any) {
       _recStream?.getTracks().forEach(t => t.stop()); _recStream = null
-      options.onError(i18n.global.t(e?.name === 'NotAllowedError' ? 'chatUi.microphoneDenied' : 'chatUi.recordingFailed') + (e?.name === 'NotAllowedError' || !e?.message ? '' : ` ${e.message}`))
+      if (e?.name === 'NotAllowedError') {
+        options.onError(i18n.global.t('guguDesktop' in window ? 'chatUi.desktopMicrophoneDenied' : 'chatUi.microphoneDenied'))
+      } else {
+        options.onError(i18n.global.t('chatUi.recordingFailed') + (e?.message ? ` ${e.message}` : ''))
+      }
     }
   }
   function stopRecord()   { if (recording.value && _recorder) { _recCancelled = false; _recorder.stop() } }   // 结束并发送

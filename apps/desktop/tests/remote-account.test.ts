@@ -1,14 +1,17 @@
+import { bindRemoteSession } from '@gugu/auth/client'
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { createRemoteByokClient } from '@gugu/core/byok/client'
-import { createRemoteAuthClient, RemoteAuthError } from '@gugu/core/auth/client'
-import type { RemoteSession, RemoteUser } from '@gugu/core/auth/contracts'
+import { createRemoteByokClient as createRemoteByokClientWithTransport } from '@gugu/core/byok/client'
+import { createRemoteAuthClient, RemoteAuthError } from '@gugu/auth/client'
+import type { RemoteSession, RemoteUser } from '@gugu/auth/contracts'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import { createRemoteSessionStore } from '../src/main/auth/store.js'
 import { createRemoteAccountHandlers } from '../src/main/auth/session.js'
+
+const createRemoteByokClient = (request: typeof fetch) => createRemoteByokClientWithTransport(bindRemoteSession(request))
 
 const dirs: string[] = []
 afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { force: true, recursive: true }))) })

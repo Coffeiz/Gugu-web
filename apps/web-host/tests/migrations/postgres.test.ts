@@ -46,7 +46,7 @@ test('空库统一迁移只读检查、整体回滚、串行落库并拒绝结�
         EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='users' AND column_name='storage_limit_bytes') AS "storageLimit"
     `)
     assert.deepEqual(removedSchema.rows[0], {
-      folders: null, fileId: false, filePath: true, fileStorageKey: false, fileFolderId: false, workspaceFolderId: false, storageLimit: false,
+      folders: null, fileId: false, filePath: true, fileStorageKey: false, fileFolderId: false, workspaceFolderId: false, storageLimit: true,
     })
     assert.deepEqual((await pool.query(`SELECT a.attname AS column_name
       FROM pg_index i JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey)
@@ -60,10 +60,10 @@ test('空库统一迁移只读检查、整体回滚、串行落库并拒绝结�
         EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='users' AND column_name='quota_window_started_at') AS "tokenWindow"
     `)
     assert.deepEqual(retainedQuotas.rows[0], { tokenLimits: true, searchLimit: true, tokenWindow: true })
-    const removedQuotaTables = await pool.query<{ ledgers: string | null; events: string | null }>(`
+    const restoredQuotaTables = await pool.query<{ ledgers: string | null; events: string | null }>(`
       SELECT to_regclass('storage_quota_ledgers')::text AS ledgers, to_regclass('storage_quota_events')::text AS events
     `)
-    assert.deepEqual(removedQuotaTables.rows[0], { ledgers: null, events: null })
+    assert.deepEqual(restoredQuotaTables.rows[0], { ledgers: 'storage_quota_ledgers', events: 'storage_quota_events' })
     const owner = randomUUID()
     await pool.query('INSERT INTO users(id,username,email,hashed_password) VALUES ($1,$2,$3,$4)',
       [owner, `path-${owner}`, `${owner}@example.invalid`, 'synthetic'])
@@ -130,7 +130,6 @@ test('已有旧文件夹结构的迁移库可先通过旧版本校验，再升�
       VALUES ($1,'保留.txt','txt','project',$2,$3,$4) RETURNING id`, [owner, project!.id, folder!.id, storageKey])
     await mkdir(dirname(join(storageRoot, storageKey)), { recursive: true })
     await writeFile(join(storageRoot, storageKey), '旧文件正文')
-    assert.equal(await readFile(join(storageRoot, storageKey), 'utf8'), '旧文件正文')
     let legacyMindRefId: number | null = null, legacyMindTextId: number | null = null
     if (process.platform === 'linux') {
       const { rows: [legacyMindRef] } = await pool.query<{ id: number }>(`INSERT INTO mind_nodes(
@@ -144,6 +143,7 @@ test('已有旧文件夹结构的迁移库可先通过旧版本校验，再升�
       legacyMindRefId = legacyMindRef!.id
       legacyMindTextId = legacyMindText!.id
     }
+    assert.equal(await readFile(join(storageRoot, storageKey), 'utf8'), '旧文件正文')
     const { rows: [session] } = await pool.query<{ id: number }>(
       'INSERT INTO conversation_sessions(user_id,title) VALUES ($1,$2) RETURNING id', [owner, '路径迁移夹具'],
     )

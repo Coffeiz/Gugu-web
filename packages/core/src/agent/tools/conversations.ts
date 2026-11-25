@@ -90,7 +90,7 @@ export function createConversationSearchTool(port:ConversationSearchPort):ToolDe
  const schema=z.object({query:z.string().optional(),keyword:z.string().optional(),queries:z.array(z.string()).optional(),mode:z.enum(['OR','AND']).optional(),limit:z.number().int().safe().optional()}).passthrough().refine(value=>['query','keyword','queries'].filter(key=>Object.hasOwn(value,key)).length<=1)
  return {definition:{name:'search_conversations',schema:{type:'function',function:{name:'search_conversations',description:'搜索历史对话；不传关键词时列出最近对话。',parameters:{type:'object',properties:{query:{type:'string'},keyword:{type:'string'},queries:{type:'array',items:{type:'string'}},mode:{type:'string',enum:['OR','AND']},limit:{type:'integer'}},oneOf:[{required:['query'],not:{anyOf:[{required:['keyword']},{required:['queries']}]}},{required:['keyword'],not:{anyOf:[{required:['query']},{required:['queries']}]}},{required:['queries'],not:{anyOf:[{required:['query']},{required:['keyword']}]}},{not:{anyOf:[{required:['query']},{required:['keyword']},{required:['queries']}]}}]}}}},effect:'read',strictArrayFields:['queries'],validate:input=>schema.safeParse(input),
   async execute(input,scope){
-   const {normalizeGlobalSearchQueries}=await import('../../search/query.js')
+   const {normalizeGlobalSearchQueries}=await import('@gugu/search')
    const args=input as z.infer<typeof schema>,raw=args.queries?.length?args.queries:[args.query||args.keyword||''],terms:string[]=[]
    for(const value of raw){terms.push(...value.trim().split(/\s+/u).filter(Boolean));if(terms.length>=8)break}
    const queries=normalizeGlobalSearchQueries('',terms),limit=Math.max(1,Math.min(args.limit||6,20))

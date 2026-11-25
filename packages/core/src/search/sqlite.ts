@@ -1,6 +1,6 @@
 import { sql, type Kysely } from 'kysely'
 import { dataContext } from '../contracts/index.js'
-import type { GlobalSearchSource } from './global-search.js'
+import type { GlobalSearchSource } from '@gugu/search'
 import { SEARCH_SOURCES } from './sources.js'
 
 const contains = (term: string) => '%' + term.replace(/[\\%_]/gu, '\\$&') + '%'

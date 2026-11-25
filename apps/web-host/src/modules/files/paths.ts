@@ -21,7 +21,7 @@ function projectPathSegments(projectId: number, name: string, startDate: unknown
 }
 
 /** 项目磁盘目录与 Shell 挂载共用同一套命名规则。 */
-export function projectFileStorageKey(
+export function projectFilePath(
   ownerId: string,
   projectId: number,
   name: string,
@@ -49,7 +49,7 @@ export async function readPostgresProjectPathKey(
   projectId: number,
 ): Promise<string> {
   const project = await readOwnedProjectPathRow(client, ownerId, projectId)
-  return projectFileStorageKey(ownerId, projectId, project.name, project.start_date, project.created_at)
+  return projectFilePath(ownerId, projectId, project.name, project.start_date, project.created_at)
 }
 
 export async function readProjectObjectLocation(

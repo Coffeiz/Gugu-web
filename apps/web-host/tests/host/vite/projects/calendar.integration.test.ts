@@ -65,12 +65,13 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
       deleted_at timestamptz
     );
     CREATE TABLE files (
-      id serial PRIMARY KEY, user_id uuid NOT NULL, display_name varchar(300) NOT NULL,
+      user_id uuid NOT NULL, path varchar(500) NOT NULL, display_name varchar(300) NOT NULL,
       ext varchar(20) NOT NULL, space varchar(20) NOT NULL, project_id integer,
       workspace_directory_id integer, stage_name varchar(100), mind_map_id integer,
-      storage_key varchar(500) NOT NULL, version integer NOT NULL, size varchar(50),
+      version integer NOT NULL, size varchar(50),
       size_bytes bigint NOT NULL, mime_type varchar(200), img_width integer, img_height integer,
-      created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz
+      created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz,
+      PRIMARY KEY(user_id,path)
     );
     CREATE TABLE calendar_events (
       id serial PRIMARY KEY, user_id uuid NOT NULL, title varchar(300) NOT NULL,
@@ -117,17 +118,16 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
   const projectId = inserted.rows[0]!.id
   const storageRoot = await mkdtemp(join(tmpdir(), 'gugu-project-calendar-vite-'))
   storageRoots.push(storageRoot)
-  const fileKey = `${ownerId}/个人文件/vite.md`
-  const fileOnDisk = join(storageRoot, fileKey)
+  const filePath = `${ownerId}/个人文件/vite.md`
+  const fileOnDisk = join(storageRoot, filePath)
   await mkdir(join(storageRoot, ownerId, '个人文件'), { recursive: true })
   await writeFile(fileOnDisk, '旧正文')
-  const fileInserted = await pool.query<{ id: number }>(
-    `INSERT INTO files (user_id,display_name,ext,space,stage_name,storage_key,version,size,size_bytes,
+  await pool.query(
+    `INSERT INTO files (user_id,path,display_name,ext,space,stage_name,version,size,size_bytes,
        mime_type,created_at,updated_at)
-     VALUES ($1,'Vite 文档','md','personal','',$2,1,'6 B',6,'text/markdown',$3,$3) RETURNING id`,
-    [ownerId, fileKey, stamp],
+     VALUES ($1,$2,'Vite 文档','md','personal','',1,'6 B',6,'text/markdown',$3,$3)`,
+    [ownerId, filePath, stamp],
   )
-  const fileId = fileInserted.rows[0]!.id
 
   const projectEvents: string[] = []
   const updateRuntime = createPostgresProjectUpdateRuntime(
@@ -160,8 +160,8 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
   const calendarRuntime = await createPostgresRuntime({ url: databaseUrl!, schema })
   calendarRuntimes.push(calendarRuntime)
   const eventStore = calendarCreateStore(calendarRuntime, postCommit)
-  const fileEvents: number[] = []
-  const fileDeleteEvents: number[] = []
+  const fileEvents: string[] = []
+  const fileDeleteEvents: string[] = []
   const app = createApp({
     appName: '合成集成测试 Host',
     isReady: async () => true,
@@ -181,10 +181,10 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
     fileDeletes: createPostgresFileDeleteOperations(pool, {
       storageRoot,
       async publishChanged(event) {
-        const committed = await pool.query<{ storage_key: string; deleted_at: Date | null; version: number }>(
-          'SELECT storage_key,deleted_at,version FROM files WHERE id=$1 AND user_id=$2', [event.entityId, event.ownerId],
+        const committed = await pool.query<{ path: string; deleted_at: Date | null; version: number }>(
+          'SELECT path,deleted_at,version FROM files WHERE path=$1 AND user_id=$2', [`${ownerId}/trash/Vite 文档.md`, event.ownerId],
         )
-        assert.equal(committed.rows[0]?.storage_key, `${ownerId}/trash/Vite 文档.md`)
+        assert.equal(committed.rows[0]?.path, `${ownerId}/trash/Vite 文档.md`)
         assert.ok(committed.rows[0]?.deleted_at)
         assert.equal(committed.rows[0]?.version, 3, '删除事件只能在版本提交后发布')
         fileDeleteEvents.push(event.entityId)
@@ -194,7 +194,7 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
       storageRoot,
       fileSyncEnabled: false,
       async publishChanged(event) {
-        const committed = await pool.query('SELECT version FROM files WHERE id=$1 AND user_id=$2', [event.entityId, event.ownerId])
+        const committed = await pool.query('SELECT version FROM files WHERE path=$1 AND user_id=$2', [event.entityId, event.ownerId])
         assert.equal(committed.rows[0]?.version, 2, '正文事件只能在文件事务提交后发布')
         fileEvents.push(event.entityId)
       },
@@ -247,6 +247,7 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
       'x-undo-context-id': 'vite-integration-tab',
       'x-client-id': 'vite-integration-client',
     }
+    const filePathQuery = new URLSearchParams({ path: filePath })
 
     const unauthenticated = await fetch(`${base}/api/v1/projects/${projectId}`, {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
@@ -264,33 +265,33 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
     const projectFilePath = join(storageRoot, ...projectFileKey.split('/'))
     await mkdir(dirname(projectFilePath), { recursive: true })
     await writeFile(projectFilePath, '项目关联正文')
-    const unauthenticatedFileWrite = await fetch(`${base}/api/v1/files/${fileId}/content`, {
+    const unauthenticatedFileWrite = await fetch(`${base}/api/v1/files/by-path/content?${filePathQuery}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ content: '未认证正文', version: 1 }),
     })
     assert.equal(unauthenticatedFileWrite.status, 401)
-    const fileWrite = await fetch(`${base}/api/v1/files/${fileId}/content`, {
+    const fileWrite = await fetch(`${base}/api/v1/files/by-path/content?${filePathQuery}`, {
       method: 'PUT', headers, body: JSON.stringify({ content: '更新正文', version: 1 }),
     })
     assert.equal(fileWrite.status, 200)
     assert.equal((await fileWrite.json() as { version: number }).version, 2)
     const persistedFile = await pool.query<{ version: number; size_bytes: number }>(
-      'SELECT version,size_bytes::int FROM files WHERE id=$1 AND user_id=$2', [fileId, ownerId],
+      'SELECT version,size_bytes::int FROM files WHERE path=$1 AND user_id=$2', [filePath, ownerId],
     )
     assert.deepEqual(persistedFile.rows[0], { version: 2, size_bytes: Buffer.byteLength('更新正文') })
     assert.equal(await readFile(fileOnDisk, 'utf8'), '更新正文')
-    assert.deepEqual(fileEvents, [fileId])
+    assert.deepEqual(fileEvents, [filePath])
 
-    const unauthenticatedFileDelete = await fetch(`${base}/api/v1/files/${fileId}`, {
+    const unauthenticatedFileDelete = await fetch(`${base}/api/v1/files/by-path?${filePathQuery}`, {
       method: 'DELETE', headers: { 'content-type': 'application/json' },
     })
     assert.equal(unauthenticatedFileDelete.status, 401)
-    const fileDelete = await fetch(`${base}/api/v1/files/${fileId}`, { method: 'DELETE', headers })
+    const fileDelete = await fetch(`${base}/api/v1/files/by-path?${filePathQuery}`, { method: 'DELETE', headers })
     assert.equal(fileDelete.status, 204)
-    const deletedFile = await pool.query<{ storage_key: string; version: number; deleted_at: Date | null }>(
-      'SELECT storage_key,version,deleted_at FROM files WHERE id=$1 AND user_id=$2', [fileId, ownerId],
+    const deletedFile = await pool.query<{ path: string; version: number; deleted_at: Date | null }>(
+      'SELECT path,version,deleted_at FROM files WHERE path=$1 AND user_id=$2', [`${ownerId}/trash/Vite 文档.md`, ownerId],
     )
-    assert.equal(deletedFile.rows[0]?.storage_key, `${ownerId}/trash/Vite 文档.md`)
+    assert.equal(deletedFile.rows[0]?.path, `${ownerId}/trash/Vite 文档.md`)
     assert.equal(deletedFile.rows[0]?.version, 3)
     assert.ok(deletedFile.rows[0]?.deleted_at)
     assert.equal(await readFile(join(storageRoot, ownerId, 'trash', 'Vite 文档.md'), 'utf8'), '更新正文')
@@ -299,7 +300,7 @@ test('Vite→Node Host→随机 PostgreSQL schema 完成项目、日历与正文
        WHERE user_id=$1 AND undo_context_id='vite-integration-tab' AND resource='files' AND action='delete'`, [ownerId],
     )
     assert.equal(fileUndo.rows[0]?.count, 1)
-    assert.deepEqual(fileDeleteEvents, [fileId])
+    assert.deepEqual(fileDeleteEvents, [filePath])
 
     const create = await fetch(`${base}/api/v1/events`, {
       method: 'POST', headers,

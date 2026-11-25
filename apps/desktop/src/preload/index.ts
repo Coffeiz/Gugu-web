@@ -1,3 +1,4 @@
+import { chatFabChannels } from '../chat-fab-channels.js'
 import {
   applicationEditKeys, applicationMenuChannels,
   type ApplicationEditAction, type ApplicationMenuBridge, type ApplicationMenuCommand,
@@ -7,7 +8,8 @@ import { createNativeFileDragGuard } from './native-file-drag.js'
 import { previewWindowChannels, projectWindowChannels, type PreviewWindowBridge, type ProjectWindowBridge } from '@gugu/desktop-contracts'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
-import type { DesktopBridge, DesktopProjectCollection } from '@gugu/core/desktop'
+import type { DesktopProjectCollection } from '@gugu/core/desktop'
+import type { DesktopBridge } from '@gugu/desktop-contracts'
 import type { DesktopAppearancePreferences } from '@gugu/core/desktop'
 
 let droppedPaths: string[] = []
@@ -229,3 +231,40 @@ const previewWindow: PreviewWindowBridge = {
   },
 }
 contextBridge.exposeInMainWorld('guguPreviewWindow', previewWindow)
+
+contextBridge.exposeInMainWorld('guguChatFabHost', {
+  attach: () => ipcRenderer.invoke(chatFabChannels.attach),
+  onPanelDetached(listener: (detached: boolean) => void) {
+    const receive = (_event: unknown, detached: boolean) => listener(detached)
+    ipcRenderer.on(chatFabChannels.panelDetached, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.panelDetached, receive)
+  },
+  panelGeometryDone: (id: number) => ipcRenderer.send(chatFabChannels.panelGeometryDone, id),
+  onPanelGeometry(listener: (geometry: unknown) => void) {
+    const receive = (_event: unknown, geometry: unknown) => listener(geometry)
+    ipcRenderer.on(chatFabChannels.panelGeometry, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.panelGeometry, receive)
+  },
+  setExpanded: (expanded: boolean) => ipcRenderer.send(chatFabChannels.panelExpanded, expanded),
+  panelReady: () => ipcRenderer.send(chatFabChannels.panelReady),
+  panelEntered: () => ipcRenderer.send(chatFabChannels.panelEntered),
+  panelClosing: () => ipcRenderer.send(chatFabChannels.panelClosing),
+  panelClose: () => ipcRenderer.send(chatFabChannels.panelClose),
+  setReferenceDrag: (active: boolean) => ipcRenderer.send(chatFabChannels.referenceDrag, active),
+  setChatVisible: (visible: boolean) => ipcRenderer.send(chatFabChannels.chatVisible, visible),
+  onDroppedReference(listener: (reply: unknown) => void) {
+    const receive = (_event: unknown, reply: unknown) => listener(reply)
+    ipcRenderer.on(chatFabChannels.droppedReference, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.droppedReference, receive)
+  },
+  onCloseChat(listener: (animated: boolean) => void) {
+    const receive = (_event: Electron.IpcRendererEvent, animated?: boolean) => listener(animated === true)
+    ipcRenderer.on(chatFabChannels.closeChat, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.closeChat, receive)
+  },
+  onOpenChat(listener: () => void) {
+    const receive = () => listener()
+    ipcRenderer.on(chatFabChannels.openChat, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.openChat, receive)
+  },
+})

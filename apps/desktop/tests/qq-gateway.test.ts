@@ -74,7 +74,7 @@ it('QQ 绑定消息只用于认证，随后只登记绑定用户的私聊', asyn
     expect(await delivery.send(reply)).toBe('rejected')
     expect(outbound).toHaveLength(3)
     await onEvent('C2C_MESSAGE_CREATE', qqPrivateMessage, signal)
-    expect(admit).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
+    expect(admit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
       eventId: qqPrivateMessage.id, text: qqPrivateMessage.content,
       scope: expect.objectContaining({ platform: 'qq', chatType: 'c2c', platformUserId: qqPrivateMessage.author.user_openid }),
     }))
@@ -93,7 +93,7 @@ it('QQ 绑定消息只用于认证，随后只登记绑定用户的私聊', asyn
     await onEvent('GROUP_AT_MESSAGE_CREATE', { ...groupMessage, id: 'passive-other-bot', mentions: [{ bot: true, is_you: false }] }, signal)
     await onEvent('GROUP_AT_MESSAGE_CREATE', { ...groupMessage, id: 'passive-unknown-bot', mentions: [{ bot: true }] }, signal)
     expect(admit.mock.calls.slice(1)).toEqual(['passive-normal', 'passive-other-bot', 'passive-unknown-bot'].map(eventId => [
-      expect.any(String), expect.objectContaining({ eventId }), undefined, expect.objectContaining({ recordOnly: true }),
+      expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), expect.any(String), expect.objectContaining({ eventId }), undefined, expect.objectContaining({ recordOnly: true }),
     ]))
     expect(groupDelivery).toBeUndefined()
     await onEvent('GROUP_AT_MESSAGE_CREATE', { ...groupMessage, author: { member_openid: 'other' } }, signal)
@@ -101,22 +101,22 @@ it('QQ 绑定消息只用于认证，随后只登记绑定用户的私聊', asyn
     await onEvent('GROUP_AT_MESSAGE_CREATE', groupMessage, signal)
     expect(admit).toHaveBeenCalledTimes(6)
     expect(groupDelivery?.group?.id).toBe('group-test')
-    expect(admit).toHaveBeenLastCalledWith(groupDelivery?.connectionId, expect.objectContaining({
+    expect(admit).toHaveBeenLastCalledWith(expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), groupDelivery?.connectionId, expect.objectContaining({
       botMentioned: true, scope: expect.objectContaining({ chatType: 'group', chatId: 'group-test' }),
     }))
     bot.groupReplyMode = 'reply_all'
     await onEvent('GROUP_MESSAGE_CREATE', { ...groupMessage, id: 'unmentioned', mentions: [] }, signal)
     expect(admit).toHaveBeenCalledTimes(7)
-    expect(admit).toHaveBeenLastCalledWith(groupDelivery?.connectionId, expect.objectContaining({
+    expect(admit).toHaveBeenLastCalledWith(expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), groupDelivery?.connectionId, expect.objectContaining({
       eventId: 'unmentioned', botMentioned: false,
     }))
 
     await onEvent('GROUP_AT_MESSAGE_CREATE', { ...groupMessage, id: 'member-message', author: { member_openid: 'other' } }, signal)
     expect(admit).toHaveBeenCalledTimes(8)
-    expect(admit).toHaveBeenLastCalledWith(groupDelivery?.connectionId, expect.objectContaining({
+    expect(admit).toHaveBeenLastCalledWith(expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), groupDelivery?.connectionId, expect.objectContaining({
       scope: expect.objectContaining({ chatId: 'group-test', platformUserId: 'other' }),
     }))
-    const member = admit.mock.lastCall?.[1]
+    const member = admit.mock.lastCall?.[2]
     if (!member || !groupDelivery?.group) throw new Error('群成员消息未准入')
     expect(await groupDelivery.group.authorizeMessage(member)).toBe(true)
     bot.groupMessageFormat = 'markdown'
@@ -135,10 +135,10 @@ it('QQ 绑定消息只用于认证，随后只登记绑定用户的私聊', asyn
     const { mentions: _mentions, ...atOnly } = groupMessage
     await onEvent('GROUP_AT_MESSAGE_CREATE', { ...atOnly, id: 'at-event-only', content: '' }, signal)
     expect(admit).toHaveBeenCalledTimes(callsBeforeAtOnly + 1)
-    expect(admit).toHaveBeenLastCalledWith(groupDelivery.connectionId, expect.objectContaining({
+    expect(admit).toHaveBeenLastCalledWith(expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), groupDelivery.connectionId, expect.objectContaining({
       eventId: 'at-event-only', text: '@咕咕', qqAtEventOnly: true, botMentioned: false,
     }))
-    expect(await groupDelivery.group.authorizeMessage(admit.mock.lastCall![1])).toBe(true)
+    expect(await groupDelivery.group.authorizeMessage(admit.mock.lastCall![2])).toBe(true)
 
   } finally { await gateway.stop() }
 })
@@ -248,7 +248,7 @@ it.each([
       await onEvent('GROUP_AT_MESSAGE_CREATE', {
         id: 'record', group_openid: 'other-group', author: { member_openid: 'owner' }, content: '测试仅记录',
       }, new AbortController().signal)
-      expect(admit).toHaveBeenCalledExactlyOnceWith(expect.any(String), expect.objectContaining({ text: '测试仅记录' }), undefined,
+      expect(admit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), expect.any(String), expect.objectContaining({ text: '测试仅记录' }), undefined,
         expect.objectContaining({ recordOnly: true, files: [] }))
       expect(dispatch.mock.calls.filter(([options]) => options.group)).toHaveLength(1)
     }

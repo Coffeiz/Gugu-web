@@ -1,4 +1,4 @@
-import { projectFileStorageKey } from '../files/paths.js'
+import { projectFilePath } from '../files/paths.js'
 import { readPathDirectoryOverview } from '../workspaces/files.js'
 import { createProjectListing as createCoreProjectListing, createProjectGetter as createCoreProjectGetter,
   createProjectFileCountListing as createCoreProjectFileCountListing } from '@gugu/core'
@@ -21,7 +21,7 @@ function createPathProjectFileCountReader(pool: Pick<Pool, 'query'>, storageRoot
     const counts: Array<{ projectId: number; fileCount: number }> = []
     for (const row of rows) {
       signal?.throwIfAborted()
-      const key = projectFileStorageKey(ownerId, row.id, row.name, row.start_date, row.created_at)
+      const key = projectFilePath(ownerId, row.id, row.name, row.start_date, row.created_at)
       const { total } = await readPathDirectoryOverview(storageRoot, key, signal)
       counts.push({ projectId: row.id, fileCount: total })
     }

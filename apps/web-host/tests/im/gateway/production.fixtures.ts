@@ -1,5 +1,6 @@
 import { agentPromptDefaults } from '@gugu/core/agent/context/prompts'
 import { byokBindings } from '@gugu/database/postgres/migrations/0021_byok_bindings'
+import { imInboundQueue } from '@gugu/database/postgres/migrations/0046_im_inbound_queue'
 import { agentReasoningSql } from '@gugu/database/postgres/migrations/0012_agent_reasoning'
 import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import { imReflectionSql } from '@gugu/database/postgres/migrations/0014_im_reflection'
@@ -75,6 +76,7 @@ export async function createImProductionFixture(options:{python:string;databaseU
   for(const statement of Object.values(imReflectionSql))await pool.query(statement)
   await pool.query(agentReasoningSql.agentReasoningActive)
   await byokBindings.apply(pool)
+  await imInboundQueue.apply(pool)
   core=await createPostgresRuntime({url:databaseUrl,schema,maxConnections:6})
   async function insert(table:string,overrides:Record<string,unknown>){
    const meta=source.metadata[table]

@@ -12,7 +12,7 @@
     </div>
     <div v-if="top" :style="{ height: Math.max(0, top - 2) + 'px', flexShrink: 0 }" aria-hidden="true" />
     <RuntimeFolderListRow v-for="folder in visibleFolders" :key="folder.id" :item="folder"
-      :open-folder="openFolder" :folder-list-icon="folderListIcon" :folder-accent-color="folderAccentColor"
+      :open-folder="openFolder"
       :runtime-id="folderLayoutKey(folder)" runtime-surface-id="files:surface:browser"
       :runtime-abilities="[]" />
     <slot />
@@ -34,7 +34,7 @@ import { runtime } from '@/interaction/runtime'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const { t } = useI18n()
-const { contents, sortedContents, sortKey, sortDir, onSortSelect, folderListIcon, folderAccentColor,
+const { contents, sortedContents, sortKey, sortDir, onSortSelect,
   folderLayoutKey, openFolder, loading, layoutCollection, viewMode } = props.context
 const headers = computed(() => [
   { key: 'name', label: t('filesViewUi.name') },

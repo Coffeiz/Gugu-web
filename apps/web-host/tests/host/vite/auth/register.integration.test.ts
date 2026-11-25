@@ -191,11 +191,11 @@ test('Vite→Node Host 注册用户并播种本地引导内容', {
     })
     assert.equal(seedResult.state.guide.enabled, true)
     const seededFiles = await pool.query<{ path: string }>(
-      'SELECT path FROM files WHERE user_id=$1 ORDER BY id', [registered.user.id],
+      'SELECT path FROM files WHERE user_id=$1 ORDER BY path', [registered.user.id],
     )
     const contents = await Promise.all(seededFiles.rows.map(file => readFile(join(storageRoot, ...file.path.split('/')), 'utf8')))
-    assert.match(contents[0]!, /^# 给未来的自己\n/)
-    assert.match(contents[1]!, /^# 可以删掉我\n/)
+    assert.ok(contents.some(content => /^# 给未来的自己\n/.test(content)))
+    assert.ok(contents.some(content => /^# 可以删掉我\n/.test(content)))
 
     await pool.query('ALTER TABLE files ADD CONSTRAINT synthetic_reject_new_files CHECK (size_bytes < 0) NOT VALID')
     const failedSeedRegistration = await fetch(`${base}/auth/register`, {

@@ -1,3 +1,5 @@
+import { createProfileUpdater } from '../../../src/modules/auth/account/profile-update.js'
+import { createPostgresProfileUpdateStore } from '../../../src/modules/auth/account/profile-store.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'
@@ -159,19 +161,23 @@ test('profile PATCH uses the authenticated identity and does not touch storage b
     isReady: async () => true,
     userAuth: userAuth(),
     profile: {
-      pool: {
-        async connect() {
-          return {
-            async query(sql: string) {
-              statements.push(sql)
-              if (sql.startsWith('SELECT'))
-                return { rows: [{ timezone: 'UTC', hashed_password: 'unused', security_version: 1 }] }
-              return { rows: [] }
-            },
-            release() {},
-          }
-        },
-      } as never,
+      updateProfile: createProfileUpdater({
+        ...createPostgresProfileUpdateStore({
+          async connect() {
+            return {
+              async query(sql: string) {
+                statements.push(sql)
+                if (sql.startsWith('SELECT'))
+                  return { rows: [{ timezone: 'UTC', hashed_password: 'unused', security_version: 1 }] }
+                return { rows: [] }
+              },
+              release() {},
+            }
+          },
+        } as never),
+        async verifyPassword() { throw new Error('不应验证密码') },
+        async hashPassword() { throw new Error('不应计算密码哈希') },
+      }),
       secret,
       lookupUser: async (id) => userAuth().lookupUser(id),
       async bumpContextRevision() {},
@@ -179,11 +185,11 @@ test('profile PATCH uses the authenticated identity and does not touch storage b
     },
   })
   try {
-    const unauthorized = await app.inject({ method: 'PATCH', url: '/api/v1/auth/profile', payload: {} })
+    const unauthorized = await app.inject({ method: 'PATCH', url: '/api/v1/users/me', payload: {} })
     assert.equal(unauthorized.statusCode, 401)
     assert.equal(statements.length, 0)
 
-    const response = await app.inject({ method: 'PATCH', url: '/api/v1/auth/profile', headers: auth, payload: {} })
+    const response = await app.inject({ method: 'PATCH', url: '/api/v1/users/me', headers: auth, payload: {} })
     assert.equal(response.statusCode, 200)
     assert.equal(response.json().id, ownerId)
     assert.deepEqual(statements, ['BEGIN', 'SELECT timezone, hashed_password, security_version FROM users WHERE id = $1 FOR UPDATE', 'COMMIT'])

@@ -2,7 +2,7 @@ import { CoreError } from '@gugu/core'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { WriteRequestMetadata } from '../../app.js'
 import { writeRequestMetadata } from '../../http/request.js'
-import { isOwnedFileStorageKey, normalizeFileOwnerId } from './store.js'
+import { isOwnedFilePath, normalizeFileOwnerId } from './store.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -166,7 +166,7 @@ export function createPostgresFileContentOperations(
         )
         const before = found.rows[0]
         if (!before) throw new CoreError('not_found', '文件不存在')
-        if (!isOwnedFileStorageKey(ownerId, before.path)) throw new CoreError('not_found', '文件不存在')
+        if (!isOwnedFilePath(ownerId, before.path)) throw new CoreError('not_found', '文件不存在')
         await lockFileSyncPath(client, ownerId, before.path)
         const mime = (before.mime_type ?? '').toLowerCase()
         if (!TEXT_EXTS.has(before.ext.toLowerCase()) && !mime.startsWith('text/')
@@ -551,13 +551,13 @@ export function createPostgresXlsxPreviewOperations(pool: Pick<Pool, 'query'>, s
   })
 
   async function ownedXlsx(ownerId: string, storageKey: string): Promise<PreviewFileRow> {
-    if (!isOwnedFileStorageKey(ownerId, storageKey)) throw new CoreError('not_found', '文件不存在')
+    if (!isOwnedFilePath(ownerId, storageKey)) throw new CoreError('not_found', '文件不存在')
     const result = await pool.query<PreviewFileRow>(
       'SELECT path,ext,version FROM files WHERE path=$1 AND user_id=$2 AND deleted_at IS NULL',
       [storageKey, ownerId],
     )
     const file = result.rows[0]
-    if (!file || !isOwnedFileStorageKey(ownerId, file.path)) throw new CoreError('not_found', '文件不存在')
+    if (!file || !isOwnedFilePath(ownerId, file.path)) throw new CoreError('not_found', '文件不存在')
     if ((file.ext || '').toLowerCase() !== 'xlsx') throw new XlsxPreviewError(415, '仅支持 XLSX 文件')
     return file
   }

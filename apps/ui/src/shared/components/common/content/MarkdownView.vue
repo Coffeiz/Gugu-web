@@ -149,14 +149,6 @@ onBeforeUnmount(() => {
 }
 .md-view :deep(.md-table-scroll > table) { margin: 0; }
 
-.md-view :deep(code:not(pre code)) {
-  font-family: var(--font-mono, var(--font-family-mono));
-  font-size: 0.88em;
-  color: var(--content-primary);
-  background: color-mix(in srgb, var(--action-primary) 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--action-outline) 50%, transparent);
-  border-radius: 5px; padding: 1px 5px;
-}
 .md-view :deep(blockquote) {
   margin: 7px 0; padding: 2px 0 2px 10px;
   border-left: 2.5px solid var(--color-primary); color: var(--text-secondary);

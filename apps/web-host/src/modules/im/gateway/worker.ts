@@ -6,6 +6,7 @@ import { RedisMessageLeaseStore } from '../../../workers/redis-message-lease.js'
 import { createRedisStreamCommands, RedisStreamCommandError } from '../../../adapters/cache/redis-stream-commands.js'
 import { createImInboundEnvelope } from './inbound/envelope.js'
 import { NODE_IM_INBOUND_STREAM, type NodeImBotBinding } from './inbound/inbox.js'
+import type { createPostgresImInbox } from './inbound/postgres-queue.js'
 import type { createPostgresImIngress } from './inbound/ingress.js'
 
 type Commands = ReturnType<typeof createRedisStreamCommands>
@@ -17,10 +18,9 @@ function bindingOf(payload: Record<string, unknown>): NodeImBotBinding {
   return { ownerId: payload.owner_user_id, botId: payload.bot_id, platform: payload.platform as NodeImBotBinding['platform'] }
 }
 
-/** 独立Node Stream消费者；只在IM消息/调度事务提交后ACK，不消费Python队列。 */
+/** Node 消费者只在 IM 消息及调度事务提交后确认入站。 */
 export function createNodeImWorker(options: {
   secretKey: string
-  commands: Commands
   ingress: Pick<ReturnType<typeof createPostgresImIngress>, 'handle'> & Partial<Pick<ReturnType<typeof createPostgresImIngress>, 'prepare' | 'handleBatch'>> & {
     prepareAdmitted?: ReturnType<typeof createPostgresImIngress>['prepare']
   }
@@ -29,18 +29,23 @@ export function createNodeImWorker(options: {
   /** 部署必须显式停止旧消费者；不同consumer group本身不能防双回复。 */
   ownership: { runtime: 'node'; pythonGatewayStopped: boolean; pythonImConsumerStopped: boolean }
   diagnose(code: 'queue_unavailable' | 'message_failed', error?: unknown): void
-}) {
+} & ({ inbound: Pick<ReturnType<typeof createPostgresImInbox>, 'consume'>; commands?: never }
+  | { inbound?: never; commands: Commands })) {
   const envelope = createImInboundEnvelope(options.secretKey)
   const controller = new AbortController()
   const batched = typeof options.ingress.prepare === 'function' && typeof options.ingress.prepareAdmitted === 'function' && typeof options.ingress.handleBatch === 'function'
   if ((options.ingress.prepare !== undefined || options.ingress.prepareAdmitted !== undefined || options.ingress.handleBatch !== undefined) && !batched)
     throw new TypeError('Node IM 批次准备和处理端口必须同时配置')
-  const consumerName = randomUUID()
-  const consumer = new WorkerConsumer({ queue: new RedisStreamQueue(options.commands, NODE_IM_INBOUND_STREAM, group, consumerName,
-    id => ({ id, payload: { __invalid_stream_payload: true } })),
-    leases: new RedisMessageLeaseStore(options.commands), concurrency: options.concurrency, createOwner: randomUUID,
+  const storage = options.inbound ? options.inbound.consume(controller.signal) : {
+    queue: new RedisStreamQueue(options.commands, NODE_IM_INBOUND_STREAM, group, randomUUID(),
+      id => ({ id, payload: { __invalid_stream_payload: true } })),
+    leases: new RedisMessageLeaseStore(options.commands),
+    stateKey: (id: string) => `im:node:state:${id}`,
+  }
+  const consumer = new WorkerConsumer({
+    ...storage,
+    concurrency: options.concurrency, createOwner: randomUUID,
     onFailure: error => options.diagnose('message_failed', error),
-    stateKey: id => `im:node:state:${id}`,
     conversationKey(message) {
       try {
         const b = bindingOf(message.payload), p = message.payload
@@ -83,7 +88,7 @@ export function createNodeImWorker(options: {
       if (options.ownership.runtime !== 'node' || options.ownership.pythonGatewayStopped !== true || options.ownership.pythonImConsumerStopped !== true)
         throw new Error('Node IM 消费归属尚未切换')
       status = 'starting'
-      try { await options.commands.sendCommand(['XGROUP', 'CREATE', NODE_IM_INBOUND_STREAM, group, '0', 'MKSTREAM'], controller.signal) }
+      try { if (options.commands) await options.commands.sendCommand(['XGROUP', 'CREATE', NODE_IM_INBOUND_STREAM, group, '0', 'MKSTREAM'], controller.signal) }
       catch (error) {
         if (!(error instanceof RedisStreamCommandError) || error.code !== 'busy_group') { status = 'stopped'; throw new Error('Node IM 消费组创建失败') }
       }
@@ -114,7 +119,7 @@ export function createNodeImWorker(options: {
         controller.abort()
         // 中断阻塞读后排空在途事务；不删队列、租约或其他运行时状态。
         const draining = consumer.close()
-        try { await options.commands.close(); await loop } finally { await draining; status = 'stopped' }
+        try { await options.commands?.close(); await loop } finally { await draining; status = 'stopped' }
       })()
     },
   }

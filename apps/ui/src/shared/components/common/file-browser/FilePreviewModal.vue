@@ -4,7 +4,10 @@
     <Transition name="fp" :duration="{ enter: 420, leave: 260 }">
       <div v-if="show && !!file" class="fp-root" :style="{ zIndex: myZ }" @mousedown.capture="raise">
         <div class="fp-overlay" @click="$emit('close')" />
-        <div class="fp-panel" :style="panelStyle">
+        <div ref="panelRef" class="fp-panel" :style="panelStyle">
+          <button type="button" class="fp-width-handle" :aria-label="t('viewerUi.resizePanel')"
+            @pointerdown.prevent="startPanelResize" @pointermove="movePanelResize" @lostpointercapture="finishPanelResize"
+            @keydown.left.prevent="resizePanelBy(24)" @keydown.right.prevent="resizePanelBy(-24)" />
           <!-- 顶栏 -->
           <div ref="panelHeaderRef" class="fp-header">
             <div class="fp-title">
@@ -61,7 +64,6 @@
 <script setup lang="ts">
 import { ref, watch, computed, onUnmounted, nextTick, type PropType } from 'vue'
 import { useRouter } from 'vue-router'
-import type { FileMeta } from '@/stores/filesCache'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useFileOpenAccess } from '@/services/fileOpenAccess'
@@ -73,12 +75,14 @@ import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import PdfViewer   from '@/components/common/viewers/PdfViewer.vue'
 
 import { CLIENT_ID, filesApi } from '@/services/api'
+import { useImageFileWatch } from '@/composables/files/useImageFileWatch'
 import { usePathFileAccess } from '@/services/pathFileAccess'
 import { isUnauthorizedResponse } from '@/services/authSession'
 import { isImageExt, isTextExt, isVideoExt, isPreviewAffectedByFileEvent, type PreviewFile } from '@/stores/preview'
 import { nextZ, registerEsc } from '@/composables/core/windowz'
 import { usePreviewBlobCache, withPreviewCacheBust as withCacheBust } from '@/composables/shared/usePreviewBlobCache'
 import { useI18n } from 'vue-i18n'
+import { readPreviewWindowSize, savePreviewWindowSize } from '@/utils/previewWindowSize'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
 import { useUiStore } from '@/stores/ui'
 
@@ -115,11 +119,42 @@ const isVectorImage = computed(() => props.file?.ext?.toUpperCase() === 'SVG')
 const panelHeaderRef = ref<HTMLElement | null>(null)
 const vectorAspect = ref<number | null>(null)
 const vectorPanelWidth = ref<number | null>(null)
-const panelStyle = computed(() => (
-  isVectorImage.value && vectorPanelWidth.value
-    ? { width: `${vectorPanelWidth.value}px` }
-    : undefined
-))
+const panelRef = ref<HTMLElement | null>(null)
+const viewportWidth = ref(window.innerWidth)
+const userPanelWidth = ref(readPreviewWindowSize('drawer')?.width)
+const clampPanelWidth = (width: number) => Math.round(Math.min(viewportWidth.value * 0.92, Math.max(320, width)))
+const panelStyle = computed(() => {
+  if (userPanelWidth.value) return { width: `${clampPanelWidth(userPanelWidth.value)}px` }
+  return isVectorImage.value && vectorPanelWidth.value ? { width: `${vectorPanelWidth.value}px` } : undefined
+})
+let panelResize: { id: number; x: number; width: number } | undefined
+
+function startPanelResize(event: PointerEvent) {
+  if (event.button !== 0 || !panelRef.value) return
+  panelResize = { id: event.pointerId, x: event.clientX, width: panelRef.value.offsetWidth }
+  const handle = event.currentTarget as HTMLElement
+  handle.setPointerCapture(event.pointerId)
+}
+
+function movePanelResize(event: PointerEvent) {
+  if (panelResize?.id !== event.pointerId || event.clientX === panelResize.x && !userPanelWidth.value) return
+  userPanelWidth.value = clampPanelWidth(panelResize.width + panelResize.x - event.clientX)
+}
+
+function finishPanelResize() {
+  if (panelResize && userPanelWidth.value) savePanelWidth()
+  panelResize = undefined
+}
+
+function savePanelWidth() {
+  if (userPanelWidth.value) savePreviewWindowSize('drawer', { width: userPanelWidth.value, height: window.innerHeight })
+}
+
+function resizePanelBy(delta: number) {
+  if (!panelRef.value) return
+  userPanelWidth.value = clampPanelWidth(panelRef.value.offsetWidth + delta)
+  savePanelWidth()
+}
 // .iv-wrap 自带 32px 内边距；头部高度运行时实测，量不到用 58 估（14+13 padding + 30 按钮 + 1 分隔线）
 const IV_BODY_PAD = 32
 // 窗口缩小后旧的 px 宽会超出新视口，必须跟着重算；量不到纵横比时保持旧行为（60vw）。
@@ -131,6 +166,7 @@ function applyVectorPanelWidth() {
   vectorPanelWidth.value = Math.round(Math.max(320, Math.min(fitW, window.innerWidth * 0.92)))
 }
 function onWindowResize() {
+  viewportWidth.value = window.innerWidth
   if (isVectorImage.value && vectorAspect.value != null) applyVectorPanelWidth()
 }
 window.addEventListener('resize', onWindowResize)
@@ -264,10 +300,14 @@ function refreshTextPreview() {
   void load(file, true)
 }
 
-watch(() => [props.show, props.file] as [boolean, Partial<FileMeta> | undefined], ([show, file]) => {
-  if (show && file) load(file)
+watch(() => [props.show, props.file] as const, ([show, file]) => {
+  if (show && file) load(file, isImageExt(file.ext) && !!file.workspaceFile
+    && !!pathFilesApi.fileRevision)
   else revoke()
 }, { immediate: true })
+
+useImageFileWatch(pathFilesApi, () => props.show && isImage.value ? props.file?.workspaceFile : undefined,
+  () => { if (props.file) return load(props.file, true) })
 
 const liveStore = useLiveStore()
 watch(() => liveStore.resourceEvent, (event) => {
@@ -388,6 +428,19 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 }
 
 /* ── 侧边面板 ── */
+.fp-width-handle {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 2;
+}
+.fp-width-handle:focus-visible { outline: 1px solid var(--action-primary); outline-offset: -1px; }
+
 .fp-panel {
   position: absolute;
   right: 0;

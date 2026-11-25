@@ -1,5 +1,4 @@
-import { remoteServerOrigin } from '../auth/client.js'
-import { remoteSessionSchema, type RemoteSession } from '../auth/contracts.js'
+import type { BindRemoteRequest } from '../shared/remote-request.js'
 import { byokCommand, byokList, byokSummary, byokTest, type ByokCommand, type ByokResult } from './contracts.js'
 
 export class RemoteByokError extends Error {
@@ -57,18 +56,18 @@ function route(command: ByokCommand) {
   }
 }
 
-export function createRemoteByokClient(request: typeof fetch = fetch) {
-  return async (session: RemoteSession, value: ByokCommand): Promise<ByokResult> => {
+export function createRemoteByokClient<Session>(bind: BindRemoteRequest<Session>) {
+  return async (session: Session, value: ByokCommand): Promise<ByokResult> => {
     const parsed = byokCommand.safeParse(value)
-    const auth = remoteSessionSchema.safeParse(session)
-    if (!parsed.success || !auth.success || remoteServerOrigin(auth.data.origin) !== auth.data.origin) {
+    const request = bind(session)
+    if (!parsed.success || !request) {
       throw new RemoteByokError('invalid_request', '凭据操作或远程会话无效')
     }
     const command = parsed.data
     const { path, method, schema } = route(command)
-    const headers = new Headers({ Authorization: 'Bearer ' + auth.data.token })
+    const headers = new Headers()
     if ('input' in command) headers.set('Content-Type', 'application/json')
-    const response = await request(new URL(path, auth.data.origin), {
+    const response = await request(path, {
       method, credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(60_000), headers,
       body: 'input' in command ? JSON.stringify(command.input) : undefined,
     }).catch(() => {

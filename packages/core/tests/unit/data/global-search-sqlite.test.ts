@@ -7,7 +7,7 @@ import { expect, it } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { createGlobalSearchOperations } from '../../../src/search/global-search.js'
 import { createKyselySqliteGlobalSearchSources } from '../../../src/search/sqlite.js'
-import { parseGlobalSearchQuery } from '../../../src/search/query.js'
+import { parseGlobalSearchQuery } from '@gugu/search'
 
 it('正式 SQLite 搜索便签、画布便签和启用中的定时任务并隔离 owner', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gugu-global-search-sqlite-')), path = join(dir, 'core.db')

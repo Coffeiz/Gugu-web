@@ -129,14 +129,14 @@ test('Vite forwards cookie login to Node Host and restores the authenticated ses
     assert.deepEqual(await session.json(), {
       id: userId,
       username: 'vite-session-user',
-      display_name: '会话测试用户',
+      displayName: '会话测试用户',
       email: 'vite-session@example.test',
-      is_active: true,
-      avatar_url: null,
-      created_at: '2026-11-01',
-      im_channels: ['qq'],
+      isActive: true,
+      avatarUrl: null,
+      createdAt: '2026-11-01',
+      imChannels: ['qq'],
       timezone: 'Asia/Shanghai',
-      email_subscribed: false,
+      emailSubscribed: false,
     })
 
     const csrfToken = csrfCookie.split(';', 1)[0]!.split('=', 2)[1]!

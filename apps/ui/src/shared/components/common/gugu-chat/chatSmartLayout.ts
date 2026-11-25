@@ -326,15 +326,30 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
         return href ? buttonMarkup('a', ` href="${href}"`) : ''
       }
       case 'chart': {
-        const { kind, points } = component
-        if ((kind !== 'line' && kind !== 'bar' && kind !== 'pie') || !Array.isArray(points) || !points.length || points.length > 40) throw new Error()
+        const { kind, points, labels, series } = component
+        if (kind !== 'line' && kind !== 'bar' && kind !== 'pie') throw new Error()
+        const multi = series !== undefined
+        if (multi && (kind === 'pie' || component.filter != null || points !== undefined ||
+          !Array.isArray(labels) || !labels.length || labels.length > 40 ||
+          !Array.isArray(series) || !series.length || series.length > 6)) throw new Error()
+        if (!multi && (!Array.isArray(points) || !points.length || points.length > 40)) throw new Error()
         const title = text(component.label)
         const unit = component.unit == null || component.unit === '' ? '' : text(component.unit, 20)
         const filter = component.filter == null ? null : fields(component.filter)
         const source = filter ? id(filter.source) : null
         if (filter && filter.operator !== 'lte' && filter.operator !== 'gte') throw new Error()
         if (source) chartFilters.add(source)
-        const rows = points.map(point => {
+        const datasets = multi ? (series as unknown[]).map(raw => {
+          const dataset = fields(raw)
+          if (!Array.isArray(dataset.values) || dataset.values.length !== (labels as unknown[]).length) throw new Error()
+          return { label: text(dataset.label, 80), values: dataset.values.map(value => value === null ? null : number(value)) }
+        }) : []
+        const rows = multi ? (labels as unknown[]).map((label, index) =>
+          `<li data-smart-point><span>${text(label, 80)}</span><div>${datasets.map(({ label, values }) => {
+            const value = values[index]
+            return `<div>${label} <strong data-smart-series-label="${label}"${value == null ? '' : ` data-smart-value="${value}"`}>${value == null ? '—' : `${value}${unit}`}</strong></div>`
+          }).join('')}</div></li>`,
+        ).join('') : (points as unknown[]).map(point => {
           const item = fields(point)
           const value = item.value === null ? null : number(item.value)
           if (kind === 'pie' && value !== null && value < 0) throw new Error()

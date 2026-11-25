@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createGlobalSearchOperations, parseGlobalSearchQuery } from '@gugu/core'
+import { createGlobalSearchOperations, parseGlobalSearchQuery } from '@gugu/search'
 import { createMindFileReferences } from '../../src/modules/mind/file-references.js'
 import { createDiskFileSearchSources } from '../../src/modules/search/files.js'
 

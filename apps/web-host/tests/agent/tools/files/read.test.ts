@@ -79,8 +79,8 @@ test('Web 拒绝退役工具并保留受控正文读取', async () => {
         signal.throwIfAborted()
         assert.deepEqual(current, identity)
         return [
-          { storageKey: relativePath, name: 'notes.txt', path: '/personal/notes.txt' },
-          { storageKey: officePath, name: 'report.pdf', path: '/personal/report.pdf' },
+          { filePath: relativePath, name: 'notes.txt', path: '/personal/notes.txt' },
+          { filePath: officePath, name: 'report.pdf', path: '/personal/report.pdf' },
         ]
       },
     }))

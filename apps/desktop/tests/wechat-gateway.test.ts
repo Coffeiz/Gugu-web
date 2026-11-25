@@ -65,11 +65,11 @@ it('微信桌面轮询只接受绑定私聊，回复携带原会话凭据，停�
     const dispatch = await binding.promise
     await vi.waitFor(() => expect(admitted).toHaveBeenCalledTimes(3))
     for (const [index, id] of [3, 4].entries()) {
-      expect(admitted).toHaveBeenNthCalledWith(index + 1, expect.stringMatching(/^[a-f0-9]{64}$/),
+      expect(admitted).toHaveBeenNthCalledWith(index + 1, expect.objectContaining({ platform: 'wechat', ownerId: 'desktop' }), expect.stringMatching(/^[a-f0-9]{64}$/),
         expect.objectContaining({ eventId: `message:${id}`, text: wechatPrivateMessage.item_list[0]?.text_item.text,
           scope: expect.objectContaining({ chatType: 'c2c', platformUserId: bot.userId }) }), 'private-context')
     }
-    expect(admitted).toHaveBeenNthCalledWith(3, expect.any(String),
+    expect(admitted).toHaveBeenNthCalledWith(3, expect.objectContaining({ platform: 'wechat', ownerId: 'desktop' }), expect.any(String),
       expect.objectContaining({ eventId: 'message:5', text: '' }), 'private-context',
       expect.objectContaining({ files: [expect.objectContaining({ bytes: png, mime: 'image/png' })] }))
     expect(downloads).toBe(1)

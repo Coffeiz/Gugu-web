@@ -51,14 +51,14 @@ it('重启后为同一收件恢复原会话和消息标识，隔离其他连接'
     opened = await openSqliteRuntime(path)
     const connection = { platform: 'telegram', connectionId: 'a'.repeat(64) }
     const event = { ...connection, eventKey: 'event-1', sealedEvent: 'AQ==' }
-    await admitDesktopImEvent(opened.runtime.db, opened.ownerId, event)
+    await expect(admitDesktopImEvent(opened.runtime.db, opened.ownerId, event)).resolves.toBe(true)
     await opened.runtime.close()
     opened = await openSqliteRuntime(path)
     const first = await prepareDesktopImEvent(opened.runtime.db, opened.ownerId, connection)
     expect(first).toMatchObject({ eventKey: event.eventKey, sealedEvent: event.sealedEvent, runId: null })
     await opened.runtime.close()
     opened = await openSqliteRuntime(path)
-    await admitDesktopImEvent(opened.runtime.db, opened.ownerId, { ...event, sealedEvent: 'Ag==' })
+    await expect(admitDesktopImEvent(opened.runtime.db, opened.ownerId, { ...event, sealedEvent: 'Ag==' })).resolves.toBe(false)
     expect(await prepareDesktopImEvent(opened.runtime.db, opened.ownerId, connection)).toEqual(first)
     expect(await prepareDesktopImEvent(opened.runtime.db, opened.ownerId, { ...connection, connectionId: 'b'.repeat(64) })).toBeNull()
     if (!first) throw new Error('收件未准备')
@@ -73,6 +73,9 @@ it('重启后为同一收件恢复原会话和消息标识，隔离其他连接'
     expect(await prepareDesktopImEvent(opened.runtime.db, opened.ownerId, connection)).toMatchObject({
       runId: admitted.identity.runId,
     })
+    const admissions = await sql<{ run_id: string }>`SELECT run_id FROM agent_run_admissions
+      WHERE session_id=${first.sessionId}`.execute(opened.runtime.db)
+    expect(admissions.rows).toEqual([{ run_id: admitted.identity.runId }])
     const key = { ...connection, eventKey: event.eventKey, runId: admitted.identity.runId }
     const owner = opened.ownerId.replaceAll('-', '')
     const db = opened.runtime.db

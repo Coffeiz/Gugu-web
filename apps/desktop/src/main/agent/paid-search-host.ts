@@ -1,3 +1,4 @@
+import { bindRemoteSession } from '@gugu/auth/client'
 import { createRemoteAgentDeepResearchClient, createRemoteAgentSearchAvailabilityClient, createRemoteAgentSimilarImageSearchClient, RemoteAgentSearchError } from '@gugu/core/agent/search-client'
 import { desktopDeepResearchInput, desktopSimilarImageHostInput } from '@gugu/core/agent/search-contracts'
 import type { createRemoteSessionStore } from '../auth/store.js'
@@ -14,9 +15,9 @@ export function createDesktopPaidSearchHost(
   request: typeof fetch,
   readImage: (id: string) => Promise<{ data: Uint8Array }>,
 ) {
-  const remoteSearchAvailable = createRemoteAgentSearchAvailabilityClient(request)
-  const remoteDeepResearch = createRemoteAgentDeepResearchClient(request)
-  const remoteSimilarImageSearch = createRemoteAgentSimilarImageSearchClient(request)
+  const remoteSearchAvailable = createRemoteAgentSearchAvailabilityClient(bindRemoteSession(request))
+  const remoteDeepResearch = createRemoteAgentDeepResearchClient(bindRemoteSession(request))
+  const remoteSimilarImageSearch = createRemoteAgentSimilarImageSearchClient(bindRemoteSession(request))
   return async (method: string, params: Record<string, unknown>, signal: AbortSignal) => {
     if ((method === 'agent.search.deep_research.available' || method === 'agent.search.similar_image_search.available')
       && Object.keys(params).length === 0) {

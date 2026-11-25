@@ -4,7 +4,7 @@
     :data-project-id="project.id"
     :data-layout-key="`project:${project.id}`"
     :data-card="String(project.id)"
-    :style="{ '--project-color': project.color }"
+    :style="{ '--project-color': project.color, '--project-advance-color': projectAccent }"
     :class="{ 'file-drag-over': fileDragOver }"
     @click="emit('click')"
     @dragenter.prevent="onFileDragEnter"
@@ -167,6 +167,7 @@
 </template>
 
 <script setup lang="ts">
+import { extractProjectAccent } from '@/utils/projectColors'
 import { computed, ref, nextTick, useAttrs, watch, onUnmounted, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
@@ -229,8 +230,9 @@ const projectRef = computed(() => props.project)
 const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectRef)
 
 
+const projectAccent = computed(() => extractProjectAccent(props.project.color))
 const _colorRgb = computed(() => {
-  const hex = props.project.color?.match(/#[0-9a-fA-F]{6}/)?.[0] ?? '#7b7fb2'
+  const hex = projectAccent.value
   const r = parseInt(hex.slice(1,3), 16)
   const g = parseInt(hex.slice(3,5), 16)
   const b = parseInt(hex.slice(5,7), 16)
@@ -469,7 +471,7 @@ async function setPriority(n: number) {
   border-radius: var(--radius-sm);
   corner-shape: round;
   box-shadow: var(--project-card-shadow);
-  background: linear-gradient(to right, var(--project-card-gradient-start) 0%, var(--project-card-gradient-end) 40%), var(--project-color);
+  background: var(--surface-card-solid);
   overflow: hidden; cursor: pointer;
   /* transition 是覆盖式属性，不会跟全局 .hover-card-fx 的 transition 叠加（只有其中一份生效）——
      这里仍自带完整的一份（含 background），确保不管层叠顺序谁赢，效果都一致，不丢 background 过渡。
@@ -660,22 +662,33 @@ async function setPriority(n: number) {
   position: relative; z-index: 1;
   width: 42px; flex-shrink: 0; align-self: stretch;
   display: flex; align-items: center; justify-content: center;
-  background: none; border: none;
+  background: transparent;
+  border: none;
   border-left: 1px solid var(--card-advance-border);
   cursor: pointer;
-  color: rgba(0,0,0,0.25);
-  transition: background 0.15s, color 0.15s;
+  color: var(--content-primary);
 }
-.card-advance:hover {
-  background: rgba(0,0,0,0.05);
-  color: var(--text-primary);
+/* 前进区以项目主色单独铺底，透明度随交互状态变化。 */
+button.card-advance::before {
+  content: '';
+  position: absolute; inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--project-advance-color);
+  opacity: 0.75;
+  transition: opacity var(--motion-hover-card) var(--motion-ease-standard);
 }
-.card-advance:active { background: rgba(0,0,0,0.1); }
+button.card-advance:hover::before {
+  opacity: 0.85;
+  transition-duration: var(--motion-hover-control);
+}
+button.card-advance:active::before { opacity: 1; }
 .card-advance-placeholder {
   position: absolute;
   top: 0;
   right: 0;
   height: 100%;
+  background: transparent;
   border-left-color: transparent;
   pointer-events: none;
 }

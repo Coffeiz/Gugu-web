@@ -452,18 +452,28 @@ LoopScope 是咕咕 Agent 的开发观测和排障工具，用来还原一次请
 
 更多实现细节见[工具与 Skills 文档](docs/agent/05-TOOLS-AND-SKILLS.md)、[上下文工程文档](docs/agent/04-CONTEXT-ENGINEERING.md)、[工作区 Shell 沙盒设计](docs/prds/【已完成】PRD-SHELL-1-工作区SHELL沙盒.md)和[LoopScope 文档](docs/agent/11-LOOPSCOPE.md)。
 
-## 项目结构
+## Monorepo 架构
 
 ```text
-gugu/
-├─ apps/ui/      Web 工作空间与 Admin 前端
-├─ backend/       API、Agent、Memory、Tools 与数据服务
-├─ loopscope/     Agent 可观测系统
-├─ docker/        部署与运行环境
-└─ docs/          产品、架构、运维与开发文档
+apps/
+├── ui/           Web、Desktop 与 Admin 界面
+├── web-host/     Node/Fastify Web 服务
+└── desktop/      Electron 主进程、IPC 与本地 Core Host
+packages/
+├── core/        业务服务与 Agent Runtime
+├── auth/        登录、会话验证和撤销
+├── users/       用户资料接口
+├── database/    数据结构、迁移与持久化基础
+├── gateway/     IM 消息接入与交付
+└── …            桌面契约、文件系统、沙箱、日志、图表与 Trace
+loopscope/        Agent Trace 采集和查看
+backend/          历史 Python 后端与旧运行组件
+docs/             产品、架构、运维与开发文档
 ```
 
-后端仍处于持续演进中，具体模块边界以 [Backend 文档](docs/backend/OVERVIEW.md) 和 [Agent 架构文档](docs/agent/02-ARCHITECTURE.md) 为准。
+Web UI 通过 HTTP/SSE 调用 Web Host，Desktop UI 通过 Electron IPC 调用本地能力。两端复用 Core 业务 API，由各自的宿主提供可信身份、存储和运行环境。同进程使用包的公开入口，跨进程使用明确的协议契约。
+
+[完整仓库设计](docs/architecture/monorepo.md) ｜ [账号架构与 API](docs/architecture/account-api.md) ｜ [Auth 包](packages/auth/README.md) ｜ [Users 包](packages/users/README.md)
 
 ## 开发
 

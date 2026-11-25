@@ -1,3 +1,4 @@
+import { bindRemoteSession } from '@gugu/auth/client'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -5,11 +6,13 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createRemoteByokClient } from '@gugu/core/byok/client'
+import { createRemoteByokClient as createRemoteByokClientWithTransport } from '@gugu/core/byok/client'
 import { migratePostgres } from '@gugu/database/postgres'
 import { Pool } from 'pg'
 import { startServer } from '../../src/main.js'
 import { signedUserToken } from '../helpers/auth.js'
+
+const createRemoteByokClient = (request: typeof fetch) => createRemoteByokClientWithTransport(bindRemoteSession(request))
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

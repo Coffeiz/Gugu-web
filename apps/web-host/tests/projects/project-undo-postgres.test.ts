@@ -40,21 +40,21 @@ test('Agent 项目删除日志在物理移动前落库，后台跳过活动操�
     await pool.query(tablesSql('postgres').receipts)
     await pool.query(`CREATE TABLE project_undo_journals (id uuid PRIMARY KEY,user_id uuid NOT NULL,operation_id varchar(64) NOT NULL,
       before_status varchar(16) NOT NULL,after_status varchar(16) NOT NULL,moves json NOT NULL,created_at timestamptz NOT NULL,UNIQUE(user_id,operation_id))`)
-    await pool.query('CREATE TABLE files(id integer PRIMARY KEY,user_id uuid,path text,deleted_at timestamptz)')
+    await pool.query('CREATE TABLE files(user_id uuid,path text,deleted_at timestamptz,PRIMARY KEY(user_id,path))')
     await mkdir(path.join(root, ownerId))
     const from = `${ownerId}/source.txt`, to = `${ownerId}/trash.txt`
     const otherFrom = `${ownerId}/other.txt`, otherTo = `${ownerId}/other-trash.txt`
     await writeFile(path.join(root, from), '合成原文')
     await writeFile(path.join(root, otherFrom), '另一文件')
-    await pool.query('INSERT INTO files VALUES (1,$1,$2,NULL),(2,$1,$3,NULL)', [ownerId, from, otherFrom])
+    await pool.query('INSERT INTO files VALUES ($1,$2,NULL),($1,$3,NULL)', [ownerId, from, otherFrom])
     const operation = randomUUID()
     await assert.rejects(journal().withJournal(ownerId, operation, async (log) => {
-      await log.record(1, from, to)
-      assert.deepEqual(await logs(), [{ user_id: ownerId, operation_id: operation, moves: [{ fileId: 1, from, to }] }])
+      await log.record(from, to)
+      assert.deepEqual(await logs(), [{ user_id: ownerId, operation_id: operation, moves: [{ from, to }] }])
       const lock = await pool.query("SELECT pg_try_advisory_xact_lock(hashtext('gugu-project-undo-journal')) AS acquired")
       assert.equal(lock.rows[0].acquired, false)
       await storage.move(ownerId, from, to)
-      await log.record(2, otherFrom, otherTo)
+      await log.record(otherFrom, otherTo)
       await storage.move(ownerId, otherFrom, otherTo)
       await runRecovery()
       assert.equal(await storage.exists(ownerId, from), false)
@@ -67,7 +67,7 @@ test('Agent 项目删除日志在物理移动前落库，后台跳过活动操�
     const fileLock = await pool.connect()
     try {
       await fileLock.query('BEGIN')
-      await fileLock.query('SELECT id FROM files WHERE id=1 FOR UPDATE')
+      await fileLock.query('SELECT path FROM files WHERE user_id=$1 AND path=$2 FOR UPDATE', [ownerId, from])
       await runRecovery()
       assert.equal((await logs()).length, 1)
       assert.equal(workerErrors, 0)
@@ -84,19 +84,19 @@ test('Agent 项目删除日志在物理移动前落库，后台跳过活动操�
 
     const committed = randomUUID()
     await assert.rejects(journal().withJournal(ownerId, committed, async log => {
-      await log.record(1, from, to)
+      await log.record(from, to)
       await storage.move(ownerId, from, to)
       await core.operationWithTransaction(context, committed, 'agent.project.delete', {}, async tx => {
-        await sql`UPDATE files SET path=${to},deleted_at=CURRENT_TIMESTAMP WHERE user_id=${ownerId} AND id=1`.execute(tx)
+        await sql`UPDATE files SET path=${to},deleted_at=CURRENT_TIMESTAMP WHERE user_id=${ownerId} AND path=${from}`.execute(tx)
         return { success: true }
       })
       throw moved
     }), error => error === moved)
     assert.equal((await logs()).length, 1)
-    await pool.query('UPDATE files SET path=$1 WHERE id=1', [from])
+    await pool.query('UPDATE files SET path=$1 WHERE user_id=$2 AND path=$3', [from, ownerId, to])
     const otherOperation = randomUUID()
     await assert.rejects(journal().withJournal(ownerId, otherOperation, async log => {
-      await log.record(2, otherFrom, otherTo)
+      await log.record(otherFrom, otherTo)
       await storage.move(ownerId, otherFrom, otherTo)
       throw moved
     }), error => error === moved)
@@ -105,7 +105,7 @@ test('Agent 项目删除日志在物理移动前落库，后台跳过活动操�
     assert.equal(workerErrors, 1)
     assert.equal(await readFile(path.join(root, otherFrom), 'utf8'), '另一文件')
     assert.equal(await readFile(path.join(root, to), 'utf8'), '合成原文')
-    await pool.query('UPDATE files SET path=$1 WHERE id=1', [to])
+    await pool.query('UPDATE files SET path=$1 WHERE user_id=$2 AND path=$3', [to, ownerId, from])
     await journal().recoverJournal(ownerId, committed)
     assert.equal(await readFile(path.join(root, to), 'utf8'), '合成原文')
     assert.equal(await storage.exists(ownerId, from), false)
@@ -134,13 +134,13 @@ test('项目撤销改名时协调显式目录端口与数据库路径，重做�
       ADD COLUMN done_at timestamptz, ADD COLUMN deleted_at timestamptz,
       ADD COLUMN updated_at timestamptz DEFAULT '2026-01-01T00:30:00.123456+08:00'`)
 
-    await pool.query(`CREATE TABLE files (id integer PRIMARY KEY,user_id text,project_id integer,path text)`)
+    await pool.query(`CREATE TABLE files (user_id text,project_id integer,path text,version integer,PRIMARY KEY(user_id,path))`)
     await pool.query(`CREATE TABLE undo_operations (id text PRIMARY KEY,user_id text,undo_context_id text,group_id text,resource text,action text,target_refs json,before_state json,after_state json,actor_type text,status varchar(16),created_at timestamptz,expires_at timestamptz,undone_at timestamptz,failure_code text)`)
     await pool.query(`CREATE TABLE project_undo_journals (id uuid PRIMARY KEY,user_id text,operation_id text,before_status text,after_status text,moves json,created_at timestamptz)`)
     const oldKey = '11111111-1111-4111-8111-111111111111/项目文件/2026/01/旧 #1', newKey = '11111111-1111-4111-8111-111111111111/项目文件/2026/01/新 #1'
     const directories = directoryPort(newKey, '内容')
     await pool.query(`INSERT INTO projects (id,user_id,name,start_date,created_at,version,stages_json) VALUES (1,'11111111-1111-4111-8111-111111111111','新','2026-01-01','2026-01-01T00:30:00.123000+08:00',2,'[]')`)
-    await pool.query(`INSERT INTO files VALUES (1,'11111111-1111-4111-8111-111111111111',1,$1)`, [`${newKey}/a.txt`])
+    await pool.query(`INSERT INTO files VALUES ('11111111-1111-4111-8111-111111111111',1,$1)`, [`${newKey}/a.txt`])
     await pool.query(`INSERT INTO undo_operations VALUES ('op','11111111-1111-4111-8111-111111111111','ctx','g','projects','update','[]',$1::json,$2::json,'web','active',now(),now()+interval '1 day',NULL,NULL)`, [JSON.stringify({ items: { 'project:1': { name: '旧', stages: [] } } }), JSON.stringify({ items: { 'project:1': { name: '新', stages: [], version: 2 } } })])
     const notifications: Record<string, unknown>[] = []
     const reread = async () => projectResponse((await pool.query(`SELECT *, contact_name AS client,
@@ -222,26 +222,27 @@ test('项目删除的撤销与重做移动本地文件并保持 owner 隔离', {
   const runtime = await createPostgresRuntime({ url: url!, schema })
   try {
     await pool.query(`CREATE TABLE projects (id integer PRIMARY KEY,user_id text,name text,start_date text,created_at timestamptz,version integer,deleted_at timestamptz)`)
-    await pool.query(`CREATE TABLE files (id integer PRIMARY KEY,user_id text,display_name text,ext text,space text,project_id integer,workspace_directory_id integer,stage_name text,mind_map_id integer,path text,version integer,deleted_at timestamptz)`)
+    await pool.query(`CREATE TABLE files (user_id text,display_name text,ext text,space text,project_id integer,workspace_directory_id integer,stage_name text,mind_map_id integer,path text,version integer,deleted_at timestamptz,PRIMARY KEY(user_id,path))`)
     await pool.query(`CREATE TABLE undo_operations (id text PRIMARY KEY,user_id text,undo_context_id text,group_id text,resource text,action text,target_refs json,before_state json,after_state json,actor_type text,status varchar(16),created_at timestamptz,expires_at timestamptz,undone_at timestamptz,failure_code text)`)
     await pool.query(`CREATE TABLE project_undo_journals (id uuid PRIMARY KEY,user_id text,operation_id text,before_status text,after_status text,moves json,created_at timestamptz)`)
-    const file = { id: 2, user_id: '11111111-1111-4111-8111-111111111111', display_name: '文档', ext: 'txt', space: 'project', project_id: 1, workspace_directory_id: null, stage_name: null, mind_map_id: null, path: '11111111-1111-4111-8111-111111111111/项目文件/2026/01/项目 #1/文档.txt', version: 2, size: '4B', size_bytes: 4, mime_type: 'text/plain', img_width: null, img_height: null, deleted_at: '2026-01-02T00:00:00Z' } satisfies ProjectTrashFile
+    const file = { user_id: '11111111-1111-4111-8111-111111111111', display_name: '文档', ext: 'txt', space: 'project', project_id: 1, workspace_directory_id: null, stage_name: null, mind_map_id: null, path: '11111111-1111-4111-8111-111111111111/项目文件/2026/01/项目 #1/文档.txt', version: 2, size: '4B', size_bytes: 4, mime_type: 'text/plain', img_width: null, img_height: null, deleted_at: '2026-01-02T00:00:00Z' } satisfies ProjectTrashFile
+    const originalPath = file.path
     file.path = projectFileTrashKey('11111111-1111-4111-8111-111111111111', file)
     await mkdir(path.dirname(path.join(root, file.path)), { recursive: true })
     await writeFile(path.join(root, file.path), '内容')
     await pool.query(`INSERT INTO projects VALUES (1,'11111111-1111-4111-8111-111111111111','项目','2026-01-01',now(),2,$1)`, [file.deleted_at])
-    await pool.query(`INSERT INTO files VALUES (2,'11111111-1111-4111-8111-111111111111','文档','txt','project',1,NULL,NULL,NULL,$1,2,$2)`, [file.path, file.deleted_at])
-    const before = { items: { 'project:1': { version: 1 }, 'file:2': { version: 1 } } }
-    const after = { items: { 'project:1': { version: 2, deleted_at: file.deleted_at }, 'file:2': { version: 2, deleted_at: file.deleted_at } } }
+    await pool.query(`INSERT INTO files VALUES ('11111111-1111-4111-8111-111111111111','文档','txt','project',1,NULL,NULL,NULL,$1,2,$2)`, [file.path, file.deleted_at])
+    const before = { items: { 'project:1': { version: 1 }, [`file:${originalPath}`]: { path: originalPath, version: 1 } } }
+    const after = { items: { 'project:1': { version: 2, deleted_at: file.deleted_at }, [`file:${originalPath}`]: { path: file.path, version: 2, deleted_at: file.deleted_at } } }
     await pool.query(`INSERT INTO undo_operations VALUES ('op','11111111-1111-4111-8111-111111111111','ctx','g','projects','delete','[]',$1::json,$2::json,'web','active',now(),now()+interval '1 day',NULL,NULL)`, [JSON.stringify(before), JSON.stringify(after)])
     const service = createHostCoreUndoOperations(pool, createRuntimeUndoTransactionPort(runtime), async () => {}, { renameDirectory: createLocalProjectDirectoryRenamer(root), trash: createLocalProjectTrashStorage(root) })
     await assert.rejects(() => service.apply('22222222-2222-4222-8222-222222222222', 'ctx', 'op', 'undo'))
     await service.apply('11111111-1111-4111-8111-111111111111', 'ctx', 'op', 'undo')
-    const restored = (await pool.query('SELECT path,deleted_at FROM files WHERE id=2')).rows[0]
+    const restored = (await pool.query('SELECT path,deleted_at FROM files WHERE user_id=$1', [file.user_id])).rows[0]
     assert.equal(restored.deleted_at, null)
     assert.equal(await readFile(path.join(root, restored.path), 'utf8'), '内容')
     await service.apply('11111111-1111-4111-8111-111111111111', 'ctx', 'op', 'redo')
-    const deleted = (await pool.query('SELECT path,deleted_at FROM files WHERE id=2')).rows[0]
+    const deleted = (await pool.query('SELECT path,deleted_at FROM files WHERE user_id=$1', [file.user_id])).rows[0]
     assert.ok(deleted.deleted_at)
     assert.equal(await readFile(path.join(root, deleted.path), 'utf8'), '内容')
   } finally {

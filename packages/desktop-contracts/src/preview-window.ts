@@ -11,7 +11,7 @@ export interface DesktopPreviewFile extends DesktopPreviewMetadata {
   workspaceFile: { directoryId: DesktopFileDirectory; relativePath: string; identity?: string }
 }
 
-export type DesktopPreviewRequest = DesktopPreviewFile | { attachmentId: string } | { libraryPath: string }
+export type DesktopPreviewRequest = DesktopPreviewFile | { attachmentId: string } | { libraryPath: string } | { relativeHref: string }
 export type DesktopPreviewWindowFile = DesktopPreviewFile | (DesktopPreviewMetadata & { contentUrl: string; canReveal?: false })
 
 export const previewWindowChannels = {

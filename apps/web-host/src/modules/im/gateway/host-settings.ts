@@ -31,7 +31,7 @@ export function createImRuntimeSettings(configPath: string, environment: NodeJS.
 /** 只检查已显式应用的迁移；禁止启动入口自行DDL或修补用户表。 */
 export async function assertImHostSchema(pool: Pick<Pool, 'query'>): Promise<void> {
   const names = ['agent_run_startups', 'agent_run_dispatch', 'agent_interaction_intents', 'agent_interaction_bindings', 'agent_interaction_resumes', 'gugu_agent_active_reasoning',
-    'gugu_im_gateway_admissions', 'gugu_im_inbound_receipts', 'gugu_im_inbound_segments', 'gugu_im_inbound_batch_members',
+    'gugu_im_gateway_admissions', 'gugu_im_inbound_queue', 'gugu_im_telegram_cursors', 'gugu_im_inbound_receipts', 'gugu_im_inbound_segments', 'gugu_im_inbound_batch_members',
     'gugu_im_run_delivery', 'gugu_im_delivery_receipts', 'gugu_im_platform_projection', 'gugu_im_accepted_delivery_facts',
     'gugu_im_binding_consumptions', 'gugu_im_shortcut_controls', 'gugu_im_native_deliveries', 'gugu_im_native_prompt_messages',
     'gugu_im_pending_ask_runs', 'gugu_im_reaction_receipts', 'gugu_im_file_tool_receipts', 'gugu_im_reflection_jobs',

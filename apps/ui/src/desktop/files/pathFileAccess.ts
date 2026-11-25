@@ -3,6 +3,7 @@ import { resolveRelativeReferences } from '@gugu/core/files/relative-references'
 import { downloadPathFile, pathFilesApi, type PathFileEntry, type PathFileRef } from '@/services/api'
 import type { PathFileAccess } from '@/services/pathFileAccess'
 import { callDesktopBridge, requestDesktopFile } from '@desktop/bridge/bridge'
+import { previewWindowBridge } from './previewWindowBridge'
 
 type LocalFileRef = PathFileRef & { directoryId: DesktopFileDirectory }
 
@@ -27,6 +28,20 @@ function requestLocalFile<T>(request: Parameters<typeof requestDesktopFile>[0]) 
 }
 
 export const desktopPathFileAccess: PathFileAccess = {
+  watchDirectoryUrl: file => isLocalFile(file) ? contentUrl(file) + '&watch=1' : pathFilesApi.watchDirectoryUrl(file),
+  async fileRevision(file, signal) {
+    if (!isLocalFile(file)) return pathFilesApi.fileRevision(file, signal)
+    const response = await fetch(contentUrl(file) + '&metadata=1', { signal, cache: 'no-store' })
+    if (!response.ok) return
+    const { revision } = await response.json()
+    if (typeof revision === 'string') return revision
+  },
+  openRelativePreview(href) {
+    if (!previewWindowBridge || new URLSearchParams(window.location.search).get('filePreview') !== '1') return
+    return previewWindowBridge.open({ relativeHref: href }).then(reply => {
+      if (reply.ok === false) throw new Error(reply.error.message)
+    })
+  },
   async resolveRelative(file, paths) {
     if (!isLocalFile(file)) return pathFilesApi.resolveRelative(file, paths)
     await requestLocalFile({ action: 'reference', ...localTarget(file), kind: 'file', identity: file.identity })
@@ -68,6 +83,10 @@ export const desktopPathFileAccess: PathFileAccess = {
       return bridge.moveDroppedFiles(directoryId as DesktopFileDirectory, relativePath, decide, progress)
     })
   },
+  hasHistory: (directory, mode) => typeof directory === 'string' || pathFilesApi.hasHistory(directory, mode),
+  applyHistory: (directory, mode) => typeof directory === 'string'
+    ? requestLocalFile({ action: mode === 'undo' ? 'undo-trash' : 'redo-trash', directoryId: directory })
+    : pathFilesApi.applyHistory(directory, mode),
   move: (file, destination) => isLocalFile(file)
     ? requestLocalFile({ action: 'move', ...localTarget(file), destination })
     : pathFilesApi.move(file, destination),
@@ -75,7 +94,7 @@ export const desktopPathFileAccess: PathFileAccess = {
     ? requestLocalFile({ action: 'copy', ...localTarget(file), destination })
     : pathFilesApi.copy(file, destination),
   moveToTrash: file => isLocalFile(file)
-    ? requestLocalFile({ action: 'trash', ...localTarget(file) })
+    ? requestLocalFile({ action: 'trash', ...localTarget(file), undoable: true })
     : pathFilesApi.moveToTrash(file),
   async upload(file, content, onProgress, overwrite = false) {
     if (!isLocalFile(file)) return pathFilesApi.upload(file, content, onProgress, overwrite)

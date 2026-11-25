@@ -90,13 +90,20 @@ describe('真实SQLite项目创建经ToolRegistry与Core应用/数据适配器',
   it('缺省颜色仅选owner未用池，显式颜色保持不变', async () => {
     const f = await setup()
     const seed = createProjectCreator(f.runtime)
-    for (const [index, color] of PROJECT_COLOR_PRESETS.slice(0, 7).entries()) await seed(f.ownerId, { name: `已有项目${index}`, color })
+    const lastColor = PROJECT_COLOR_PRESETS.at(-1)!
+    for (const [index, color] of PROJECT_COLOR_PRESETS.slice(0, -1).entries()) await seed(f.ownerId, { name: `已有项目${index}`, color })
     // 别的owner使用最后一色，不应影响当前owner未用颜色池。
-    await seed(randomUUID(), { name: '其他用户项目', color: PROJECT_COLOR_PRESETS[7] })
+    await seed(randomUUID(), { name: '其他用户项目', color: lastColor })
     expect(await f.registry.tools.dispatch(f.call, f.scope)).toMatchObject({ successful: true, mutated: true })
-    expect((await f.rows()).at(-1)?.color).toBe(PROJECT_COLOR_PRESETS[7])
+    expect((await f.rows()).at(-1)?.color).toBe(lastColor)
     expect(await f.registry.tools.dispatch({ ...f.call, id: 'explicit', input: { ...args, color: 'teal' } }, f.scope)).toMatchObject({ successful: true })
     expect((await f.rows()).at(-1)?.color).toBe(PROJECT_COLOR_PRESETS[2])
+  })
+  it('咕咕创建项目拒绝已移除的 sunset 色名', async () => {
+    const f = await setup()
+    const result = await f.registry.tools.dispatch({ ...f.call, input: { ...args, color: 'sunset' } }, f.scope)
+    expect(result).toMatchObject({ successful: false, mutated: false })
+    expect(await f.rows()).toHaveLength(0)
   })
   it('默认阶段及摘要优先级持久化，自定义阶段todos保留', async () => {
     const f = await setup()

@@ -1,8 +1,8 @@
-import { classifyGatewayGroupMessage } from '@gugu/gateway'
+import { classifyGatewayGroupMessage, type ImReceivedMessage } from '@gugu/gateway'
 import { desktopImGroupToolAllowed } from '@gugu/core/agent/scenes/im'
 import { transcribeDesktopImFile, type DesktopImVoice } from '../../inbound/voice.js'
 import { resolveImActor } from '@gugu/core/im/access'
-import { updateUserBotGroupTools, userBotGroupFileToolsAllowed } from '@gugu/core/im/user-bots'
+import { defaultUserBotGroupSettings, updateUserBotGroupTools, userBotGroupFileToolsAllowed } from '@gugu/core/im/user-bots'
 import { createHash } from 'node:crypto'
 import { desktopTransportOptions } from '@gugu/core/providers/node'
 import { isExplicitImCancel, parseImControlCommand } from '@gugu/core/im/shortcut'
@@ -154,12 +154,12 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
       function startGroupDispatch(groupId: string, userId: string) {
         const connectionId = groupConnectionId(bot.appId, groupId, userId)
         const authorize = () => authorizeGroup(userId)
-        const authorizeMessage = async (message: Parameters<typeof admit>[1]) => {
+        const authorizeMessage = async (message: ImReceivedMessage) => {
           const current = await readActive()
           return current?.groupChatEnabled === true && current.userId === userId
             && current.groupReplyMode !== 'record_only' && (message.botMentioned || message.qqAtEventOnly || current.groupReplyMode === 'reply_all')
         }
-        const authorizeFile = async (message: Parameters<typeof admit>[1]) => {
+        const authorizeFile = async (message: ImReceivedMessage) => {
           const current = await readActive()
           return current?.groupChatEnabled === true && userBotGroupFileToolsAllowed(current) && current.userId === userId
             && current.groupReplyMode !== 'record_only' && (message.botMentioned || current.groupReplyMode === 'reply_all')
@@ -259,7 +259,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
             groupMentioned: event.botMentioned || event.qqAtEventOnly === true,
             mentionsOtherBot: parsed.payload.mentions_other_bot === true } as const
           const groupDisposition = (mode: typeof current.groupReplyMode) =>
-            classifyGatewayGroupMessage(groupFacts, mode, cancelControl)
+            classifyGatewayGroupMessage(groupFacts, mode ?? defaultUserBotGroupSettings('qq').groupReplyMode, cancelControl)
           if (!current.userId) {
             if (parsed.mediaItems.length) return
             await handleQqBinding(parsed.payload.text, async code => {
@@ -340,8 +340,8 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
           if (!await authorize()) return
           if (!parsed.mediaItems.length) {
             if (recordOnly) {
-              if (event.text.trim() || event.quotedText) await admit(connectionId, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId, authorize })
-            } else await admit(connectionId, event)
+              if (event.text.trim() || event.quotedText) await admit(connection, connectionId, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId, authorize })
+            } else await admit(connection, connectionId, event)
             return
           }
           if (!mediaTransport) return
@@ -383,7 +383,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
               : !event.text.trim() && files.length > 0 && files.every(file => !file.transcript && !/^(?:image\/|text\/)/u.test(file.mime))
               ? { ...event, text: '[QQ 附件]' } : event
             try {
-              await admit(connectionId, incoming, undefined, { files, recordOnly, ownerPlatformUserId: recordOnly ? current.userId : undefined, authorize, async onAccepted(ids) {
+              await admit(connection, connectionId, incoming, undefined, { files, recordOnly, ownerPlatformUserId: recordOnly ? current.userId : undefined, authorize, async onAccepted(ids) {
                 if (!sourceIndices.size || !runtime?.references || !await authorize()) return
                 const items = Object.fromEntries([...sourceIndices].map(([index, position]) => [index, ids[position]!]))
                 await runtime.references.rememberAttachments(event.scope, event.platformMessageId ?? event.eventId, items, active)

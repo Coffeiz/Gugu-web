@@ -4,6 +4,7 @@ import { confirmFileDeletion } from './useFileDeleteConfirm'
 import { useBoxSelection } from '@/composables/shared/useBoxSelection'
 import { type PathFileEntry, type PathFileRef } from '@/services/api'
 import { usePathFileAccess } from '@/services/pathFileAccess'
+import { undoShortcutMode } from '@/interaction/undo/UndoManager'
 import { hasTextSelection, shortcutKey } from '@/interaction/keyboardShortcuts'
 import { accountBoundaryEpoch } from '@/utils/accountBoundary'
 
@@ -12,7 +13,6 @@ export function usePathFileSelection(options: {
   container: Ref<HTMLElement | null>
   getEntries: () => PathFileEntry[]
   getSelectedEntries: () => PathFileEntry[]
-  trash?: (file: PathFileRef, entry: PathFileEntry) => Promise<unknown>
   reload: () => void
 }) {
   const pathFilesApi = usePathFileAccess()
@@ -155,6 +155,24 @@ export function usePathFileSelection(options: {
   }
 
   function handleShortcut(event: KeyboardEvent) {
+    const mode = undoShortcutMode(event, true)
+    const directory = target.value?.directoryId
+    if (directory !== undefined && mode && pathFilesApi.applyHistory && pathFilesApi.hasHistory?.(directory, mode)) {
+      event.preventDefault()
+      if (moving.value) return
+      const epoch = accountBoundaryEpoch.value
+      moving.value = true
+      void pathFilesApi.applyHistory(directory, mode).then(result => {
+        if (result.changed && epoch === accountBoundaryEpoch.value && target.value?.directoryId === directory) {
+          clearSelection()
+          clearCut()
+          reload()
+        }
+      }).catch(error => {
+        if (epoch === accountBoundaryEpoch.value) showAppError(errorMessage(error))
+      }).finally(() => { moving.value = false })
+      return
+    }
     const key = shortcutKey(event)
     if (!target.value || !key || event.shiftKey) return
     if (key === 'a') {
@@ -186,8 +204,7 @@ export function usePathFileSelection(options: {
         if (epoch !== accountBoundaryEpoch.value) break
         try {
           const file = { directoryId: location.directoryId, relativePath: entry.relativePath }
-          if (options.trash) await options.trash(file, entry)
-          else await pathFilesApi.moveToTrash(file)
+          await pathFilesApi.moveToTrash(file)
           completed.add(entry.relativePath)
         } catch (error) { if (epoch === accountBoundaryEpoch.value) showAppError(errorMessage(error)) }
       }

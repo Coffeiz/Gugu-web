@@ -1,6 +1,6 @@
 import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
 import type { CurrentTurnAttachment } from '@gugu/core/agent'
-import { isOwnedFileStorageKey } from '../../files/store.js'
+import { isOwnedFilePath } from '../../files/store.js'
 import type { Pool, QueryResultRow } from 'pg'
 
 export interface CurrentMessageAttachmentReaderOptions {
@@ -58,7 +58,7 @@ export function createCurrentMessageAttachmentReader(options: CurrentMessageAtta
       if (!attachment) throw new Error('附件不属于当前消息')
       const size = Number(attachment.size)
       if (!Number.isSafeInteger(size) || size < 0 || size > 32 * 1024 * 1024) throw new Error('附件文本读取超限')
-      if (!isOwnedFileStorageKey(owner, attachment.storage_key)) throw new Error('附件归属不匹配')
+      if (!isOwnedFilePath(owner, attachment.storage_key)) throw new Error('附件归属不匹配')
       const opened = await openLocalFile(options.storageRoot, attachment.storage_key)
       if (!opened) throw new Error('附件文件不可用')
       try {

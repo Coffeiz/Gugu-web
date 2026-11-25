@@ -7,7 +7,7 @@ import { normalizePersistentArtifact, type RunIdentity } from '@gugu/core/agent'
 import { type ImActor } from '@gugu/core/im/access'
 import { imCanUseTool } from '@gugu/core/agent/scenes/im'
 import type { ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
-import { isOwnedFileStorageKey } from '../../../files/store.js'
+import { isOwnedFilePath } from '../../../files/store.js'
 import { createWorkspaceFileReads } from '../../../workspaces/files.js'
 import { imAttachmentScopeKey, type ImAttachmentScope } from '../inbound/attachments.js'
 import type { GatewayPlatformSender } from '../connections.js'
@@ -48,7 +48,7 @@ export function createImRunArtifactSender(options: {
         AND a.platform=$4 AND a.extra->>'im_ingress_scope'=$5 AND m.conversation_seq<=$6`,
     [identity.ownerId, identity.sessionId, attachId, scope.platform, scopeKey, watermark])).rows
     const row = rows[0]
-    if (rows.length !== 1 || !row || typeof row.storage_key !== 'string' || !isOwnedFileStorageKey(identity.ownerId, row.storage_key)
+    if (rows.length !== 1 || !row || typeof row.storage_key !== 'string' || !isOwnedFilePath(identity.ownerId, row.storage_key)
       || !object(row.extra) || row.extra.im_ingress_scope !== scopeKey || !Number.isSafeInteger(Number(row.conversation_seq))
       || Number(row.conversation_seq) > watermark) throw new Rejected()
     return { ...metadata(row.name, row.ext, row.mime, row.size), storageKey: row.storage_key }

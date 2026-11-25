@@ -2,10 +2,13 @@ import { hasInjectionContext, inject, type InjectionKey } from 'vue'
 import { pathFilesApi } from '@/services/api'
 
 export interface PathFileAccess {
+  watchDirectoryUrl?: typeof pathFilesApi.watchDirectoryUrl
+  fileRevision?: (file: Parameters<typeof pathFilesApi.contentUrl>[0], signal: AbortSignal) => Promise<string | undefined>
   downloadArchive?: typeof pathFilesApi.downloadArchive
   compressArchive?: typeof pathFilesApi.compressArchive
   extractArchive?: typeof pathFilesApi.extractArchive
   resolveRelative?: typeof pathFilesApi.resolveRelative
+  openRelativePreview?: (href: string) => Promise<void> | undefined
   reference: typeof pathFilesApi.reference
   entries: typeof pathFilesApi.entries
   contentUrl: typeof pathFilesApi.contentUrl
@@ -17,6 +20,8 @@ export interface PathFileAccess {
     decide: (filename: string, canOverwrite: boolean) => Promise<'skip' | 'keep_both' | 'overwrite'>,
     progress: (percent: number) => void,
   ) => Promise<{ retained: number }> | undefined
+  hasHistory?: typeof pathFilesApi.hasHistory
+  applyHistory?: typeof pathFilesApi.applyHistory
   move: typeof pathFilesApi.move
   copy: typeof pathFilesApi.copy
   moveToTrash: typeof pathFilesApi.moveToTrash

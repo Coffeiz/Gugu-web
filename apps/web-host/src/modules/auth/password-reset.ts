@@ -1,3 +1,4 @@
+import { isRecoveryToken, PASSWORD_RESET_COOLDOWN_SECONDS, PASSWORD_RESET_TTL_SECONDS, validatePasswordReset } from '@gugu/auth'
 import { randomBytes, createHash } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
@@ -5,8 +6,7 @@ import type { Pool } from 'pg'
 import { withPostgresTransaction } from '../../adapters/database/postgres-transaction.js'
 import { RateLimitError, type RateLimitHandler } from './rate-limit.js'
 
-export const PASSWORD_RESET_TTL_SECONDS = 30 * 60
-export const PASSWORD_RESET_COOLDOWN_SECONDS = 60
+export { PASSWORD_RESET_TTL_SECONDS, PASSWORD_RESET_COOLDOWN_SECONDS }
 export const PASSWORD_RESET_GENERIC = Object.freeze({
   ok: true,
   message: '若该邮箱已注册，重置链接已发送，请查收邮箱（含垃圾箱）。',
@@ -126,7 +126,7 @@ export function registerPasswordResetRoutes(app: FastifyInstance, options: Passw
       if (reserved !== 'OK') return response
 
       const token = createToken()
-      if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) {
+      if (!isRecoveryToken(token)) {
         await options.redis.del(cooldownKey)
         throw new Error('Password reset token generator returned an invalid token')
       }
@@ -162,8 +162,9 @@ export function registerPasswordResetRoutes(app: FastifyInstance, options: Passw
       const body = resetBody(request.body)
       if (!body || body.token === undefined || body.newPassword === undefined)
         return reply.code(422).send({ detail: '重置密码请求字段无效' })
-      if ([...body.newPassword].length < 8) throw new PasswordResetError('密码至少 8 位', 400)
-      if (!body.token) throw new PasswordResetError('链接无效', 400)
+      const invalid = validatePasswordReset(body.token, body.newPassword)
+      if (invalid === 'weak_password') throw new PasswordResetError('密码至少 8 位', 400)
+      if (invalid === 'missing_token') throw new PasswordResetError('链接无效', 400)
       if (!options.redis) throw new PasswordResetError('密码重置服务暂不可用', 503)
 
       const tokenKey = `pwdreset:tok:${body.token}`

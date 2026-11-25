@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { createRemoteAgentDeepResearchClient, createRemoteAgentSearchAvailabilityClient, createRemoteAgentSimilarImageSearchClient } from '../../src/agent/search-client.js'
+import { createRemoteAgentDeepResearchClient as createRemoteAgentDeepResearchClientWithTransport, createRemoteAgentSearchAvailabilityClient as createRemoteAgentSearchAvailabilityClientWithTransport, createRemoteAgentSimilarImageSearchClient as createRemoteAgentSimilarImageSearchClientWithTransport } from '../../src/agent/search-client.js'
 
 import { MAX_DESKTOP_SEARCH_IMAGE_BYTES } from '../../src/agent/search-contracts.js'
+
+function bindTestSession(request: typeof fetch) {
+  return (session: { origin: string; token: string }) => (path: string, init: RequestInit) => {
+    const headers = new Headers(init.headers)
+    headers.set('authorization', `Bearer ${session.token}`)
+    return request(new URL(path, session.origin), { ...init, headers })
+  }
+}
+
+const createRemoteAgentSimilarImageSearchClient = (request: typeof fetch) => createRemoteAgentSimilarImageSearchClientWithTransport(bindTestSession(request))
+const createRemoteAgentSearchAvailabilityClient = (request: typeof fetch) => createRemoteAgentSearchAvailabilityClientWithTransport(bindTestSession(request))
+const createRemoteAgentDeepResearchClient = (request: typeof fetch) => createRemoteAgentDeepResearchClientWithTransport(bindTestSession(request))
 
 const session = {
   provider: 'self-hosted' as const,

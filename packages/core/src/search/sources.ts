@@ -1,6 +1,5 @@
 import { CANVAS_NOTE_TITLE_LIMIT, canvasNoteDisplayTitle } from '../mind/note-create.js'
-import type { GlobalSearchType } from './query.js'
-import { searchSnippet } from './global-search.js'
+import { searchSnippet, type GlobalSearchType } from '@gugu/search'
 
 export type SearchRow = Record<string, unknown>
 

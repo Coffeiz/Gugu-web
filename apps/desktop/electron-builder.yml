@@ -2,6 +2,8 @@ appId: com.gugu.desktop.preview
 productName: 咕咕桌面验证
 artifactName: gugu-desktop-${version}-${os}-${arch}.${ext}
 asar: true
+asarUnpack:
+  - dist/native/chat-fab-glass.node
 npmRebuild: false
 directories:
   output: release
@@ -32,6 +34,8 @@ mac:
   target: [dmg, zip]
   icon: assets/icon.icns
   category: public.app-category.productivity
+  extendInfo:
+    NSMicrophoneUsageDescription: 咕咕需要访问麦克风，以便录制你在聊天中发送的语音消息。
   minimumSystemVersion: '13.5'
   identity: '-'
   hardenedRuntime: false

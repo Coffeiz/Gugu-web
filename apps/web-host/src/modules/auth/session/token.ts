@@ -1,3 +1,4 @@
+import { authenticateSession } from '@gugu/auth'
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { parseCookieHeader } from '../../../http/cookies.js'
 
@@ -139,10 +140,7 @@ export async function authenticateUser<T extends AuthenticatedUserRecord>(
   lookupUser: (userId: string) => Promise<T | null>,
 ): Promise<{ identity: UserIdentity; user: T }> {
   const identity = verifyUserToken(extractUserToken(request), secret)
-  const user = await lookupUser(identity.userId)
-  const active = user && user.isActive && (user.accountStatus ?? 'active') === 'active'
-  const securityVersion = user?.securityVersion || 1
-  if (!active || securityVersion !== identity.securityVersion)
-    throw new AuthenticationError('用户不存在或已停用')
+  const user = await authenticateSession(identity, lookupUser)
+  if (!user) throw new AuthenticationError('用户不存在或已停用')
   return { identity, user }
 }

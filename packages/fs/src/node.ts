@@ -1,6 +1,7 @@
+import type { BigIntStats } from 'node:fs'
 import { constants } from 'node:fs'
-import { randomUUID } from 'node:crypto'
-import { link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { link, lstat, mkdir, open, readdir, realpath, rename, rmdir, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { getSystemErrorName } from 'node:util'
 
@@ -296,22 +297,49 @@ export async function createLocalDirectory(root: string, relativePath: string): 
   }
 }
 
+function localHistoryReceipt(entry: BigIntStats, parent: BigIntStats, destination?: BigIntStats) {
+  const identity = (value: BigIntStats) => `${value.dev}.${value.ino}.${value.birthtimeNs}`
+  return createHash('sha256')
+    .update(JSON.stringify([identity(entry), identity(parent), destination && identity(destination)])).digest('hex')
+}
+
+async function localTrashReceipt(root: string, relativePath: string) {
+  const location = await openAnchoredParent(root, relativePath)
+  if (!location) return
+  try {
+    const entry = await lstat(path.join(location.parent, location.name), { bigint: true })
+    if (!entry.isFile() && !entry.isDirectory()) throw new UnsafeLocalPathError()
+    return localHistoryReceipt(entry, await stat(location.parent, { bigint: true }))
+  } finally {
+    await location.close()
+  }
+}
+
 let renameFunctions: { renameat2: (from: number, source: Buffer, to: number, destination: Buffer, flags: number) => number; __errno_location: () => bigint } | undefined
 
 /** 源和目标都相对于打开的目录句柄；内核保证移动与拒绝覆盖在同一步完成。 */
-export async function moveLocalEntry(root: string, fromPath: string, toPath: string): Promise<boolean> {
+export async function moveLocalEntry(root: string, fromPath: string, toPath: string, history?: { expected?: string; reverse?: string; trash?: 'store' | 'restore' }): Promise<boolean> {
   const from = await openAnchoredParent(root, fromPath)
   if (!from) return false
   try {
     const to = await openAnchoredParent(root, toPath)
     if (!to) return false
     try {
-      const info = await lstat(path.join(from.parent, from.name)).catch(error => {
+      const info = await lstat(path.join(from.parent, from.name), { bigint: true }).catch(error => {
         if (error.code === 'ENOENT') return null
         throw error
       })
       if (!info) return false
       if (!info.isFile() && !info.isDirectory()) throw new UnsafeLocalPathError()
+      if (history) {
+        const [fromParent, toParent] = await Promise.all([
+          stat(from.parent, { bigint: true }), stat(to.parent, { bigint: true }),
+        ])
+        const fingerprint = (source: typeof info, destination?: typeof info) => localHistoryReceipt(info, source, destination)
+        if (history.expected && history.expected !== fingerprint(fromParent, history.trash === 'store' ? undefined : toParent))
+          throw Object.assign(new Error('文件或目标目录已变化'), { code: 'ESTALE' })
+        history.reverse = fingerprint(toParent, history.trash === 'restore' ? undefined : fromParent)
+      }
       const ffi = await import('node:ffi')
       renameFunctions ??= ffi.dlopen(null, {
         renameat2: { arguments: ['i32', 'pointer', 'i32', 'pointer', 'u32'], return: 'i32' },
@@ -364,6 +392,10 @@ export async function localFileIdentity(handle: Awaited<ReturnType<typeof open>>
   return `${info.dev}.${info.ino}.${info.birthtimeNs}`
 }
 
+export function localFileRevision(info: BigIntStats): string {
+  return createHash('sha256').update(`${info.dev}:${info.ino}:${info.birthtimeNs}:${info.mtimeNs}:${info.ctimeNs}:${info.size}`).digest('hex')
+}
+
 export async function listLocalDirectory(root: string, relativePath: string) {
   const parent = await openAnchoredParent(root, relativePath)
   if (!parent) return null
@@ -371,15 +403,15 @@ export async function listLocalDirectory(root: string, relativePath: string) {
     const handle = await open(path.join(parent.parent, parent.name), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
     try {
       const directory = `/proc/self/fd/${handle.fd}`
-      const entries: Array<{ name: string; kind: 'directory' | 'file'; size: number }> = []
+      const entries: Array<{ name: string; kind: 'directory' | 'file'; size: number; revision?: string }> = []
       for (const name of await readdir(directory)) {
         if (name.startsWith('.gugu-') || name.includes('\\')) continue
-        const info = await lstat(path.join(directory, name)).catch(error => {
+        const info = await lstat(path.join(directory, name), { bigint: true }).catch(error => {
           if (error.code === 'ENOENT') return null
           throw error
         })
         if (info?.isDirectory()) entries.push({ name, kind: 'directory', size: 0 })
-        if (info?.isFile()) entries.push({ name, kind: 'file', size: info.size })
+        if (info?.isFile()) entries.push({ name, kind: 'file', size: Number(info.size), revision: localFileRevision(info) })
       }
       return entries
     } finally {
@@ -462,6 +494,7 @@ export function createLocalFileTree(storageRoot: string, rootKey: string) {
 
   return {
     path,
+    trashReceipt: (relativePath: string) => localTrashReceipt(storageRoot, path(relativePath)),
     copy: (relativePath: string, destination: string, signal: AbortSignal) =>
       copyLocalEntry(storageRoot, path(relativePath), path(destination), signal),
     async ensureRoot() {
@@ -483,12 +516,12 @@ export function createLocalFileTree(storageRoot: string, rootKey: string) {
     mkdir: (relativePath: string) => createLocalDirectory(storageRoot, path(relativePath)),
     upload: (relativePath: string, content: AsyncIterable<Uint8Array>, signal: AbortSignal, overwrite = false) =>
       importLocalFile(storageRoot, path(relativePath), content, signal, overwrite),
-    async move(relativePath: string, destination: string) {
+    async move(relativePath: string, destination: string, history?: { expected?: string; reverse?: string }) {
       const from = path(relativePath)
       const to = path(destination)
       if (to.startsWith(`${from}/`))
         throw Object.assign(new Error('不能移动到自身的子目录'), { code: 'EINVAL' })
-      return moveLocalEntry(storageRoot, from, to)
+      return moveLocalEntry(storageRoot, from, to, history)
     },
   }
 }
@@ -571,3 +604,5 @@ export async function readWorkspaceAgentInstructions(root: string): Promise<stri
     }
   }
 }
+
+export { watchDirectoryChanges } from './watch.js'

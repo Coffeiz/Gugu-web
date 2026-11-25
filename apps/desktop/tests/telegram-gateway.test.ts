@@ -141,7 +141,7 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
     await first.updateGroupSettings({ groupChatEnabled: true })
     releaseGroupMessages.resolve()
     await vi.waitFor(() => expect(offsets).toContain(4))
-    await vi.waitFor(() => expect(admit).toHaveBeenCalledWith(expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
+    await vi.waitFor(() => expect(admit).toHaveBeenCalledWith(expect.objectContaining({ platform: 'telegram', ownerId: 'desktop' }), expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
       kind: 'message.received', eventId: String(authorizedMessage.update_id), text: telegramPrivateMessage.message.text,
       scope: expect.objectContaining({ chatType: 'c2c', platformUserId: String(telegramPrivateMessage.message.from.id) }),
     })))
@@ -155,19 +155,19 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
       expect((await first.snapshot()).messages).toEqual([expect.objectContaining({ id: 4, text: '允许的消息' }), expect.objectContaining({ id: 5, text: '' }), expect.objectContaining({ id: 9, text: '引用图片' }), expect.objectContaining({ id: 10, text: '外部引用' })])
     })
     expect(admit).toHaveBeenCalledTimes(5)
-    expect(admit).toHaveBeenCalledWith(expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
+    expect(admit).toHaveBeenCalledWith(expect.objectContaining({ platform: 'telegram', ownerId: 'desktop' }), expect.stringMatching(/^[a-f0-9]{64}$/), expect.objectContaining({
       eventId: '7', scope: expect.objectContaining({ platform: 'telegram', chatType: 'group', chatId: '-10055' }),
     }), undefined, expect.objectContaining({ files: [], authorize: expect.any(Function) }))
     expect(dispatchOptions.some(options => 'group' in options && options.group?.id === '-10055')).toBe(true)
-    expect(admit).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ eventId: '5', text: '' }),
+    expect(admit).toHaveBeenCalledWith(expect.objectContaining({ platform: 'telegram', ownerId: 'desktop' }), expect.any(String), expect.objectContaining({ eventId: '5', text: '' }),
       undefined, expect.objectContaining({ files: [expect.objectContaining({ mime: 'image/jpeg', bytes })] }))
     expect(reference).toHaveBeenCalledWith('im.inbox.attachmentReference', expect.objectContaining({
       platform: 'telegram', sourceMessageId: '12345:42:5', sourceIndex: 0, connectionId: expect.stringMatching(/^[a-f0-9]{64}$/),
     }))
     expect(reference.mock.calls.filter(([method]) => method === 'im.inbox.attachmentReference')).toHaveLength(1)
-    expect(admit).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ eventId: '9', text: '引用图片' }),
+    expect(admit).toHaveBeenCalledWith(expect.objectContaining({ platform: 'telegram', ownerId: 'desktop' }), expect.any(String), expect.objectContaining({ eventId: '9', text: '引用图片' }),
       undefined, expect.objectContaining({ files: [expect.objectContaining({ bytes: new Uint8Array(bytes) })] }))
-    expect(admit).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ eventId: '10', quotedText: null }))
+    expect(admit).toHaveBeenCalledWith(expect.objectContaining({ platform: 'telegram', ownerId: 'desktop' }), expect.any(String), expect.objectContaining({ eventId: '10', quotedText: null }))
     expect(downloads).toHaveBeenCalledOnce()
     const delivery = await dispatched.promise
     const reply = { version: 1, kind: 'reply.requested', ...telegramPrivateReply,

@@ -1,4 +1,4 @@
-import { matchFolderSearchHits } from '@gugu/core'
+import { matchFolderSearchHits } from '@gugu/search'
 import { createDiskFileSearchSources } from '../../../search/files.js'
 import type { Pool } from 'pg'
 import type { FilePresentationPort } from '@gugu/core/tools'

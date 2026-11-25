@@ -81,25 +81,25 @@ test('Vite→Node Host→isolated PostgreSQL uploads an authenticated Local avat
     await vite.listen()
     const address = vite.httpServer?.address()
     assert.ok(address && typeof address !== 'string')
-    const base = `http://127.0.0.1:${address.port}/api/v1/auth/avatar`
+    const base = `http://127.0.0.1:${address.port}/api/v1/users/me/avatar`
     const ownerToken = createUserToken(ownerId, 1, secret)
 
     const unauthorizedForm = new FormData()
     unauthorizedForm.append('file', new Blob([Buffer.from('unauthorized')], { type: 'image/png' }), 'avatar.png')
-    const unauthorized = await fetch(base, { method: 'POST', body: unauthorizedForm })
+    const unauthorized = await fetch(base, { method: 'PUT', body: unauthorizedForm })
     assert.equal(unauthorized.status, 401)
 
     const form = new FormData()
     form.append('file', new Blob([Buffer.from('new-owner-avatar')], { type: 'image/webp' }), 'clipboard.png')
     const uploaded = await fetch(base, {
-      method: 'POST',
+      method: 'PUT',
       headers: { authorization: `Bearer ${ownerToken}` },
       body: form,
     })
     assert.equal(uploaded.status, 200)
-    const user = await uploaded.json() as { id: string; avatar_url: string }
+    const user = await uploaded.json() as { id: string; avatarUrl: string }
     assert.equal(user.id, ownerId)
-    assert.match(user.avatar_url, new RegExp(`^/api/v1/auth/avatar/${ownerId}\\?v=`))
+    assert.match(user.avatarUrl, new RegExp(`^/api/v1/users/${ownerId}/avatar\\?v=`))
 
     const stored = await pool.query<{ avatar: string }>('SELECT avatar FROM users WHERE id=$1', [ownerId])
     assert.match(stored.rows[0]!.avatar, new RegExp(`^avatars/${ownerId}\\.[0-9a-f]{32}\\.webp$`))
@@ -107,7 +107,7 @@ test('Vite→Node Host→isolated PostgreSQL uploads an authenticated Local avat
     await assert.rejects(readFile(path.join(avatarDirectory, `${ownerId}.png`)), { code: 'ENOENT' })
     assert.equal(await readFile(path.join(avatarDirectory, `${foreignId}.gif`), 'utf8'), 'foreign-avatar')
 
-    const read = await fetch(`${base}/${ownerId}`)
+    const read = await fetch(new URL(`/api/v1/users/${ownerId}/avatar`, base))
     assert.equal(read.status, 200)
     assert.equal(read.headers.get('content-type'), 'image/webp')
     assert.equal(read.headers.get('cache-control'), 'no-cache')
@@ -116,20 +116,20 @@ test('Vite→Node Host→isolated PostgreSQL uploads an authenticated Local avat
     const unsupportedForm = new FormData()
     unsupportedForm.append('file', new Blob(['<svg/>'], { type: 'image/svg+xml' }), 'avatar.svg')
     const unsupported = await fetch(base, {
-      method: 'POST', headers: { authorization: `Bearer ${ownerToken}` }, body: unsupportedForm,
+      method: 'PUT', headers: { authorization: `Bearer ${ownerToken}` }, body: unsupportedForm,
     })
     assert.equal(unsupported.status, 400)
-    const stillReadable = await fetch(`${base}/${ownerId}`)
+    const stillReadable = await fetch(new URL(`/api/v1/users/${ownerId}/avatar`, base))
     assert.equal(Buffer.from(await stillReadable.arrayBuffer()).toString(), 'new-owner-avatar')
     const replacementForm = new FormData()
     replacementForm.append('file', new Blob(['replacement-avatar'], { type: 'image/webp' }), 'avatar.webp')
     const replacement = await fetch(base, {
-      method: 'POST', headers: { authorization: `Bearer ${ownerToken}` }, body: replacementForm,
+      method: 'PUT', headers: { authorization: `Bearer ${ownerToken}` }, body: replacementForm,
     })
     assert.equal(replacement.status, 200)
-    const replacementUser = await replacement.json() as { avatar_url: string }
-    assert.notEqual(replacementUser.avatar_url, user.avatar_url)
-    assert.equal(Buffer.from(await (await fetch(new URL(replacementUser.avatar_url, base))).arrayBuffer()).toString(), 'replacement-avatar')
+    const replacementUser = await replacement.json() as { avatarUrl: string }
+    assert.notEqual(replacementUser.avatarUrl, user.avatarUrl)
+    assert.equal(Buffer.from(await (await fetch(new URL(replacementUser.avatarUrl, base))).arrayBuffer()).toString(), 'replacement-avatar')
   } finally {
     if (vite) await vite.close()
     await app.close().catch(() => undefined)

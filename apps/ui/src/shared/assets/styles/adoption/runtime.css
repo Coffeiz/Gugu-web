@@ -12,11 +12,9 @@ html[data-theme='dark'][data-family] [data-runtime-proxy-content='true']:not([da
   -webkit-backdrop-filter: var(--runtime-drag-glass-filter) !important;
 }
 
-/* 项目看板的渐变绘制于根卡片。画布与素材抽屉的渐变由各自的 ::before 淡入淡出。 */
+/* 看板代理落位时沿用卡片底色，项目色由前进按钮自身绘制。 */
 html[data-theme='dark'][data-family] .proj-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing']) {
-  background:
-    linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
-    var(--pr-project-color) !important;
+  background: var(--surface-card-solid) !important;
   border-color: var(--project-card-border) !important;
 }
 
