@@ -1,7 +1,7 @@
 // 只使用新建临时数据库，证明脱离源码目录后不依赖系统 Node/Python 或开发依赖。
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
+import { fork, spawnSync } from 'node:child_process'
 import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
@@ -11,7 +11,7 @@ const rootIndex = process.argv.indexOf('--root')
 const root =
   rootIndex >= 0
     ? resolve(process.argv[rootIndex + 1])
-    : resolve(fileURLToPath(new URL('../resources/core-sidecar/', import.meta.url)))
+    : resolve(fileURLToPath(new URL(process.platform === 'win32' ? '../resources/core-sidecar-sea/' : '../resources/core-sidecar/', import.meta.url)))
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'))
 const workerEntry = manifest.workerEntry ?? 'host/dist/runtime/worker.js'
 const agentRuntimeModule = manifest.agentRuntimeModule
@@ -29,10 +29,35 @@ const directory = mkdtempSync(join(tmpdir(), 'gugu-sidecar-check-')),
 try {
   const isolated = join(directory, 'runtime')
   cpSync(root, isolated, { recursive: true, dereference: true })
+  if (manifest.runtimeMode === 'sea') {
+    await new Promise((resolve, reject) => {
+      const child = fork('--gateway', ['qq'], {
+        execPath: join(isolated, manifest.executable),
+        execArgv: [],
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        windowsHide: true,
+      })
+      let requested = false
+      const timer = setTimeout(() => child.kill(), 10_000)
+      child.once('error', error => { clearTimeout(timer); reject(error) })
+      child.on('message', message => {
+        // 只验证子进程协议，不提供凭据，也不访问 QQ。
+        if (!requested && message?.method === 'token') {
+          requested = true
+          child.send({ stop: true }, error => { if (error) child.kill() })
+        }
+      })
+      child.once('exit', code => {
+        clearTimeout(timer)
+        if (requested && code === 0) resolve()
+        else reject(new Error('QQ SEA 网关启动或停止验证失败'))
+      })
+    })
+  }
   const run = (frames) => {
     const result = spawnSync(
       join(isolated, manifest.executable),
-      [join(isolated, manifest.entry), '--database', database, '--protocol', '2',
+      [manifest.runtimeMode === 'sea' ? '--core' : join(isolated, manifest.entry), '--database', database, '--protocol', '2',
         '--worker-entry', join(isolated, workerEntry),
         '--agent-runtime-module', join(isolated, agentRuntimeModule)],
       {
@@ -103,7 +128,7 @@ try {
       status: 'passed',
       platform: process.platform,
       arch: process.arch,
-      checks: ['integrity', 'isolated-start', 'sqlite-write', 'restart-receipt', 'im-inbox-restart', 'im-chart-render'],
+      checks: ['integrity', 'isolated-start', 'sqlite-write', 'restart-receipt', 'im-inbox-restart', 'im-chart-render', ...(manifest.runtimeMode === 'sea' ? ['qq-gateway-ipc'] : [])],
     }),
   )
 } finally {

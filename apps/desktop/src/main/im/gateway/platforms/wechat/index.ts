@@ -1,4 +1,3 @@
-import { readImAddressedCommand } from '@gugu/gateway'
 import { createHash } from 'node:crypto'
 import { createGatewaySupervisor, readImReceivedMessage } from '@gugu/gateway'
 import { connectWechatPolling, createILinkClient, createWechatTypingIndicator, createWechatTypingTicketCache, createWechatMedia, processWechatImages, createWechatSender, WECHAT_MISSING_VOICE_NOTICE } from '@gugu/gateway/wechat'
@@ -7,7 +6,7 @@ import type { createDesktopWechatPairing } from '../../../connect/platforms/wech
 import { MAX_DESKTOP_ATTACHMENT_BYTES } from '../../../../agent/attachments.js'
 import type { DesktopImFile, createDesktopImInbox } from '../../inbound/inbox.js'
 import type { IpcHost } from '../../../../ipc/types.js'
-import { readDesktopImRunStatus, stopDesktopImRun, type createDesktopImDispatch } from '../../delivery/dispatch.js'
+import { tryDesktopImRunControl, type createDesktopImDispatch } from '../../delivery/dispatch.js'
 
 export function createDesktopWechatCursor(directory: string, encryption: Parameters<typeof createEncryptedDesktopStore>[2]) {
   return (connectionId: string) => createEncryptedDesktopStore(directory, `im-wechat-cursor-${connectionId}`, encryption, value => {
@@ -77,10 +76,9 @@ export function createDesktopWechatGateway(pairing: Pick<ReturnType<typeof creat
           }
           if (host) {
             const event = readImReceivedMessage(connection, { ...payload })
-            const { command } = readImAddressedCommand(event)
-            if ((command?.name === 'stop' || command?.name === 'status') && !command.argument) {
-              const text = await (command.name === 'stop' ? stopDesktopImRun : readDesktopImRunStatus)(host, event, connectionId)
-              const deliveryId = createHash('sha256').update(JSON.stringify([connectionId, event.eventId, command.name])).digest('hex')
+            const text = await tryDesktopImRunControl(host, event, connectionId, { hasMedia: pendingMedia, authorize })
+            if (text) {
+              const deliveryId = createHash('sha256').update(JSON.stringify([connectionId, event.eventId, 'run-control'])).digest('hex')
               await sender.text({ userId: bot.userId, contextToken: payload.context_token }, text, signal, authorize, deliveryId)
               return 'consumed'
             }

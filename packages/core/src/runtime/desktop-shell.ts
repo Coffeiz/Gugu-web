@@ -76,7 +76,7 @@ export async function createDesktopShellTool(
       fullUserSandboxWrite: false, adminDangerousEnabled: true, userDangerousEnabled: access.dangerousEnabled || deletion.kind === 'trash',
     }, { isolatedWorkspaceWrite: isolatedWorkspace })
     if (!decision.allowed) return fail(decision.reason)
-    if (deletion.kind === 'blocked') return fail('请用独立的 rm 命令和明确路径移入废纸篓')
+    if (deletion.kind === 'blocked') return fail('整条命令未执行，也未发起权限确认。请把写入和删除拆成两次调用。删除请用独立的 rm 命令和明确路径；Windows 也支持独立的 Remove-Item -LiteralPath 加单个盘符绝对路径。')
     let trash: Awaited<ReturnType<typeof desktopTrashTarget>>[] | undefined
     let trashCwd = directory
     if (deletion.kind === 'trash') {
@@ -190,6 +190,12 @@ async function executeDesktopSandboxShell(input: AgentShellInput, options: {
   persistent: boolean
 }): Promise<ToolResult> {
   const { backend, platform, cwd, root, writable, signal } = options
+  if (process.platform === 'win32' && /(?:^|[;\r\n]\s*|&&?\s*|\|\s*)(?:Write-Output|Get-Location|Get-Date|Get-CimInstance|Get-ChildItem)\b/i.test(input.command.trim())) {
+    return { kind: 'completed', successful: false, executed: false, mutated: false, value: {
+      error: '当前 Windows 隔离环境使用 CMD。请使用 CMD 语法（例如 echo sandbox-ok）。如需测试宿主权限门，请显式指定工作区外的宿主机绝对目录。',
+      error_code: 'sandbox_shell_syntax', scope: 'sandbox',
+    } }
+  }
   const request = {
     id: options.requestId ?? randomUUID(),
     command: platform.command(input.command),

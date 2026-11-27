@@ -298,6 +298,8 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
           (names.has(call.name) ? delegation.tools : toolPorts.tools).dispatch(call, scope),
         reconcile: (call: Parameters<typeof toolPorts.tools.reconcile>[0], identity: Parameters<typeof toolPorts.tools.reconcile>[1]) =>
           (names.has(call.name) ? delegation.tools : toolPorts.tools).reconcile(call, identity),
+        reconcileAfterUnknown: async (...args: Parameters<NonNullable<typeof toolPorts.tools.reconcileAfterUnknown>>) =>
+          await (names.has(args[0].name) ? delegation.tools : toolPorts.tools).reconcileAfterUnknown?.(...args) ?? { kind: 'unknown' as const },
       } : toolPorts.tools
       const authorize = options.authorizeReasoning
       let provider: ReturnType<typeof createPersistentAgentRuntime>['provider']

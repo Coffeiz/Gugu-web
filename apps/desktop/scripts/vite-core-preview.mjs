@@ -10,6 +10,7 @@ import { createDesktopImDispatch } from '../src/main/im/gateway/delivery/dispatc
 import { createDesktopImCallback } from '../src/main/im/gateway/interactions/callback.ts'
 import { createDesktopQqPairing } from '../src/main/im/connect/platforms/qq/index.ts'
 import { createDesktopQqGateway } from '../src/main/im/gateway/platforms/qq/index.ts'
+import { createDesktopQqChildConnection } from '../src/main/im/gateway/platforms/qq/connection-host.ts'
 import { createDesktopFeishuPairing } from '../src/main/im/connect/platforms/feishu/index.ts'
 import { createDesktopFeishuGateway } from '../src/main/im/gateway/platforms/feishu/index.ts'
 import { createDesktopWechatPairing } from '../src/main/im/connect/platforms/wechat/index.ts'
@@ -88,7 +89,7 @@ function desktopScheduledImRequest(method, params, signal) {
 }
 
 export function desktopCorePreview(desktopRoot) {
-  const artifactRoot = join(desktopRoot, 'resources', 'core-sidecar')
+  const artifactRoot = join(desktopRoot, 'resources', process.platform === 'win32' ? 'core-sidecar-sea' : 'core-sidecar')
   let lifecycle
   const gateways = []
   return {
@@ -227,7 +228,9 @@ export function desktopCorePreview(desktopRoot) {
       const feishuPairing = createDesktopFeishuPairing(credentialDirectory, encryption, randomUUID(), newTransport(), () => refresh(feishu))
       const feishu = createDesktopFeishuGateway(feishuPairing, admit, dispatch, newTransport, undefined, callback)
       const qqPairing = createDesktopQqPairing(credentialDirectory, encryption, randomUUID(), newTransport(), () => qq.refresh())
-      const qq = createDesktopQqGateway(qqPairing, admit, dispatch, newTransport, undefined, callback,
+      const qqExecutable = process.platform === 'win32' ? join(artifactRoot, 'gugu-core.exe') : undefined
+      const qq = createDesktopQqGateway(qqPairing, admit, dispatch, newTransport,
+        qqExecutable ? ports => createDesktopQqChildConnection(ports, qqExecutable) : undefined, callback,
         (code, error) => report('gateway.degraded', { code, error }), { host, encryption })
       const scheduledIm = bindDesktopScheduledIm({ feishuPairing, qqPairing, wechatPairing, wechatReach, telegram, transport: newTransport })
       const resolveEmbedding = createDesktopEmbeddingResolver(credentialDirectory, encryption)

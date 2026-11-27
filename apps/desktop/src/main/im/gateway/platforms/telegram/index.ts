@@ -22,7 +22,7 @@ import { createDesktopTelegramConfig, parseDesktopTelegramBot, validTelegramPriv
 
 import type { createDesktopImCallback } from '../../interactions/callback.js'
 import { desktopImEventKey, type DesktopImFile, type createDesktopImInbox } from '../../inbound/inbox.js'
-import { readDesktopImRunStatus, stopDesktopImRun, type createDesktopImDispatch } from '../../delivery/dispatch.js'
+import { isDesktopImTextCancel, tryDesktopImRunControl, type createDesktopImDispatch } from '../../delivery/dispatch.js'
 import { startDesktopImPendingAskPump } from '../../inbound/pending-asks.js'
 
 type Inbox = { cursor: number | null; messages: DesktopTelegramMessage[] }
@@ -200,7 +200,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
             || !latest.groupChatEnabled || !event.scope.chatId) return 'consumed'
           const decision = classifyGatewayGroupMessage({ platform: 'telegram', chatType: 'group', chatId: event.scope.chatId,
             groupMentioned: event.botMentioned, mentionsOtherBot: false },
-          latest.groupReplyMode)
+          latest.groupReplyMode, isDesktopImTextCancel(event, message.attachments.length > 0 || message.quoted_attachments.length > 0))
           return latest.groupReplyMode === 'record_only' || decision === 'reply' ? 'enqueue' : 'consumed'
         },
         async materialize(payload, signal) {
@@ -246,9 +246,10 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
           if (!payload.text.trim() && !files.length) return null
           const ready = { ...payload, attachments: [], quoted_attachments: [] }
           const event = readImReceivedMessage(connection, ready)
-          const command = readImAddressedCommand(event).command
-          if (!recordOnly && attachmentHost && (command?.name === 'stop' || command?.name === 'status') && !command.argument && await eventAuthorize()) {
-            const text = await (command.name === 'status' ? readDesktopImRunStatus : stopDesktopImRun)(attachmentHost, event, eventConnectionId, isGroup ? bot.chatId! : undefined)
+          const text = !recordOnly && attachmentHost ? await tryDesktopImRunControl(attachmentHost, event, eventConnectionId, {
+            hasMedia: payload.attachments.length > 0 || payload.quoted_attachments.length > 0, ownerPlatformUserId: isGroup ? bot.chatId! : undefined, authorize: eventAuthorize,
+          }) : null
+          if (text) {
             await adapter.sender.text({ chatId: groupId ?? event.scope.platformUserId, chatType: event.scope.chatType,
               replyToMessageId: event.platformMessageId ?? undefined }, text, { signal, authorize: eventAuthorize })
             return null
@@ -297,12 +298,19 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
         },
         async callback(data, signal) {
           if (!callback || !bot.chatId || typeof data.id !== 'string') return true
-          let accepted = false
-          try { accepted = await callback(connection, connectionId(bot), bot.chatId, data, authorize) }
+          let outcome: Awaited<ReturnType<typeof callback>> = { accepted: false }
+          try { outcome = await callback(connection, connectionId(bot), bot.chatId, data, authorize) }
           catch { /* 回调验证或消费失败，返回通用状态。 */ }
+          const awaitingText = outcome.accepted && outcome.awaitingText
+          const hint = '请直接发送你的回复，咕咕会继续处理。'
           try { await adapter.api.call(bot.token, 'answerCallbackQuery', { payload: {
-            callback_query_id: data.id, text: accepted ? '已收到选择' : '交互已失效', show_alert: !accepted,
+            callback_query_id: data.id, text: awaitingText ? hint : outcome.accepted ? '已收到选择' : '交互已失效',
+            show_alert: !outcome.accepted,
           }, signal, authorize }) } catch { /* 平台提示失败不重放已消费动作。 */ }
+          if (awaitingText) {
+            try { await adapter.sender.text({ chatId: bot.chatId, chatType: 'c2c' }, hint, { signal, authorize }) }
+            catch { /* 聊天提示失败不重放已消费动作。 */ }
+          }
           return true
         },
         inbox: {
@@ -379,8 +387,9 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
                 identity: event.identity, receipts, sender: adapter.sender, target: recipient,
                 authorize, signal: dispatchSignal, policyVersion: 'desktop-telegram-v1',
                 showIntermediateReplies: target.preferences?.showIntermediateReplies,
-                toolSummary: target.preferences?.imToolDisplayMode === 'all'
+                toolSummary: target.preferences?.imToolDisplayMode && target.preferences.imToolDisplayMode !== 'off'
                   ? { chatType: 'p2p', includeDetails: false, sanitize: redactToolError, locale: target.preferences?.locale } : undefined,
+                toolMinimumDurationMs: target.preferences?.imToolDisplayMode === 'slow_only' ? 5000 : undefined,
                 renderCharts: createDesktopImChartRenderer(attachmentHost, authorize),
               })
               const result = await stream.project({ identity: event.identity, deliveryId: event.id, event })

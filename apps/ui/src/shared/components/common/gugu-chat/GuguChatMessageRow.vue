@@ -226,7 +226,9 @@ function toggleTranscript(file: ChatFile) {
 }
 const runOutcomeDetail = computed(() => {
   const outcome = props.msg.runOutcome
-  if (outcome?.status !== 'failed' || !outcome.messageKey) return ''
+  if (outcome?.status !== 'failed') return ''
+  if (outcome.errorCode === 'tool_result_unknown') return t('chatUi.toolResultUnknown')
+  if (!outcome.messageKey) return ''
   return translateAgentError(outcome.messageKey, outcome.messageParams)
 })
 

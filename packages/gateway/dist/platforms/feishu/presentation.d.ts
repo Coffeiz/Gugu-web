@@ -5,6 +5,7 @@ export type FeishuToolEvent = {
     name?: string;
     label?: string;
     status?: string;
+    toolDurationMs?: number;
     display?: unknown;
     input?: unknown;
     result?: unknown;

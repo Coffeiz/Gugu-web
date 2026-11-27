@@ -6,7 +6,7 @@ import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js
 import { dataContract } from '../../fixtures/data-contract.js'
 import { expect, it } from 'vitest'
 import { dataContext } from '../../../src/contracts/index.js'
-import { execute } from '../../../src/runtime/commands.js'
+import { execute, validateCommandParams } from '../../../src/runtime/commands.js'
 import type { ClientRecord, ProjectRecord } from '../../../src/contracts/index.js'
 
 dataContract('临时 SQLite 的项目/联系人同逻辑回归', async () => {
@@ -71,4 +71,14 @@ it('桌面项目改名和联系人维护命令经 Core 收据提交，正式 SQL
     await runtime?.close()
     rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
+})
+
+it('仅允许飞书工具详情随 IM 流式投递请求读取', () => {
+  const run = { id: 1, runId: 'synthetic-run', after: 0 }
+  const flags = { imDelivery: true, imStream: true, imFeishuToolDetails: true }
+  expect(() => validateCommandParams('agent.sessions.events', { ...run, ...flags })).not.toThrow()
+  expect(() => validateCommandParams('agent.sessions.events', { ...run, imFeishuToolDetails: true }))
+    .toThrow(expect.objectContaining({ code: 'invalid_request' }))
+  expect(() => validateCommandParams('agent.sessions.events', { ...run, ...flags, imFeishuToolDetails: false }))
+    .toThrow(expect.objectContaining({ code: 'invalid_request' }))
 })

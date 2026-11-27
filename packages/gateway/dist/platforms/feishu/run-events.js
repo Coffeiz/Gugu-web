@@ -15,7 +15,9 @@ export function createFeishuRunEventProjector(options = {}) {
                         ...(typeof payload.toolCallId === 'string' ? { toolCallId: payload.toolCallId } : {}),
                         ...(typeof payload.name === 'string' ? { name: payload.name, label: resolveImToolLabel(payload.name, payload.display, undefined, options.toolSummary?.locale) } : {}),
                         ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
+                        ...(typeof payload.toolDurationMs === 'number' && Number.isFinite(payload.toolDurationMs) ? { toolDurationMs: payload.toolDurationMs } : {}),
                         ...('display' in payload ? { display: payload.display } : {}),
+                        ...('input' in payload ? { input: payload.input } : {}),
                         ...('result' in payload ? { result: payload.result } : {}),
                     }];
             if (event.type === 'round_end')

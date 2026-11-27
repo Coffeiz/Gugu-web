@@ -26,7 +26,7 @@ export type UseSkillPorts = AgentSkillRuntimePorts
 export interface AskUserAuthorizationPort {
   singleChoiceOnly?: boolean
   allowQuestionBatch?: boolean
-  authorization(identity: RunIdentity, signal: AbortSignal): Promise<'disabled' | 'already_authorized' | 'available'>
+  authorization?(identity: RunIdentity, signal: AbortSignal): Promise<'disabled' | 'already_authorized' | 'available'>
 }
 
 function toolSchemaEvent(tool: PreparedToolDefinition) {
@@ -160,10 +160,12 @@ export function createAskUserTool(ports?: AskUserAuthorizationPort):ToolDefiniti
   const kinds: Array<'choice' | 'question' | 'questions'> = batch ? ['choice', 'question', 'questions'] : ['choice', 'question']
   const baseSchema = z.object({
     kind: z.enum(kinds), title: z.string().max(120), body: z.string().max(1000).optional(),
-    authorization: z.literal('user_sandbox').optional(), options: z.array(option).max(8).optional(),
+    options: z.array(option).max(8).optional(),
     questions: askQuestionBatchSchema(ports?.singleChoiceOnly).optional(),
   }).strict()
-  const schema = (ports?.singleChoiceOnly ? baseSchema : baseSchema.extend({
+  const questionSchema = ports?.authorization
+    ? baseSchema.extend({ authorization: z.literal('user_sandbox').optional() }) : baseSchema
+  const schema = (ports?.singleChoiceOnly ? questionSchema : questionSchema.extend({
     selection_mode: z.enum(['single', 'multiple']).optional(),
   })).superRefine((args, ctx) => {
     const invalid = (field: string) => ctx.addIssue({ code: 'custom', path: [field], message: '字段与提问类型不匹配' })
@@ -185,8 +187,8 @@ export function createAskUserTool(ports?: AskUserAuthorizationPort):ToolDefiniti
   return {definition:{name:'ask_user',schema:{type:'function',function:{name:'ask_user',description:`向用户提出澄清问题，等待回答后继续。${batchHint}${selectionHint}权限授权和危险操作使用专门的确认流程。`,parameters:parameters as Record<string,import('../../models.js').Json>}}},effect:'read',requiresInteraction:true,strictArrayFields:['options', 'questions'],validate:input=>schema.safeParse(input),
     async execute(input,scope,call){
       const args=input as z.infer<typeof schema>
-      if(args.kind !== 'questions' && args.authorization){
-        if(!ports)return {kind:'completed',successful:false,mutated:false,value:{error:'当前 Host 未提供完整用户沙箱授权能力'}}
+      if(args.kind !== 'questions' && 'authorization' in args && args.authorization){
+        if(!ports?.authorization)return {kind:'completed',successful:false,mutated:false,value:{error:'当前 Host 未提供完整用户沙箱授权能力'}}
         const authorization=await ports.authorization(scope.identity,scope.signal)
         scope.signal.throwIfAborted()
         if(authorization==='disabled')return {kind:'completed',successful:false,mutated:false,value:{error:'完整用户沙箱授权功能当前未开启'}}

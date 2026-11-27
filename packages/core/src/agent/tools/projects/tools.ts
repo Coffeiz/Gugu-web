@@ -78,11 +78,14 @@ export interface ProjectFileOverview {
 }
 
 const getInput = z.object({ project_id: z.number().int().safe().optional(), project: z.string().optional() }).passthrough()
+// Desktop 文件服务也会返回已绑定的 Windows 网络共享。设备命名空间不属于共享路径。
+const windowsUncPath = /^\\\\[^\\/?*:"<>|]+\\[^\\/?*:"<>|]+(?:\\|$)/u
 const locationInput = z.object({
     kind: z.enum(['sandbox', 'host_absolute']),
     value: z.string().min(1).max(4096),
   }).strict().refine(({ kind, value }) => !value.includes('\0') && !value.split(/[\\/]/u).some(part => part === '..' || part === '.')
-    && (kind === 'sandbox' ? /^\/(?:project|workspace)\//u.test(value) : value.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(value))).optional()
+    && (kind === 'sandbox' ? /^\/(?:project|workspace)\//u.test(value)
+      : value.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(value) || windowsUncPath.test(value))).optional()
 const projectLocationInput = locationInput.refine(location => location?.kind !== 'sandbox' || location.value.startsWith('/project/'))
 const overviewInput = z.object({
   total_file_count: z.number().int().nonnegative().safe(),

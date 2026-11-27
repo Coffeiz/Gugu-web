@@ -4,6 +4,7 @@ artifactName: gugu-desktop-${version}-${os}-${arch}.${ext}
 asar: true
 asarUnpack:
   - dist/cli/gugu.cjs
+  - dist/gateway/*.cjs
   - dist/native/chat-fab-glass.node
 npmRebuild: false
 directories:
@@ -34,7 +35,8 @@ nsis:
   include: assets/cli-install.nsh
   oneClick: false
   perMachine: false
-  allowElevation: false
+  allowElevation: true
+  selectPerMachineByDefault: false
   allowToChangeInstallationDirectory: true
 mac:
   target: [dmg, zip]

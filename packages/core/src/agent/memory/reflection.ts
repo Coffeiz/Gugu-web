@@ -5,6 +5,7 @@ import { blocks,copy } from '../context/history/canonical-history.js'
 import type { BranchPorts } from '../ports.js'
 import { recordAgentObservation, type AgentObservationPort } from '../observation.js'
 import { isContextOverflowError } from '../context/budget.js'
+import { ProviderError } from '../providers/errors.js'
 
 /** 群聊owner长期记忆只能看到owner原文与本Run私人工具结果，不能吸收群聊助手回复。 */
 export function buildOwnerReflectionInput(input: {
@@ -54,7 +55,8 @@ export async function runPrivateReflection<Wire>(
         ? { input: result.usage.input, output: result.usage.output,
           cacheRead: Number(result.usage.cacheRead ?? 0), cacheWrite: Number(result.usage.cacheWrite ?? 0),
           contextInput: typeof result.usage.contextInput === 'number' ? result.usage.contextInput : null } : undefined,
-      output: { ...attributes, ...(result ? { attempts: result.attempts, probe_eligible: result.usage !== null } : {}) },
+      output: { ...attributes, ...(result ? { attempts: result.attempts, probe_eligible: result.usage !== null,
+        ...(result.ok ? {} : { reason: result.reason, provider_error_code: result.providerErrorCode }) } : {}) },
     })
   }
 }
@@ -110,9 +112,10 @@ async function executeModelTask<Wire>(input: BranchInput<Wire>, policy: BranchPo
         throw signal.reason
       result.reason = 'provider_error'
       result.contextOverflow = isContextOverflowError(error)
-      result.providerErrorCode = ports.provider.isInputRejected(error) ? 'input_sensitive' : null
+      const inputRejected = ports.provider.isInputRejected(error)
+      result.providerErrorCode = inputRejected ? 'input_sensitive' : error instanceof ProviderError ? error.code : null
       ports.diagnostic(error, { branch: policy.name, runFingerprint: ports.digest(input.runId), attempt })
-      if (result.providerErrorCode || result.contextOverflow && policy.name === 'compaction')
+      if (inputRejected || result.contextOverflow && policy.name === 'compaction')
         break
       continue
     }

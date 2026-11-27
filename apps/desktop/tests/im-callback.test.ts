@@ -16,9 +16,9 @@ it('仅将匹配已投递提示和绑定用户的 Telegram 回调提交给原运
   const payload = telegramPrivateInteraction
   const user = String(payload.from.id)
   const scope = 'a'.repeat(64)
-  expect(await callback(connection, scope, '8', payload, async () => true)).toBe(false)
-  expect(await callback(connection, scope, user, { ...payload, message: { ...payload.message, message_id: 10 } }, async () => true)).toBe(false)
-  expect(await callback(connection, scope, user, payload, async () => true)).toBe(true)
+  expect(await callback(connection, scope, '8', payload, async () => true)).toMatchObject({ accepted: false })
+  expect(await callback(connection, scope, user, { ...payload, message: { ...payload.message, message_id: 10 } }, async () => true)).toMatchObject({ accepted: false })
+  expect(await callback(connection, scope, user, payload, async () => true)).toMatchObject({ accepted: true })
   expect(request.mock.calls.filter(([method]) => method === 'agent.sessions.respond')).toEqual([
     ['agent.sessions.respond', expect.objectContaining({ id: 8, runId: 'run', promptId: 7, token: 'synthetic-action' })],
   ])
@@ -33,9 +33,9 @@ it('QQ 无消息 ID 回调仍需绑定用户和已投递的提示', async () => 
   const payload = qqPrivateInteraction
   const user = payload.user_openid
   const scope = 'a'.repeat(64)
-  expect(await callback(connection, scope, user, { ...payload, user_openid: 'other' }, async () => true)).toBe(false)
-  expect(await callback(connection, scope, user, { ...payload, data: { resolved: { button_data: '8:synthetic-action' } } }, async () => true)).toBe(false)
-  expect(await callback(connection, scope, user, payload, async () => true)).toBe(true)
+  expect(await callback(connection, scope, user, { ...payload, user_openid: 'other' }, async () => true)).toMatchObject({ accepted: false })
+  expect(await callback(connection, scope, user, { ...payload, data: { resolved: { button_data: '8:synthetic-action' } } }, async () => true)).toMatchObject({ accepted: false })
+  expect(await callback(connection, scope, user, payload, async () => true)).toMatchObject({ accepted: true })
   expect(request.mock.calls.filter(([method]) => method === 'agent.sessions.respond')).toEqual([
     ['agent.sessions.respond', expect.objectContaining({ id: 8, runId: 'run', promptId: 7, token: 'synthetic-action' })],
   ])

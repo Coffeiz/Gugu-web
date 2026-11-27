@@ -6,10 +6,13 @@ import type { ImPlatformKey } from '../chatTypes'
 import type GuguChatSidebar from '../GuguChatSidebar.vue'
 import type GuguChatBindDialog from '../GuguChatBindDialog.vue'
 
-interface Bot {
+export interface ChatImBot {
   id?: number
   platform: string
   enabled: boolean
+  ownerBound?: boolean
+  telegramStatus?: 'disabled' | 'connecting' | 'connected' | 'retrying' | 'conflict' | 'cleanup_failed'
+  connectionState?: 'disabled' | 'running' | 'retrying' | 'connecting' | 'cleanup_failed'
 }
 
 interface ImConnectState { platform: string; id: string | number }
@@ -17,8 +20,11 @@ interface ImConnectState { platform: string; id: string | number }
 // ImPlatformKey 从 chatTypes.ts 引入（GuguChatSidebar.vue 的函数类型 props 也要用同一个
 // 类型别名，strictFunctionTypes 下两边收窄成不同类型会报参数逆变错误）。
 interface ImPlatformApi { start: () => Promise<any>; poll: (id: any) => Promise<any> }
+export type TelegramBindingStep = { code?: { code: string; expiresAt: number } }
+
 export interface ChatImAccess {
-  listBots(): Promise<{ items?: Bot[]; supported_platforms?: ImPlatformKey[] }>
+  generateTelegramBinding?(): Promise<TelegramBindingStep['code']>
+  listBots(): Promise<{ items?: ChatImBot[]; supported_platforms?: ImPlatformKey[] }>
   connectTelegram?(token: string): Promise<unknown>
   qr?: Partial<Record<ImPlatformKey, ImPlatformApi>>
 }
@@ -51,7 +57,7 @@ export function useChatImConnect(options: {
     { key: 'wechat',  label: 'WeChat', api: options.access?.qr?.wechat ?? null },
     { key: 'telegram', label: 'Telegram', api: null },
   ]
-  const bots   = ref<Bot[]>([])
+  const bots   = ref<ChatImBot[]>([])
   let botsLoadSeq = 0
   const telegramTokenDialogOpen = ref(false)
   const telegramConnecting = ref(false)
@@ -78,16 +84,39 @@ export function useChatImConnect(options: {
     } catch {}
   }
   watch(() => liveStore.rev.im_channels, () => { void loadBots() })
-  function toggleImPlatform(key: ImPlatformKey) { imOpen[key] = !imOpen[key] }
+  function toggleImPlatform(key: ImPlatformKey) {
+    imOpen[key] = !imOpen[key]
+    if (imOpen[key]) void loadBots()
+  }
 
-  function openTelegramTokenDialog() {
+  const telegramBindingStep = ref<TelegramBindingStep>()
+  async function generateTelegramBinding() {
+    if (!options.access?.generateTelegramBinding) return
+    telegramBindingStep.value = {}
+    try {
+      const code = await options.access.generateTelegramBinding()
+      if (!code) throw new Error('未取得 Telegram 绑定码')
+      telegramBindingStep.value = { code }
+    } catch {
+      telegramConnectError.value = t('desktopTelegram.failed')
+    }
+  }
+
+  async function openTelegramTokenDialog(binding = false) {
     if (!options.access?.connectTelegram) return
     telegramConnectError.value = ''
+    telegramBindingStep.value = binding ? {} : undefined
     telegramTokenDialogOpen.value = true
+    if (binding && !telegramConnecting.value) {
+      telegramConnecting.value = true
+      try { await generateTelegramBinding() } finally { telegramConnecting.value = false }
+    }
   }
   function closeTelegramTokenDialog() {
     if (telegramConnecting.value) return
     telegramTokenDialogOpen.value = false
+    telegramBindingStep.value = undefined
+    void loadBots()
   }
   async function submitTelegramToken(token: string) {
     const normalized = token.trim()
@@ -96,7 +125,8 @@ export function useChatImConnect(options: {
     telegramConnectError.value = ''
     try {
       await options.access.connectTelegram(normalized)
-      telegramTokenDialogOpen.value = false
+      if (options.access.generateTelegramBinding) await generateTelegramBinding()
+      else telegramTokenDialogOpen.value = false
       await loadBots()
       await options.fetchSessions()
     } catch {
@@ -233,7 +263,7 @@ export function useChatImConnect(options: {
   return {
     bots, imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,
     loadBots, toggleImPlatform, promptConnectIM,
-    telegramTokenDialogOpen, telegramConnecting, telegramConnectError,
+    telegramTokenDialogOpen, telegramConnecting, telegramConnectError, telegramBindingStep,
     openTelegramTokenDialog, closeTelegramTokenDialog, submitTelegramToken,
     connecting, connect, connectHint, connectErr, setConnectCanvas,
     startImConnect, cancelImConnect,

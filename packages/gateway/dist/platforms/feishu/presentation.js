@@ -178,8 +178,12 @@ export class FeishuPresentation {
         const tail = last ? text.includes(last) ? text.slice(text.lastIndexOf(last) + last.length) : this.activeText : text;
         if (this.active)
             this.active.text = tail;
-        else if (tail)
-            this.append(tail);
+        else if (tail) {
+            const previous = this.blocks.at(-1);
+            // 轮次结束只关闭当前段，最终事件可能再次携带该段完整正文。
+            if (previous?.kind !== 'text' || previous.text.trimEnd() !== tail.trimEnd())
+                this.append(tail);
+        }
     }
     elements() {
         const elements = [];

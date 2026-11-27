@@ -12,10 +12,12 @@ it('飞书桌面只登记绑定用户私聊，撤权后拒绝入站', async () =
   const appId = 'cli_0123456789abcdef'
   const bot = { appId, appSecret: 'synthetic-secret', userId: feishuPrivateMessage.sender.sender_id.open_id, enabled: true, revision: '1' }
   const admit = vi.fn(async () => {})
+  let awaitingText = false
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
     if (method === 'im.inbox.prompt') return params?.promptId === 7 && params.messageId === 'om_card'
       ? { sessionId: 8, runId: 'run' } : null
     if (method === 'agent.sessions.runModel') return null
+    if (method === 'agent.sessions.respond') return { awaitingText }
     return {}
   })
   const callback = vi.fn(createDesktopImCallback({ request: request as IpcHost['request'] }, {
@@ -26,6 +28,7 @@ it('飞书桌面只登记绑定用户私聊，撤权后拒绝入站', async () =
   const transcribe = vi.fn(async () => "  飞书语音测试  ")
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0])
   const outbound: Array<Record<string, unknown>> = []
+  const reactions: string[] = []
   const gateway = createDesktopFeishuGateway({ read: async () => bot }, admit, async options => { dispatch.resolve(options) },
     () => ({ async request(request) {
       if (request.url.includes('/resources/')) {
@@ -40,7 +43,14 @@ it('飞书桌面只登记绑定用户私聊，撤权后拒绝入站', async () =
         }] } }
         return { status: 200, headers: {}, body: (async function* () { yield Buffer.from(JSON.stringify(response)) })(), cancel() {} }
       }
-      const sending = new URL(request.url).pathname.endsWith('/im/v1/messages')
+      const path = new URL(request.url).pathname
+      if (path.endsWith('/reactions')) {
+        reactions.push(path)
+        return { status: 200, headers: {}, body: (async function* () {
+          yield Buffer.from(JSON.stringify({ code: 0, data: { reaction_id: 'synthetic-reaction' } }))
+        })(), cancel() {} }
+      }
+      const sending = path.endsWith('/im/v1/messages')
       if (sending) outbound.push(JSON.parse(Buffer.from(request.body as Uint8Array).toString()))
       const response = sending ? { code: 0, data: { message_id: 'om_reply' } } : request.url.includes('tenant_access_token')
         ? { code: 0, tenant_access_token: 'synthetic-token', expire: 7200 }
@@ -63,18 +73,43 @@ it('飞书桌面只登记绑定用户私聊，撤权后拒绝入站', async () =
     await connection.onMessage(message('ou_other', 'p2p'), signal)
     await connection.onMessage(message(bot.userId, 'group'), signal)
     await connection.onMessage({ ...feishuPrivateMessage, app_id: appId, message: { ...feishuPrivateMessage.message, parent_id: 'om_parent' } }, signal)
+    await vi.waitFor(() => expect(reactions).toEqual([
+      `/open-apis/im/v1/messages/${feishuPrivateMessage.message.message_id}/reactions`,
+    ]))
     const action = feishuPrivateInteraction
-    expect(await connection.onCardAction(action, signal)).toMatchObject({ toast: { type: 'info' } })
+    expect(await connection.onCardAction(action, signal)).toMatchObject({
+      toast: { type: 'info' },
+      card: { type: 'raw', data: { elements: [
+        { tag: 'div', text: { tag: 'plain_text', content: '已确认收到选择，咕咕将继续处理。' } },
+      ] } },
+    })
     expect(callback).toHaveBeenCalledOnce()
     expect(request).toHaveBeenCalledWith('agent.sessions.respond', expect.objectContaining({
       id: 8, runId: 'run', promptId: 7, token: 'synthetic-action',
     }))
+    awaitingText = true
+    const customAction = { ...action, header: { ...action.header, event_id: 'custom-reply-event' } }
+    const customResponse = await connection.onCardAction(customAction, signal)
+    const hint = '请在当前飞书聊天中发送你的回答，咕咕收到后会继续处理。'
+    expect(customResponse).toMatchObject({
+      toast: { type: 'info', content: hint },
+      card: { type: 'raw', data: { elements: [{ tag: 'div', text: { tag: 'plain_text', content: hint } }] } },
+    })
     const delivery = await dispatch.promise
     const reply = { version: 1, kind: 'reply.requested', ...feishuPrivateReply,
       scope: { ...delivery.connection, chatType: 'c2c', chatId: null, platformUserId: feishuPrivateReply.recipient } } as const
     expect(await delivery.send(reply)).toBe('accepted')
     expect(outbound).toEqual([expect.objectContaining({ receive_id: feishuPrivateReply.recipient, msg_type: 'interactive' })])
     expect(outbound[0]?.content).toContain(feishuPrivateReply.text)
+    await delivery.sendPrompt!({ prompt_id: 7, title: '选择一个方案', options: [
+      { id: 'a', label: '方案 A', token: 'synthetic-a' },
+      { id: 'b', label: '方案 B', token: 'synthetic-b' },
+      { id: '__custom_reply__', label: '自定义回复', token: 'synthetic-custom' },
+    ] }, bot.userId)
+    const card = JSON.parse(String(outbound[1]?.content))
+    const choices = card.elements.find((element: { tag: string }) => element.tag === 'action')
+    expect(choices.actions.map((button: { value: { option_id: string } }) => button.value.option_id))
+      .toEqual(['a', 'b', '__custom_reply__'])
     const imageMessage = {
       ...feishuPrivateMessage, app_id: appId,
       message: { ...feishuPrivateMessage.message, message_id: 'om_image', parent_id: 'om_other', message_type: 'image', content: '{"image_key":"img_test"}' },
@@ -97,13 +132,16 @@ it('飞书桌面只登记绑定用户私聊，撤权后拒绝入站', async () =
       ...imageMessage,
       message: { ...imageMessage.message, message_id: 'om_missing', content: '{"image_key":"img_missing"}' },
     }, signal)
-    expect(outbound[1]).toMatchObject({ receive_id: bot.userId, msg_type: 'interactive' })
-    expect(outbound[1]?.content).toContain('暂时无法从飞书下载附件')
+    expect(outbound.at(-1)).toMatchObject({ receive_id: bot.userId, msg_type: 'interactive' })
+    expect(outbound.at(-1)?.content).toContain('暂时无法从飞书下载附件')
+    const sentBeforeRevocation = outbound.length
     bot.enabled = false
     expect(await delivery.send(reply)).toBe('rejected')
-    expect(outbound).toHaveLength(2)
-    expect(await connection.onCardAction(action, signal)).toMatchObject({ toast: { type: 'error' } })
-    expect(callback).toHaveBeenCalledOnce()
+    expect(outbound).toHaveLength(sentBeforeRevocation)
+    const rejectedAction = await connection.onCardAction(action, signal)
+    expect(rejectedAction).toMatchObject({ toast: { type: 'error' } })
+    expect(rejectedAction).not.toHaveProperty('card')
+    expect(callback).toHaveBeenCalledTimes(2)
     await connection.onMessage({ ...feishuPrivateMessage, app_id: appId, message: { ...feishuPrivateMessage.message, parent_id: 'om_parent' } }, signal)
     await connection.onMessage(imageMessage, signal)
     await connection.onMessage(voiceMessage, signal)

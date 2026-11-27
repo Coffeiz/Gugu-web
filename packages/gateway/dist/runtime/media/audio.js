@@ -1,6 +1,6 @@
 import { mkdtemp, writeFile, rm, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareSilk } from './silk.js';
 import { runImMediaProcess } from './process.js';
@@ -86,7 +86,11 @@ export function createImAudioProcessor(options = {}) {
             let input = copy;
             if (silk) {
                 const worker = fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './silk-worker.ts' : './silk-worker.js', import.meta.url));
-                const pcm = await execute(options.nodePath ?? process.execPath, ['--wasm-max-mem-pages=2048', '--max-old-space-size=64', worker], directory, Math.min(outputLimit, silk.maximumPcmBytes), operation === 'probe' ? probeTimeout : Math.min(convertTimeout, 30_000), signal, silk.bytes);
+                const binary = options.nodePath ?? process.execPath;
+                const flags = ['--wasm-max-mem-pages=2048', '--max-old-space-size=64'];
+                const args = process.platform === 'win32' && basename(binary).toLowerCase() === 'gugu-core.exe'
+                    ? [`--node-options=${flags.join(' ')}`, '--silk-worker'] : [...flags, worker];
+                const pcm = await execute(binary, args, directory, Math.min(outputLimit, silk.maximumPcmBytes), operation === 'probe' ? probeTimeout : Math.min(convertTimeout, 30_000), signal, silk.bytes);
                 if (!pcm || !pcm.length || pcm.length % 2)
                     return null;
                 if (operation === 'probe')

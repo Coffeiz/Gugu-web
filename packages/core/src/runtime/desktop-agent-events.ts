@@ -4,6 +4,7 @@ import type { Database } from '../data/schema.js'
 import { CoreError } from '../contracts/index.js'
 import { MAX_AGENT_RESPONSE, type DesktopAgentEventPage } from '../contracts/desktop.js'
 import { reconstructionStatusEvent, startupFailureEvent } from '../agent/run/event-stream.js'
+import { projectPersistentToolInput } from '../agent/runner/tool-projection.js'
 import { projectAgentRunEvent } from '../agent/run/event-projection.js'
 import { createSqliteAgentAdmission } from '../agent/run/sqlite-admission.js'
 import { createSqliteAgentRunCoordination } from '../agent/run/sqlite-coordination.js'
@@ -34,7 +35,7 @@ export function createDesktopAgentEventReader(db: Kysely<Database>, databasePath
     return { store, readState,
       projection: createSqliteInteractionProjection(db, secret) }
   }
-  return async (sessionId: number, runId: string | undefined, after: number, stateOnly = false, imDelivery = false, imStream = false, reportAgentWait = false): Promise<DesktopAgentEventPage> => {
+  return async (sessionId: number, runId: string | undefined, after: number, stateOnly = false, imDelivery = false, imStream = false, reportAgentWait = false, imFeishuToolDetails = false): Promise<DesktopAgentEventPage> => {
     if (runId === undefined && after !== 0) throw new CoreError('invalid_request', '续读事件必须指定运行')
     const active = await admission.active(ownerId, sessionId, runId)
     if (!active || (runId !== undefined && !active.identity)) throw new CoreError('not_found', '会话或运行不存在')
@@ -74,11 +75,22 @@ export function createDesktopAgentEventReader(db: Kysely<Database>, databasePath
           projected.push({ type: 'im_final_text', text: event.payload.text })
       }
       if (imStream && (!internalTool || event.type === 'tool_call') && ['token', 'text_end', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_waiting', 'run_resumed'].includes(event.type)) {
-        const { text, status } = event.payload
+        const { text, status, toolCallId, name } = event.payload
+        const tool = !internalTool && (event.type === 'tool_call' || event.type === 'tool_done')
+        const display = tool && imDelivery && event.payload.display
+          && typeof event.payload.display === 'object' && !Array.isArray(event.payload.display)
+          ? event.payload.display as Record<string, unknown> : undefined
+        const toolDisplay = display?.kind === 'tool' && display.toolCallId === toolCallId ? display : undefined
+        const details = imFeishuToolDetails ? toolDisplay : undefined
         projected.push({ type: 'im_stream', runEvent: {
           id: event.id, identity: event.identity, sequence: event.sequence, round: event.round, type: event.type,
           payload: { ...(['token', 'text_end', 'round_end', 'final'].includes(event.type) && typeof text === 'string' ? { text } : {}),
-            ...(event.type === 'final' && typeof status === 'string' ? { status } : {}) },
+            ...((event.type === 'final' || tool) && typeof status === 'string' ? { status } : {}),
+            ...(tool && typeof toolCallId === 'string' ? { toolCallId } : {}),
+            ...(tool && typeof name === 'string' ? { name } : {}),
+            ...(typeof toolDisplay?.toolDurationMs === 'number' ? { toolDurationMs: toolDisplay.toolDurationMs } : {}),
+            ...(details?.toolInput === undefined ? {} : { input: projectPersistentToolInput(details.toolInput) }),
+            ...(details?.toolResult === undefined ? {} : { result: projectPersistentToolInput(details.toolResult) }) },
         } })
       }
       const bytes = Buffer.byteLength(JSON.stringify(projected))

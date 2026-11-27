@@ -128,6 +128,7 @@
           :telegram-token-dialog-open="telegramTokenDialogOpen"
           :telegram-connecting="telegramConnecting"
           :telegram-connect-error="telegramConnectError"
+          :telegram-binding-step="telegramBindingStep"
           :on-open-telegram-token-dialog="openTelegramTokenDialog"
           :on-close-telegram-token-dialog="closeTelegramTokenDialog"
           :on-submit-telegram-token="submitTelegramToken"
@@ -1098,7 +1099,7 @@ const bindDialogRef = ref<InstanceType<typeof GuguChatBindDialog> | null>(null)
 const {
   imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,
   loadBots, toggleImPlatform, promptConnectIM,
-  telegramTokenDialogOpen, telegramConnecting, telegramConnectError,
+  telegramTokenDialogOpen, telegramConnecting, telegramConnectError, telegramBindingStep,
   openTelegramTokenDialog, closeTelegramTokenDialog, submitTelegramToken,
   connecting, connect, connectHint, connectErr, setConnectCanvas,
   startImConnect, cancelImConnect,

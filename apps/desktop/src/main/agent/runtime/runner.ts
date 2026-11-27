@@ -419,8 +419,12 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       return active?.identity?.runId === identity.runId
     }
     async function desktopPrivateImOwner(identity: RunIdentity, signal?: AbortSignal) {
+      if (!await authorize(identity)) return null
+      return desktopPrivateImBinding(identity, signal)
+    }
+    async function desktopPrivateImBinding(identity: RunIdentity, signal?: AbortSignal) {
       const platform = desktopScheduleImPlatforms.find(value => value === imSession?.platform)
-      if (!platform || imChatType !== 'c2c' || !await authorize(identity)) return null
+      if (!platform || imChatType !== 'c2c') return null
       const target = await privateScheduleImTarget(platform, identity, signal)
       if (!target || target.chatType !== 'c2c' || target.platform !== platform || target.recipient !== target.boundUserId) return null
       const { rows } = await sql`SELECT 1 FROM desktop_im_sessions
@@ -704,7 +708,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         },
         metadata: identity => ({ undoContextId: `agent:${identity.sessionId}:${identity.runId}`.slice(0, 128) }),
       }) } : {}),
-      ...(interactive ? { askUser: { ...askUserPolicy, authorization: async () => 'disabled' as const } } : {}),
+      ...(interactive ? { askUser: askUserPolicy } : {}),
       httpGet,
       remember: createSqliteRememberMemory(db, memoryFiles),
       memorySearch: createSqliteMemorySearch(db, authorize, embedding, memoryFiles, resolveProxy),
@@ -1008,9 +1012,18 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       },
       provider: {
         continuationStore: continuation.store,
-        resolve: async (identity, _modelIdentity, signal) => {
+        resolve: async (identity, modelIdentity, signal, purpose) => {
           if (identity.ownerId !== ownerId || identity.sessionId !== String(sessionId)) throw new ProviderError('input_rejected')
-          if (imChatType === 'c2c' && !await desktopPrivateImOwner(identity, signal)) throw new ProviderError('cancelled')
+          if (imChatType === 'c2c') {
+            if (purpose === 'reflection') {
+              // 闲置反思发生在主 Run 结束后，使用已认领的反思任务和当前私聊绑定授权。
+              const { rows } = await sql`SELECT 1 FROM desktop_agent_reflection_jobs
+                WHERE user_id=${dataContext(ownerId).ownerId.replaceAll('-', '')} AND session_id=${Number(sessionId)}
+                  AND run_id=${identity.runId} AND model_identity=${modelIdentity}
+                  AND status='processing' AND claimed_at_ms IS NOT NULL`.execute(db)
+              if (!rows.length || !await desktopPrivateImBinding(identity, signal)) throw new ProviderError('cancelled')
+            } else if (!await desktopPrivateImOwner(identity, signal)) throw new ProviderError('cancelled')
+          }
           return { modelIdentity: selection.modelIdentity, accessScopeHash: runAccessScope(identity), config, systemPrompt: contextState.systemPrompt }
         },
         transportFactory: createNodeProviderTransportFactory(desktopModelTransportOptions(config, resolveProxy)),

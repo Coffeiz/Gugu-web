@@ -39,6 +39,20 @@ await build({
   external: ['electron'],
   sourcemap: true,
 })
+await build({
+  entryPoints: {
+    qq: resolve(root, 'src/main/im/gateway/platforms/qq/connection-child.ts'),
+    platforms: resolve(root, 'src/main/im/gateway/process-child.ts'),
+  },
+  outdir: resolve(root, 'dist/gateway'),
+  outExtension: { '.js': '.cjs' },
+  bundle: true,
+  platform: 'node',
+  target: 'node22',
+  format: 'cjs',
+  external: ['@node-rs/jieba', '@aws-sdk/client-s3'],
+})
+
 if (process.platform === 'darwin') {
   const nativeDir = resolve(root, 'dist/native')
   await mkdir(nativeDir, { recursive: true })

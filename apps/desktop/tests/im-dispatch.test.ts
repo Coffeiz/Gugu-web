@@ -1,6 +1,6 @@
 import { desktopImEventKey } from '../src/main/im/gateway/inbound/inbox.js'
 import { expect, it, vi } from 'vitest'
-import { createDesktopImDispatch, stopDesktopImRun } from '../src/main/im/gateway/delivery/dispatch.js'
+import { createDesktopImDispatch, stopDesktopImRun, tryDesktopImRunControl } from '../src/main/im/gateway/delivery/dispatch.js'
 import { DesktopError } from '../src/main/core-host.js'
 import { createRuntimeLog } from '@gugu/log/runtime'
 import type { IpcHost } from '../src/main/ipc/types.js'
@@ -565,6 +565,29 @@ it('即时停止命令重投复用原操作标识，保留群发起者范围', a
   expect(request.mock.calls[0]?.[2]).not.toBe(request.mock.calls[2]?.[2])
 })
 
+it.each(['feishu', 'wechat', 'telegram'] as const)('%s 在入队前处理文本取消并保持授权边界', async platform => {
+  const request = vi.fn(async (_method: string, _params: unknown) => ({ outcome: 'requested' }))
+  const host = { request: request as IpcHost['request'] }
+  const event = {
+    version: 1, kind: 'message.received', eventId: 'synthetic-cancel', text: '取消',
+    quotedText: null, botMentioned: false,
+    scope: { platform, ownerId: 'desktop', botId: 'synthetic-bot', chatType: 'c2c',
+      chatId: 'synthetic-chat', platformUserId: 'synthetic-sender' },
+  } as const
+  const connectionId = 'a'.repeat(64)
+  const authorize = async () => true
+  expect(await tryDesktopImRunControl(host, event, connectionId, { authorize })).toBe('好的，那这个先不继续啦～')
+  expect(request).toHaveBeenCalledWith('im.inbox.cancelRun', {
+    platform, connectionId, chatType: 'c2c', platformUserId: 'synthetic-sender',
+  })
+  request.mockClear()
+  expect(await tryDesktopImRunControl(host, event, connectionId, { authorize, hasMedia: true })).toBeNull()
+  expect(await tryDesktopImRunControl(host, event, connectionId, { authorize: async () => false })).toBeNull()
+  expect(request).not.toHaveBeenCalled()
+  request.mockResolvedValueOnce({ outcome: 'idle' })
+  expect(await tryDesktopImRunControl(host, event, connectionId, { authorize })).toBeNull()
+})
+
 it('监听模式空闲时不补读，仅由对应连接的收件事件唤醒', async () => {
   vi.useFakeTimers()
   const controller = new AbortController()
@@ -597,4 +620,48 @@ it('监听模式空闲时不补读，仅由对应连接的收件事件唤醒', a
     vi.useRealTimers()
   }
   expect(unsubscribe).toHaveBeenCalledTimes(2)
+})
+
+it.each([true, false])('Telegram 流式时不另发工具通知，非流式通知不引用原消息（流式 %s）', async streaming => {
+  const controller = new AbortController()
+  const connection = { platform: 'telegram', botId: 'bot', ownerId: 'desktop' } as const
+  const event = { version: 1, kind: 'message.received', eventId: 'update', platformMessageId: '42',
+    text: '合成收件', quotedText: null, botMentioned: false,
+    scope: { ...connection, chatType: 'c2c', chatId: null, platformUserId: 'user' } } as const
+  const identity = { ownerId: 'desktop', sessionId: '1', runId: 'run' }
+  const tool = { id: 'tool', identity, sequence: 1, round: 1, type: 'tool_done',
+    payload: { name: 'list_projects', status: 'success' } }
+  const final = { id: 'final', identity, sequence: 2, round: 1, type: 'final',
+    payload: { text: '最终正文', status: 'completed' } }
+  const request = (async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'im.inbox.prepare') return { sessionId: 1, runId: 'run', eventKey: desktopImEventKey(event), sealedEvent: 'AQ==', clientId: 'client' }
+    if (method === 'agent.sessions.events') return { status: 'completed', cursor: 2, hasMore: false, events: [
+      ...(streaming ? [{ type: 'im_stream', runEvent: tool }] : []),
+      { type: 'display_event', item: { kind: 'tool', eventId: 'tool', toolName: 'list_projects', toolStatus: 'success' } },
+      ...(streaming ? [{ type: 'im_stream', runEvent: final }] : []),
+      { type: 'im_final_text', text: '最终正文' },
+    ] }
+    if (method !== 'im.inbox.delivery') throw new Error('请求无效')
+    if (params?.action !== 'begin' && !params?.noticeKey) controller.abort()
+    return true
+  }) as IpcHost['request']
+  const dispatch = createDesktopImDispatch({ request }, {
+    async decryptStringAsync() { return { result: JSON.stringify({ event }), shouldReEncrypt: false } },
+  }, { resolveRunModelSelection: vi.fn() }, async () => ({
+    theme: 'system', themeFamily: 'mono', palette: 'neutral', imToolDisplayMode: 'all',
+  }))
+  const project = vi.fn(async () => 'accepted' as const)
+  const send = vi.fn(async (_reply: { text: string; originalMessageId?: string }) => 'accepted' as const)
+  await dispatch({ connection, connectionId: 'a'.repeat(64), userId: 'user', signal: controller.signal,
+    authorize: async () => !controller.signal.aborted, send,
+    ...(streaming ? { async createStream() { return { project, async close() {} } } } : {}),
+  })
+  if (streaming) {
+    expect(project.mock.calls).toEqual([[tool], [final]])
+    expect(send).not.toHaveBeenCalled()
+  } else {
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(send.mock.calls[0]?.[0].originalMessageId).toBeUndefined()
+    expect(send.mock.calls[1]?.[0]).toMatchObject({ originalMessageId: '42', text: '最终正文' })
+  }
 })

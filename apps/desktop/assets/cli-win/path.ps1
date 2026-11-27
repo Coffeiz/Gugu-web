@@ -1,7 +1,11 @@
-param([switch]$Remove)
+param([switch]$Remove, [switch]$AllUsers)
 $ErrorActionPreference = 'Stop'
 $directory = $PSScriptRoot
-$key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+$key = if ($AllUsers) {
+    [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true)
+} else {
+    [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+}
 try {
     $current = [string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
     $entries = @($current -split ';' | Where-Object { $_ })

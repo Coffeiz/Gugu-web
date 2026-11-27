@@ -3,7 +3,7 @@ import { formatImToolReceipt } from '../../ir/tool-receipt.js'
 import { buildFeishuCardElements } from './sender.js'
 
 type Element = Record<string, unknown>
-export type FeishuToolEvent = { type: 'tool_call' | 'tool_done'; toolCallId?: string; name?: string; label?: string; status?: string; display?: unknown; input?: unknown; result?: unknown }
+export type FeishuToolEvent = { type: 'tool_call' | 'tool_done'; toolCallId?: string; name?: string; label?: string; status?: string; toolDurationMs?: number; display?: unknown; input?: unknown; result?: unknown }
 /** 只允许可信Host为私聊打开详情；脱敏必须沿用正式出站策略。 */
 export type FeishuToolSummaryPolicy = { chatType: 'group'; includeDetails?: false; locale?: string | null; sanitize(text: string): string }
   | { chatType: 'p2p'; includeDetails?: boolean; locale?: string | null; sanitize(text: string): string }
@@ -125,7 +125,11 @@ export class FeishuPresentation {
     const last = this.embeddedSources.at(-1)
     const tail = last ? text.includes(last) ? text.slice(text.lastIndexOf(last) + last.length) : this.activeText : text
     if (this.active) this.active.text = tail
-    else if (tail) this.append(tail)
+    else if (tail) {
+      const previous = this.blocks.at(-1)
+      // 轮次结束只关闭当前段，最终事件可能再次携带该段完整正文。
+      if (previous?.kind !== 'text' || previous.text.trimEnd() !== tail.trimEnd()) this.append(tail)
+    }
   }
   elements(): Element[] {
     const elements: Element[] = []

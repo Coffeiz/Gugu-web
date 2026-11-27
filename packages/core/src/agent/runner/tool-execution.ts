@@ -88,7 +88,7 @@ export function bindToolExecution<C>(ports: AgentRunnerPorts<C>, identity: RunId
       throw error
     }).finally(() => { closed = true })
     try {
-      const result = waitForCleanup ? await operation : await cancellable(operation, signal).catch(async (error) => {
+      let result = waitForCleanup ? await operation : await cancellable(operation, signal).catch(async (error) => {
         if (error instanceof AgentRunError && error.code === 'cancelled') {
           // ToolPort的确定回执先到时优先保留，资源清理所需额外await不能反转完成/取消顺序。
           const completed = observed
@@ -98,6 +98,14 @@ export function bindToolExecution<C>(ports: AgentRunnerPorts<C>, identity: RunId
         }
         throw error
       })
+      if (result.kind === 'unknown' && !signal.aborted && ports.tools.reconcileAfterUnknown) {
+        const recovered = await ports.tools.reconcileAfterUnknown(call, { ...identity, roundId: `${identity.runId}:${round}` }, signal)
+          .catch(() => ({ kind: 'unknown' as const }))
+        if (recovered.kind === 'completed' && recovered.executed !== false && !signal.aborted) {
+          result = recovered
+          uncertainExecutions.delete(`${round}:${call.id}`)
+        }
+      }
       if (result.kind === 'waiting')
         recordToolInvocation(identity, call, round, 'waiting', startedAt, { executed: true, interaction: result.interaction.kind })
       else if (result.kind === 'unknown')

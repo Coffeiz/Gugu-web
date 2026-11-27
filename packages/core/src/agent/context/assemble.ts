@@ -577,6 +577,13 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
     async resumeInteraction(state, pending, resolution) {
       if (pending.id !== resolution.interactionId)
         throw new Error('交互回执与待处理请求不匹配')
+      if (pending.kind === 'confirmation' && resolution.status === 'cancelled') {
+        return toolResult(state, pending.toolCall, {
+          status: 'cancelled', code: 'user_denied', executed: false,
+          message: '用户拒绝了这次操作，工具未执行。请告知用户结果，并根据已有信息继续回复。不要绕过授权或自动重试被拒绝的操作。',
+          interaction_id: pending.id,
+        }, undefined, true)
+      }
       return toolResult(state, pending.toolCall, {
         status: resolution.status,
         value: pending.kind === 'credential' ? { status: resolution.status === 'answered' ? 'completed' : resolution.status }

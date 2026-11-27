@@ -6,7 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { safeStorage } from 'electron'
 import { deliverImPrompt, projectImChoiceButtons, formatImToolReceipt, replyToImMemoryCommand, readImAddressedCommand, createImRequestedReply, parseImReceivedMessage, type ImConnectionIdentity, type ImInboundConsumption, type ImReceivedMessage } from '@gugu/gateway'
 import { redactToolError, type RunEvent } from '@gugu/core/agent'
-import { immediateImCommandReply, normalizeImWorkspaceArgument, runImAutomaticModeCommand, runImForgetCommand } from '@gugu/core/im/shortcut'
+import { immediateImCommandReply, isExplicitImCancel, normalizeImWorkspaceArgument, runImAutomaticModeCommand, runImForgetCommand } from '@gugu/core/im/shortcut'
 import { agentCommandMenu, desktopWorkspaceReply, parseAgentGoalArgument, parseDesktopWorkspaceCommand } from '@gugu/core/agent/commands/menu'
 import { formatImCompactionNotice } from '@gugu/core/im/run-delivery'
 import { isAttentionSourceKind } from '@gugu/core/im/attention/directive'
@@ -47,6 +47,33 @@ export async function readDesktopImRunStatus(host: IpcHost, event: ImReceivedMes
   if (status === 'waiting_agent') return '正在等待子 Agent 的消息。'
   return status === 'waiting' ? '正在等待你的确认。'
     : status === 'preparing' || status === 'running' ? '当前任务仍在运行。' : '当前没有正在运行的任务。'
+}
+
+/** 入队前处理停止和状态。空闲时保留自然语言的正常入站行为。 */
+export function isDesktopImTextCancel(event: ImReceivedMessage, hasMedia = false) {
+  return !hasMedia && !event.quotedText && isExplicitImCancel(readImAddressedCommand(event).semantic)
+}
+
+export async function tryDesktopImRunControl(host: IpcHost, event: ImReceivedMessage, connectionId: string,
+  options: { hasMedia?: boolean; ownerPlatformUserId?: string; authorize(): Promise<boolean> }) {
+  const { command } = readImAddressedCommand(event)
+  const owner = options.ownerPlatformUserId
+  if (command && !command.argument && (command.name === 'stop' || command.name === 'status')) {
+    if (!await options.authorize()) return null
+    return (command.name === 'stop' ? stopDesktopImRun : readDesktopImRunStatus)(host, event, connectionId, owner)
+  }
+  if (!isDesktopImTextCancel(event, options.hasMedia) || !await options.authorize()) return null
+  return cancelDesktopImRunFromText(host, event, connectionId, owner)
+}
+
+export async function cancelDesktopImRunFromText(host: IpcHost, event: ImReceivedMessage, connectionId: string, ownerPlatformUserId?: string) {
+  const { outcome } = await host.request<{ outcome: string }>('im.inbox.cancelRun', {
+    platform: event.scope.platform, connectionId, chatType: event.scope.chatType, platformUserId: event.scope.platformUserId,
+    ...(ownerPlatformUserId === undefined ? {} : { ownerPlatformUserId }),
+  })
+  return outcome === 'requested' ? '好的，那这个先不继续啦～'
+    : outcome === 'already_completed' ? '这个任务已经结束啦～'
+      : outcome === 'not_owner' ? '这个不是你发起的任务哦，咕咕还在忙～' : null
 }
 
 export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof safeStorage, 'decryptStringAsync'>,
@@ -331,7 +358,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
               const noticeKey = createHash('sha256').update(JSON.stringify([clientId, key])).digest('hex')
               const qq = connection.platform === 'qq' ? resolveQqNoticeTarget(kind, event!.eventId) : undefined
               if (qq?.mode === 'rejected') return 'rejected'
-              const reply = qq?.mode === 'active'
+              const reply = qq?.mode === 'active' || connection.platform === 'telegram' && kind !== 'reply'
                 ? createImRequestedReply(event!.scope, { ownerId: connection.ownerId, deliveryId: noticeKey, text })
                 : makeReply(text, noticeKey, qq?.messageId)
               if (!reply || !await options.authorize()) return
@@ -349,7 +376,9 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             const current = projection
             let status: string
             do {
-              const page = await callRpc<DesktopAgentEventPage>('agent.sessions.events', { id: item.sessionId, runId: item.runId, after: current.cursor, imDelivery: true, ...(current.stream ? { imStream: true } : {}) })
+              const page = await callRpc<DesktopAgentEventPage>('agent.sessions.events', { id: item.sessionId, runId: item.runId, after: current.cursor, imDelivery: true, ...(current.stream ? { imStream: true } : {}),
+                ...(current.stream && !options.group && connection.platform === 'feishu' && preferences?.imToolDisplayMode && preferences.imToolDisplayMode !== 'off'
+                  ? { imFeishuToolDetails: true } : {}) })
               for (const entry of page.events) {
                 if (entry.type === 'im_stream' && current.stream && current.streamOutcome !== 'unknown' && current.streamOutcome !== 'rejected') {
                   const runEvent = entry.runEvent as RunEvent
@@ -357,7 +386,8 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                   if (runEvent.type === 'final') current.streamFinal = true
                 }
                 if (entry.type === 'im_compaction' && typeof entry.sequence === 'number'
-                  && !options.group && (connection.platform === 'feishu' || preferences?.imToolDisplayMode !== 'off')) {
+                  && !options.group && !(connection.platform === 'telegram' && current.stream)
+                  && (connection.platform === 'feishu' || preferences?.imToolDisplayMode !== 'off')) {
                   const notice = formatImCompactionNotice({ phase: entry.phase, applied: entry.applied })
                   if (notice) {
                     if (connection.platform === 'qq' && current.stream && entry.phase === 'started'
@@ -387,7 +417,8 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                 if (message.kind === 'assistant' && typeof message.eventId === 'string' && typeof message.text === 'string')
                   current.messages.set(message.eventId, message.text)
                 const toolMode = preferences?.imToolDisplayMode
-                if (toolMode && toolMode !== 'off' && message.kind === 'tool' && typeof message.eventId === 'string'
+                if (!(current.stream && (connection.platform === 'feishu' || connection.platform === 'telegram'))
+                  && toolMode && toolMode !== 'off' && message.kind === 'tool' && typeof message.eventId === 'string'
                   && typeof message.toolName === 'string' && /^[\w.:-]{1,120}$/u.test(message.toolName)
                   && (message.toolStatus === 'success' || message.toolStatus === 'error')
                   && (toolMode === 'all' || (message.toolDurationMs ?? 0) >= 5000))

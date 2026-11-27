@@ -16,6 +16,24 @@ function setup(effect: 'read' | 'write' = 'read', destructive = false) {
 }
 
 describe('可信工具注册边界', () => {
+  it('写入结果未知时只重查收据，取消后不继续查询', async () => {
+    const f = setup('write')
+    const receipt = { kind: 'completed' as const, value: { saved: true }, successful: true, mutated: true }
+    const reconcile = vi.fn<NonNullable<ToolDefinition['reconcile']>>()
+      .mockResolvedValueOnce({ kind: 'unknown' }).mockResolvedValueOnce(receipt)
+    const registry = createToolRegistry({ tools: [{ ...f.tool, reconcile }], authorize: f.authorize })
+    const candidate = { ...identity, roundId: f.scope.roundId }
+    expect(await registry.tools.reconcileAfterUnknown!(f.call, candidate, f.scope.signal)).toEqual(receipt)
+    expect(reconcile).toHaveBeenCalledTimes(2)
+    const controller = new AbortController()
+    reconcile.mockImplementationOnce(async () => {
+      controller.abort()
+      return { kind: 'unknown' }
+    })
+    expect(await registry.tools.reconcileAfterUnknown!(f.call, candidate, controller.signal)).toEqual({ kind: 'unknown' })
+    expect(reconcile).toHaveBeenCalledTimes(3)
+    expect(f.execute).not.toHaveBeenCalled()
+  })
   it('真实派发返回Python纠错载荷，未知字段名称和值不进入错误', async () => {
     const create = vi.fn().mockResolvedValue({ success: true })
     const f = setup()

@@ -26,6 +26,7 @@ export interface TelegramProjectionOptions {
     };
     showIntermediateReplies?: boolean;
     toolSummary?: FeishuToolSummaryPolicy;
+    toolMinimumDurationMs?: number;
     renderCharts?: FeishuChartRenderer;
     now?(): number;
 }

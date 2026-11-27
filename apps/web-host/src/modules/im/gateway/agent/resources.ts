@@ -353,7 +353,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
         canvases: createSqlMindCanvasReader(options.core.db, 'postgres'),
       } : {}),
       ...ownerTools?.tools,
-      askUser: { ...imAskUserPolicy, authorization: async () => 'disabled' },
+      askUser: imAskUserPolicy,
       ...(actor.platform !== 'wechat' ? { sendFile: createImSendFileTool(createImFileTools({
         ...options, identity, actor, scope, messageIds, payload: route.payload,
         files: createPostgresFileReadOperations(options.pool, options.storageRoot),

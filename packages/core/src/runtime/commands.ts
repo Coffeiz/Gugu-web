@@ -83,7 +83,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'agent.sessions.history': ['id', 'before'],
   'agent.sessions.toolDetails': ['id', 'messageId', 'index'],
   'agent.sessions.subagentSnapshot': ['id', 'runId', 'childId'],
-  'agent.sessions.events': ['id', 'runId', 'after', 'stateOnly', 'imDelivery', 'imStream'],
+  'agent.sessions.events': ['id', 'runId', 'after', 'stateOnly', 'imDelivery', 'imStream', 'imFeishuToolDetails'],
   'agent.memory.invalidateEmbedding': [],
   'agent.memory.resumeReflections': [],
   'agent.memory.read': [],
@@ -448,6 +448,8 @@ export function validateCommandParams(method: string, params: Fields): void {
     if (params.after !== undefined) safeInteger(params.after, 0)
     if (params.imStream !== undefined && (params.imStream !== true || params.imDelivery !== true))
       throw new CoreError('invalid_request', '本机 IM 流式事件请求无效')
+    if (params.imFeishuToolDetails !== undefined && (params.imFeishuToolDetails !== true || params.imStream !== true || params.imDelivery !== true))
+      throw new CoreError('invalid_request', '飞书工具详情请求必须用于 IM 流式投递')
     if (params.imDelivery !== undefined && (params.imDelivery !== true || params.stateOnly !== undefined || params.runId === undefined))
       throw new CoreError('invalid_request', 'IM 投递事件查询参数无效')
     if (params.stateOnly !== undefined && (params.stateOnly !== true || params.after !== undefined))

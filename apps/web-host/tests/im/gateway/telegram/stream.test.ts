@@ -85,10 +85,10 @@ test('草稿明确失败仅禁预览，仍需正式final；工具只投可信摘
   const stream = create(m, p, { toolSummary: { chatType: 'p2p', includeDetails: false, sanitize: text => text } })
   try {
     await push(stream, event(1, 'token', { text: '预览正文' }))
-    await push(stream, event(2, 'tool_done', { name: 'read_file', toolCallId: 'synthetic-tool', status: 'completed', result: { private: 'synthetic-credential-do-not-send' } }))
+    await push(stream, event(2, 'tool_done', { name: 'list_projects', toolCallId: 'synthetic-tool', status: 'success', result: { private: 'synthetic-credential-do-not-send' } }))
     await push(stream, event(3, 'final', { text: '正式回复', status: 'completed' }))
     assert.equal(p.calls.filter(call => call.method === 'sendMessageDraft').length, 1)
-    assert.equal(texts(p).length, 1); assert.ok(texts(p)[0]!.includes('read\\_file'))
+    assert.equal(texts(p).length, 1); assert.match(texts(p)[0]!, /查询项目列表完成/)
     assert.doesNotMatch(JSON.stringify(p.calls), /synthetic-credential-do-not-send/)
   } finally { await stream.close(); await p.api.close() }
 })
@@ -396,4 +396,25 @@ test('真实PG Telegram回调提前结束仍排空已排队SQL，再释放连接
       assert.equal(row.rows[0].state, 'pending')
     } finally { releaseGate(); await work; await Promise.allSettled(pending) }
   })
+})
+
+test('Telegram 仅长工具模式在同一份草稿和最终回复中保留长工具摘要', async () => {
+  const m = memory(), p = platform()
+  const stream = create(m, p, { toolMinimumDurationMs: 5000,
+    toolSummary: { chatType: 'p2p', includeDetails: false, sanitize: text => text } })
+  try {
+    const batch = [
+      event(1, 'token', { text: '正在处理' }),
+      event(2, 'tool_done', { name: 'fast', status: 'success', toolDurationMs: 4999 }),
+      event(3, 'tool_done', { name: 'slow', status: 'success', toolDurationMs: 5000 }),
+      event(4, 'final', { text: '最终回复', status: 'completed' }),
+    ]
+    for (const value of batch) { p.tick(1100); assert.equal(await push(stream, value), 'accepted') }
+    const drafts = p.calls.filter(call => call.method === 'sendMessageDraft').map(call => JSON.parse(call.body.toString()))
+    assert.equal(new Set(drafts.map(draft => draft.draft_id)).size, 1)
+    assert.ok(drafts.some(draft => draft.text.includes('slow完成')))
+    assert.equal(texts(p).length, 1)
+    assert.match(texts(p)[0]!, /slow完成/)
+    assert.doesNotMatch(texts(p)[0]!, /fast/)
+  } finally { await stream.close(); await p.api.close() }
 })

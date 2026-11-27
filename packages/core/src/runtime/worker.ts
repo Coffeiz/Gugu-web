@@ -634,7 +634,7 @@ try {
               const id = safeInteger(job.params.id), runId = job.params.runId as string | undefined
               const after = job.params.after === undefined ? 0 : safeInteger(job.params.after, 0)
               result = readCompactionEvents(id, runId, after, job.params.stateOnly === true)
-                ?? await readAgentEvents(id, runId, after, job.params.stateOnly === true, job.params.imDelivery === true, job.params.imStream === true)
+                ?? await readAgentEvents(id, runId, after, job.params.stateOnly === true, job.params.imDelivery === true, job.params.imStream === true, false, job.params.imFeishuToolDetails === true)
               break
             }
             case 'agent.sessions.append': {

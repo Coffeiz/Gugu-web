@@ -68,6 +68,13 @@ export function buildFeishuCardElements(text) {
         append(text);
     return elements;
 }
+/** 飞书在动作回调中用 raw card 替换原卡片，已处理的选择不再可点击。 */
+export function buildFeishuCompletedActionCard(content) {
+    return { type: 'raw', data: {
+            config: { wide_screen_mode: true },
+            elements: [{ tag: 'div', text: { tag: 'plain_text', content } }],
+        } };
+}
 export function createFeishuSender(options) {
     async function send(receiveId, type, content, signal, authorize) {
         if (!validRecipient(receiveId))

@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { splitMarkdownV2 as splitTelegramMarkdownV2 } from '@gugu/core/im/telegram-format';
 import { TelegramApiError } from './client.js';
+import { packButtonRows } from '../button-rows.js';
 const object = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
 /** 每 Bot 一个实例，跨 chat 串行维护 bot/chat 限速；未知结果不自动重试。 */
 export function createTelegramSender(options) {
@@ -89,9 +90,7 @@ export function createTelegramSender(options) {
             const buttons = (prompt.options ?? []).filter(option => option.token).map(option => ({ text: Array.from(option.label || option.id || '选择').slice(0, 64).join(''), callback_data: `${prompt.prompt_id}:${option.token}` }));
             if (buttons.some(button => Buffer.byteLength(button.callback_data) > 64 || button.callback_data.slice(button.callback_data.indexOf(':') + 1).includes(':')))
                 return Promise.resolve({ outcome: 'rejected', platformMessageIds: [] });
-            const rows = [];
-            for (let i = 0; i < buttons.length; i += 4)
-                rows.push(buttons.slice(i, i + 4));
+            const rows = packButtonRows(buttons, button => button.text, 4);
             return sender.text(target, [prompt.title || '需要你的回答', prompt.body || ''].filter(Boolean).join('\n'), { signal, authorize, ...(buttons.length ? { replyMarkup: { inline_keyboard: rows } } : {}) });
         },
         file(target, data, filename, signal, authorize) {

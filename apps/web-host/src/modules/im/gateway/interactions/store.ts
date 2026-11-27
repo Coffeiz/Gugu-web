@@ -1,3 +1,4 @@
+import { buildFeishuCompletedActionCard } from '@gugu/gateway/feishu'
 import { sendAuthorizedImPrompt, projectImChoiceButtons, matchesImInteractionScope, readImReceivedInteraction } from '@gugu/gateway'
 import { createHmac,randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
@@ -176,7 +177,7 @@ export function createPostgresImNativeInteractions(options:{
         if(platform==='qq'&&!result.accepted)options.diagnose?.('qq_interaction_action_rejected')
         const feedback = result.nextQuestion ? '已保存本题答案，请回答下一题。' : result.awaitingText ? '请直接发送你的回复，咕咕会继续处理。' : '已确认收到选择；咕咕将继续处理。'
         return{consumed:true,accepted:result.accepted,...(platform==='feishu'&&result.accepted?{response:{
-          toast:{type:'info',content:result.awaitingText?feedback:'已收到选择。'},card:{type:'raw',data:{config:{wide_screen_mode:true},elements:[{tag:'div',text:{tag:'plain_text',content:feedback}}]}}
+          toast:{type:'info',content:result.awaitingText?feedback:'已收到选择。'},card:buildFeishuCompletedActionCard(feedback)
         }}:{})}
       }catch(error){
         try { options.diagnose?.('interaction_callback_failed', error) } catch { /* 诊断不得影响回调结算。 */ }

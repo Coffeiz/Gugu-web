@@ -829,6 +829,7 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
 
   async function globalFileSearch(queries: readonly string[], mode: 'OR' | 'AND' = 'OR', perType = 6, signal?: AbortSignal, maxEntries = 10_000) {
     const terms = queries.map(term => isAbsolute(term) ? term : term.normalize('NFC').toLowerCase())
+    const exactPaths = terms.length > 0 && terms.every(isAbsolute) ? [...new Set(terms)] : null
     const budget = { remaining: maxEntries }
     let truncated = false
     type Item = { id: string; title: string; subtitle: string; path_file: {
@@ -879,8 +880,30 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     async function collect(files: ReturnType<typeof workspaceFiles>, directoryName: string,
       targetFor: (relativePath: string) => Promise<{ directoryId: DesktopFileDirectory; relativePath: string } | null>,
       onEntry?: (path: string) => Promise<void>) {
+      async function* entries() {
+        if (!exactPaths) {
+          yield* files.scan(budget)
+          return
+        }
+        const root = await files.locate([])
+        for (const path of exactPaths) {
+          signal?.throwIfAborted()
+          const local = relative(root, path)
+          if (!local || isAbsolute(local) || local === '..' || local.startsWith('..' + sep)) continue
+          const relativePath = local.split(sep).join('/')
+          try {
+            const absolute = await files.locate(segments(relativePath))
+            if (absolute !== path) continue
+            const info = await lstat(absolute)
+            if (info.isDirectory() || info.isFile())
+              yield { name: basename(absolute), relativePath, kind: info.isDirectory() ? 'directory' : 'file' }
+          } catch (error) {
+            if (!['ENOENT', 'ENOTDIR', 'not_found', 'invalid_request', 'forbidden', 'EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+          }
+        }
+      }
       try {
-        for await (const entry of files.scan(budget)) {
+        for await (const entry of entries()) {
           signal?.throwIfAborted()
           if (entry.kind === 'directory') await onEntry?.(entry.relativePath)
           const scannedPath = entry.relativePath.normalize('NFC').toLowerCase()

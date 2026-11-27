@@ -128,6 +128,20 @@ export function createDesktopToolRuntime(options: {
     signal?.throwIfAborted()
     return allowed.has('call_tool') && allowed.has(canonicalAgentToolName(name))
   }
+  async function receiptTools(call: Parameters<ToolPort['reconcile']>[0], identity: RunIdentity, signal?: AbortSignal) {
+    if (imSession && !groupTools) {
+      const actor = await desktopPrivateImOwner(identity, signal)
+      if (!actor || !imCanUseTool(actor, call.name)) return null
+    }
+    if (groupTools) return groupTools.tools
+    if (delegation && delegationNames.has(call.name)) return delegation.tools
+    if (unavailableSearch.has(call.name)) {
+      if (call.adapter === 'call_tool' && !await mayForward('call_tool', identity, signal)) return null
+      return searchRecovery
+    }
+    if (call.adapter === 'call_tool' && !await mayForward(call.name, identity, signal)) return null
+    return mcpTools.tools
+  }
   const tools: ToolPort = {
     ...(groupTools?.tools ?? mcpTools.tools),
     ...(imSession ? { unavailableTool: imUnavailableTool } : {}),
@@ -160,18 +174,12 @@ export function createDesktopToolRuntime(options: {
       })
     },
     async reconcile(call, identity) {
-      if (imSession && !groupTools) {
-        const actor = await desktopPrivateImOwner(identity)
-        if (!actor || !imCanUseTool(actor, call.name)) return { kind: 'unknown' }
-      }
-      if (groupTools) return groupTools.tools.reconcile(call, identity)
-      if (delegation && delegationNames.has(call.name)) return delegation.tools.reconcile(call, identity)
-      if (unavailableSearch.has(call.name)) {
-        if (call.adapter === 'call_tool' && !await mayForward('call_tool', identity)) return { kind: 'unknown' }
-        return searchRecovery.reconcile(call, identity)
-      }
-      if (call.adapter === 'call_tool' && !await mayForward(call.name, identity)) return { kind: 'unknown' }
-      return mcpTools.tools.reconcile(call, identity)
+      const port = await receiptTools(call, identity)
+      return await port?.reconcile(call, identity) ?? { kind: 'unknown' }
+    },
+    async reconcileAfterUnknown(call, identity, signal) {
+      const port = await receiptTools(call, identity, signal)
+      return await port?.reconcileAfterUnknown?.(call, identity, signal) ?? { kind: 'unknown' }
     },
   }
   return { tools, mcpRuntime, groupTools, groupSkillRegistry, delegation, configuredTools }

@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path'
 import { realpath, stat } from 'node:fs/promises'
+import { setTimeout as delay } from 'node:timers/promises'
 import type { SqlDataRuntime } from '#core-source/data/runtime.js'
 import type { RunIdentity, ToolCall, ToolResult } from '#core-source/agent/models.js'
 import type { ToolDefinition, ToolScope } from '#core-source/agent/tools/contracts.js'
@@ -42,7 +43,21 @@ export async function createDesktopFileTools(options: {
     async execute(input, scope, call) {
       const fail = (error: string) => ({ kind: 'completed' as const, successful: false, mutated: false, value: { error } })
       if (!isLibraryItemInput(input) || !await authorizeWrite(db, scope.identity, scope.signal)) return fail('当前会话无权移入废纸篓')
-      const target = await hostRequest('agent.files.deleteItem', input, scope.signal)
+      let target: unknown
+      for (const wait of [0, 250]) {
+        if (wait) await delay(wait, undefined, { signal: scope.signal }).catch(() => undefined)
+        scope.signal.throwIfAborted()
+        try {
+          target = await hostRequest('agent.files.deleteItem', input, scope.signal)
+          break
+        } catch (error) {
+          scope.signal.throwIfAborted()
+          if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'storage_error') throw error
+          // 这里只查询目标，尚未派发移入废纸篓的操作。
+          if (wait) return { kind: 'completed', executed: false, successful: false, mutated: false,
+            value: { error: '暂时无法核对废纸篓目标，未执行删除。', code: 'trash_target_unavailable' } }
+        }
+      }
       if (typeof target !== 'string') return fail('找不到类型匹配的文件库目标')
       const snapshot = { targetsDigest: digest(input), versionsDigest: digest(target), targetIds: {} }
       const argsDigest = digest(input)

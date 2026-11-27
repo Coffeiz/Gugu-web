@@ -18,10 +18,13 @@ export const retryClock: RetryClock = {
 
 /** SDK/HTTP层不再嵌套重试；一旦任何输出事实出现，禁止重发整轮。 */
 export async function* streamWithRetry(open: () => AsyncIterable<ProviderEvent>, signal: AbortSignal, options: { clock?: RetryClock; maxRetries?: number; intervalMs?: number; maxWallMs?: number } = {}): AsyncGenerator<ProviderEvent> {
-  const clock = options.clock ?? retryClock, started = clock.now(), max = options.maxRetries ?? 5, pause = options.intervalMs ?? 5000
+  const clock = options.clock ?? retryClock, started = clock.now(), max = options.maxRetries ?? 5
+  const interval = options.intervalMs ?? 5_000
+  const maxWallMs = options.maxWallMs ?? 900_000
   let previousError: ProviderError | null = null
   for (let attempt = 0; ; attempt++) {
-    if (previousError && clock.now() - started >= (options.maxWallMs ?? 900_000)) throw previousError
+    throwIfCancelled(signal)
+    if (previousError && clock.now() - started >= maxWallMs) throw previousError
     let emitted = false
     try {
       yield { type: 'usage', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, contextInput: null } }
@@ -34,7 +37,8 @@ export async function* streamWithRetry(open: () => AsyncIterable<ProviderEvent>,
     } catch (raw) {
       if (signal.aborted) throw new ProviderError('cancelled')
       const error = classifyProviderError(raw)
-      if (emitted || error.options.outputStarted || !error.options.retryable || attempt >= max || clock.now() - started >= (options.maxWallMs ?? 900_000)) throw error
+      const pause = Math.min(interval * 2 ** Math.min(attempt, 30), 30_000)
+      if (emitted || error.options.outputStarted || !error.options.retryable || attempt >= max || clock.now() - started + pause >= maxWallMs) throw error
       previousError = error
       const errorCode = error.code === 'rate_limit' ? 'rate_limited' : error.code === 'busy' ? 'upstream_busy' : error.code === 'timeout' ? 'timeout' : 'transport'
       yield { type: 'retry', attempt: attempt + 1, maxRetries: max, nextRetryMs: pause, errorCode }

@@ -21,12 +21,14 @@
 .mail-nav-row .mail-nav-count {
   margin-inline-start: auto;
   flex: none;
-  padding-inline: var(--space-xs);
+  min-inline-size: 18px;
+  padding: 1px var(--space-xs);
   border-radius: var(--radius-pill);
   background: var(--selection-bg);
   color: var(--selection-fg);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-bold);
+  text-align: center;
 }
 .mail-nav-row { width: 100%; text-align: left; border: 1px solid transparent; padding: var(--space-sm); font: inherit; color: var(--content-primary); background: transparent; cursor: pointer; }
 .mail-nav-row:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }

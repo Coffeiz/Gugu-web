@@ -50,9 +50,11 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
     message: { message_id: id, chat: { id: sender, type }, from: { id: sender, first_name: '示例' }, text },
   })
   const outbound: Array<Record<string, unknown>> = []
+  const callbackAcks: unknown[] = []
   const adapter: typeof createTelegramAdapter = ({ token }) => ({
     api: {
-      async call(_token, method) {
+      async call(_token, method, request) {
+        if (method === 'answerCallbackQuery') callbackAcks.push(request?.payload)
         if (method === 'getFile') return { file_path: 'photos/image.jpg', file_size: bytes.length }
         if (token.endsWith('-invalid')) throw new TelegramApiError('getMe', 401, 401)
         return method === 'getMe' ? { id: 12345, username: 'test_bot' } : { url: '' }
@@ -105,6 +107,7 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
                 { update_id: 9, message: { ...update(9, 42, 'private', '引用图片').message, reply_to_message: photo.message } },
                 { update_id: 10, message: { ...update(10, 42, 'private', '外部引用').message,
                   reply_to_message: { ...photo.message, chat: { id: 99, type: 'private' } } } },
+                { update_id: 11, callback_query: { id: 'synthetic-custom-answer' } },
               ]
             }
             await delay(60_000, undefined, { signal: request?.signal })
@@ -122,7 +125,7 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
   const first = createDesktopTelegramGateway(directory, encryption, adapter, undefined, admit, async options => {
     dispatchOptions.push(options)
     dispatched.resolve(options)
-  }, undefined, undefined, { request: reference as IpcHost['request'] })
+  }, async () => ({ accepted: true, awaitingText: true }), undefined, { request: reference as IpcHost['request'] })
   let reopened: ReturnType<typeof createDesktopTelegramGateway> | undefined
   try {
     await first.start()
@@ -149,7 +152,7 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
     expect((await first.snapshot()).messages).toEqual([])
     admission.resolve()
     await vi.waitFor(async () => {
-      expect(offsets).toContain(11)
+      expect(offsets).toContain(12)
       expect(await first.snapshot()).toMatchObject({ status: 'connected', bound: true })
       expect((await first.snapshot()).binding).toBeUndefined()
       expect((await first.snapshot()).messages).toEqual([expect.objectContaining({ id: 4, text: '允许的消息' }), expect.objectContaining({ id: 5, text: '' }), expect.objectContaining({ id: 9, text: '引用图片' }), expect.objectContaining({ id: 10, text: '外部引用' })])
@@ -169,6 +172,9 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
       undefined, expect.objectContaining({ files: [expect.objectContaining({ bytes: new Uint8Array(bytes) })] }))
     expect(admit).toHaveBeenCalledWith(expect.objectContaining({ platform: 'telegram', ownerId: 'desktop' }), expect.any(String), expect.objectContaining({ eventId: '10', quotedText: null }))
     expect(downloads).toHaveBeenCalledOnce()
+    const hint = '请直接发送你的回复，咕咕会继续处理。'
+    await vi.waitFor(() => expect(outbound).toContainEqual(expect.objectContaining({ chat_id: '42', text: hint })))
+    expect(callbackAcks).toEqual([{ callback_query_id: 'synthetic-custom-answer', text: hint, show_alert: false }])
     const delivery = await dispatched.promise
     const reply = { version: 1, kind: 'reply.requested', ...telegramPrivateReply,
       scope: { ...delivery.connection, chatType: 'c2c', chatId: null, platformUserId: telegramPrivateReply.recipient } } as const
@@ -177,6 +183,7 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
       expect.objectContaining({ chat_id: '99', text: expect.stringContaining('绑定码无效') }),
       expect.objectContaining({ chat_id: '42', text: '绑定成功。' }),
       expect.objectContaining({ chat_id: '42', reply_to_message_id: 8, text: expect.stringContaining('超限附件未接收') }),
+      expect.objectContaining({ chat_id: '42', text: hint }),
       expect.objectContaining({
       chat_id: telegramPrivateReply.recipient, reply_to_message_id: Number(telegramPrivateReply.originalMessageId), text: telegramPrivateReply.text,
     })])
@@ -189,7 +196,7 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
     offsets.length = 0
     reopened = createDesktopTelegramGateway(directory, encryption, adapter)
     await reopened.start()
-    await vi.waitFor(() => expect(offsets[0]).toBe(11))
+    await vi.waitFor(() => expect(offsets[0]).toBe(12))
     expect(await reopened.snapshot()).toMatchObject({ groupChatEnabled: true, groupReplyMode: 'reply_all', groupAttentionMode: 'active',
       groupOwnerMemoryEnabled: true, groupHistorySearchEnabled: true })
     expect(outbound.filter(item => item.reply_to_message_id === 8)).toHaveLength(1)

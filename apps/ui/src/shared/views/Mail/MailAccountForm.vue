@@ -205,6 +205,7 @@ form.mail-account-form > span,
   border: 1px solid var(--border-hairline); border-radius: var(--radius-xs);
   background: var(--surface-soft); color: var(--content-primary); font: inherit; text-align: left;
 }
+.mail-provider-option { border-color: transparent; background: transparent; }
 .mail-provider-option, .mail-disclosure { cursor: pointer; }
 .mail-provider-option:hover, .mail-disclosure:hover { background: var(--option-bg-hover); }
 .mail-provider-option span, .mail-selected-provider strong { flex: 1; min-width: 0; }

@@ -13,7 +13,7 @@
         </div>
         <MarkdownView v-else :html="block.html" chat :preserve-smart-blocks="block.smart"
           :stream-motion="presenting && !block.smart && !block.cards"
-          :render-math="!presenting && !block.smart && !block.cards" />
+          :render-math="!block.smart && !block.cards" />
       </div>
     </div>
   </div>

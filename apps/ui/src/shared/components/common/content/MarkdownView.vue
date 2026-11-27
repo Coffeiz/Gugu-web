@@ -98,10 +98,16 @@ function patchSmartChildren(live: Node, previous: Node, next: Node) {
   liveChildren.slice(newChildren.length).forEach(child => live.removeChild(child))
 }
 
+const updateStreamMotion = createMarkdownStreamMotion()
+
 const vMarkdownHtml = {
   mounted(element: HTMLElement, { value }: { value: string }) { updateMarkup(element, value) },
   updated(element: HTMLElement, { value, oldValue }: { value: string; oldValue: string }) {
-    if (value !== oldValue) updateMarkup(element, value)
+    if (value === oldValue) return
+    updateMarkup(element, value)
+    wrapMarkdownTables()
+    // 在本次 DOM 写入后附加动画，避免指令随后替换刚创建的动画节点。
+    if (props.streamMotion) updateStreamMotion(element, true)
   },
 }
 function updateMarkup(element: HTMLElement, value: string) {
@@ -117,17 +123,12 @@ function updateMarkup(element: HTMLElement, value: string) {
   previousMarkup = next
 }
 
-const updateStreamMotion = createMarkdownStreamMotion()
-watch(rendered, () => {
-  wrapMarkdownTables()
-  if (props.streamMotion && root.value) updateStreamMotion(root.value, true)
-}, { flush: 'post' })
 watch(() => props.streamMotion, (active) => {
   if (!active && root.value) updateStreamMotion(root.value, false)
 }, { flush: 'post' })
 
 watch([rendered, locale, () => props.renderMath, () => props.streamMotion], async () => {
-  if (!props.streamMotion && props.renderMath) await renderMarkdownMath(root.value, createMathLabels())
+  if (props.renderMath) await renderMarkdownMath(root.value, createMathLabels())
   await renderMermaidBlocks()
 }, { flush: 'post' })
 

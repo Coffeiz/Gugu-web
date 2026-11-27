@@ -212,9 +212,9 @@ Object.assign((messages['en-US'] as Record<string, any>).chatUi, { canvasCardNod
 Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { interruptRun: '终止任务', cancelling: '请求中断…', cancelFailed: '中断请求失败，请重试。', cancelTooLate: '已完成，来不及中断', cancelRemoteUnknown: '本地已停止，远端执行状态未知' })
 Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { interruptRun: 'タスクを中断', cancelling: '中断を要求中…', cancelFailed: '中断リクエストに失敗しました。再試行してください。', cancelTooLate: '完了済みのため中断できませんでした', cancelRemoteUnknown: 'ローカルでは停止しました。リモートの実行状態は不明です' })
 Object.assign((messages['en-US'] as Record<string, any>).chatUi, { interruptRun: 'Stop task', cancelling: 'Requesting interruption…', cancelFailed: 'Could not interrupt the run. Please try again.', cancelTooLate: 'Already completed; too late to interrupt', cancelRemoteUnknown: 'Stopped locally; remote execution status is unknown' })
-Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { runFailed: '生成失败', runInterrupted: '已中断' })
-Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { runFailed: '生成に失敗しました', runInterrupted: '中断しました' })
-Object.assign((messages['en-US'] as Record<string, any>).chatUi, { runFailed: 'Generation failed', runInterrupted: 'Interrupted' })
+Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { runFailed: '生成失败', runInterrupted: '已中断', toolResultUnknown: '工具执行结果尚未确认，任务已停止。请核对结果后再继续。' })
+Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { runFailed: '生成に失敗しました', runInterrupted: '中断しました', toolResultUnknown: 'ツールの実行結果が未確認のため、タスクを停止しました。結果を確認してから続けてください。' })
+Object.assign((messages['en-US'] as Record<string, any>).chatUi, { runFailed: 'Generation failed', runInterrupted: 'Interrupted', toolResultUnknown: 'The task stopped because a tool result could not be confirmed. Check the result before continuing.' })
 Object.assign((messages['zh-CN'] as Record<string, any>).chatUi, { qqOffline: 'QQ 离线', wechatOffline: '微信离线', feishuOffline: '飞书离线', telegramOffline: 'Telegram 离线', resting: '休息中', online: '在线', restingHint: '咕咕精力用完了，歇会儿就回来～', onlineHint: '咕咕在线', offlineHint: '咕咕还没接到你的微信 / QQ / 飞书 / Telegram——点一下接上，随时随地找它', voice: '语音' })
 Object.assign((messages['ja-JP'] as Record<string, any>).chatUi, { qqOffline: 'QQ オフライン', wechatOffline: 'WeChat オフライン', feishuOffline: 'Feishu オフライン', telegramOffline: 'Telegram オフライン', resting: '休憩中', online: 'オンライン', restingHint: 'Gugu は休憩中です。しばらくすると戻ります', onlineHint: 'Gugu はオンラインです', offlineHint: 'WeChat / QQ / Feishu / Telegram に未接続です。タップして接続してください', voice: '音声' })
 Object.assign((messages['en-US'] as Record<string, any>).chatUi, { qqOffline: 'QQ offline', wechatOffline: 'WeChat offline', feishuOffline: 'Feishu offline', telegramOffline: 'Telegram offline', resting: 'Resting', online: 'Online', restingHint: 'Gugu is resting and will be back soon', onlineHint: 'Gugu is online', offlineHint: 'Gugu is not connected to WeChat, QQ, Feishu, or Telegram. Tap to connect', voice: 'Voice' })
@@ -534,6 +534,8 @@ Object.assign((messages['zh-CN'] as Record<string, any>).profileImUi, {
   telegramTokenSecurityHint: 'Token 仅提交到咕咕后端并加密保存；Telegram 官方 API 请求使用 HTTPS。',
   telegramBinding: 'Telegram owner 身份绑定',
   telegramBindingHint: '生成验证码后，在 Telegram 私聊 Bot 发送下方 /bind 命令',
+  telegramPendingBinding: '待绑定身份',
+  telegramGetCode: '获取验证码',
   sendTelegramToBot: '复制并发送给 Telegram Bot',
 })
 Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, {
@@ -547,6 +549,8 @@ Object.assign((messages['ja-JP'] as Record<string, any>).profileImUi, {
   telegramTokenSecurityHint: 'Token は Gugu に送信後、暗号化して保存します。Telegram API への通信は HTTPS を使用します。',
   telegramBinding: 'Telegram owner の連携',
   telegramBindingHint: 'コードを生成し、Telegram の Bot との DM で /bind コマンドを送信してください',
+  telegramPendingBinding: '本人確認待ち',
+  telegramGetCode: '確認コードを取得',
   sendTelegramToBot: 'コピーして Telegram Bot に送信',
 })
 Object.assign((messages['en-US'] as Record<string, any>).profileImUi, {
@@ -560,6 +564,8 @@ Object.assign((messages['en-US'] as Record<string, any>).profileImUi, {
   telegramTokenSecurityHint: 'The token is sent to Gugu and encrypted at rest. Telegram API requests use HTTPS.',
   telegramBinding: 'Telegram owner identity',
   telegramBindingHint: 'Generate a code, then send the /bind command below to your Bot in a private chat.',
+  telegramPendingBinding: 'Awaiting binding',
+  telegramGetCode: 'Get verification code',
   sendTelegramToBot: 'Copy and send to Telegram Bot',
 })
 

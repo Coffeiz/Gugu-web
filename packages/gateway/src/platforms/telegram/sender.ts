@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { splitMarkdownV2 as splitTelegramMarkdownV2 } from '@gugu/core/im/telegram-format'
 import { TelegramApiError, type TelegramCallOptions } from './client.js'
+import { packButtonRows } from '../button-rows.js'
 
 export interface TelegramTarget {
   chatId: string
@@ -96,8 +97,7 @@ export function createTelegramSender(options: {
       if (!Number.isSafeInteger(prompt.prompt_id) || prompt.prompt_id < 1 || (prompt.options?.length ?? 0) > 8) return Promise.resolve({outcome:'rejected',platformMessageIds:[]})
       const buttons = (prompt.options ?? []).filter(option => option.token).map(option => ({text:Array.from(option.label || option.id || '选择').slice(0,64).join(''),callback_data:`${prompt.prompt_id}:${option.token}`}))
       if (buttons.some(button => Buffer.byteLength(button.callback_data)>64 || button.callback_data.slice(button.callback_data.indexOf(':')+1).includes(':'))) return Promise.resolve({outcome:'rejected',platformMessageIds:[]})
-      const rows: typeof buttons[]=[]
-      for(let i=0;i<buttons.length;i+=4)rows.push(buttons.slice(i,i+4))
+      const rows = packButtonRows(buttons, button => button.text, 4)
       return sender.text(target,[prompt.title||'需要你的回答',prompt.body||''].filter(Boolean).join('\n'),{signal,authorize,...(buttons.length?{replyMarkup:{inline_keyboard:rows}}:{})})
     },
     file(target: TelegramTarget, data: Uint8Array, filename: string, signal?: AbortSignal,authorize?:()=>Promise<boolean>): Promise<TelegramDeliveryReceipt> {

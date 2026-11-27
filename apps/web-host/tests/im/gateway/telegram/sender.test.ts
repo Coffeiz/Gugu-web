@@ -106,3 +106,16 @@ test('Telegram原生按钮复用限流与Markdown，429等待后撤权不再发H
   assert.equal((await f.sender.interaction(target,{prompt_id:7,options:[{token:'x'.repeat(64)}]})).outcome,'rejected')
   assert.equal(f.calls.length,1)
 })
+
+test('Telegram 长选项分行，短选项每行最多四个且回调顺序保持一致', async () => {
+  const f = fixture()
+  const labels = ['把当前项目的所有待办整理成清单', '🔎 查看详情', 'A', 'B', 'C', 'D', 'E']
+  const buttons = labels.map((text, index) => ({ text, callback_data: `8:option-${index}` }))
+  const result = await f.sender.interaction(target, { prompt_id: 8, options: labels.map((label, index) => ({
+    label, token: `option-${index}`,
+  })) })
+  assert.equal(result.outcome, 'accepted')
+  assert.deepEqual(f.calls[0]!.payload?.reply_markup, {
+    inline_keyboard: [buttons.slice(0, 1), buttons.slice(1, 5), buttons.slice(5)],
+  })
+})

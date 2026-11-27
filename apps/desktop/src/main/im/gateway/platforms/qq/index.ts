@@ -11,7 +11,7 @@ import { createImMediaBudget, createGatewaySupervisor, imSemanticText, readImRec
 import { createPersistentQqProjection, createQqChartPreparation, createQqMediaUploader, sendQqChart, createQqClient, createQqConnection, createQqSender, createQqSocketFactory } from '@gugu/gateway/qq'
 import type { createDesktopQqPairing } from '../../../connect/platforms/qq/index.js'
 import type { createDesktopImCallback } from '../../interactions/callback.js'
-import { readDesktopImRunStatus, stopDesktopImRun, type createDesktopImDispatch } from '../../delivery/dispatch.js'
+import { cancelDesktopImRunFromText, readDesktopImRunStatus, stopDesktopImRun, type createDesktopImDispatch } from '../../delivery/dispatch.js'
 import { DesktopError } from '../../../../core-host.js'
 import { MAX_DESKTOP_ATTACHMENT_BYTES, readDesktopAgentAttachment } from '../../../../agent/attachments.js'
 import { desktopImEventKey, type createDesktopImInbox, type DesktopImFile } from '../../inbound/inbox.js'
@@ -306,16 +306,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
             let reply: string | null
             if (explicitStatus) reply = await readDesktopImRunStatus(runtime.host, event, connectionId, owner)
             else if (explicitStop) reply = await stopDesktopImRun(runtime.host, event, connectionId, owner)
-            else {
-              const result = await runtime.host.request<{ outcome: 'idle' | 'requested' | 'already_completed' | 'not_owner' }>('im.inbox.cancelRun', {
-                platform: 'qq', connectionId, chatType: event.scope.chatType,
-                platformUserId: event.scope.platformUserId,
-                ...(group ? { ownerPlatformUserId: owner } : {}),
-              })
-              reply = result.outcome === 'requested' ? '好的，那这个先不继续啦～'
-                : result.outcome === 'already_completed' ? '这个任务已经结束啦～'
-                  : result.outcome === 'not_owner' ? '这个不是你发起的任务哦，咕咕还在忙～' : null
-            }
+            else reply = await cancelDesktopImRunFromText(runtime.host, event, connectionId, owner)
             if (reply) {
               const latest = await readActive()
               if (latest && await authorize()) {

@@ -33,7 +33,7 @@ export interface TelegramProjectionOptions {
   authorize(): Promise<boolean>
   signal?: AbortSignal
   acceptedEvidence?: { scope: ImConversationScope; recipient: string; accept(value: { platformMessageIds: string[]; text: string }): Promise<ImDeliveryAcknowledgement> }
-  showIntermediateReplies?: boolean; toolSummary?: FeishuToolSummaryPolicy; renderCharts?: FeishuChartRenderer; now?(): number
+  showIntermediateReplies?: boolean; toolSummary?: FeishuToolSummaryPolicy; toolMinimumDurationMs?: number; renderCharts?: FeishuChartRenderer; now?(): number
 }
 
 export function createPersistentTelegramProjection(options: TelegramProjectionOptions): NonNullable<ImRunDeliveryPorts<unknown>['stream']> & { close(): Promise<void> } {
@@ -44,7 +44,7 @@ export function createPersistentTelegramProjection(options: TelegramProjectionOp
   if (proof && (proof.scope.platform !== 'telegram' || proof.scope.ownerId !== identity.ownerId || proof.scope.chatType !== 'c2c'
     || proof.scope.chatId !== null || proof.scope.platformUserId !== target.chatId || proof.recipient !== target.chatId)) throw new Error('Telegram 持久投影证据无效')
   const targetHash = hash([target, options.policyVersion, !!options.showIntermediateReplies, !!options.toolSummary, !!options.toolSummary?.includeDetails,
-    proof ? [proof.scope, proof.recipient] : null])
+    proof ? [proof.scope, proof.recipient] : null, ...(options.toolMinimumDurationMs ? [options.toolMinimumDurationMs] : [])])
   const now = options.now ?? Date.now
   const fresh = (segment = 0, eventSequence = 0, visible: State['visible'] = []): State => ({ v: 1, target: targetHash,
     stage: 'open', segment, eventSequence, draftId: randomInt(1, 2 ** 48 - 1), draftEnabled: true, draftText: '', lastDraftText: '',
@@ -163,7 +163,8 @@ export function createPersistentTelegramProjection(options: TelegramProjectionOp
       const projectedEvents = await projector.push(event)
       for (const projected of projectedEvents) {
         if (projected.type === 'token') { append(projected.text); await draft() }
-        else if (projected.type === 'tool_done' && options.toolSummary) {
+        else if (projected.type === 'tool_done' && options.toolSummary
+          && (projected.toolDurationMs ?? 0) >= (options.toolMinimumDurationMs ?? 0)) {
           const text = formatImToolReceipt(projected, options.toolSummary.sanitize, options.toolSummary.locale)
           if (text) { state.separator = !!state.draftText.trim(); append(text, false); state.tools.push(text); state.separator = true; await draft() }
         } else if (projected.type === 'chart_image') {

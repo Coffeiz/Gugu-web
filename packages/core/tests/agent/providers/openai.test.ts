@@ -284,7 +284,7 @@ describe('OpenAI缓存、分片与真实请求边界', () => {
     } } }
     const output = await events(streamWithRetry(() => openaiDriver.stream(input, deps), input.signal, { clock: { now: () => 0, sleep: async ms => { pauses.push(ms) } } }))
     expect(requests).toHaveLength(3); expect(requests[0]).toEqual(requests[1]); expect(requests[1]).toEqual(requests[2])
-    expect(pauses).toEqual([5000, 5000])
+    expect(pauses).toEqual([5000, 10000])
     expect(output.filter(event => event.type === 'retry')).toMatchObject([{ attempt: 1, errorCode: 'rate_limited' }, { attempt: 2, errorCode: 'rate_limited' }])
     expect(output.at(-1)).toMatchObject({ type: 'complete', text: '最终成功' })
   })
@@ -295,7 +295,7 @@ describe('OpenAI缓存、分片与真实请求边界', () => {
     })().catch(error => error as unknown)
     expect(failure).toMatchObject({ code: 'rate_limit', options: { retryable: true, status: 429 } })
     expect(JSON.stringify(failure)).not.toContain('synthetic-secret')
-    expect(f.requests).toHaveLength(3); expect(f.cancel).toHaveBeenCalledTimes(3); expect(pauses).toEqual([5000, 5000])
+    expect(f.requests).toHaveLength(3); expect(f.cancel).toHaveBeenCalledTimes(3); expect(pauses).toEqual([5000, 10000])
     expect(output.filter(event => event.type === 'retry').map(event => event.type === 'retry' ? event.attempt : null)).toEqual([1, 2])
     expect(output.filter(event => event.type === 'complete')).toEqual([])
   })

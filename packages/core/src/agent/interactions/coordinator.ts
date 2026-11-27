@@ -115,22 +115,22 @@ export async function* resumeWaitingRun<C>(scope: RunCoordination<C>, resolution
   const cancelled = resolution.status === 'cancelled'
   const aborted = resolution.status === 'aborted'
   const expired = resolution.status === 'expired'
-  const closure: ResolutionClosure | null = cancelled || aborted || expired ? { disposition: resolution.status as ResolutionClosure['disposition'], pending, closingRound: scope.state.round + 1, step: 'close_tools' } : null
+  const denied = pending.kind === 'confirmation' && cancelled
+  const closure: ResolutionClosure | null = (cancelled && !denied) || aborted || expired ? { disposition: resolution.status as ResolutionClosure['disposition'], pending, closingRound: scope.state.round + 1, step: 'close_tools' } : null
   const event = await scope.commit({
-    context, resolution: pending.kind === 'confirmation' ? resolution : null, status: 'running', pending: null,
+    context, resolution: pending.kind === 'confirmation' && !denied ? resolution : null, status: 'running', pending: null,
     replayCall: pending.kind === 'confirmation' && !cancelled && !expired && !aborted ? pending.toolCall : null,
     replayResultReady: false,
-    completedToolCount: scope.state.completedToolCount + (pending.kind !== 'confirmation' && !cancelled && !expired && !aborted ? 1 : 0),
+    completedToolCount: scope.state.completedToolCount + (denied || (pending.kind !== 'confirmation' && !cancelled && !expired && !aborted) ? 1 : 0),
     resolutionClosure: closure,
   }, 'interaction_resolved', { interactionId: pending.id, status: resolution.status }, null, resolution.receiptId)
   yield event!
-  if (cancelled || aborted || expired) {
+  if (closure) {
     yield* scope.completeResolutionClosure()
     return true
   }
-  if (pending.kind !== 'confirmation')
-    yield (await scope.commit({}, 'tool_done', { toolCallId: pending.toolCall.id, name: pending.toolCall.name, status: 'success' }))!
-  if (pending.kind !== 'confirmation') {
+  if (pending.kind !== 'confirmation' || denied) {
+    yield (await scope.commit({}, 'tool_done', { toolCallId: pending.toolCall.id, name: pending.toolCall.name, status: denied ? 'cancelled' : 'success' }))!
     const next = await scope.activateNextInteraction()
     if (next)
       yield next

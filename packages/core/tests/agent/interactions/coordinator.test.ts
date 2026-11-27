@@ -315,13 +315,15 @@ it('ask_user 拒绝不支持的授权、表单及伪造选项，撤权和取消�
 it('IM 的 ask_user 声明只支持单选，执行时拒绝多选参数', async () => {
   const { createAskUserTool } = await import('../../../src/agent/tools/meta/index.js')
   const { createToolRegistry } = await import('../../../src/agent/tools/registry.js')
-  const tool = createAskUserTool({ singleChoiceOnly: true, allowQuestionBatch: false, authorization: async () => 'disabled' })
+  const { imAskUserPolicy } = await import('../../../src/agent/interactions/prompt-description.js')
+  const tool = createAskUserTool(imAskUserPolicy)
   const registry = createToolRegistry({ tools: [tool], authorize: async () => true })
   const [definition] = await registry.capabilities(identity)
   expect(definition?.schema).toMatchObject({ function: {
     parameters: { properties: { options: expect.anything() } },
     description: expect.stringContaining('只支持单选'),
   } })
+  expect(JSON.stringify(definition?.schema)).not.toContain('authorization')
   expect(JSON.stringify(definition?.schema)).not.toContain('selection_mode')
   expect(JSON.stringify(definition?.schema)).not.toContain('"questions"')
   const call = { id: 'ask', name: 'ask_user', input: {
@@ -330,6 +332,8 @@ it('IM 的 ask_user 声明只支持单选，执行时拒绝多选参数', async 
   const scope = { identity, roundId: 'round', signal: new AbortController().signal, resolution: null,
     execute: async () => { throw new Error('不能执行') } }
   expect(await registry.tools.dispatch(call, scope)).toMatchObject({ kind: 'waiting' })
+  expect(await registry.tools.dispatch({ ...call, input: { ...call.input, authorization: 'user_sandbox' } }, scope))
+    .toMatchObject({ successful: false, executed: false })
   expect(await registry.tools.dispatch({ ...call, input: { ...call.input, questions: [{ id: 'a', title: '第一题' }, { id: 'b', title: '第二题' }] } }, scope))
     .toMatchObject({ successful: false, value: { next_action: expect.stringContaining('逐题询问') } })
   expect(await registry.tools.dispatch({ ...call, input: { ...call.input, selection_mode: 'multiple' } }, scope))

@@ -27,6 +27,7 @@ export class DesktopError extends Error {
   }
 }
 interface Manifest {
+  runtimeMode?: 'node' | 'sea'
   nodeVersion: string
   nodeAbi: string
   entry: string
@@ -43,9 +44,12 @@ export async function verifyArtifact(
   if (bytes.length > 4 * 1024 * 1024)
     throw new DesktopError('artifact_invalid', 'Node 制品清单无效')
   const manifest = JSON.parse(bytes.toString('utf8'))
-  const executable = process.platform === 'win32' ? 'node.exe' : 'node'
+  const sea = manifest.runtimeMode === 'sea'
+  const executable = sea ? 'gugu-core.exe' : process.platform === 'win32' ? 'node.exe' : 'node'
   if (
     manifest.platform !== process.platform ||
+    (manifest.runtimeMode !== undefined && manifest.runtimeMode !== 'node' && !sea) ||
+    (sea && process.platform !== 'win32') ||
     manifest.arch !== process.arch ||
     manifest.protocol !== 2 ||
     manifest.schema !== CORE_SCHEMA_VERSION ||
@@ -61,11 +65,12 @@ export async function verifyArtifact(
     throw new DesktopError('artifact_invalid', 'Node 制品与宿主、协议或数据版本不匹配')
   const workerEntry = manifest.workerEntry ?? 'host/dist/runtime/worker.js'
   const agentRuntimeModule = manifest.agentRuntimeModule
-  if (workerEntry !== 'host/dist/runtime/worker.js' && workerEntry !== 'host/desktop-agent-worker.mjs')
+  if (workerEntry !== 'host/dist/runtime/worker.js' && workerEntry !== 'host/desktop-agent-worker.mjs'
+    && !(sea && workerEntry === 'host/core-worker.mjs'))
     throw new DesktopError('artifact_invalid', 'Node 制品的桌面 Worker 入口无效')
   if (agentRuntimeModule !== 'host/agent/runtime.mjs')
     throw new DesktopError('artifact_invalid', 'Node 制品的桌面 Agent 运行模块无效')
-  for (const required of [executable, manifest.entry, workerEntry, agentRuntimeModule])
+  for (const required of [executable, sea ? 'bridge.cjs' : manifest.entry, workerEntry, agentRuntimeModule])
     if (!Object.hasOwn(manifest.files, required))
       throw new DesktopError('artifact_invalid', 'Node 制品缺少必要文件')
   const actual = new Set<string>()
@@ -81,7 +86,8 @@ export async function verifyArtifact(
   actual.delete('manifest.json')
   if (actual.size !== Object.keys(manifest.files).length)
     throw new DesktopError('artifact_invalid', 'Node 制品资源集合不匹配')
-  for (const [name, hash] of Object.entries(manifest.files)) {
+  const files = Object.entries(manifest.files) as [string, string][]
+  async function verifyFile([name, hash]: [string, string]) {
     if (
       name.includes('\\') ||
       name.includes(':') ||
@@ -100,6 +106,15 @@ export async function verifyArtifact(
         .digest('hex') !== hash
     )
       throw new DesktopError('artifact_invalid', 'Node 制品完整性验证失败')
+  }
+  if (process.platform === 'win32') {
+    // 并行处理文件读取，减少 Windows 逐个打开小文件的等待，并限制同时读取的文件数。
+    const batchSize = 8
+    for (let start = 0; start < files.length; start += batchSize) {
+      await Promise.all(files.slice(start, start + batchSize).map(verifyFile))
+    }
+  } else {
+    for (const file of files) await verifyFile(file)
   }
   return {
     node: join(root, executable),
@@ -164,7 +179,7 @@ export class CoreHost {
     node: string,
     entry: string,
     database: string,
-    manifest?: Pick<Manifest, 'nodeVersion' | 'nodeAbi'>,
+    manifest?: Pick<Manifest, 'nodeVersion' | 'nodeAbi' | 'runtimeMode'>,
     timeoutMs = 15_000,
     memoryRoot?: string,
     workerEntry?: string,
@@ -181,7 +196,8 @@ export class CoreHost {
     )
     delete env.GUGU_DESKTOP_MEMORY_ROOT
     if (memoryRoot) env.GUGU_DESKTOP_MEMORY_ROOT = memoryRoot
-    const child = spawn(node, [entry, '--database', database, '--protocol', '2',
+    const entryArg = manifest?.runtimeMode === 'sea' ? '--core' : entry
+    const child = spawn(node, [entryArg, '--database', database, '--protocol', '2',
       ...(workerEntry ? ['--worker-entry', workerEntry] : []),
       ...(agentRuntimeModule ? ['--agent-runtime-module', agentRuntimeModule] : [])], {
       cwd: dirname(database),

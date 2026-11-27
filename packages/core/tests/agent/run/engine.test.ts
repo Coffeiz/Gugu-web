@@ -426,6 +426,16 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(uncertain.ports.provider.stream).toHaveBeenCalledTimes(1)
   })
 
+  it('同一运行核对到工具收据后继续，无需重新派发工具', async () => {
+    const f = fixture([[{ type: 'complete', text: '', calls: [toolCall] }], [{ type: 'complete', text: '完成', calls: [] }]])
+    f.ports.tools.dispatch = vi.fn<ToolPort['dispatch']>(async () => ({ kind: 'unknown' }))
+    f.ports.tools.reconcileAfterUnknown = vi.fn(async () => ({ kind: 'completed', value: '已提交', successful: true, mutated: true }))
+    const result = await collect(f.harness.start(identity))
+    expect(result.state).toMatchObject({ status: 'completed', mutated: true, remoteStatusUnknown: false })
+    expect(f.ports.tools.dispatch).toHaveBeenCalledTimes(1)
+    expect(f.ports.tools.reconcileAfterUnknown).toHaveBeenCalledExactlyOnceWith(toolCall, { ...identity, roundId: 'run-synthetic:1' }, expect.any(AbortSignal))
+  })
+
   it('成功提交与发布后才安排反思，hook失败保持权威终态且不重放业务；error/cancel不反思', async () => {
     const f = fixture()
     f.ports.context.afterFinal = vi.fn(async () => {

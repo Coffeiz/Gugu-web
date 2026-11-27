@@ -4,7 +4,7 @@
       <button class="im-plat-head" :class="{ open: imOpen[p.key] }" @click="onTogglePlatform(p.key)">
         <svg class="im-plat-chev" :class="{ open: imOpen[p.key] }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
         <span class="im-plat-name">{{ p.label }}</span>
-        <span class="im-plat-badge" :class="{ on: botsOf(p.key).length }">{{ botsOf(p.key).length ? t('chatUi.connected') : t('chatUi.notConnected') }}</span>
+        <span class="im-plat-badge" :class="{ on: botsOf(p.key).some(bot => bot.enabled) }">{{ statusLabel(botsOf(p.key)) }}</span>
       </button>
       <div v-show="imOpen[p.key]" class="im-plat-body">
         <template v-if="botsOf(p.key).length">
@@ -17,7 +17,10 @@
             </div>
             <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" :title="t('common.actions.delete')"><Icon name="action.delete" :size="12" /></button>
           </div>
-          <div v-if="!imSessionsOf(p.key).length" class="exp-session-empty">{{ t('chatUi.noSessions') }}</div>
+          <div v-if="p.key === 'telegram' && botsOf(p.key)[0]?.ownerBound === false" class="exp-session-empty">
+            <button type="button" class="im-connect-btn" @click="onOpenTelegramTokenDialog(true)">{{ t('profileImUi.telegramGetCode') }}</button>
+          </div>
+          <div v-else-if="!imSessionsOf(p.key).length" class="exp-session-empty">{{ t('chatUi.noSessions') }}</div>
         </template>
         <template v-else>
           <div v-if="connect && connect.platform === p.key" class="im-qr-box">
@@ -26,7 +29,7 @@
             <button class="im-qr-cancel" @click="onCancelImConnect">{{ t('common.actions.cancel') }}</button>
           </div>
           <template v-else-if="p.key === 'telegram'">
-            <button class="im-connect-btn" @click="onOpenTelegramTokenDialog">{{ t('chatUi.connectTelegramBot') }}</button>
+            <button class="im-connect-btn" @click="onOpenTelegramTokenDialog()">{{ t('chatUi.connectTelegramBot') }}</button>
           </template>
           <template v-else>
             <button class="im-connect-btn" :disabled="connecting === p.key" @click="onStartImConnect(p.key)">
@@ -41,6 +44,7 @@
       :show="telegramTokenDialogOpen"
       :busy="telegramConnecting"
       :error="telegramConnectError"
+      :binding-step="telegramBindingStep" @generate="onOpenTelegramTokenDialog(true)"
       @close="onCloseTelegramTokenDialog"
       @submit="onSubmitTelegramToken"
     />
@@ -48,6 +52,7 @@
 </template>
 
 <script setup lang="ts">
+import type { ChatImBot, TelegramBindingStep } from './composables/useChatImConnect'
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -56,6 +61,18 @@ import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatSession, ImPlatformKey } from './chatTypes'
 const { t } = useI18n()
 
+function statusLabel(bots: ChatImBot[]) {
+  if (bots.some(bot => bot.enabled)) return t('chatUi.connected')
+  if (!bots.length) return t('chatUi.notConnected')
+  const bot = bots[0]
+  if (bot.telegramStatus) {
+    if (bot.ownerBound === false && bot.telegramStatus === 'connected') return t('profileImUi.telegramPendingBinding')
+    return t(`desktopTelegram.${bot.telegramStatus}`)
+  }
+  const state = bot.connectionState
+  return t(state && state !== 'running' ? `profileImUi.${state}` : 'profileImUi.connecting')
+}
+
 interface ImPlatformOption { key: ImPlatformKey; label: string }
 interface ImConnectState { platform: string; id: string | number }
 
@@ -63,7 +80,7 @@ defineProps<{
   imPlatforms: ImPlatformOption[]
   imOpen: Record<ImPlatformKey, boolean>
   imHighlight: boolean
-  botsOf: (platform: ImPlatformKey) => unknown[]
+  botsOf: (platform: ImPlatformKey) => ChatImBot[]
   imSessionsOf: (platform: ImPlatformKey) => ChatSession[]
   sessionId: number | null
   connect: ImConnectState | null
@@ -74,7 +91,8 @@ defineProps<{
   telegramTokenDialogOpen: boolean
   telegramConnecting: boolean
   telegramConnectError: string
-  onOpenTelegramTokenDialog: () => void
+  telegramBindingStep?: TelegramBindingStep
+  onOpenTelegramTokenDialog: (binding?: boolean) => void
   onCloseTelegramTokenDialog: () => void
   onSubmitTelegramToken: (token: string) => void
   onTogglePlatform: (key: ImPlatformKey) => void

@@ -15,20 +15,28 @@ export function createDesktopChatImAccess(): ChatImAccess | undefined {
   if (!available.length && !telegramAvailable) return undefined
   return {
     connectTelegram: telegramAvailable ? token => requestDesktopTelegram({ action: 'save', input: { token } }) : undefined,
+    generateTelegramBinding: telegramAvailable ? async () => {
+      const snapshot = await requestDesktopTelegram({ action: 'bindingCode' })
+      return snapshot.binding
+    } : undefined,
     qr: Object.fromEntries(available.map(({ platform, api }) => [platform, api])),
     async listBots() {
       const results = await Promise.allSettled(available.map(async ({ platform, api }) => {
         const status = await api.status()
         const enabled = status.enabled && status.connectionState === 'running' && (platform !== 'qq' || status.bound === true)
-        // QQ 扫码接入与私聊身份绑定是两个步骤，侧栏应保留已录入的机器人。
-        return platform === 'qq' ? (status.configured ? { platform, enabled } : null) : (enabled ? { platform, enabled } : null)
+        return status.configured ? { platform, enabled, connectionState: status.connectionState } : null
       }))
       const items = results.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : [])
       const supported = available.map(item => item.platform)
       const telegram = telegramAvailable ? await requestDesktopTelegram({ action: 'status' }).catch(() => null) : null
-      const telegramReady = telegram?.bound && telegram.status === 'connected'
+      const telegramBot = telegram?.configured ? {
+        platform: 'telegram' as const,
+        enabled: telegram.bound && telegram.status === 'connected',
+        ownerBound: telegram.bound,
+        telegramStatus: telegram.status,
+      } : null
       return {
-        items: telegramReady ? [...items, { platform: 'telegram', enabled: true }] : items,
+        items: telegramBot ? [...items, telegramBot] : items,
         supported_platforms: telegramAvailable ? [...supported, 'telegram'] : supported,
       }
     },

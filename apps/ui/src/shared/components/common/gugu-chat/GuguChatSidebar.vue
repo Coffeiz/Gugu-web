@@ -18,6 +18,7 @@
         :telegram-token-dialog-open="telegramTokenDialogOpen"
         :telegram-connecting="telegramConnecting"
         :telegram-connect-error="telegramConnectError"
+        :telegram-binding-step="telegramBindingStep"
         :on-open-telegram-token-dialog="onOpenTelegramTokenDialog"
         :on-close-telegram-token-dialog="onCloseTelegramTokenDialog"
         :on-submit-telegram-token="onSubmitTelegramToken"
@@ -70,6 +71,7 @@
 </template>
 
 <script setup lang="ts">
+import type { ChatImBot, TelegramBindingStep } from './composables/useChatImConnect'
 import { ref, computed, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -92,7 +94,7 @@ defineProps<{
   imPlatforms: ImPlatformOption[]
   imOpen: Record<ImPlatformKey, boolean>
   imHighlight: boolean
-  botsOf: (platform: ImPlatformKey) => unknown[]
+  botsOf: (platform: ImPlatformKey) => ChatImBot[]
   imSessionsOf: (platform: ImPlatformKey) => ChatSession[]
   webSessions: ChatSession[]
   sessionBadges?: Record<number, 'running' | 'unread'>
@@ -104,7 +106,8 @@ defineProps<{
   telegramTokenDialogOpen: boolean
   telegramConnecting: boolean
   telegramConnectError: string
-  onOpenTelegramTokenDialog: () => void
+  telegramBindingStep?: TelegramBindingStep
+  onOpenTelegramTokenDialog: (binding?: boolean) => void
   onCloseTelegramTokenDialog: () => void
   onSubmitTelegramToken: (token: string) => void
   onTogglePlatform: (key: ImPlatformKey) => void

@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { QqApiError, type createQqClient } from './client.js'
 import { z } from 'zod'
 import {createHash} from 'node:crypto'
+import { packButtonRows } from '../button-rows.js'
 
 /** 只提前发送不会被后续链接、围栏或 Markdown 标记重写的纯文本部分。 */
 export function qqStreamPrefix(text: string): string {
@@ -62,21 +63,10 @@ function validatePrompt(prompt: QqInteractionPrompt): void {
     (prompt.options ?? []).some(option => !option || typeof option !== 'object' || [option.id, option.label, option.token].some(value => value !== undefined && typeof value !== 'string') || option.token?.includes(':')))
     throw new Error('QQ 交互提示格式无效')
 }
-function labelUnits(text: string): number {
-  return [...text].reduce((sum, char) => sum + (char.codePointAt(0)! > 0x2E7F ? 2 : 1), 0)
-}
 function packButtons(buttons: Record<string, unknown>[]): Record<string, unknown> {
-  const rows: { buttons: Record<string, unknown>[] }[] = []
-  let current: Record<string, unknown>[] = [], units = 0
-  for (const button of buttons) {
-    const label = (button.render_data as { label: string }).label
-    const cost = labelUnits(label) + 4
-    if (current.length && (current.length >= 5 || units + cost > 40)) { rows.push({ buttons: current }); current = []; units = 0 }
-    current.push(button); units += cost
-  }
-  if (current.length) rows.push({ buttons: current })
+  const rows = packButtonRows(buttons, button => (button.render_data as { label: string }).label, 5)
   if (rows.length > 5) throw new RangeError('QQ 键盘容量不足')
-  return { content: { rows } }
+  return { content: { rows: rows.map(buttons => ({ buttons })) } }
 }
 export function buildQqKeyboard(prompt: QqInteractionPrompt): Record<string, unknown> {
   validatePrompt(prompt)

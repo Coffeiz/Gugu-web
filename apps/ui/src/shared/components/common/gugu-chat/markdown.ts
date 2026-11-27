@@ -288,7 +288,7 @@ export function renderMdStream(text: string) {
   } else if (isSmartFence(openFence?.info) && openFence) {
     lines.splice(openFence.line)
   } else if (openFence) {
-    if (openFence.info.split(/\s+/)[0]?.toLowerCase() === 'mermaid') {
+    if (/^(?:mermaid|latex|tex)$/i.test(openFence.info.split(/\s+/)[0] ?? '')) {
       const opening = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(lines[openFence.line])
       if (opening) lines[openFence.line] = `${opening[1]}${opening[2]}text`
     }

@@ -56,6 +56,10 @@ export function createMcpAgentToolPorts(options: AgentMcpToolPortsOptions & { ba
       if (call.name.startsWith('mcp_')) return { kind: 'unknown' }
       return options.base.tools.reconcile(call, identity)
     },
+    async reconcileAfterUnknown(call, identity, signal) {
+      if (call.name.startsWith('mcp_')) return { kind: 'unknown' }
+      return await options.base.tools.reconcileAfterUnknown?.(call, identity, signal) ?? { kind: 'unknown' }
+    },
   }
   return {
     async capabilities(identity: RunIdentity, lookup?: McpToolLookup): Promise<PreparedToolDefinition[]> {

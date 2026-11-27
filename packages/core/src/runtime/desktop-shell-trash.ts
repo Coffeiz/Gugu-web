@@ -5,8 +5,16 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 const deletion = /\b(?:rm|rmdir|unlink|del|erase|remove-item|clear-content|shred|srm|rimraf|rd)\b|\b(?:find|git)\b[^\n]*(?:-delete|-exec|\bclean\b)/iu
 
 /** 只接受静态路径，原命令不会交给 Shell 展开或执行。 */
-export function parseDesktopTrashCommand(command: string) {
+export function parseDesktopTrashCommand(command: string, platform = process.platform) {
   const value = command.trim()
+  if (platform === 'win32' && /^Remove-Item(?:\s|$)/iu.test(value)) {
+    // 只接收一个字面路径，不解释 PowerShell 参数、表达式或通配符。
+    const literal = /^Remove-Item[ \t]+-LiteralPath[ \t]+(?:'([^'\r\n]+)'|"([^"\r\n]+)"|([^\s'"]+))$/iu.exec(value)
+    const path = literal?.[1] ?? literal?.[2] ?? literal?.[3]
+    if (!path || !/^[A-Za-z]:[\\/]/u.test(path) || /[$`*?\[\];|&<>%\x00-\x1f]/u.test(path))
+      return { kind: 'blocked' as const }
+    return { kind: 'trash' as const, paths: [path] }
+  }
   const tokens = value.match(/'[^'\r\n]*'|"[^"\r\n]*"|[^\s'"]+/gu) ?? []
   if (!/^(?:\/bin\/|\/usr\/bin\/)?(?:rm|rmdir|unlink)$/u.test(tokens[0] ?? ''))
     return deletion.test(value) ? { kind: 'blocked' as const } : { kind: 'other' as const }

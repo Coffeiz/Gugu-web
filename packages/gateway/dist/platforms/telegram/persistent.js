@@ -33,7 +33,7 @@ export function createPersistentTelegramProjection(options) {
         || proof.scope.chatId !== null || proof.scope.platformUserId !== target.chatId || proof.recipient !== target.chatId))
         throw new Error('Telegram 持久投影证据无效');
     const targetHash = hash([target, options.policyVersion, !!options.showIntermediateReplies, !!options.toolSummary, !!options.toolSummary?.includeDetails,
-        proof ? [proof.scope, proof.recipient] : null]);
+        proof ? [proof.scope, proof.recipient] : null, ...(options.toolMinimumDurationMs ? [options.toolMinimumDurationMs] : [])]);
     const now = options.now ?? Date.now;
     const fresh = (segment = 0, eventSequence = 0, visible = []) => ({ v: 1, target: targetHash,
         stage: 'open', segment, eventSequence, draftId: randomInt(1, 2 ** 48 - 1), draftEnabled: true, draftText: '', lastDraftText: '',
@@ -218,7 +218,8 @@ export function createPersistentTelegramProjection(options) {
                     append(projected.text);
                     await draft();
                 }
-                else if (projected.type === 'tool_done' && options.toolSummary) {
+                else if (projected.type === 'tool_done' && options.toolSummary
+                    && (projected.toolDurationMs ?? 0) >= (options.toolMinimumDurationMs ?? 0)) {
                     const text = formatImToolReceipt(projected, options.toolSummary.sanitize, options.toolSummary.locale);
                     if (text) {
                         state.separator = !!state.draftText.trim();

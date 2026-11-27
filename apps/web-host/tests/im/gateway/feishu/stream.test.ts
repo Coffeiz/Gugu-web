@@ -395,3 +395,28 @@ test('默认正式renderer真实栅格化Mermaid与LaTeX并经飞书client上传
     assert.match(JSON.stringify(elements), /图示|公式|完毕/)
   } finally { await client.close() }
 })
+
+test('飞书工具摘要卡片在轮次结束后不会重复追加最终正文', () => {
+  const summary = new FeishuPresentation({ chatType: 'p2p', sanitize: clean })
+  summary.tool({ type: 'tool_done', toolCallId: 'call-a', name: 'search', status: 'success' })
+  summary.append('最终正文')
+  summary.endRound()
+  summary.finish('最终正文', false)
+  assert.equal(summary.plainText().match(/最终正文/g)?.length, 1)
+  assert.match(summary.plainText(), /search/)
+})
+test('飞书 RunEvent 私聊工具详情包含配对的输入和结果', async () => {
+  const card = new FeishuPresentation({ chatType: 'p2p', includeDetails: true, sanitize: clean })
+  const projector = createFeishuRunEventProjector()
+  for (const event of [
+    runEvent('tool_call', { toolCallId: 'call', name: 'search', status: 'running', input: { query: '合成输入' } }, 4),
+    runEvent('tool_done', { toolCallId: 'call', name: 'search', status: 'success', result: '合成结果' }, 5),
+  ]) {
+    for (const projected of await projector.push(event)) {
+      if (projected.type === 'tool_call' || projected.type === 'tool_done') card.tool(projected)
+    }
+  }
+  assert.match(card.plainText(), /合成输入/)
+  assert.match(card.plainText(), /合成结果/)
+  assert.match(card.plainText(), /已完成/)
+})

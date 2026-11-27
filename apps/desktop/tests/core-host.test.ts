@@ -29,6 +29,7 @@ import type { createDesktopAgentModelService } from '../src/main/agent/model.js'
 import { desktopAgentAttachmentHandlers } from '../src/main/agent/attachments.js'
 import { DesktopLifecycle } from '../src/main/lifecycle.js'
 import { desktopAgentToolPolicy } from '../src/main/agent/tool-policy.js'
+import { PRIVATE_REFLECTION_IDLE_SECONDS } from '#core-source/agent/memory/reflection/window.js'
 
 const desktopAgentRuntimeModule = fileURLToPath(new URL('../.tools/agent/runtime.mjs', import.meta.url))
 const folders: string[] = []
@@ -1193,7 +1194,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     }
   })
 
-  it('桌面重启后补跑中断的反思，且只召回尚未删除的记忆', async () => {
+  it('桌面重启后补跑已绑定私聊的反思，且只召回尚未删除的记忆', async () => {
     const database = join(directory(), 'core.db')
     const { initializeSqlite, openSqliteRuntime } = await import('../../../packages/core/dist/data/sqlite.js')
     const { createDesktopAgentSession } = await import('../../../packages/core/dist/agent/sessions/desktop.js')
@@ -1227,6 +1228,8 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     await initializeSqlite(database)
     const { runtime, ownerId } = await openSqliteRuntime(database)
     const owner = ownerId.replaceAll('-', '')
+    const privateTarget = { platform: 'telegram', chatType: 'c2c', botId: '12345', boundUserId: '42', recipient: '42' }
+    const connectionId = createHash('sha256').update(JSON.stringify([privateTarget.botId, privateTarget.boundUserId])).digest('hex')
     const contracts = []
     try {
       for (const attempts of [1, 3]) {
@@ -1239,16 +1242,20 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     } finally { await runtime.close() }
     const seed = new DatabaseSync(database)
     try {
+      seed.prepare("UPDATE conversation_sessions SET chat_type='c2c' WHERE id=?").run(contracts[0]!.sessionId)
+      seed.prepare("INSERT INTO desktop_im_sessions(owner_id,platform,connection_id,session_id) VALUES(?,'telegram',?,?)")
+        .run(owner, connectionId, contracts[0]!.sessionId)
       const statement = seed.prepare(`INSERT INTO desktop_agent_reflection_jobs
         (user_id,session_id,run_id,user_message_id,model_identity,assistant_text,status,attempts,created_at_ms,claimed_at_ms)
         VALUES(?,?,?,?,?,?,'processing',?,?,?)`)
       for (const item of contracts) statement.run(owner, item.sessionId, item.runId, item.userMessageId, modelIdentity,
-        '合成助手回复', item.attempts, Date.now(), Date.now())
+        '合成助手回复', item.attempts, Date.now() - (PRIVATE_REFLECTION_IDLE_SECONDS + 1) * 1000, Date.now())
     } finally { seed.close() }
     const host = await launchCoreHost(process.execPath, resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js'), database)
     try {
       host.setHostRequestHandler(async ({ method }) => {
         if (method === 'agent.memory.resolveReflectionModel') return config
+        if (method === 'agent.schedules.im.privateTarget') return privateTarget
         if (method === 'agent.tools.policy') return desktopAgentToolPolicy()
         if (method.endsWith('.available')) return false
         if (method === 'agent.log.append') return null

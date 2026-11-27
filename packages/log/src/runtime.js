@@ -36,7 +36,7 @@ const conditions = new Set((
   'platform-unavailable admission-pending admission-unknown admission-unavailable callback-cleanup-pending ' +
   'telegram-poll-unavailable telegram-cleanup-failed telegram-media-notice-failed wechat-voice-notice-failed wechat-cleanup-failed wechat-poll-unavailable wechat-sender-unmatched wechat-start-notify-unavailable wechat-stop-notify-unavailable wechat-typing-ticket-unavailable wechat-typing-unavailable wechat-typing-revoked wechat-typing-stop-unavailable ' +
   'qq-connection-failed qq-event-failed qq-heartbeat-failed qq-heartbeat-timeout qq-cleanup-failed ' +
-  'feishu-sdk-error feishu-sdk-warning feishu-misrouted-event feishu-event-failed feishu-cleanup-failed feishu-connection-failed'
+  'feishu-sdk-error feishu-sdk-warning feishu-misrouted-event feishu-event-failed feishu-cleanup-failed feishu-connection-failed feishu-reaction-rejected feishu-reaction-unknown'
 ).split(' '))
 
 const dispatchRpcMethods = new Set([

@@ -6,6 +6,7 @@ import type { ToolDefinition, ToolGroupDefinition, ToolRegistryConfiguration, To
 import { enrichToolError, invalidInputResult } from './input-errors.js'
 import { normalizeToolInput } from './normalize-input.js'
 import { snapshotToolDefinition } from './definition-schema.js'
+import { setTimeout as delay } from 'node:timers/promises'
 
 function rejected(error: string, executed = false): ToolResult {
   return { kind: 'completed', value: { error }, successful: false, mutated: false, executed }
@@ -184,6 +185,21 @@ export function createToolRegistry(options: ToolRegistryOptions): {
         const result = await tool.reconcile(parsed.data, identity, call)
         return result.kind === 'completed' ? withInputAdaptations({ ...result, value: enrichToolError(call.name, result.value) }, adaptations, tool.definition, input) : result
       } catch { return { kind: 'unknown' } }
+    },
+    async reconcileAfterUnknown(call, identity, signal) {
+      const tool = entries.get(canonicalAgentToolName(call.name))
+      if (!tool?.reconcile || blocked(tool) || !enabled(canonicalAgentToolName(call.name))) return { kind: 'unknown' }
+      for (const wait of [0, 250, 500]) {
+        if (signal.aborted) break
+        if (wait) await delay(wait, undefined, { signal }).catch(() => undefined)
+        if (signal.aborted) break
+        const result = await tools.reconcile(call, identity).catch(() => ({ kind: 'unknown' as const }))
+        if (result.kind === 'completed') {
+          if (result.executed !== false && !signal.aborted) return result
+          break
+        }
+      }
+      return { kind: 'unknown' }
     },
   }
   return { tools, register, registerGroup, configure, catalog() {

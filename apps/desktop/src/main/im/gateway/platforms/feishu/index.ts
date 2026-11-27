@@ -1,3 +1,4 @@
+import { chooseImInstantReactionEmoji } from '@gugu/core/im/shortcut'
 import { classifyGatewayGroupMessage, type ImReceivedMessage } from '@gugu/gateway'
 import { readImAddressedCommand } from '@gugu/gateway'
 import { desktopImGroupToolAllowed } from '@gugu/core/agent/scenes/im'
@@ -14,10 +15,10 @@ import { createHash } from 'node:crypto'
 import { FeishuMediaIngressError, parseFeishuEvent, processFeishuMedia, readFeishuQuote } from '@gugu/gateway/feishu'
 import { createGatewaySupervisor, createImGroupAttentionGate, readImReceivedMessage, type ImGroupAttentionHistory,
   type ImPendingAskStore } from '@gugu/gateway'
-import { createPersistentFeishuProjection, createFeishuClient, createFeishuConnection, createFeishuSender, createFeishuWsNetwork } from '@gugu/gateway/feishu'
+import { buildFeishuCompletedActionCard, createPersistentFeishuProjection, createFeishuClient, createFeishuConnection, createFeishuSender, createFeishuWsNetwork } from '@gugu/gateway/feishu'
 import type { createDesktopFeishuPairing } from '../../../connect/platforms/feishu/index.js'
 import type { createDesktopImCallback } from '../../interactions/callback.js'
-import { readDesktopImRunStatus, stopDesktopImRun, type createDesktopImDispatch } from '../../delivery/dispatch.js'
+import { tryDesktopImRunControl, type createDesktopImDispatch } from '../../delivery/dispatch.js'
 import { MAX_DESKTOP_ATTACHMENT_BYTES } from '../../../../agent/attachments.js'
 import { desktopImEventKey, type DesktopImFile, type createDesktopImInbox } from '../../inbound/inbox.js'
 import { parseImReceivedMessage } from '@gugu/gateway'
@@ -32,7 +33,8 @@ function groupConnectionId(botId: string, groupId: string, ownerId: string) {
 export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof createDesktopFeishuPairing>, 'read'>,
   admit: ReturnType<typeof createDesktopImInbox>, dispatch: ReturnType<typeof createDesktopImDispatch>,
   transport: () => Transport, connect = createFeishuConnection, callback?: ReturnType<typeof createDesktopImCallback>, voice?: DesktopImVoice,
-  projection?: { host: IpcHost; encryption: Pick<typeof safeStorage, 'encryptStringAsync' | 'decryptStringAsync'> }, pendingAsks?: ImPendingAskStore) {
+  projection?: { host: IpcHost; encryption: Pick<typeof safeStorage, 'encryptStringAsync' | 'decryptStringAsync'> }, pendingAsks?: ImPendingAskStore,
+  report?: (code: 'feishu-reaction-rejected' | 'feishu-reaction-unknown') => void) {
   const supervisor = createGatewaySupervisor({
     async read() {
       const bot = await pairing.read()
@@ -44,6 +46,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
       const connectionId = createHash('sha256').update(JSON.stringify([bot.appId, bot.userId])).digest('hex')
       const client = createFeishuClient({ appId: bot.appId, appSecret: bot.appSecret, transport: transport() })
       const sender = createFeishuSender({ client })
+      const reacted = new Set<string>()
       const controller = new AbortController()
       const active = AbortSignal.any([signal, controller.signal])
       const groupDeliveries = new Map<string, Promise<void>>()
@@ -145,6 +148,17 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
               current.groupReplyMode)
               if (current.groupReplyMode !== 'record_only' && decision !== 'reply') return
             } else if (parsed.payload.platform_user_id !== bot.userId) return
+            const messageId = parsed.payload.platform_message_id
+            if (!isGroup && messageId && !reacted.has(messageId)) {
+              if (reacted.size >= 256) reacted.delete(reacted.values().next().value!)
+              reacted.add(messageId)
+              const reactionSignal = AbortSignal.any([active, messageSignal, AbortSignal.timeout(5_000)])
+              void sender.react(messageId, chooseImInstantReactionEmoji(parsed.payload.text, parsed.mediaItems.length > 0),
+                reactionSignal, authorize).then(({ outcome }) => {
+                if (!active.aborted && !messageSignal.aborted && (outcome === 'rejected' || outcome === 'unknown'))
+                  report?.(`feishu-reaction-${outcome}`)
+              })
+            }
             const mediaSignal = AbortSignal.any([active, messageSignal, AbortSignal.timeout(60_000)])
             const quote = await readFeishuQuote(parsed, client, botOpenId, mediaSignal, authorize)
             if (!await authorize()) return
@@ -153,6 +167,16 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             const current = await readActive()
             if (!current) return
             let recordOnly = isGroup && current.groupReplyMode === 'record_only'
+            const targetConnection = isGroup
+              ? groupConnectionId(bot.appId, parsed.payload.chat_id, current.userId!) : connectionId
+            const eventAuthorize = isGroup ? () => authorizeGroup(parsed.payload.chat_id) : authorize
+            const reply = !recordOnly && projection ? await tryDesktopImRunControl(projection.host, event, targetConnection, {
+              hasMedia: parsed.mediaItems.length > 0, ownerPlatformUserId: isGroup ? current.userId! : undefined, authorize: eventAuthorize,
+            }) : null
+            if (reply) {
+              await sender.text(isGroup ? parsed.payload.chat_id : event.scope.platformUserId, reply, mediaSignal, eventAuthorize)
+              return
+            }
             let pendingAsk = false
             let sourceAttentionKind = isGroup && event.botMentioned ? attentionSourceKind('DIRECT') : null
             if (isGroup && !recordOnly && current.groupReplyMode === 'reply_all' && !readImAddressedCommand(event).command) {
@@ -171,15 +195,6 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
               recordOnly = !attention.run
               pendingAsk = attention.pendingAsk && !parsed.mediaItems.length && Boolean(event.text.trim())
               sourceAttentionKind = attentionSourceKind(attention.decision.kind)
-            }
-            const targetConnection = isGroup
-              ? groupConnectionId(bot.appId, parsed.payload.chat_id, current.userId!) : connectionId
-            const eventAuthorize = isGroup ? () => authorizeGroup(parsed.payload.chat_id) : authorize
-            const command = readImAddressedCommand(event).command
-            if (!recordOnly && projection && (command?.name === 'stop' || command?.name === 'status') && !command.argument && await eventAuthorize()) {
-              const reply = await (command.name === 'status' ? readDesktopImRunStatus : stopDesktopImRun)(projection.host, event, targetConnection, isGroup ? current.userId! : undefined)
-              await sender.text(isGroup ? parsed.payload.chat_id : event.scope.platformUserId, reply, mediaSignal, eventAuthorize)
-              return
             }
             if (!parsed.mediaItems.length) {
               if (recordOnly) {
@@ -225,15 +240,23 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             }
           },
           async onCardAction(data) {
-            let accepted = false
+            let outcome: Awaited<ReturnType<NonNullable<typeof callback>>> = { accepted: false }
             try {
               if (callback && object(data) && await authorize()) {
                 const parsed = parse(data, 'card.action.trigger')
                 if (parsed?.kind === 'card_action')
-                  accepted = await callback(connection, connectionId, bot.userId, { ...parsed, raw: data }, authorize)
+                  outcome = await callback(connection, connectionId, bot.userId, { ...parsed, raw: data }, authorize)
               }
             } catch { /* 平台只收到脱敏的交互结果。 */ }
-            return { toast: { type: accepted ? 'info' : 'error', content: accepted ? '已收到选择' : '交互已失效' } }
+            if (!outcome.accepted) return { toast: { type: 'error', content: '交互已失效' } }
+            if (outcome.awaitingText) {
+              const hint = '请在当前飞书聊天中发送你的回答，咕咕收到后会继续处理。'
+              return { toast: { type: 'info', content: hint }, card: buildFeishuCompletedActionCard(hint) }
+            }
+            return {
+              toast: { type: 'info', content: '已收到选择' },
+              card: buildFeishuCompletedActionCard('已确认收到选择，咕咕将继续处理。'),
+            }
           },
         })
         if (pendingAsks && projection) stopPendingAskPump = startDesktopImPendingAskPump({
@@ -278,8 +301,8 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
                 stream ??= createPersistentFeishuProjection({
                   identity: event.identity, receiveId: bot.userId, policyVersion: 'desktop-feishu-v1',
                   receipts, client, authorize, signal: active,
-                  toolSummary: target.preferences?.imToolDisplayMode === 'all'
-                    ? { chatType: 'p2p', includeDetails: false, sanitize: redactToolError, locale: target.preferences?.locale } : undefined,
+                  toolSummary: target.preferences?.imToolDisplayMode && target.preferences.imToolDisplayMode !== 'off'
+                    ? { chatType: 'p2p', includeDetails: true, sanitize: redactToolError, locale: target.preferences?.locale } : undefined,
                   renderCharts: createDesktopImChartRenderer(projection.host, authorize),
                 })
                 const result = await stream.project({ identity: event.identity, deliveryId: event.id, event })

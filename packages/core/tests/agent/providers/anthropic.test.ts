@@ -180,7 +180,7 @@ describe('Anthropic真实HTTP协议边界', () => {
     expect(early.closed).toEqual([0])
   })
 
-  it.each([1, 5, 6])('真实Anthropic读取超时%i次遵循五次重试和5秒间隔，成功缺报usage不能借失败attempt', async failTimes => {
+  it.each([1, 5, 6])('真实Anthropic读取超时%i次遵循最多五次指数退避，成功缺报usage不能借失败attempt', async failTimes => {
     const failed = { events: [start()] }, successful = { events: [start(null), blockStart(0, { type: 'text', text: '成功' }), stop(0), end] }
     const f = fixture([...Array.from({ length: failTimes }, () => failed), successful])
     const original = f.dependencies.transport.request
@@ -203,7 +203,7 @@ describe('Anthropic真实HTTP协议边界', () => {
     else { await run(); expect(final(events).text).toBe('成功'); expect(events.filter(event => event.type === 'usage').at(-1)).toMatchObject({ usage: { contextInput: null } }) }
     expect(f.requests).toHaveLength(Math.min(failTimes + 1, 6))
     expect(events.filter(event => event.type === 'retry').map(event => event.type === 'retry' ? event.attempt : 0)).toEqual(Array.from({ length: Math.min(failTimes, 5) }, (_, index) => index + 1))
-    expect(sleeps).toEqual(Array.from({ length: Math.min(failTimes, 5) }, () => 5000))
+    expect(sleeps).toEqual([5000, 10000, 20000, 30000, 30000].slice(0, failTimes))
     expect(events.filter(event => event.type === 'retry').every(event => event.type === 'retry' && event.errorCode === 'timeout')).toBe(true)
     expect(f.closed).toHaveLength(f.requests.length)
   })
@@ -219,10 +219,11 @@ describe('Anthropic真实HTTP协议边界', () => {
           maxWallMs, clock: { now: () => elapsed, sleep: async ms => { sleeps.push(ms); elapsed += ms } },
         })) events.push(event)
       })()).rejects.toMatchObject({ code: 'busy', options: { status: 529, retryable: true, outputStarted: false } })
-      const attempts = maxWallMs === 900_000 ? 6 : 2, retries = maxWallMs === 900_000 ? 5 : 2
+      const delays = maxWallMs === 900_000 ? [5000, 10000, 20000, 30000, 30000] : [5000]
+      const attempts = delays.length + 1
       expect(f.requests).toHaveLength(attempts); expect(f.closed).toHaveLength(attempts)
-      expect(events.filter(event => event.type === 'retry')).toEqual(Array.from({ length: retries }, (_, index) => ({ type: 'retry', attempt: index + 1, maxRetries: 5, nextRetryMs: 5000, errorCode: 'upstream_busy' })))
-      expect(sleeps).toEqual(Array.from({ length: retries }, () => 5000))
+      expect(events.filter(event => event.type === 'retry')).toEqual(delays.map((nextRetryMs, index) => ({ type: 'retry', attempt: index + 1, maxRetries: 5, nextRetryMs, errorCode: 'upstream_busy' })))
+      expect(sleeps).toEqual(delays)
       expect(events.filter(event => event.type === 'token' || event.type === 'complete')).toEqual([])
       expect(events.filter(event => event.type === 'usage').every(event => event.type === 'usage' && event.usage.contextInput === null)).toBe(true)
       expect(JSON.stringify(events)).not.toContain('私有上游正文'); expect(JSON.stringify(events)).not.toContain('synthetic-secret')

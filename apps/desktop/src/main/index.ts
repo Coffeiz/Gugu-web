@@ -13,6 +13,8 @@ import { createGatewayPowerPolicy } from './im/gateway-power.js'
 import { createDesktopImAttachmentSender } from './im/gateway/delivery/attachments.js'
 import { createDesktopImCallback } from './im/gateway/interactions/callback.js'
 import { createDesktopQqReferences } from './im/gateway/platforms/qq/references.js'
+import { connectDesktopFeishuProcess, isolateDesktopImPolling } from './im/gateway/process-host.js'
+import { createDesktopQqChildConnection } from './im/gateway/platforms/qq/connection-host.js'
 import { createDesktopQqGateway } from './im/gateway/platforms/qq/index.js'
 import { createDesktopFeishuGateway } from './im/gateway/platforms/feishu/index.js'
 import { createDesktopRecordingTranscriber } from './agent/voice-recording.js'
@@ -31,6 +33,7 @@ import { directDesktopFetch } from './network.js'
 import { resolveDesktopSystemProxy } from './proxy.js'
 import { createDesktopImInbox } from './im/gateway/inbound/inbox.js'
 import { createDesktopImPendingAskStore } from './im/gateway/inbound/pending-asks.js'
+import { createTelegramAdapter } from '@gugu/gateway/telegram'
 import { createDesktopTelegramGateway } from './im/gateway/platforms/telegram/index.js'
 import { telegramHandlers, pairingHandlers } from './im/ipc.js'
 import { desktopTerminalHandlers } from './terminal/ipc.js'
@@ -123,8 +126,10 @@ const smoke = process.argv.includes('--smoke')
 const devUiUrl = !app.isPackaged ? process.env.GUGU_DESKTOP_DEV_URL : undefined
 const previewSocket = devUiUrl && process.env.GUGU_DESKTOP_PREVIEW_SOCKET
 const previewSecret = devUiUrl && process.env.GUGU_DESKTOP_PREVIEW_SECRET
-const devNode = previewSocket && previewSecret ? process.env.GUGU_DESKTOP_DEV_NODE : undefined
+const devCoreSea = Boolean(previewSocket && previewSecret && process.env.GUGU_DESKTOP_DEV_CORE_SEA === '1')
+const devNode = previewSocket && previewSecret && !devCoreSea ? process.env.GUGU_DESKTOP_DEV_NODE : undefined
 delete process.env.GUGU_DESKTOP_DEV_NODE
+delete process.env.GUGU_DESKTOP_DEV_CORE_SEA
 delete process.env.GUGU_DESKTOP_PREVIEW_SOCKET
 delete process.env.GUGU_DESKTOP_PREVIEW_SECRET
 let dataDirectory = join(app.getPath('appData'), 'com.gugu.desktop.preview')
@@ -208,7 +213,10 @@ else {
           agentRuntimeModule: resolve(app.getAppPath(), '.tools/agent/runtime.mjs'),
           manifest: undefined,
         }
-        : await verifyArtifact(join(resource, 'core-sidecar'))
+        : await verifyArtifact(join(resource, devCoreSea ? 'core-sidecar-sea' : 'core-sidecar'))
+      if (devCoreSea && runtime.manifest?.runtimeMode !== 'sea') throw new Error('开发测试制品不是 SEA')
+      const gatewayExecutable = runtime.manifest?.runtimeMode === 'sea' ? runtime.node : undefined
+
       mkdirSync(dataDirectory, { recursive: true })
       const filesRoot = join(smoke ? dataDirectory : app.getPath('documents'), 'Gugu-data')
       let filesOwner: string | undefined
@@ -277,19 +285,24 @@ else {
         return (await imTranscriber).transcribe(input, signal, authorize)
       }
       const imVoice = { transcribe: transcribeImVoice, report: (error: unknown) => report('gateway.degraded', { code: 'im_voice_failed', error }) }
-      const gateway = telegram = createDesktopTelegramGateway(dataDirectory, safeStorage, undefined, resolveModelProxy, admitIm, dispatchIm, callbackIm, imVoice, host, pendingImAsks)
+      const gateway = telegram = createDesktopTelegramGateway(dataDirectory, safeStorage,
+        options => createTelegramAdapter({ ...options, transport: isolateDesktopImPolling(options.transport!, 'telegram', resolveModelProxy, gatewayExecutable) }), resolveModelProxy, admitIm, dispatchIm, callbackIm, imVoice, host, pendingImAsks)
       const newImTransport = () => createNodeProviderTransport(desktopTransportOptions(false, resolveModelProxy))
       // 扫码任务只在本进程有效，使用本次启动的本地身份隔离。
       const wechatPairing = createDesktopWechatPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => { wechat?.refresh(); await wechat?.settled() })
       const wechatReach = createDesktopWechatReach(dataDirectory, safeStorage)
-      const wechatGateway = wechat = createDesktopWechatGateway(wechatPairing, admitIm, dispatchIm, newImTransport, createDesktopWechatCursor(dataDirectory, safeStorage), (code, error) => report('gateway.degraded', { code, error }), wechatReach, host)
+      const wechatGateway = wechat = createDesktopWechatGateway(wechatPairing, admitIm, dispatchIm,
+        () => isolateDesktopImPolling(newImTransport(), 'wechat', resolveModelProxy, gatewayExecutable), createDesktopWechatCursor(dataDirectory, safeStorage), (code, error) => report('gateway.degraded', { code, error }), wechatReach, host)
       const feishuPairing = createDesktopFeishuPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => {
         feishu?.refresh()
         await feishu?.settled()
       })
-      const feishuGateway = feishu = createDesktopFeishuGateway(feishuPairing, admitIm, dispatchIm, newImTransport, undefined, callbackIm, imVoice, { host, encryption: safeStorage }, pendingImAsks)
+      const feishuGateway = feishu = createDesktopFeishuGateway(feishuPairing, admitIm, dispatchIm, newImTransport,
+        options => connectDesktopFeishuProcess(options, resolveModelProxy, gatewayExecutable, code => report('gateway.degraded', { code })), callbackIm, imVoice, { host, encryption: safeStorage }, pendingImAsks,
+        code => report('gateway.degraded', { code }))
       const qqPairing = createDesktopQqPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), () => qq?.refresh())
-      const qqGateway = qq = createDesktopQqGateway(qqPairing, admitIm, dispatchIm, newImTransport, undefined, callbackIm,
+      const qqGateway = qq = createDesktopQqGateway(qqPairing, admitIm, dispatchIm, newImTransport,
+        ports => createDesktopQqChildConnection(ports, gatewayExecutable), callbackIm,
         (code, error) => report('gateway.degraded', { code, error }), { host, encryption: safeStorage, dataDirectory, voice: imVoice, observeUpload: uploadMetrics => report('gateway.qq_upload_timing', { uploadMetrics }), references: createDesktopQqReferences(dataDirectory, safeStorage) })
       const scheduledIm = bindDesktopScheduledIm({ feishuPairing, qqPairing, wechatPairing, wechatReach, telegram: gateway, transport: newImTransport,
         async readScheduledGroup(params, signal) {

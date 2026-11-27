@@ -27,6 +27,10 @@ if (!existsSync(viteCli) || !existsSync(electronCli) || !existsSync(tsc))
 
 prepareDesktopPty(resolve(root, 'packages/core/package.json'))
 
+const coreSea = process.argv.includes('--core-sea')
+if (coreSea && (process.platform !== 'win32' || !existsSync(resolve(desktop, 'resources/core-sidecar-sea/manifest.json'))))
+  throw new Error('SEA 开发测试需要 Windows 制品，请先运行 pnpm run prepare:sidecar --sea')
+
 const preferredPort = 5176
 const lastPort = 5190
 
@@ -63,11 +67,7 @@ const bridge = {
 process.once('exit', () => rmSync(bridgeDirectory, { recursive: true, force: true }))
 const viteArgs = [viteCli, '--config', 'vite.desktop.config.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort']
 if (process.argv.includes('--open')) viteArgs.push('--open', previewPath)
-const vite = spawn(process.execPath, viteArgs, {
-  cwd: ui,
-  stdio: 'inherit',
-  env: { ...process.env, ...bridge },
-})
+let vite
 let electron
 let runningHostFingerprint
 let stopping = false
@@ -112,15 +112,12 @@ function stop(code = 0) {
   for (const watcher of watchers) watcher.close()
   builder?.kill('SIGTERM')
   if (electron && electron.exitCode === null) electron.kill('SIGTERM')
-  if (vite.exitCode === null) vite.kill('SIGTERM')
+  if (vite?.exitCode === null) vite.kill('SIGTERM')
   process.exitCode = code
 }
 
 process.on('SIGINT', () => stop())
 process.on('SIGTERM', () => stop())
-vite.on('exit', (code) => {
-  if (!stopping) stop(code || 1)
-})
 
 const LOOPSCOPE_ENDPOINT_DEFAULT = 'http://127.0.0.1:4320'
 const LOOPSCOPE_ENABLED_PATTERN = /^(1|true|yes|on)$/i
@@ -137,7 +134,8 @@ async function resolveLoopScopeEnv() {
 }
 
 const loopScope = await resolveLoopScopeEnv()
-const electronEnv = { ...process.env, ...bridge, GUGU_DESKTOP_DEV_URL: devUrl, GUGU_DESKTOP_DEV_NODE: process.execPath }
+const electronEnv = { ...process.env, ...bridge, GUGU_DESKTOP_DEV_URL: devUrl, GUGU_DESKTOP_DEV_NODE: process.execPath,
+  GUGU_DESKTOP_DEV_CORE_SEA: coreSea ? '1' : undefined }
 if (loopScope) {
   electronEnv.LOOPSCOPE_ENABLED = 'true'
   electronEnv.LOOPSCOPE_ENDPOINT = loopScope.endpoint
@@ -153,10 +151,25 @@ function launchElectron() {
 }
 
 async function runBuild(args) {
-  if (stopping) return
-  builder = spawn(process.execPath, args, { cwd: desktop, stdio: 'inherit' })
-  const [code] = await once(builder, 'exit').finally(() => { builder = undefined })
-  if (code !== 0) throw new Error('桌面构建失败')
+  const attempts = process.platform === 'win32' && args[0] === tsc ? 3 : 1
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    if (stopping) return
+    const child = builder = spawn(process.execPath, args, { cwd: desktop, stdio: ['inherit', 'pipe', 'pipe'] })
+    let output = ''
+    for (const [stream, destination] of [[child.stdout, process.stdout], [child.stderr, process.stderr]]) {
+      stream.on('data', chunk => {
+        destination.write(chunk)
+        output += chunk.toString()
+      })
+    }
+    const [code] = await once(child, 'close').finally(() => { builder = undefined })
+    if (code === 0 || stopping) return
+    const diagnostics = output.split(/\r?\n/).filter(line => /error TS\d+:/.test(line))
+    const busy = diagnostics.length > 0 && diagnostics.every(line => /error TS5033:.*\bEBUSY\b/.test(line))
+    if (!busy || attempt === attempts) throw new Error('桌面构建失败')
+    console.warn('Windows 暂时锁定了编译输出，稍后重试')
+    await new Promise(resolveRetry => setTimeout(resolveRetry, attempt * 500))
+  }
 }
 
 async function buildWorkspace() {
@@ -300,6 +313,14 @@ function watchSource(path, level) {
 try {
   await buildWorkspace()
   await runBuild([resolve(desktop, 'scripts/build.mjs')])
+  if (stopping) throw new Error('桌面开发已停止')
+  vite = spawn(process.execPath, viteArgs, {
+    cwd: ui,
+    stdio: 'inherit',
+    env: { ...process.env, ...bridge },
+  })
+  vite.on('exit', code => { if (!stopping) stop(code || 1) })
+  vite.on('error', error => { console.error(error.message); stop(1) })
   await waitForVite()
   if (!stopping) {
     // 提前打印：Electron 启动横幅和 Vite 输出会淹没这行，浏览器预览地址要一眼可见。

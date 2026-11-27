@@ -5,6 +5,8 @@ import { buildCore } from '../../../packages/core/scripts/build.mjs'
 import { buildDesktopAgentRuntime } from './build-agent-runtime.mjs'
 import { prepareDesktopPty } from './prepare-pty.mjs'
 import { pruneSidecarHost } from './prune-sidecar.mjs'
+import { buildCoreSea } from './build-core-sea.mjs'
+import { bundleChartWorker, bundledChartPackages } from './bundle-chart-worker.mjs'
 import {
   cpSync,
   existsSync,
@@ -27,8 +29,10 @@ const pnpm = process.env.npm_execpath
 if (!pnpm || !existsSync(pnpm)) throw new Error('请通过 pnpm run prepare:sidecar 装配制品')
 if (!/^v26\./.test(process.version) || Number(process.versions.node.split('.')[1]) < 13)
   throw new Error('桌面制品需要固定的 Node 26.13 或更新的 26 LTS')
+const sea = process.platform === 'win32'
+if (process.argv.includes('--sea') && !sea) throw new Error('SEA 制品目前仅支持 Windows')
 const resourceParent = join(desktop, 'resources'),
-  target = join(resourceParent, 'core-sidecar')
+  target = join(resourceParent, sea ? 'core-sidecar-sea' : 'core-sidecar')
 const executable = process.platform === 'win32' ? 'node.exe' : 'node'
 const digest = (path) => createHash('sha256').update(readFileSync(path)).digest('hex')
 const isolatedEnv = Object.fromEntries(Object.entries(process.env)
@@ -134,6 +138,22 @@ async function prepareSidecar() {
   if (!canRunStandalone(embeddedNode))
     throw new Error('复制后的 Node 不能独立运行，请使用官方 Node 发行版准备桌面制品')
   // 裁剪开发期文件与异平台二进制，裁剪后再生成清单，保证摘要与实际内容一致。
+  if (process.platform === 'win32') {
+    const modules = join(host, 'node_modules')
+    const worker = join(modules, '@gugu', 'charts', 'src', 'worker.mjs')
+    const bundledWorker = join(dirname(worker), 'worker.bundle.mjs')
+    await bundleChartWorker(worker, bundledWorker)
+    renameSync(bundledWorker, worker)
+    for (const name of bundledChartPackages) {
+      const directory = join(modules, name)
+      if (realpathSync(directory) !== directory) throw new Error('图表依赖目录不是普通目录')
+      // 保留依赖元数据及根目录许可证，供制品清单与许可审计使用。
+      for (const entry of readdirSync(directory)) {
+        if (entry === 'package.json' || /^(licen[cs]e|notice|copying)(\.|$)/i.test(entry)) continue
+        rmSync(owned(join(directory, entry)), { recursive: true, force: true })
+      }
+    }
+  }
   const pruned = pruneSidecarHost(host)
   console.log(
     JSON.stringify({
@@ -144,6 +164,17 @@ async function prepareSidecar() {
       afterBytes: pruned.after,
     }),
   )
+  let runtime = { executable, workerEntry: 'host/dist/runtime/worker.js' }
+  if (sea) {
+    const buildRoot = mkdtempSync(join(desktop, '.tools', 'sea-build-'))
+    try {
+      runtime = await buildCoreSea({ payload: stage, temp: buildRoot, node: embeddedNode })
+      rmSync(owned(embeddedNode))
+    } finally {
+      if (realpathSync(buildRoot) !== buildRoot) throw new Error('SEA 暂存目录路径不匹配')
+      rmSync(owned(buildRoot), { recursive: true, force: true })
+    }
+  }
   const files = {}
   const dependencies = new Map()
   function inventory(directory) {
@@ -173,9 +204,10 @@ async function prepareSidecar() {
     arch: process.arch,
     protocol: 2,
     schema: CORE_SCHEMA_VERSION,
-    executable,
+    executable: runtime.executable,
+    ...(sea ? { runtimeMode: 'sea' } : {}),
     entry: 'host/dist/runtime/transport/stdio.js',
-    workerEntry: 'host/dist/runtime/worker.js',
+    workerEntry: runtime.workerEntry,
     agentRuntimeModule: 'host/agent/runtime.mjs',
     dependencies: [...dependencies.values()],
     files,

@@ -40,7 +40,7 @@ export interface ProviderRuntimeOptions extends ContextServices {
   /** 通用观测端口只接收实际请求 body，不接收传输凭据或请求头。 */
   readonly observation?: AgentObservationPort
   /** 由Host的可信选模/BYOK解析器提供，必须与Harness冻结模型身份一致。 */
-  resolve(identity: RunIdentity, modelIdentity: string, signal: AbortSignal): Promise<{ modelIdentity: string; accessScopeHash: string; config: ProviderConfig; systemPrompt: string }>
+  resolve(identity: RunIdentity, modelIdentity: string, signal: AbortSignal, purpose?: 'reflection'): Promise<{ modelIdentity: string; accessScopeHash: string; config: ProviderConfig; systemPrompt: string }>
   readonly references: ContextReferenceCodec
   readonly prepareRequest: CanonicalContextPorts['prepareRequest']
   readonly transport?: ProviderTransport
@@ -137,10 +137,10 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
   readonly rememberPreparedRequest: NonNullable<CanonicalContextPorts['rememberPreparedRequest']> = (identity, request) => {
     this.#prefixes.set(this.#key(identity), Promise.resolve(clone(request)))
   }
-  async #selection(identity: RunIdentity, modelIdentity: string, signal: AbortSignal) {
+  async #selection(identity: RunIdentity, modelIdentity: string, signal: AbortSignal, purpose?: 'reflection') {
     throwIfCancelled(signal)
     let selected: Awaited<ReturnType<ProviderRuntimeOptions['resolve']>>
-    try { selected = await this.options.resolve(identity, modelIdentity, signal) }
+    try { selected = await this.options.resolve(identity, modelIdentity, signal, purpose) }
     catch (error) { this.#diagnose('provider_selection', error); throwIfCancelled(signal); throw classifyProviderError(error) }
     throwIfCancelled(signal)
     if (!selected.modelIdentity || selected.modelIdentity !== modelIdentity || !selected.accessScopeHash || typeof selected.systemPrompt !== 'string') throw new ProviderError('input_rejected')
@@ -471,7 +471,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
   async #completeModelTask(input: BranchInput<ProviderWire> & { modelIdentity: string; scenario?: BranchName; outputMode?: 'text' | 'json'; maxOutputTokens?: number | null; cacheSingleflight?: boolean; thinking?: string | null }, signal = new AbortController().signal) {
     const identity = { ownerId: input.ownerId, sessionId: input.sessionId, runId: input.runId ?? 'branch' }
     const observationIdentity = input.observationIdentity ?? identity
-    const selected = await this.#selection(identity, input.modelIdentity, signal)
+    const selected = await this.#selection(identity, input.modelIdentity, signal, input.scenario === 'reflection' ? 'reflection' : undefined)
     const { policy, driver, accessScopeHash } = selected
     const config = input.thinking === undefined ? selected.config : filterReasoningConfig({ ...selected.config, thinking: input.thinking }, policy)
     if (input.projection && (input.projection.modelIdentity !== input.modelIdentity || input.projection.wire.protocol !== driver.protocol || input.projection.wire.provider !== policy.name

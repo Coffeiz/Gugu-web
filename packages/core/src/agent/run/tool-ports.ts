@@ -74,6 +74,11 @@ export function createAgentRunToolPorts(options: {
       if (call.adapter === 'call_tool' && !await mayForward(call.name, new AbortController().signal)) return { kind: 'unknown' }
       return options.registry.tools.reconcile(call, candidate)
     },
+    async reconcileAfterUnknown(call, candidate, signal) {
+      if (!matchesRun(candidate) || signal.aborted) return { kind: 'unknown' }
+      if (call.adapter === 'call_tool' && !await mayForward(call.name, signal)) return { kind: 'unknown' }
+      return await options.registry.tools.reconcileAfterUnknown?.(call, candidate, signal) ?? { kind: 'unknown' }
+    },
   }
   return {
     tools,

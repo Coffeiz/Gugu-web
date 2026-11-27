@@ -389,9 +389,10 @@ it('工具搜索支持 AND、本机绝对路径和工作区边界', async () => 
   expect(found.groups).toMatchObject([{ type: 'file', items: [
     { title: '会议.txt', path_file: { directoryId: 'personal', location: { kind: 'host_absolute', value: join(root, '样本目录/会议.txt') } } },
   ] }])
-  const exact = await files.globalFileSearch([join(root, '样本目录/会议.txt')])
+  const exact = await files.globalFileSearch([join(root, '样本目录/会议.txt')], 'OR', 6, undefined, 1)
   expect(exact.groups[0]?.items).toHaveLength(1)
   expect(exact.groups[0]?.items[0]?.path_file.relativePath).toBe('样本目录/会议.txt')
+  expect((await files.globalFileSearch([join(directory, '样本会议.txt')])).groups).toEqual([])
 })
 
 it('保存已授权聊天附件时原子写入、保留同名文件并恢复重复调用', async () => {

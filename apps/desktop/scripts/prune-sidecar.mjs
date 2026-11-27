@@ -1,7 +1,7 @@
 // 裁剪桌面制品中的开发期文件与异平台二进制，只保留当前平台运行所需内容。
 // 必须在清单生成前执行，裁剪结果才会被 manifest.json 的文件摘要覆盖。
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 
 // 明确的开发期目录，删除后不影响运行时。
 const DEV_DIRECTORIES = new Set([
@@ -15,10 +15,12 @@ const DEV_DIRECTORIES = new Set([
 ])
 const TYPE_SUFFIXES = ['.d.ts', '.d.mts', '.d.cts']
 
-function walk(directory, visit) {
+function walk(directory, visit, visitDirectory = () => true) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
-    if (entry.isDirectory()) walk(path, visit)
+    if (entry.isDirectory()) {
+      if (visitDirectory(path, entry.name)) walk(path, visit, visitDirectory)
+    }
     else if (entry.isFile()) visit(path)
   }
 }
@@ -60,12 +62,11 @@ export function pruneSidecarHost(host, platform = process.platform, arch = proce
 
   // 2. 删除依赖包自带的开发期目录。
   if (existsSync(nodeModules)) {
-    walk(nodeModules, (path) => {
-      const name = path.slice(path.lastIndexOf('/') + 1)
-      if (!DEV_DIRECTORIES.has(name)) return
+    walk(nodeModules, () => {}, (path, name) => {
       // 目录内自带 package.json 说明它是独立子包，保留。
-      if (existsSync(join(path, 'package.json'))) return
+      if (!DEV_DIRECTORIES.has(name) || existsSync(join(path, 'package.json'))) return true
       remove(path, stats)
+      return false
     })
   }
 
@@ -75,6 +76,14 @@ export function pruneSidecarHost(host, platform = process.platform, arch = proce
   if (existsSync(ptyPrebuilds)) {
     for (const entry of readdirSync(ptyPrebuilds, { withFileTypes: true })) {
       if (entry.isDirectory() && entry.name !== keepPrebuild) remove(join(ptyPrebuilds, entry.name), stats)
+    }
+    if (platform === 'win32') {
+      const windowsPrebuild = join(ptyPrebuilds, keepPrebuild)
+      if (existsSync(windowsPrebuild)) {
+        walk(windowsPrebuild, (path) => {
+          if (path.endsWith('.pdb')) remove(path, stats)
+        })
+      }
     }
   }
   const sqlite = join(nodeModules, 'better-sqlite3')
@@ -115,6 +124,17 @@ export function pruneSidecarHost(host, platform = process.platform, arch = proce
   // 5. pdfjs 只使用 legacy 构建，移除并存的现代构建副本。
   const pdfjsBuild = join(nodeModules, 'pdfjs-dist', 'build')
   if (existsSync(pdfjsBuild)) remove(pdfjsBuild, stats)
+
+  // 服务端通过 mermaid.core.mjs 加载，保留其模块和分块，仅删除浏览器独立包。
+  for (const name of ['mermaid.js', 'mermaid.min.js']) {
+    const browserBundle = join(nodeModules, 'mermaid', 'dist', name)
+    if (existsSync(browserBundle)) remove(browserBundle, stats)
+  }
+  // Sidecar 的代码高亮只使用 JS 模块。浏览器主题和 Sass 源码由前端单独构建。
+  for (const name of ['styles', 'scss']) {
+    const browserThemes = join(nodeModules, 'highlight.js', name)
+    if (existsSync(browserThemes)) remove(browserThemes, stats)
+  }
 
   const after = directorySize(host)
   return { removed: stats.removed, before, after, saved: before - after }

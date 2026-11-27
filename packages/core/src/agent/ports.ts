@@ -407,6 +407,8 @@ export interface ToolPort {
   reconcile(call: ToolCall, identity: RunIdentity & {
     readonly roundId: string
   }): Promise<ToolResult>
+  /** 仅核对已派发操作的收据，允许短暂等待收据可见。 */
+  reconcileAfterUnknown?(call: ToolCall, identity: RunIdentity & { readonly roundId: string }, signal: AbortSignal): Promise<ToolResult>
 }
 
 export interface InteractionPort {

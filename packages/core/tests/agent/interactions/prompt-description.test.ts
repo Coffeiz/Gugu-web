@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
+import { prepareAgentInteractionPrompt } from '../../../src/agent/interactions/prompt-preparation.js'
 import { createAgentInteractionDescription } from '../../../src/agent/interactions/prompt-description.js'
 
 const identity = { ownerId: 'owner-a', sessionId: '7', runId: 'run-a' }
@@ -68,4 +69,19 @@ test('IM 恢复旧 ask_user 请求时，卡片只投影单选选项', async () =
   assert.equal(normal.selectionMode, 'multiple')
   assert.equal(Object.hasOwn(im, 'selectionMode'), false)
   assert.deepEqual(im.options, normal.options)
+})
+
+test('问答从协议包装里恢复标题、正文和实际候选项，自定义回复只作为附加选项', async () => {
+  const args = { kind: 'choice', title: '请选择方案', body: '方案将用于后续操作。',
+    options: [{ id: 'a', label: '方案 A' }, { id: 'b', label: '方案 B' }] }
+  const describe = createAgentInteractionDescription(emptyTrusted)
+  for (const input of [{ arguments: args }, { tool_name: 'ask_user', arguments: args }]) {
+    const request = { id: 'wrapped-question', kind: 'question' as const, toolCall: { id: 'ask', name: 'ask_user', input } }
+    const prompt = await describe.describe(null, identity, request)
+    assert.equal(prompt.title, args.title)
+    assert.equal(prompt.body, args.body)
+    assert.deepEqual(prepareAgentInteractionPrompt(prompt, request, 0).options.map(option => option.id), ['a', 'b', '__custom_reply__'])
+  }
+  await assert.rejects(describe.describe(null, identity, { id: 'wrapped-auth', kind: 'question',
+    toolCall: { id: 'ask', name: 'ask_user', input: { arguments: { ...args, authorization: 'untrusted' } } } }))
 })

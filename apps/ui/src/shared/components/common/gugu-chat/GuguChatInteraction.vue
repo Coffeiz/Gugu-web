@@ -95,7 +95,7 @@
     <div v-if="submitting" class="interaction-resolved">{{ t(isMultiple ? 'chatUi.multiSubmitting' : 'chatUi.confirmationSubmitting') }}</div>
     <div v-else-if="expired" class="interaction-resolved">{{ t('chatUi.expired') }}</div>
     <div v-else-if="resolved && isPausedConfirmation && msg.interaction?.selectedOptionId === 'cancel'" class="interaction-resolved">
-      {{ t('chatUi.confirmationCancelled') }}
+      {{ t('chatUi.confirmationDeniedContinue') }}
     </div>
     <div v-else-if="resolved && !msg.interaction?.submissionRejected && !(isPausedConfirmation && msg.interaction?.selectedOptionId === 'confirm')" class="interaction-resolved">{{ t('chatUi.submitted') }}</div>
   </div>

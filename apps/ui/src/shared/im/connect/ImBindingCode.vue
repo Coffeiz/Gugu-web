@@ -7,6 +7,7 @@ import { copyTextToClipboard } from '@/components/common/gugu-chat/composables/c
 const props = defineProps({
   binding: { type: Object as PropType<{ code: string; expiresIn: number }>, required: true },
   telegram: Boolean,
+  expanded: Boolean,
 })
 const emit = defineEmits<{ copyFailed: [] }>()
 const { t } = useI18n()
@@ -32,7 +33,7 @@ async function copy() {
 </script>
 
 <template>
-  <div class="pm-binding-code-result">
+  <div class="pm-binding-code-result" :class="{ 'is-expanded': expanded }">
     <span class="pm-binding-code-command" :title="t(telegram ? 'profileImUi.sendTelegramToBot' : 'profileImUi.sendToBot')">
       <code class="pm-binding-code-value">{{ command }}</code>
     </span>
@@ -111,4 +112,17 @@ async function copy() {
   background: var(--status-success-bg);
   border-color: color-mix(in srgb,var(--status-success) 32%,transparent);
 }
+.pm-binding-code-result.is-expanded {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "command copy" "expiry expiry";
+  gap: var(--space-xs) var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface-soft);
+  border-color: transparent;
+}
+.is-expanded .pm-binding-code-command { grid-area: command; min-width: 0; }
+.is-expanded .pm-binding-code-value { font-size: var(--font-size-lg); letter-spacing: .05em; }
+.is-expanded .pm-binding-code-expiry { grid-area: expiry; font-size: var(--font-size-xs); }
+.is-expanded .pm-binding-copy-btn { grid-area: copy; min-height: 28px; }
 </style>

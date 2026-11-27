@@ -1,5 +1,6 @@
 import { askQuestionBatchSchema, QUESTION_BATCH_CANCEL, QUESTION_BATCH_SUBMIT, type AskQuestion } from './question-batch.js'
 import type { PendingInteraction, RunIdentity } from '../models.js'
+import { unwrapToolInputEnvelope } from '../tools/normalize-input.js'
 
 /** 平台无关的用户交互提示数据；Host 负责持久化和投影。 */
 export interface AgentPromptSpec {
@@ -42,7 +43,9 @@ export function createAgentInteractionDescription<Client>(
     if (request.kind === 'confirmation') return trusted.confirmation(client, identity, request)
     if (request.kind === 'credential') return trusted.credential(client, identity, request)
     if (request.toolCall.name !== 'ask_user') throw new Error('交互工具不支持')
-    const args = object(request.toolCall.input)
+    const args = unwrapToolInputEnvelope(object(request.toolCall.input),
+      input => Object.keys(input).some(key => ['kind', 'title', 'body', 'options', 'questions', 'authorization', 'selection_mode'].includes(key)),
+      { toolName: 'ask_user' })
     if (args.authorization !== undefined) {
       if (args.authorization !== 'user_sandbox') throw new Error('该交互需要可信授权处理器')
       return trusted.authorization(client, identity, request)

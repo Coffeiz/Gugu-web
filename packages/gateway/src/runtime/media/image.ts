@@ -83,7 +83,11 @@ export function createImImageProcessor(options:{ffmpegPath?:string;temporaryRoot
     decoded=png
    }
    const worker=fileURLToPath(new URL(import.meta.url.endsWith('.ts')?'./image-worker.ts':'./image-worker.js',import.meta.url))
-   const result=await runImMediaProcess({binary:process.execPath,args:['--max-old-space-size=64',worker,JSON.stringify({original:passthrough,maxPixels:pixels,maxOutputBytes:outputLimit})],
+   const imageOptions=JSON.stringify({original:passthrough,maxPixels:pixels,maxOutputBytes:outputLimit})
+   const args=process.platform==='win32'&&/[\\/]gugu-core\.exe$/i.test(process.execPath)
+    ? ['--node-options=--max-old-space-size=64','--image-worker',imageOptions]
+    : ['--max-old-space-size=64',worker,imageOptions]
+   const result=await runImMediaProcess({binary:process.execPath,args,
     directory,maxOutputBytes:outputLimit+4096,timeoutMs:timeout,signal,input:decoded,cancelled})
    if(!result)return null
    const newline=result.indexOf(10)

@@ -2,6 +2,8 @@
 import DesktopLogs from './DesktopLogs.vue'
 import DesktopUpdatePane from './DesktopUpdatePane.vue'
 import DesktopAuxiliaryModels from './DesktopAuxiliaryModels.vue'
+import TelegramTokenDialog from '@/components/common/gugu-chat/TelegramTokenDialog.vue'
+import type { TelegramBindingStep } from '@/components/common/gugu-chat/composables/useChatImConnect'
 import ProfileModal from '@/components/common/profile/ProfileModal.vue'
 import ProfileDevicePane from '@/components/common/profile/ProfileDevicePane.vue'
 import { hasDesktopAgentModelBridge, hasDesktopAuxiliaryModelBridge, requestDesktopAgentModel } from './agent-model-transport'
@@ -22,8 +24,28 @@ const { t } = useI18n()
 const loadDesktopDevice = () => callDesktopBridge(bridge => bridge.deviceInfo())
 const missingModel = ref(false)
 const telegramSnapshot = ref<DesktopTelegramSnapshot>()
+const telegramBindingStep = ref<TelegramBindingStep>()
+const bindingBusy = ref(false)
+const bindingError = ref('')
+async function generateTelegramBinding() {
+  if (bindingBusy.value) return
+  telegramBindingStep.value = {}
+  bindingBusy.value = true
+  bindingError.value = ''
+  try {
+    const snapshot = await requestDesktopTelegram({ action: 'bindingCode' })
+    if (!snapshot.binding) throw new Error('未取得 Telegram 绑定码')
+    telegramSnapshot.value = snapshot
+    telegramBindingStep.value = { code: snapshot.binding }
+  } catch {
+    bindingError.value = t('desktopTelegram.failed')
+  } finally {
+    bindingBusy.value = false
+  }
+}
 const connectTelegram = hasDesktopTelegramGateway() ? async (token: string) => {
   telegramSnapshot.value = await requestDesktopTelegram({ action: 'save', input: { token } })
+  await generateTelegramBinding()
 } : undefined
 
 onMounted(async () => {
@@ -60,4 +82,6 @@ onMounted(async () => {
     <template #desktop-logs><DesktopLogs /></template>
     <template #remote><RemoteAccountPane /></template>
   </ProfileModal>
+  <TelegramTokenDialog :show="show && !!telegramBindingStep" :busy="bindingBusy" :error="bindingError"
+    :binding-step="telegramBindingStep" @close="!bindingBusy && (telegramBindingStep = undefined)" @generate="generateTelegramBinding" />
 </template>
