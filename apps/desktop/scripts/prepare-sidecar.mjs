@@ -109,7 +109,8 @@ async function prepareSidecar() {
     return existsSync(source) ? [[name, source]] : []
   })
   if (!nativeCanvas.length) throw new Error('图片处理缺少 Canvas 原生绑定')
-  for (const [name, source] of [[canvas, canvasSource], ['image-size', join(gateway, 'node_modules/image-size')], ...nativeCanvas]) {
+  const imageSizeSource = realpathSync(join(gateway, 'node_modules/image-size'))
+  for (const [name, source] of [[canvas, canvasSource], ['image-size', imageSizeSource], ...nativeCanvas]) {
     const destination = join(host, 'node_modules', name)
     mkdirSync(dirname(destination), { recursive: true })
     cpSync(source, destination, { recursive: true, dereference: true })
