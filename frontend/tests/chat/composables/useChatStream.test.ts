@@ -357,6 +357,27 @@ describe('useChatStream 展示事件与生命周期', () => {
     expect(options.messages.value.some(message => message.text.includes('没有收到回复'))).toBe(false)
   })
 
+  it('直接显示已保存的工作区命令回复，不插入无回复提示', async () => {
+    const options = createOptions([], ref(42))
+    const stream = useChatStream(options)
+    vi.spyOn(trackApi, 'track').mockResolvedValue({} as never)
+    const reply = '当前会话未绑定工作区。'
+    vi.stubGlobal('fetch', vi.fn(async () => new Response([
+      { type: 'session_id', session_id: 42, user_message_id: 73 },
+      { type: 'session_message', message: {
+        id: 74, role: 'assistant', content: reply, createdAt: '2026-11-27T04:19:00Z',
+      } },
+      { type: 'done' },
+    ].map(event => `data: ${JSON.stringify(event)}\n\n`).join(''))))
+
+    options.inputText.value = '/workspace'
+    await stream.send()
+
+    expect(options.messages.value.filter(message => message.role === 'ai')).toEqual([
+      expect.objectContaining({ dbId: 74, text: reply }),
+    ])
+  })
+
   it('取消接口迟到失败时不覆盖已经到达的正常终态', async () => {
     const options = createOptions([])
     const stream = useChatStream(options)

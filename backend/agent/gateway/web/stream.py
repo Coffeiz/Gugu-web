@@ -228,13 +228,22 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             return
         async with _sess._SessionLocal() as db2:
             if await db2.get(ConversationSession, session_id) is not None:
-                db2.add(ConversationMessage(session_id=session_id, role="assistant", content=cmd_reply))
+                reply = ConversationMessage(session_id=session_id, role="assistant", content=cmd_reply)
+                db2.add(reply)
                 await db2.commit()
-                await _publish_session_append(req, session_id, [{"role": "assistant", "text": cmd_reply}])
+                await _publish_session_append(req, session_id, [{
+                    "role": "assistant", "message_id": reply.id, "text": cmd_reply,
+                }])
+                event = {
+                    "type": "session_message",
+                    "message": {
+                        "id": reply.id, "role": "assistant", "content": cmd_reply,
+                        "createdAt": reply.created_at.isoformat(),
+                    },
+                }
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 from app.services.conversation_retention import trim_session_messages
                 await trim_session_messages(session_id)
-        async for line in genstream.immediate_stream(cmd_reply):
-            yield line
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
     if goal_start:
