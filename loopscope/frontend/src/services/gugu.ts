@@ -106,6 +106,7 @@ export async function loadMessagePage(
       platformUserName: m.platformUserName ?? null,
       platformBotUserId: m.platformBotUserId ?? null,
       createdAt: m.createdAt,
+      runId: m.runId,
       canonicalId: Number(m.id),
       timelineOrder: Number(m.timelineOrder ?? Number(m.id) * 1000),
     }))

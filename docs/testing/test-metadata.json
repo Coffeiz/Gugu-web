@@ -1479,6 +1479,14 @@
     "keyBehavior": "按最新优先的运行列表关联历史助手消息，并避免把窗口外旧消息误配给新运行",
     "ci": "frontend-test"
   },
+  "frontend/tests/loopscope/guguMessageRunId.test.ts": {
+    "domain": "loopscope-run-history",
+    "layer": "L1",
+    "owner": "loopscope/frontend",
+    "productionEntry": "loopscope/frontend/src/services/gugu.ts",
+    "keyBehavior": "历史消息转换保留 runId，使同一运行的多条助手消息准确关联到该运行",
+    "ci": "frontend-test"
+  },
   "frontend/tests/profile/MessageFormatSettings.test.ts": {
     "domain": "qq-message-format",
     "layer": "L1",
