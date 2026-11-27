@@ -20,12 +20,14 @@
 - Reduce memory use while loading QQ quote reference indexes.
 - Keep LoopScope conversation history visible across the unified IM source and legacy platform source names.
 - Fix Vite development loading for source paths and prebundle Arco Design.
+- Watch shared Mermaid renderer sources for Vite development updates and associate LoopScope historical assistant messages with the correctly ordered runs.
 
 #### Fixes
 
 - Keep provider model and context budget snapshots consistent for each run after BYOK settings change.
 - Preserve database connections after recoverable connection errors and retry QQ gateway reconnects.
 - Render slash-command replies directly so successful commands do not show a false missing-reply notice.
+- Preserve canonical chat timeline ordering and compatibility with older open clients for slash-command replies.
 
 #### Contributors
 
@@ -46,12 +48,14 @@
 - 降低 QQ 引用索引加载时的内存占用。
 - 兼容 LoopScope 统一后的 IM 来源和旧平台来源名称，保证历史记录继续可见。
 - 修复 Vite 开发环境的源码路径加载，并预构建 Arco Design 依赖。
+- 监听 Mermaid 共享源码变化以触发 Vite 热更新，并修正 LoopScope 历史助手消息与运行记录的关联顺序。
 
 #### 修复
 
 - BYOK 设置变更后，每轮运行继续使用一致的模型与上下文预算快照。
 - 可恢复的数据库连接异常后保留连接池可用，并修复 QQ 网关重连。
 - 斜杠命令回复改为直接呈现，避免命令成功后误报未收到回复。
+- 补回旧版打开页面可识别的命令回复事件，并保持消息的标准时间线顺序。
 
 #### 贡献者
 

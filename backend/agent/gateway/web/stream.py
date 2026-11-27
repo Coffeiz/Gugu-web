@@ -24,6 +24,23 @@ from .run_lifecycle import _generate, _gen_tasks, _session_gen_tasks
 logger = logging.getLogger(__name__)
 
 
+def _command_reply_events(message: ConversationMessage) -> list[dict]:
+    """同时发旧版 token 与新版持久消息事件，兼容仍打开的旧聊天页。"""
+    return [
+        {"type": "token", "content": message.content},
+        {
+            "type": "session_message",
+            "message": {
+                "id": message.id,
+                "role": "assistant",
+                "content": message.content,
+                "timelineOrder": message.id * 1_000_000,
+                "createdAt": message.created_at.isoformat(),
+            },
+        },
+    ]
+
+
 async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     user_id = req.user_id
     settings = get_settings()
@@ -234,14 +251,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                 await _publish_session_append(req, session_id, [{
                     "role": "assistant", "message_id": reply.id, "text": cmd_reply,
                 }])
-                event = {
-                    "type": "session_message",
-                    "message": {
-                        "id": reply.id, "role": "assistant", "content": cmd_reply,
-                        "createdAt": reply.created_at.isoformat(),
-                    },
-                }
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                for event in _command_reply_events(reply):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 from app.services.conversation_retention import trim_session_messages
                 await trim_session_messages(session_id)
         yield f"data: {json.dumps({'type': 'done'})}\n\n"

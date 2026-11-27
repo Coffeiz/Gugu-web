@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { execSync } from 'node:child_process'
+import { createChartRendererDevPlugin } from './vite-chart-renderer-dev-plugin.mjs'
 import Components from 'unplugin-vue-components/vite'
 import AutoImport from 'unplugin-auto-import/vite'
 import { ArcoResolver } from 'unplugin-vue-components/resolvers'
@@ -64,13 +65,7 @@ const devSourceUrls = {
   apply: 'serve',
   enforce: 'pre',
   resolveId(id) {
-    const chartEntry = /^\.\.\/\.\.\/\.\.\/\.\.\/backend\/ts\/workers\/chart-renderer\/(theme|diagram-source|svg-style)\.mjs$/u.exec(id)
-    if (chartEntry) return `\0gugu-chart-renderer:${chartEntry[1]}`
     if (Object.hasOwn(devSourceEntries, id)) return resolve(__dirname, devSourceEntries[id])
-  },
-  load(id) {
-    const chartEntry = /^\0gugu-chart-renderer:(theme|diagram-source|svg-style)$/u.exec(id)
-    if (chartEntry) return readFileSync(resolve(__dirname, `../backend/ts/workers/chart-renderer/${chartEntry[1]}.mjs`), 'utf8')
   },
   configureServer(server) {
     server.middlewares.use(async (req, res, next) => {
@@ -85,6 +80,7 @@ const devSourceUrls = {
     })
   },
 }
+const chartRendererDevSources = createChartRendererDevPlugin(__dirname)
 
 const adminEntry = {
   name: 'admin-entry',
@@ -117,6 +113,7 @@ export default defineConfig({
   },
   plugins: [
     vue(),
+    chartRendererDevSources,
     devSourceUrls,
     adminEntry,
     versionJsonPlugin,

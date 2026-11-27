@@ -143,8 +143,8 @@ async def test_no_credential_returns_platform_config(monkeypatch, harness):
 
 
 @pytest.mark.asyncio
-async def test_byok_model_budget_stays_bound_to_run_after_edit(monkeypatch, harness):
-    """修改 BYOK 模型后，已有 run 保留原快照，新 run 使用成对的新模型与预算。"""
+async def test_byok_resolution_returns_independent_model_and_budget_snapshots(monkeypatch, harness):
+    """解析结果是独立快照；本用例不模拟运行中的 Agent 生命周期。"""
     rows = _user_row(model="test-flash", max_tokens=64000, context_tokens=512000)
     first = await resolve_run_config_for_user(harness, _Db(rows), "synthetic-user")
     rows[0].model = "test-pro"

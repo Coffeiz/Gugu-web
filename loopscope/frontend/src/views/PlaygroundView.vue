@@ -119,6 +119,7 @@ import SessionMonitor from '../components/SessionMonitor.vue'
 import { buildTraceRounds } from '../utils/runExport'
 import { prettyJson } from '../utils/prettyJson'
 import { formatCompactNumber } from '../utils/formatNumber'
+import { runForAssistantMessage } from '../utils/assistantRunMapping'
 
 const sessions = ref<GuguSession[]>([])
 const activeId = ref<number | null>(null)
@@ -543,16 +544,8 @@ async function send() {
     sending.value = false
   }
 }
-function assistantOrdinal(messageIndex: number) {
-  return messages.value.slice(0, messageIndex + 1).filter(m => m.role === 'assistant').length - 1
-}
 function runForAssistant(messageIndex: number) {
-  const message = messages.value[messageIndex]
-  if (message?.runId) return runDetails.value[message.runId] ?? runs.value.find(r => r.id === message.runId)
-  const assistantCount = messages.value.filter(m => m.role === 'assistant').length
-  const offset = Math.max(0, assistantCount - runs.value.length)
-  const ordinal = assistantOrdinal(messageIndex) - offset
-  return ordinal >= 0 ? runs.value[ordinal] : undefined
+  return runForAssistantMessage(messageIndex, messages.value, runs.value, runDetails.value)
 }
 function spanCount(run: TraceRun | TraceRunSummary | undefined, kind: string) { return run?.spans?.filter(s => s.kind === kind).length ?? 0 }
 function fmtMs(v: number | null | undefined) { return v == null ? '—' : v >= 1000 ? `${(v/1000).toFixed(2)}s` : `${Math.round(v)}ms` }

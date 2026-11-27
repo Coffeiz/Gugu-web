@@ -1388,7 +1388,7 @@
     "layer": "L1",
     "owner": "backend/agent/gateway",
     "productionEntry": "backend/agent/gateway/web/stream.py",
-    "keyBehavior": "Web 流先持久化用户消息再转发后台 SSE 事件",
+    "keyBehavior": "Web 流持久化消息后转发兼容新旧客户端的命令回复，并保持标准时间线顺序",
     "ci": "backend-pytest"
   },
   "frontend/e2e/mermaid.spec.ts": {
@@ -1461,6 +1461,22 @@
     "owner": "frontend/utils",
     "productionEntry": "frontend/src/utils/chart/mermaidRenderer.ts",
     "keyBehavior": "共享 Markdown Mermaid 渲染器更新图表且在卸载后清理 DOM 与交互资源",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/build/viteChartRendererDevPlugin.test.ts": {
+    "domain": "vite-dev-hmr",
+    "layer": "L1",
+    "owner": "frontend/build",
+    "productionEntry": "frontend/vite-chart-renderer-dev-plugin.mjs",
+    "keyBehavior": "共享 Mermaid 源文件作为虚拟模块加载时注册到 Vite 文件监听依赖",
+    "ci": "frontend-test"
+  },
+  "frontend/tests/loopscope/assistantRunMapping.test.ts": {
+    "domain": "loopscope-run-history",
+    "layer": "L0",
+    "owner": "loopscope/frontend",
+    "productionEntry": "loopscope/frontend/src/utils/assistantRunMapping.ts",
+    "keyBehavior": "按最新优先的运行列表关联历史助手消息，并避免把窗口外旧消息误配给新运行",
     "ci": "frontend-test"
   },
   "frontend/tests/profile/MessageFormatSettings.test.ts": {
@@ -1965,6 +1981,22 @@
     "owner": "backend/agent/im/platforms/qq",
     "productionEntry": "backend/agent/im/dispatch.py",
     "keyBehavior": "@其他 Bot 的群消息只路由到目标 Bot；区分他人提及和当前 Bot 提及",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_qq_ref_index_loading.py": {
+    "domain": "qq-reference-index",
+    "layer": "L1",
+    "owner": "backend/agent/im",
+    "productionEntry": "backend/agent/im/qq_ref_index.py",
+    "keyBehavior": "逐行恢复 QQ 引用索引并保留过期过滤、最新记录、末行兼容和有界读取行为",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/im/qq/test_runtime_retry.py": {
+    "domain": "qq-gateway-retry",
+    "layer": "L1",
+    "owner": "backend/agent/gateway/qq",
+    "productionEntry": "backend/agent/gateway/qq/runtime.py",
+    "keyBehavior": "QQ token 超时进入退避重连并允许任务取消干净退出",
     "ci": "backend-pytest"
   },
   "backend/tests/im/test_early_persist_run_prefix.py": {

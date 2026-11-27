@@ -364,8 +364,11 @@ describe('useChatStream 展示事件与生命周期', () => {
     const reply = '当前会话未绑定工作区。'
     vi.stubGlobal('fetch', vi.fn(async () => new Response([
       { type: 'session_id', session_id: 42, user_message_id: 73 },
+      // 后端兼容事件：旧版客户端靠 token 展示；当前客户端忽略此事件并按 ID 合并 session_message。
+      { type: 'token', content: reply },
       { type: 'session_message', message: {
-        id: 74, role: 'assistant', content: reply, createdAt: '2026-11-27T04:19:00Z',
+        id: 74, role: 'assistant', content: reply, timelineOrder: 74_000_000,
+        createdAt: '2026-11-27T04:19:00Z',
       } },
       { type: 'done' },
     ].map(event => `data: ${JSON.stringify(event)}\n\n`).join(''))))
@@ -374,7 +377,7 @@ describe('useChatStream 展示事件与生命周期', () => {
     await stream.send()
 
     expect(options.messages.value.filter(message => message.role === 'ai')).toEqual([
-      expect.objectContaining({ dbId: 74, text: reply }),
+      expect.objectContaining({ dbId: 74, text: reply, _timelineOrder: 74_000_000 }),
     ])
   })
 
