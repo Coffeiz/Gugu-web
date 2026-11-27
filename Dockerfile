@@ -111,7 +111,7 @@ RUN mkdir -p /out \
         -o /out/cosign ./cmd/cosign \
     && /out/cosign version
 
-# Compose v5.6.0 从固定上游提交重建，更新 Go 标准库与压缩依赖的安全修复。
+# Compose v5.6.0 从固定上游提交重建，并固定修复版 containerd 与 Go 安全依赖。
 FROM golang:1.26.10-trixie AS compose-build
 
 ARG HTTPS_PROXY
@@ -129,6 +129,7 @@ RUN mkdir -p /src /out \
     && rm /tmp/compose.tar.gz \
     && go mod edit \
         -require=github.com/klauspost/compress@v1.18.7 \
+        -require=github.com/containerd/containerd/v2@v2.4.2 \
         -require=golang.org/x/net@v0.62.0 \
     && go mod tidy \
     && go mod verify \
