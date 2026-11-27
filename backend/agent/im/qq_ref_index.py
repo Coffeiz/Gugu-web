@@ -45,19 +45,20 @@ class QQRefIndex:
             return
         self._loaded = True
         self._ensure_private_storage()
+        now = time.time()
         try:
-            lines = self._path.read_text(encoding="utf-8").splitlines()
+            # 逐行解析，避免整个文件文本、拆行列表与已解析索引同时驻留。
+            with self._path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    self._line_count += 1
+                    try:
+                        item = json.loads(line)
+                        if item.get("t", 0) + _TTL_SECONDS >= now and item.get("k") and item.get("v"):
+                            self._entries[str(item["k"])] = item["v"]
+                    except (ValueError, TypeError):
+                        continue
         except FileNotFoundError:
             return
-        now = time.time()
-        self._line_count = len(lines)
-        for line in lines:
-            try:
-                item = json.loads(line)
-                if item.get("t", 0) + _TTL_SECONDS >= now and item.get("k") and item.get("v"):
-                    self._entries[str(item["k"])] = item["v"]
-            except (ValueError, TypeError):
-                continue
         self._evict()
 
     def get(self, key: str) -> dict[str, Any] | None:
