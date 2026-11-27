@@ -13,6 +13,7 @@ files:
   - dist/**
   - '!dist/**/*.map'
   - assets/icon.png
+  - assets/icon-win-*.ico
   - assets/trayTemplate*.png
   - ui/**
   - node_modules/**
