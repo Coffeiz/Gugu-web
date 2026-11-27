@@ -181,7 +181,7 @@ async def test_voice_transcribe_retries_on_timeout_then_succeeds():
         async def create(self, **kwargs):
             calls["n"] += 1
             if calls["n"] < 2:
-                raise _openai.APITimeoutError(request=None)
+                raise _openai.APITimeoutError(request=httpx.Request("POST", "https://example.test"))
             msg = SimpleNamespace(content="你好")
             choice = SimpleNamespace(message=msg)
             return SimpleNamespace(choices=[choice])
@@ -206,7 +206,7 @@ async def test_voice_transcribe_exhausts_retries_returns_empty_not_raise():
     class _FakeCompletions:
         async def create(self, **kwargs):
             calls["n"] += 1
-            raise _openai.APIConnectionError(request=None)
+            raise _openai.APIConnectionError(request=httpx.Request("POST", "https://example.test"))
 
     class _FakeClient:
         def __init__(self, *a, **kw):
