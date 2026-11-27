@@ -7,6 +7,60 @@
 
 ## [Unreleased]
 
+## [1.7.11] - 2026-11-27
+
+### What's New
+
+#### New Features
+
+- None.
+
+#### Improvements
+
+- Reduce memory use while loading QQ quote reference indexes.
+- Keep LoopScope conversation history visible across the unified IM source and legacy platform source names.
+- Fix Vite development loading for source paths and prebundle Arco Design.
+
+#### Fixes
+
+- Keep provider model and context budget snapshots consistent for each run after BYOK settings change.
+- Preserve database connections after recoverable connection errors and retry QQ gateway reconnects.
+- Render slash-command replies directly so successful commands do not show a false missing-reply notice.
+
+#### Contributors
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for contributing these changes.
+
+#### Feedback & Issue Reporters
+
+- None.
+
+### 更新内容
+
+#### 新功能
+
+- 暂无。
+
+#### 改进
+
+- 降低 QQ 引用索引加载时的内存占用。
+- 兼容 LoopScope 统一后的 IM 来源和旧平台来源名称，保证历史记录继续可见。
+- 修复 Vite 开发环境的源码路径加载，并预构建 Arco Design 依赖。
+
+#### 修复
+
+- BYOK 设置变更后，每轮运行继续使用一致的模型与上下文预算快照。
+- 可恢复的数据库连接异常后保留连接池可用，并修复 QQ 网关重连。
+- 斜杠命令回复改为直接呈现，避免命令成功后误报未收到回复。
+
+#### 贡献者
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 参与这些改动。
+
+#### 反馈与问题报告
+
+- 暂无。
+
 ## [1.7.10] - 2026-11-11
 
 ### What's New

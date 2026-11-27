@@ -162,7 +162,10 @@ async function refreshSessions() {
 }
 function runSources() {
   const source = activeSession.value?.source || 'web'
-  return [...new Set([source, 'web'])]
+  const collectorSource = ['im', 'feishu', 'qq', 'wechat', 'telegram'].includes(source) ? 'im' : source
+  // 新版 Node 将所有 IM 统一写到 `im`；旧 Python 使用平台名作为 source。
+  // 两种键都查，避免旧会话在迁移后显示为空。
+  return [...new Set([collectorSource, source, 'web'])]
 }
 async function loadSessionRuns(options: { limit?: number; before?: number } = {}) {
   const sessionId = activeId.value

@@ -140,3 +140,19 @@ async def test_no_credential_returns_platform_config(monkeypatch, harness):
     cfg = await resolve_run_config_for_user(harness, db, "uid")
     assert cfg.is_byok is False
     assert cfg.model.api_key == "platform-secret"
+
+
+@pytest.mark.asyncio
+async def test_byok_model_budget_stays_bound_to_run_after_edit(monkeypatch, harness):
+    """修改 BYOK 模型后，已有 run 保留原快照，新 run 使用成对的新模型与预算。"""
+    rows = _user_row(model="test-flash", max_tokens=64000, context_tokens=512000)
+    first = await resolve_run_config_for_user(harness, _Db(rows), "synthetic-user")
+    rows[0].model = "test-pro"
+    rows[0].max_tokens = 256000
+    rows[0].context_tokens = 1000000
+    second = await resolve_run_config_for_user(harness, _Db(rows), "synthetic-user")
+
+    assert (first.model.model, first.model.max_tokens) == ("test-flash", 64000)
+    assert (second.model.model, second.model.max_tokens) == ("test-pro", 256000)
+    assert first.context_tokens == 512000
+    assert second.context_tokens == 1000000
