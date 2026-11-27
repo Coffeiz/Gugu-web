@@ -140,3 +140,19 @@ async def test_no_credential_returns_platform_config(monkeypatch, harness):
     cfg = await resolve_run_config_for_user(harness, db, "uid")
     assert cfg.is_byok is False
     assert cfg.model.api_key == "platform-secret"
+
+
+@pytest.mark.asyncio
+async def test_byok_resolution_returns_independent_model_and_budget_snapshots(monkeypatch, harness):
+    """解析结果是独立快照；本用例不模拟运行中的 Agent 生命周期。"""
+    rows = _user_row(model="test-flash", max_tokens=64000, context_tokens=512000)
+    first = await resolve_run_config_for_user(harness, _Db(rows), "synthetic-user")
+    rows[0].model = "test-pro"
+    rows[0].max_tokens = 256000
+    rows[0].context_tokens = 1000000
+    second = await resolve_run_config_for_user(harness, _Db(rows), "synthetic-user")
+
+    assert (first.model.model, first.model.max_tokens) == ("test-flash", 64000)
+    assert (second.model.model, second.model.max_tokens) == ("test-pro", 256000)
+    assert first.context_tokens == 512000
+    assert second.context_tokens == 1000000

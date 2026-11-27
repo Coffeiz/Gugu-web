@@ -142,3 +142,30 @@ async def test_stream_persists_user_message_then_forwards_background_sse(monkeyp
 
 async def _false():
     return False
+
+
+def test_command_reply_events_support_old_and_current_chat_clients():
+    """命令回复保留 token 契约，同时提供带稳定 ID 的持久消息供新版去重。"""
+    from datetime import datetime, timezone
+    from agent.gateway.web.stream import _command_reply_events
+
+    reply = SimpleNamespace(
+        id=654,
+        role="assistant",
+        content="当前会话未绑定工作区。",
+        created_at=datetime(2026, 11, 27, 4, 19, tzinfo=timezone.utc),
+    )
+
+    assert _command_reply_events(reply) == [
+        {"type": "token", "content": "当前会话未绑定工作区。"},
+        {
+            "type": "session_message",
+            "message": {
+                "id": 654,
+                "role": "assistant",
+                "content": "当前会话未绑定工作区。",
+                "timelineOrder": 654_000_000,
+                "createdAt": "2026-11-27T04:19:00+00:00",
+            },
+        },
+    ]

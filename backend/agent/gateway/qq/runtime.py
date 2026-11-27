@@ -10,6 +10,8 @@ from contextlib import suppress
 
 import aiohttp
 
+from app.core.redaction import diag_log, redact
+
 from .client import (
     _qq_access_token,
     _qq_gateway_url,

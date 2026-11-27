@@ -10,7 +10,8 @@ import app.db.session as db_session
 
 def test_build_engine_reaps_idle_transactions(monkeypatch):
     captured = {}
-    fake_engine = object()
+    fake_engine = SimpleNamespace(sync_engine=object())
+    monkeypatch.setattr(db_session.event, "listen", lambda *args: None)
 
     def fake_create_engine(url, **kwargs):
         captured["url"] = url
@@ -116,3 +117,25 @@ async def test_rollback_safely_invalidates_closed_connection():
 
     assert await db_session.rollback_safely(ClosedSession()) is False
     assert calls == ["rollback", "invalidate"]
+
+
+def test_asyncpg_internal_protocol_error_invalidates_connection():
+    import asyncpg
+
+    original = RuntimeError("数据库驱动包装异常")
+    original.__cause__ = asyncpg.InternalClientError("synthetic protocol state failure")
+    context = SimpleNamespace(original_exception=original, is_disconnect=False)
+    db_session._invalidate_asyncpg_protocol_error(context)
+    assert context.is_disconnect is True
+    assert context.invalidate_pool_on_disconnect is False
+
+
+def test_regular_sql_error_keeps_connection_classification():
+    import asyncpg
+
+    context = SimpleNamespace(
+        original_exception=asyncpg.UniqueViolationError("synthetic duplicate"),
+        is_disconnect=False,
+    )
+    db_session._invalidate_asyncpg_protocol_error(context)
+    assert context.is_disconnect is False

@@ -587,6 +587,15 @@ export function useChatStream(options: {
             // 兼容旧事件：新版 round_start 已先建立身份，旧客户端只看到这里也不会报错。
             currentRunId = String(evt.core_run_id || evt.run_id || currentRunId)
             if (evt.round_id) currentRoundId = String(evt.round_id)
+          } else if (evt.type === 'session_message') {
+            if (!live()) continue
+            const delta = mapSessionMessageDelta(
+              { messages: [evt.message] }, mkid, role => ({ role: role === 'assistant' ? 'ai' : role }),
+            )
+            messages.value = mergeSessionMessageDelta(messages.value, delta)
+            receivedAssistantContent = true
+            options.clearStatus()
+            scheduleStreamScroll()
           } else if (evt.type === 'display_event') {
             if (!live()) continue
             const item = evt.item

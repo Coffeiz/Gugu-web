@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { execSync } from 'node:child_process'
+import { createChartRendererDevPlugin } from './vite-chart-renderer-dev-plugin.mjs'
 import Components from 'unplugin-vue-components/vite'
 import AutoImport from 'unplugin-auto-import/vite'
 import { ArcoResolver } from 'unplugin-vue-components/resolvers'
@@ -54,6 +55,33 @@ function versionPayload() {
   })
 }
 
+// 开发目录含非 ASCII 字符时，Vite 生成的部分绝对文件 URL 会返回 404。
+const devSourceEntries = {
+  '@arco-design/web-vue/dist/arco.css': 'node_modules/@arco-design/web-vue/dist/arco.css',
+  'xterm/css/xterm.css': 'node_modules/xterm/css/xterm.css',
+}
+const devSourceUrls = {
+  name: 'gugu-dev-source-urls',
+  apply: 'serve',
+  enforce: 'pre',
+  resolveId(id) {
+    if (Object.hasOwn(devSourceEntries, id)) return resolve(__dirname, devSourceEntries[id])
+  },
+  configureServer(server) {
+    server.middlewares.use(async (req, res, next) => {
+      if (req.method !== 'GET' || (req.url ?? '').split('?')[0] !== '/@vite/client') return next()
+      try {
+        const client = await server.transformRequest('/@vite/client')
+        if (!client) return next()
+        const code = client.code.replace(/(import\s+["'])\/@fs\/[^"'\r\n]+\/vite\/dist\/client\/env\.mjs(?=["'])/u, '$1/@vite/env')
+        if (code === client.code) return next()
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' }).end(code)
+      } catch (error) { next(error) }
+    })
+  },
+}
+const chartRendererDevSources = createChartRendererDevPlugin(__dirname)
+
 const adminEntry = {
   name: 'admin-entry',
   configureServer(server) {
@@ -74,6 +102,9 @@ const localRuntimeAliases = process.env.VITE_USE_LOCAL_RUNTIME === '1'
   : []
 
 export default defineConfig({
+  optimizeDeps: {
+    include: ['@arco-design/web-vue'],
+  },
   define: {
     __APP_VERSION__: JSON.stringify(APP_VER),
     __APP_RELEASE__: JSON.stringify(APP_RELEASE),
@@ -82,6 +113,8 @@ export default defineConfig({
   },
   plugins: [
     vue(),
+    chartRendererDevSources,
+    devSourceUrls,
     adminEntry,
     versionJsonPlugin,
     Components({

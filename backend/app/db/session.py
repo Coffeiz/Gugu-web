@@ -1,6 +1,6 @@
 import asyncio
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from typing import AsyncGenerator
 from app.core.config import get_settings
@@ -13,6 +13,21 @@ _MIGRATION_LOCK_KEY = 834271
 # 查询完成后仍停留在事务中的连接会持有 AccessShareLock，阻塞 ALTER TABLE。
 # 正常业务事务不会在这里超时；只限制真正 idle in transaction 的连接。
 _IDLE_IN_TRANSACTION_TIMEOUT_MS = "60000"
+
+
+def _invalidate_asyncpg_protocol_error(context) -> None:
+    """驱动内部状态异常后丢弃连接，避免回滚或下一请求复用异常协议状态。"""
+    import asyncpg
+
+    error = context.original_exception
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error, asyncpg.InternalClientError):
+            context.is_disconnect = True
+            context.invalidate_pool_on_disconnect = False
+            return
+        error = error.__cause__ or error.__context__
 
 
 def _current_loop():
@@ -44,6 +59,7 @@ def _build_engine():
         pool_timeout=10,
         pool_recycle=1800,
     )
+    event.listen(_engine.sync_engine, "handle_error", _invalidate_asyncpg_protocol_error)
     _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
     _engine_loop = _current_loop()
 
