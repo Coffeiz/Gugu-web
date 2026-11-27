@@ -1,16 +1,17 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { windowsPowerShell } from '@gugu/sandbox/desktop'
 
 export async function executeDesktopHostShell(command: string, cwd: string, timeout: number, limit: number, signal: AbortSignal) {
   signal.throwIfAborted()
   const windows = process.platform === 'win32'
   const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
-  const executable = windows ? join(systemRoot, 'System32', 'cmd.exe') : '/bin/sh'
-  const child = spawn(executable, windows ? ['/d', '/s', '/c', `"${command}"`] : ['-c', command], {
-    cwd, windowsHide: true, windowsVerbatimArguments: windows, detached: !windows,
+  const invocation = windows ? windowsPowerShell(command) : { executable: '/bin/sh', args: ['-c', command] }
+  const child = spawn(invocation.executable, invocation.args, {
+    cwd, windowsHide: true, windowsVerbatimArguments: false, detached: !windows,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: windows ? { SystemRoot: systemRoot, USERPROFILE: homedir(), PATH: process.env.PATH }
+    env: windows ? { SystemRoot: systemRoot, USERPROFILE: homedir(), PATHEXT: process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD', PATH: [join(systemRoot, 'System32'), systemRoot, process.env.PATH ?? ''].join(';') }
       : { HOME: homedir(), PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'en_US.UTF-8' },
   })
   const outputs: Record<'stdout' | 'stderr', Buffer[]> = { stdout: [], stderr: [] }

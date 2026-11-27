@@ -1,6 +1,7 @@
 <template>
   <div ref="rootRef" class="select-popup" :class="{ 'select-popup--disabled': disabled }">
     <button
+      ref="triggerRef"
       type="button"
       class="select-popup-trigger"
       :class="[triggerClass, { open: open, disabled: disabled }]"
@@ -16,7 +17,7 @@
       </slot>
     </button>
 
-    <PopupMenu :show="open" :anchor="rootRef" :placement="preferredPlacement ?? placement" :popup-class="popupClass ? `select-popup-host ${popupClass}` : 'select-popup-host'">
+    <PopupMenu :show="open" :anchor="triggerRef" :placement="preferredPlacement ?? placement" :horizontal-align="horizontalAlign" :popup-class="popupClass ? `select-popup-host ${popupClass}` : 'select-popup-host'">
       <slot name="options" :select="select" :close="close" :open="open">
         <button
           v-for="option in options"
@@ -48,11 +49,13 @@ const props = defineProps({
   popupClass: { type: String, default: '' },
   autoFlip: { type: Boolean, default: false },
   preferredPlacement: { type: String as PropType<'top' | 'bottom'>, default: undefined },
+  horizontalAlign: { type: String as PropType<'start' | 'center'>, default: 'start' },
   ariaLabel: { type: String, default: '' },
   ariaLabelledby: { type: String, default: '' },
 })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
+const triggerRef = ref<HTMLButtonElement | null>(null)
 const rootRef = ref<HTMLElement | null>(null)
 const open = ref(false)
 const placement = ref<'bottom' | 'top'>('bottom')

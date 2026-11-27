@@ -51,9 +51,9 @@ defineEmits<{ (event: 'click', value: MouseEvent): void }>()
     color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .app-close-button:hover {
-  background: var(--surface-glass-hover);
-  border-color: var(--content-divider);
-  color: var(--content-primary);
+  background: var(--close-button-danger-bg);
+  border-color: transparent;
+  color: var(--close-button-danger-fg);
 }
 .app-close-button--compact {
   flex-basis: var(--control-xs);
@@ -63,7 +63,7 @@ defineEmits<{ (event: 'click', value: MouseEvent): void }>()
   border-radius: var(--radius-compact);
   background: transparent;
 }
-.app-close-button--compact:hover { background: var(--surface-soft-hover); }
+.app-close-button--compact:hover { background: var(--close-button-danger-bg); color: var(--close-button-danger-fg); }
 @media (prefers-reduced-motion: reduce) {
   .app-close-button { transition: none; }
 }

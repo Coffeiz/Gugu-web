@@ -823,6 +823,16 @@ function onListScroll() {
   if (el.scrollTop + el.clientHeight < el.scrollHeight - 240) return
   if (store.hasMore && !store.loadingMore) void store.loadMoreNotes()
 }
+function refreshNotesOnReturn() { if (document.visibilityState === 'visible') void store.fetchNotes() }
+onMounted(() => {
+  window.addEventListener('focus', refreshNotesOnReturn)
+  document.addEventListener('visibilitychange', refreshNotesOnReturn)
+  refreshNotesOnReturn()
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('focus', refreshNotesOnReturn)
+  document.removeEventListener('visibilitychange', refreshNotesOnReturn)
+})
 </script>
 
 <style scoped>

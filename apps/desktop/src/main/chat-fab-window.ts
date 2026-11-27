@@ -393,7 +393,7 @@ export function registerChatFabWindow(options: {
       title: '咕咕聊天',
     })
     panel = window
-    secureWindow(window)
+    secureWindow(window, undefined, { uiUrl: panelAddress.href, ...desktopPlatform().microphone })
     platform.configureWindow?.(window)
     window.on('show', () => {
       clearInterval(panelHitTimer)
@@ -618,6 +618,7 @@ export function registerChatFabWindow(options: {
   }
 
   async function create(main: BrowserWindow) {
+    const mainContents = main.webContents
     const window = new BrowserWindow({
       ...platform.windowOptions,
       width: extent, height: extent, frame: false, transparent: true, backgroundColor: '#00000000',
@@ -647,8 +648,7 @@ export function registerChatFabWindow(options: {
       jointMotion = undefined
       if (panel && !panel.isDestroyed()) panel.destroy()
       mode = 'docked'
-      const main = options.mainWindow()
-      if (main && !main.isDestroyed()) main.webContents.send(channels.ballDetached, false)
+      if (options.mainWindow() === main && !main.isDestroyed() && !mainContents.isDestroyed()) mainContents.send(channels.ballDetached, false)
     })
     const ready = new Promise<boolean>(resolve => { resolveReady = resolve })
     const timeout = setTimeout(() => resolveReady?.(false), 10_000)

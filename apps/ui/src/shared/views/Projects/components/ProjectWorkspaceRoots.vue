@@ -6,7 +6,7 @@ import ActionButton from '@/components/common/controls/ActionButton.vue'
 import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import ContextMenu from '@/components/common/overlays/ContextMenu.vue'
 import Icon from '@/components/common/icons/Icon.vue'
-import WorkspaceCreateDialog from '@/views/Files/components/WorkspaceCreateDialog.vue'
+
 import { useProjectAccess, type ProjectWorkspaceBinding } from '@/api/projects'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
 
@@ -20,7 +20,8 @@ const access = useProjectAccess()
 const { t } = useI18n()
 const rows = ref<ProjectWorkspaceBinding[]>([])
 const busy = ref(false)
-const showCreate = ref(false)
+
+
 const addWorkspaceOption = 'add-workspace'
 const projectRoot = computed(() => `project:${props.projectId}` as const)
 const workspaces = computed(() => rows.value.filter(row => row.available))
@@ -48,7 +49,7 @@ async function select(value: string) {
   menuOpen.value = false
   if (busy.value) return
   if (value === addWorkspaceOption) {
-    showCreate.value = true
+    await addWorkspace()
     return
   }
   if (value === PERSONAL_WORKSPACE_ID) {
@@ -78,7 +79,7 @@ async function addWorkspace() {
   try {
     id = await access.pickWorkspace()
     if (!id || !active) return
-    showCreate.value = false
+
     await refresh()
   } catch (error) {
     if (active) showAppError(errorMessage(error))
@@ -134,12 +135,11 @@ void refresh().then(() => {
       </template>
     </ContextMenu>
   </div>
-  <WorkspaceCreateDialog v-if="access.pickWorkspace" local :show="showCreate" :busy="busy"
-    @close="showCreate = false" @submit="addWorkspace" />
+
 </template>
 
 <style scoped>
 .workspace-selector { flex: 0 1 auto; min-width: 0; max-width: 180px; }
 .workspace-selector :deep(button) { max-width: 100%; }
-.workspace-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.5; padding-block: 1px; }
 </style>

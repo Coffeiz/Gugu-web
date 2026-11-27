@@ -46,7 +46,7 @@ const emit = defineEmits<{
   box-sizing: border-box;
   max-height: calc(100dvh - 12px);
   overflow-y: auto;
-  padding: var(--popup-content-inset);
+  padding: var(--space-md);
   border: 1px solid var(--popup-surface-border);
   border-radius: var(--event-popup-radius);
   background: var(--popup-surface-bg);
@@ -95,8 +95,8 @@ html[data-theme][data-family] .event-form-body .nextday-tag {
   color: var(--selection-fg); background: var(--selection-bg);
 }
 html[data-theme][data-family] .event-form-body .reminder-section { border-top-color: var(--content-divider); }
-html[data-theme][data-family] .event-form-body .reminder-del { color: var(--status-warning); }
-html[data-theme][data-family] .event-form-body .reminder-del:hover { background: var(--status-warning-bg); }
+html[data-theme][data-family] .event-form-body .reminder-del { color: var(--content-secondary); }
+html[data-theme][data-family] .event-form-body .reminder-del:hover { background: var(--close-button-danger-bg); color: var(--close-button-danger-fg); }
 html[data-theme][data-family] .event-form-body .reminder-add-toggle {
   color: var(--content-secondary); background: transparent; border-color: var(--action-outline);
 }

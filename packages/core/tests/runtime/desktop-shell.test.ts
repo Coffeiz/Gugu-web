@@ -10,7 +10,8 @@ import type { createSqliteToolConfirmation } from '../../src/agent/interactions/
 import type { ToolScope } from '../../src/agent/tools/contracts.js'
 import { createDesktopShellTool } from '../../src/runtime/desktop-shell.js'
 
-vi.mock('@gugu/sandbox/desktop', () => ({
+vi.mock('@gugu/sandbox/desktop', async importOriginal => ({
+  ...await importOriginal<typeof import('@gugu/sandbox/desktop')>(),
   desktopShellPlatform: () => platform,
 }))
 
@@ -50,7 +51,7 @@ it('隔离不可用时拒绝隔离命令，宿主命令仍须明确确认', asyn
   const automaticInput = {
     ...hostInput,
     command: process.platform === 'win32'
-      ? 'echo desktop-host-shell-start && echo desktop-host-shell-end'
+      ? 'echo desktop-host-shell-start; echo desktop-host-shell-end'
       : `echo desktop-host-shell-start\n# ${'x'.repeat(1500)}\necho desktop-host-shell-end`,
   }
   let automaticMode = true

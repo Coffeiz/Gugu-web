@@ -22,8 +22,8 @@
         <!-- 联系人 & 项目周期 同行 -->
         <div class="section-row">
           <div class="field">
-            <label>{{ t('projects.client') }}</label>
-            <input v-model="form.client" :placeholder="t('projects.clientPlaceholder')" />
+            <span class="section-label">{{ t('projects.client') }}</span>
+            <ProjectContactSelect v-if="show" v-model="form.client" />
           </div>
           <div class="field">
             <label>{{ t('projects.period') }}</label>
@@ -215,6 +215,7 @@ import { useProjectStore } from '@/stores/projects'
 import { showAppError } from '@/composables/core/useAppToast'
 import { useUiStore } from '@/stores/ui'
 import DateRangePicker from '@/components/common/controls/DateSpanPicker.vue'
+import ProjectContactSelect from './ProjectContactSelect.vue'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useStageTemplates } from '@/composables/projects/useStageTemplates'
@@ -793,7 +794,6 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   cursor: pointer; color: var(--text-secondary);
   transition: all 0.15s; flex-shrink: 0;
 }
-.del-btn:hover:not(:disabled) { background: rgba(176,120,88,0.1); color: var(--color-warning); }
 .del-btn:disabled { opacity: 0.2; cursor: not-allowed; }
 
 /* 待办 */

@@ -48,7 +48,24 @@ export function buildApplicationMenu({ mac, canUpdate, checkForUpdates, sendComm
   const editing = editItems.map(item => editItem(item, mac))
   editing.splice(2, 0, separator)
   const edit = { label: '编辑', submenu: editing }
-  if (!mac) return [{ label: '咕咕', submenu: [update, separator, quit] }, edit]
+  if (!mac) return [
+    { label: '文件', submenu: [
+      command('新建项目', 'new-project', 'Control+N'),
+      command('新建笔记', 'new-note', 'Control+Shift+N'), separator,
+      command('设置…', 'settings', 'Control+,'), separator, quit,
+    ] },
+    edit,
+    { label: '前往', submenu: [
+      command('全局搜索', 'search', 'Control+K'), separator,
+      command('项目', 'projects'), command('日历', 'calendar'),
+      command('笔记', 'notes'), command('画布', 'canvases'), command('文件库', 'files'),
+    ] },
+    { label: '窗口', submenu: [
+      { role: 'minimize', label: '最小化' },
+      { role: 'togglefullscreen', label: '切换全屏' },
+    ] },
+    { label: '帮助', submenu: [update] },
+  ]
   return [
     {
       label: '咕咕',

@@ -738,6 +738,7 @@ export type DesktopFileCommand =
     ))
   | { action: 'resolve-library-link'; url: string }
   | { action: 'workspace-list' | 'workspace-add' }
+  | { action: 'workspace-create'; name: string }
   | { action: 'project-workspaces'; projectId: number }
   | { action: 'project-workspace-binding'; projectId: number; directoryId: DesktopFileDirectory; bound: boolean }
   | { action: 'workspace-relink' | 'workspace-remove'; directoryId: DesktopFileDirectory }

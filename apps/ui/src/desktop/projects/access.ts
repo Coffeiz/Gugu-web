@@ -6,8 +6,12 @@ import { showAppNotice } from '@/composables/core/useAppToast'
 
 
 export const desktopProjectAccess: ProjectAccess = {
-  pickWorkspace: () => {
-    if ('guguDesktop' in window) return pickDesktopWorkspace()
+  listContacts: () => desktopData.clients(),
+  pickWorkspace: async (name) => {
+    if ('guguDesktop' in window) {
+      if (name) return (await requestDesktopFile({ action: 'workspace-create', name }) as { id: `desktop:${string}` }).id
+      return pickDesktopWorkspace()
+    }
     showAppNotice(i18n.global.t('filesUi.addDesktopWorkspaceNative'))
     return Promise.resolve(null)
   },

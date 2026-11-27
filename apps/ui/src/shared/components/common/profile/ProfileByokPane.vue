@@ -122,6 +122,7 @@
 </template>
 
 <script setup lang="ts">
+import { notifyModelConfigChanged } from '@/services/modelConfigEvents'
 import { DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '@gugu/core/contracts'
 import { useDesktopProfile } from './desktopProfile'
 import { computed, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
@@ -518,7 +519,7 @@ function applyProviderTo(target: Editor, value: string) { applyProvider(target, 
 function closeNewEditor() { newEditor.value = null }
 function notifyQuotaChanged() {
   if (!props.deviceApi) window.dispatchEvent(new Event('gugu-quota-changed'))
-  window.dispatchEvent(new Event('gugu-chat-models-changed'))
+  notifyModelConfigChanged()
 }
 async function saveNewEditor() { if (!newEditor.value) return; saving.value = true; const draft = newEditor.value; messageCapability.value = draft.capability; try { await modelApi.create({ provider: draft.provider, capability: draft.capability, value: draft.value, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, ...deviceOptions(draft), dimensions: draft.capability === 'embedding' ? (draft.dimensions || 0) : undefined, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, web_search_enabled: draft.capability === 'llm' && providerWebSearchAvailable(draft) && draft.web_search_enabled, image: draft.image, video: draft.video, audio: draft.audio, image_detail: draft.image_detail }); newEditor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; // 整表重拉：主密钥校验状态与同能力旧行的停用状态都由服务端裁决，本地拼 items 拿不到
 await load(); notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '保存失败'; messageType.value = 'err' } finally { saving.value = false } }

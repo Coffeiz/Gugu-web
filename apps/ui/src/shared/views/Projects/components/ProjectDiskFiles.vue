@@ -10,7 +10,8 @@
     </template>
 
     <div ref="main" class="file-content scroll-surface" @mousedown="selection.onContainerMouseDown"
-      @dragover.prevent @drop.prevent="dropFiles">
+      @dragenter="fileDropHover.enter" @dragover="fileDropHover.over" @dragleave="fileDropHover.leave" @drop.prevent="fileDropHover.reset(); dropFiles($event)">
+      <FileUploadDropOverlay :visible="fileDropHover.active.value" />
       <div v-if="selectionRect" class="project-path-selection" :style="{
         left: selectionRect.left + 'px', top: selectionRect.top + 'px',
         width: selectionRect.width + 'px', height: selectionRect.height + 'px',
@@ -30,6 +31,9 @@
 </template>
 
 <script setup lang="ts">
+import { useFileDropHover } from '@/composables/files/useFileDropHover'
+import FileUploadDropOverlay from '@/components/common/file-browser/FileUploadDropOverlay.vue'
+const fileDropHover = useFileDropHover()
 import { useFileViewMode } from '@/composables/files/useFileViewMode'
 import { computed, onMounted, onScopeDispose, ref, toRef, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

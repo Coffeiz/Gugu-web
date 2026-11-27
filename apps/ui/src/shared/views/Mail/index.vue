@@ -770,7 +770,7 @@ onMounted(async () => { await loadAccounts('', true); accountsLoaded.value = tru
 
 <style scoped>
 .mail-pane-toolbar { display: flex; align-items: center; gap: var(--space-xs); }
-.mail-pane-toolbar h2 { margin-inline-end: auto; }
+.mail-pane-toolbar :is(h2, h3) { margin: 0; margin-inline-end: auto; font-size: var(--font-size-title); font-weight: 650; line-height: 1.4; }
 .mail-reading-toolbar { flex-wrap: wrap; }
 .mail-reading-scroll { padding: var(--page-content-inset); }
 .mail-nav-group { display: grid; gap: var(--space-xs); border-top: 1px solid var(--content-divider); margin-top: var(--space-sm); padding-top: var(--space-sm); }

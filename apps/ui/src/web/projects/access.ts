@@ -2,6 +2,7 @@ import { del, get, patch, post, put } from '@/api/client'
 import type { ProjectAccess } from '@/api/projects'
 
 export const webProjectAccess: ProjectAccess = {
+  listContacts: () => get('/clients'),
   storesProjectsLocally: false,
   listWorkspaceBindings: id => get(`/projects/${id}/workspace-selection`),
   selectWorkspace(id, directoryId, workspaceId) {

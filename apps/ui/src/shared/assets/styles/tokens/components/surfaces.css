@@ -155,7 +155,7 @@
   --popup-surface-blur: var(--popup-blur);
   --popup-surface-radius: var(--popup-radius);
   --event-popup-radius: var(--popup-radius);
-  --popup-surface-padding: var(--space-sm);
+  --popup-surface-padding: var(--space-xs);
   --popup-content-inset: var(--space-sm);
   --popup-item-fg: var(--content-primary);
   --popup-item-fg-muted: var(--content-secondary);

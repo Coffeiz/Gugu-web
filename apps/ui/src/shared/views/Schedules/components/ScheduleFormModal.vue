@@ -506,7 +506,7 @@ function submit() {
 .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--input-border-focus); }
 .reminder-field { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .reminder-field textarea { flex: 1 1 auto; min-height: 96px; max-height: none; resize: none; line-height: 1.6; overflow-y: hidden; }
-.repeat-tabs { display: flex; gap: var(--option-gap); }
+.repeat-tabs { display: flex; gap: var(--space-xs); }
 .repeat-tab { flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-xs); border: 1px solid var(--option-border); background: var(--option-bg); font-size: 13px; font-family: var(--font-sans); color: var(--option-fg); cursor: pointer; transition: all 0.15s; text-align: center; }
 .repeat-tab:hover { border-color: var(--option-border-hover); }
 .repeat-tab.on { background: var(--action-primary-bg); color: var(--content-on-accent); border-color: transparent; }

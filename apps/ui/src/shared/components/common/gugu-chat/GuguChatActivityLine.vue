@@ -3,7 +3,7 @@
     :class="{ 'activity-summary': button }" :type="button ? 'button' : undefined">
     <span class="activity-symbol" :class="{ 'is-running': indicator === 'running' }" aria-hidden="true">
       <span v-if="indicator === 'dots'" class="activity-dots"><i v-for="dot in 3" :key="dot" /></span>
-      <template v-else-if="indicator === 'arrow'">↳</template>
+      <svg v-else-if="indicator === 'arrow'" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3v6h8M9 6l3 3-3 3" /></svg>
     </span>
     <span class="activity-text" role="status" :aria-live="typing ? 'off' : undefined">
       <span v-if="typewritten" :key="motionKey" class="activity-label">
@@ -58,7 +58,8 @@ function fadeLabel(element: Element) {
 }
 .activity-summary:hover { background-color: var(--surface-soft-hover); }
 .activity-summary:focus-visible { outline: 2px solid var(--border-focus); }
-.activity-symbol { display: grid; place-items: center; flex: none; width: 12px; }
+.activity-symbol { display: grid; place-items: center; flex: 0 0 16px; width: 16px; height: 16px; line-height: 16px; font-family: var(--font-sans); }
+.activity-line :deep(svg) { flex-shrink: 0; aspect-ratio: 1; }
 .activity-symbol.is-running { color: var(--action-primary); }
 .activity-symbol.is-running::before {
   content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor;

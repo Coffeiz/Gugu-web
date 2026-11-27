@@ -13,7 +13,7 @@
       <span v-else>{{ placeholder }}</span>
     </div>
 
-    <PopupMenu ref="popupMenuRef" :show="open" :anchor="triggerRef" placement="auto" popup-class="drp-popup-host drp-popup">
+    <PopupMenu ref="popupMenuRef" :show="open" :anchor="triggerRef" placement="auto" horizontal-align="center" popup-class="drp-popup-host drp-popup">
 
           <!-- 头部导航 -->
           <div v-if="!yearMode" class="drp-header">

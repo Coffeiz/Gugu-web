@@ -3,7 +3,7 @@
     <div class="info-block">
       <div class="section">
         <label class="section-label">{{ t('projects.client') }}</label>
-        <input class="field-input" v-model="client" :placeholder="t('projects.clientPlaceholder')" />
+        <ProjectContactSelect v-model="client" />
       </div>
 
       <hr class="col-divider" />
@@ -39,6 +39,7 @@
 </template>
 
 <script setup lang="ts">
+import ProjectContactSelect from './ProjectContactSelect.vue'
 import { computed } from 'vue'
 import DateSpanPicker from '@/components/common/controls/DateSpanPicker.vue'
 import { extractProjectAccent, PROJECT_COLOR_OPTIONS } from '@/utils/projectColors'

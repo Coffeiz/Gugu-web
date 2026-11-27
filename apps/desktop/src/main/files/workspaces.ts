@@ -217,6 +217,22 @@ export function fileWorkspaces(root: string, registry?: string, protectedRoot?: 
       if (!await reconnect(share)) throw new DesktopError('workspace_unavailable', '工作区已断开，重连未成功')
     },
     managedRoots,
+    create(value: unknown) {
+      return change(async rows => {
+        if (!registry) throw new DesktopError('unsupported', '当前环境不支持创建工作区')
+        if (typeof value !== 'string' || !value.trim() || value.trim().length > 200 || /[<>:"/\\|?*\x00-\x1f]/.test(value) || /[. ]$/.test(value) || ['.', '..'].includes(value) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(value))
+          throw new DesktopError('invalid_request', '工作区名称无效')
+        const name = value.trim()
+        const parent = join((await managedRoots()).base, 'workspaces')
+        await mkdir(parent, { recursive: true })
+        const root = join(parent, name)
+        await mkdir(root)
+        const row: Binding = { id: `desktop:${randomUUID()}`, name, root: await directory(root) }
+        rows.push(row)
+        await save(rows)
+        return row.id as `desktop:${string}`
+      })
+    },
     bind(path: string, id?: unknown) {
       return change(async rows => {
         const actual = await directory(path)

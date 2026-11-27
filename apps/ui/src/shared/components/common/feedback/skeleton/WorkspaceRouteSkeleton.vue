@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageLoadingState from '../PageLoadingState.vue'
 import { useI18n } from 'vue-i18n'
 import CalendarSkeleton from '@/views/Calendar/components/CalendarSkeleton.vue'
 import MailRouteSkeleton from '@/views/Mail/MailRouteSkeleton.vue'
@@ -15,6 +16,7 @@ const { t } = useI18n()
 
 <template>
   <div class="workspace-route-skeleton" :class="{ 'is-desktop': desktop }" role="status" :aria-label="t('common.status.loading')">
+    <PageLoadingState class="route-loading-state" />
     <div v-if="routeName === 'Calendar'" class="calendar-route" aria-hidden="true">
       <div class="route-toolbar glass-card">
         <SkeletonBlock style="--skeleton-width: 184px" />
@@ -76,6 +78,9 @@ const { t } = useI18n()
 </template>
 
 <style scoped>
+.workspace-route-skeleton { position: relative; }
+.route-loading-state { position: absolute; inset: 0; z-index: 2; }
+.workspace-route-skeleton :deep(.skeleton-block) { visibility: hidden; }
 .workspace-route-skeleton { height: 100%; }
 .calendar-route, .panel-route { display: flex; flex-direction: column; gap: var(--space-md); height: 100%; }
 .route-toolbar {

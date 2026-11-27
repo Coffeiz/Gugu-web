@@ -111,7 +111,12 @@ describe('执行策略、能力隔离与原生回收', () => {
       expect.objectContaining({
         ui: { disable: true, clipboard: 'none', injection: false },
         inheritDefaultEnvironment: false,
-        environment: {},
+        environment: process.platform === 'win32' ? {
+          SYSTEMROOT: process.env.SystemRoot ?? process.env.SYSTEMROOT ?? 'C:\\Windows',
+          LOCALAPPDATA: process.env.LOCALAPPDATA ?? '',
+          PATH: `${process.env.SystemRoot ?? process.env.SYSTEMROOT ?? 'C:\\Windows'}\\System32`,
+          PATHEXT: '.COM;.EXE;.BAT;.CMD',
+        } : {},
         timeoutMs: 2000,
         network: {
           egress: { default: 'deny' },

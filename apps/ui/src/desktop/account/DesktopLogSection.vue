@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageLoadingState from '@/components/common/feedback/PageLoadingState.vue'
 import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { desktopData } from '@desktop/bridge/bridge'
@@ -83,7 +84,7 @@ function toggle() {
     <div :id="`desktop-logs-${kind}`" v-show="open">
       <p v-if="truncated" class="pm-field-hint desktop-log-limit">{{ $t('pageUi.recentLogs') }}</p>
       <p v-if="error" class="pm-msg err" role="alert">{{ error }}</p>
-      <p v-else-if="loading && !rows.length" class="pm-field-hint" role="status">{{ t('adminLogs.loading') }}</p>
+      <PageLoadingState v-else-if="loading && !rows.length" :label="t('adminLogs.loading')" />
       <p v-else-if="!rows.length" class="pm-field-hint">{{ t('adminLogs.empty') }}</p>
       <div v-if="rows.length" ref="viewport" class="desktop-log-list" tabindex="0" :aria-label="title">
         <div v-for="(row, index) in rows" :key="`${index}:${row.line}`" class="desktop-log-row">

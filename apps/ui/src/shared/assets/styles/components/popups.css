@@ -6,7 +6,7 @@
   border: 1px solid var(--popup-border);
   border-radius: var(--popup-radius);
   box-shadow: var(--popup-shadow);
-  padding: 4px;
+  padding: var(--popup-surface-padding);
   user-select: none;
 }
 .menu-pop-enter-active,
@@ -44,7 +44,7 @@
   border: 1px solid var(--popup-surface-border);
   border-radius: var(--popup-radius);
   box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
-  padding: 4px;
+  padding: var(--popup-surface-padding);
   user-select: none;
 }
 .popup-menu-dark .popup-menu-item { color: var(--popup-item-fg); font-family: var(--font-sans); }

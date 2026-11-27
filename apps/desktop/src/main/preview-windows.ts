@@ -71,7 +71,8 @@ export function registerPreviewWindows(options: {
       ...desktopWindowMaterial(),
       ...desktopPreviewBounds(file, area, lastSize),
       title: '咕咕 · 文件预览',
-      frame: false,
+      frame: process.platform === 'win32',
+      ...(process.platform === 'win32' ? { titleBarStyle: 'hidden' as const, roundedCorners: true } : {}),
       show: false,
       webPreferences: windowOptions(options.preload).webPreferences,
     })

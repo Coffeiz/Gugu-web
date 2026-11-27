@@ -1,4 +1,12 @@
+/* 统一关闭、清除和移除用的叉号反馈，使用与卡片关闭按钮相同的令牌。 */
+html:root body button:is(:has(> [data-close-icon]), .chat-att-x, .label-reset):not(:disabled):is(:hover, :focus-visible) {
+  color: var(--close-button-danger-fg);
+  background-color: var(--close-button-danger-bg);
+}
+
 :root {
+  --close-button-danger-fg: light-dark(#c42b1c, #ff7474);
+  --close-button-danger-bg: color-mix(in srgb, var(--close-button-danger-fg) 18%, transparent);
   /* Generic cards / popups */
   --card-radius: var(--radius-sm);
   --card-close-inset: var(--space-md);
@@ -181,8 +189,8 @@
   --gugu-fab-logo-size: 32px;
   --gugu-fab-bg: var(--theme-fab-gradient);
   --gugu-fab-border: transparent;
-  --gugu-fab-shadow: 0 4px 18px color-mix(in srgb,var(--action-primary) 32%,transparent), inset 0 1px 0 rgba(255,255,255,.45);
-  --gugu-fab-hover-shadow: 0 7px 24px color-mix(in srgb,var(--action-primary) 42%,transparent), inset 0 1px 0 rgba(255,255,255,.50);
+  --gugu-fab-shadow: 0 4px 18px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.45);
+  --gugu-fab-hover-shadow: 0 7px 24px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.50);
   --gugu-fab-ripple: color-mix(in srgb,var(--action-primary) 75%,transparent);
 
   /* Gugu chat window + conversation layout. The Design mock consumes this same contract. */

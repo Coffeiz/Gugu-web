@@ -1,3 +1,4 @@
+import { decodeWindowsOutput } from '../windows/output.js'
 import { ExecutionError } from '../contracts.js'
 import type { ExecutionBackend, ExecutionPolicy, ExecutionResult } from '../contracts.js'
 import type { Readable } from 'node:stream'
@@ -97,7 +98,15 @@ export class MxcExecutor implements ExecutionBackend {
           ...(this.networkProxy ? { runtimeConfig: { networkProxy: this.networkProxy } } : {}),
         },
         ui: { disable: true, clipboard: 'none', injection: false },
-        environment: { ...policy.environment },
+        environment: {
+          ...(process.platform === 'win32' ? {
+            SYSTEMROOT: process.env.SystemRoot ?? process.env.SYSTEMROOT ?? 'C:\\Windows',
+            LOCALAPPDATA: process.env.LOCALAPPDATA ?? '',
+            PATH: `${process.env.SystemRoot ?? process.env.SYSTEMROOT ?? 'C:\\Windows'}\\System32`,
+            PATHEXT: '.COM;.EXE;.BAT;.CMD',
+          } : {}),
+          ...policy.environment,
+        },
         inheritDefaultEnvironment: false,
       })
       child.standardOutput?.on('data', stdout)
@@ -111,15 +120,15 @@ export class MxcExecutor implements ExecutionBackend {
       if (streamFailed) throw new ExecutionError('native_failure', '原生执行输出通道失败')
       if (exceeded) throw new ExecutionError('output_limit', '执行输出超出授权限制')
       return {
-        stdout: Buffer.concat(output).toString('utf8'),
-        stderr: Buffer.concat(errors).toString('utf8'),
+        stdout: process.platform === 'win32' ? decodeWindowsOutput(Buffer.concat(output)) : Buffer.concat(output).toString('utf8'),
+        stderr: process.platform === 'win32' ? decodeWindowsOutput(Buffer.concat(errors)) : Buffer.concat(errors).toString('utf8'),
         exitCode: result.exitCode,
         timedOut: result.timedOut,
       }
     } catch (error) {
       cancel()
       if (error instanceof ExecutionError) throw error
-      throw new ExecutionError('native_failure', '原生执行失败，未放宽隔离策略')
+      throw new ExecutionError('native_failure', '原生执行失败（隔离执行器异常），执行结果未知；未申请宿主机权限，也未自动重试。需要宿主机执行时，请明确选择宿主工作目录并发起授权确认，勿重复执行结果未知的操作')
     } finally {
       signal?.removeEventListener('abort', cancel)
       child?.standardOutput?.off('data', stdout)

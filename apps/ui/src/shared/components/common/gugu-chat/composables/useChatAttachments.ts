@@ -1,4 +1,5 @@
-import { ref, computed } from 'vue'
+import { useFileDropHover } from '@/composables/files/useFileDropHover'
+import { ref } from 'vue'
 import { agentApi } from '@/services/api'
 import type { ChatFile } from '../chatTypes'
 import { IMG_EXTS } from '../messageDisplay'
@@ -50,12 +51,13 @@ export function useChatAttachments(options: {
   }
 
   // ── 拖入文件添加附件（大小窗都支持）──
-  const chatDrag = ref(0)
-  const isChatDragging = computed(() => chatDrag.value > 0)
+  const hover = useFileDropHover()
+  const chatDrag = hover.depth
+  const isChatDragging = hover.active
   function _dragHasFiles(e: DragEvent) { return [...(e.dataTransfer?.types || [])].includes('Files') }
-  function onChatDragEnter(e: DragEvent) { if (_dragHasFiles(e)) { e.preventDefault(); chatDrag.value++ } }
-  function onChatDragOver(e: DragEvent)  { if (_dragHasFiles(e)) e.preventDefault() }
-  function onChatDragLeave()  { if (chatDrag.value > 0) chatDrag.value-- }
+  const onChatDragEnter = hover.enter
+  const onChatDragOver = hover.over
+  const onChatDragLeave = hover.leave
   async function onChatDrop(e: DragEvent) {
     if (!_dragHasFiles(e)) return
     e.preventDefault()

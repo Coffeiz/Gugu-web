@@ -17,7 +17,7 @@ const state = vi.hoisted(() => ({
 class WindowStub extends EventEmitter {
   private readonly frame = { url: '' }
   readonly webContents = Object.assign(new EventEmitter(), {
-    send: vi.fn(), isLoadingMainFrame: () => false, mainFrame: this.frame,
+    isDestroyed: () => false, send: vi.fn(), isLoadingMainFrame: () => false, mainFrame: this.frame,
   })
   x = 0
   y = 0
@@ -46,6 +46,8 @@ class WindowStub extends EventEmitter {
     this.width = width
     this.height = height
   }
+  setBackgroundMaterial = vi.fn()
+  setBackgroundColor = vi.fn()
   focus = vi.fn()
   setIgnoreMouseEvents = vi.fn()
   setResizable(value: boolean) { this.resizable = value }
@@ -60,6 +62,7 @@ class WindowStub extends EventEmitter {
 }
 
 vi.mock('electron', () => ({
+  app: { getAppPath: () => 'synthetic-app' }, nativeTheme: { shouldUseDarkColors: false },
   BrowserWindow: class extends WindowStub {
     constructor(options: { parent: WindowStub; type?: string; width?: number; height?: number }) {
       super(options.parent)
@@ -82,11 +85,11 @@ vi.mock('electron', () => ({
 
 vi.mock('../src/main/windows.js', async importOriginal => ({
   ...await importOriginal<typeof import('../src/main/windows.js')>(),
-  secureWindow: () => {},
+  secureWindow: vi.fn(),
 }))
 
 const { registerChatFabWindow } = await import('../src/main/chat-fab-window.js')
-const { createChatFabGeometryStore } = await import('../src/main/windows.js')
+const { createChatFabGeometryStore, secureWindow } = await import('../src/main/windows.js')
 import { chatFabChannels as channels } from '../src/chat-fab-channels.js'
 
 const uiUrl = 'gugu-desktop://app/desktop.html'
@@ -188,6 +191,10 @@ it('独立聊天面板跟随悬浮球，拖回后交给主窗', async () => {
   gesture('down')
   gesture('up')
   const panel = state.windows[1]!
+  expect(secureWindow).toHaveBeenCalledWith(panel, undefined, {
+    uiUrl: 'gugu-desktop://app/desktop.html?chatFabPanel=1',
+    isGranted: expect.any(Function), request: expect.any(Function),
+  })
   const nativeType = process.platform === 'darwin' ? 'panel' : undefined
   expect(state.windowTypes).toEqual([nativeType, nativeType])
   if (process.platform === 'darwin') {
@@ -291,6 +298,10 @@ it('从主窗拖出紧凑聊天后，首次展开复用脱离时准备的原生�
   await attaching
   gesture('open')
   const panel = state.windows[1]!
+  expect(secureWindow).toHaveBeenCalledWith(panel, undefined, {
+    uiUrl: 'gugu-desktop://app/desktop.html?chatFabPanel=1',
+    isGranted: expect.any(Function), request: expect.any(Function),
+  })
   const notify = (channel: string, value?: unknown) => state.events.get(channel)!(panel.sender(), value)
   notify(channels.panelReady)
   notify(channels.panelEntered)
@@ -340,6 +351,10 @@ it('聊天面板再次点击时播放退场动画，旧退场通知不会隐藏�
   await attaching
   gesture('open')
   const panel = state.windows[1]!
+  expect(secureWindow).toHaveBeenCalledWith(panel, undefined, {
+    uiUrl: 'gugu-desktop://app/desktop.html?chatFabPanel=1',
+    isGranted: expect.any(Function), request: expect.any(Function),
+  })
   const notify = (channel: string) => state.events.get(channel)!(panel.sender())
   notify(channels.panelReady)
   expect(panel.visible).toBe(true)
@@ -381,6 +396,10 @@ it('独立聊天与主窗口重叠时仍保留原生窗口和球', async () => {
   gesture('up', 1060, 580)
   gesture('open')
   const panel = state.windows[1]!
+  expect(secureWindow).toHaveBeenCalledWith(panel, undefined, {
+    uiUrl: 'gugu-desktop://app/desktop.html?chatFabPanel=1',
+    isGranted: expect.any(Function), request: expect.any(Function),
+  })
   state.events.get(channels.panelReady)!(panel.sender())
   state.events.get(channels.panelEntered)!(panel.sender())
   panel.focus.mockClear()
@@ -417,6 +436,10 @@ it('拖到屏幕上方后，首次展开复用松手时准备的原生视口', a
   await attaching
   gesture('open')
   const panel = state.windows[1]!
+  expect(secureWindow).toHaveBeenCalledWith(panel, undefined, {
+    uiUrl: 'gugu-desktop://app/desktop.html?chatFabPanel=1',
+    isGranted: expect.any(Function), request: expect.any(Function),
+  })
   const notify = (channel: string, value?: unknown) => state.events.get(channel)!(panel.sender(), value)
   notify(channels.panelReady)
   notify(channels.panelEntered)
@@ -447,6 +470,10 @@ it('停靠的紧凑聊天首次展开时复用已准备的原生视口', async (
   await attaching
   gesture('open')
   const panel = state.windows[1]!
+  expect(secureWindow).toHaveBeenCalledWith(panel, undefined, {
+    uiUrl: 'gugu-desktop://app/desktop.html?chatFabPanel=1',
+    isGranted: expect.any(Function), request: expect.any(Function),
+  })
   state.events.get(channels.panelReady)!(panel.sender())
   state.events.get(channels.panelEntered)!(panel.sender())
   const compactFrame = panel.getBounds()
@@ -472,6 +499,10 @@ it('只有独立聊天面板可以把有效的对象引用交给主窗口', asyn
   await attaching
   gesture('open')
   const panel = state.windows[1]!
+  expect(secureWindow).toHaveBeenCalledWith(panel, undefined, {
+    uiUrl: 'gugu-desktop://app/desktop.html?chatFabPanel=1',
+    isGranted: expect.any(Function), request: expect.any(Function),
+  })
   const open = state.attach.get(channels.openMainReference)!
 
   await expect(open(ball.sender(), 'event', 42)).resolves.toMatchObject({ ok: false, error: { code: 'forbidden' } })
@@ -505,6 +536,10 @@ it('只有悬浮球可以接收系统文件，聊天面板就绪后收到引用'
   expect(state.windows).toHaveLength(1)
   drop(ball.sender(), paths)
   const panel = state.windows[1]!
+  expect(secureWindow).toHaveBeenCalledWith(panel, undefined, {
+    uiUrl: 'gugu-desktop://app/desktop.html?chatFabPanel=1',
+    isGranted: expect.any(Function), request: expect.any(Function),
+  })
   expect(createDroppedReference).not.toHaveBeenCalled()
 
   state.events.get(channels.panelReady)!(panel.sender())
@@ -574,4 +609,18 @@ it('仅转发可信来源的选区草稿，拒绝超长内容', async () => {
 
   drop(preview.sender(), reference, snapshot)
   expect(main.webContents.send).toHaveBeenCalledExactlyOnceWith(channels.droppedReferences, reference, snapshot)
+})
+
+it('主窗口 WebContents 先销毁时，关闭悬浮球不再发送消息或抛异常', async () => {
+  const main = new WindowStub()
+  await main.loadURL(uiUrl)
+  registerChatFabWindow({ uiUrl, preload: '合成预加载', panelPreload: '合成面板预加载', prewarm: false, enabled: () => true, mainWindow: () => main.asWindow() })
+  const attaching = state.attach.get(channels.attach)!(main.sender())
+  const ball = state.windows[0]!
+  state.events.get(channels.gesture)!(ball.sender(), 'ready', 0, 0)
+  await attaching
+  main.webContents.isDestroyed = () => true
+  main.webContents.send.mockClear()
+  expect(() => ball.destroy()).not.toThrow()
+  expect(main.webContents.send).not.toHaveBeenCalled()
 })

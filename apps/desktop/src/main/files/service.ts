@@ -1178,6 +1178,8 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
             const directoryId = 'directoryId' in command ? command.directoryId : undefined
             return await withDirectory(directoryId, () => searchWorkspaces('query' in command ? command.query : undefined, directoryId))
           }
+        case 'workspace-create':
+          return { id: await workspaces.create('name' in command ? command.name : undefined) }
         case 'workspace-add':
         case 'workspace-relink': {
           if (!native) throw new DesktopError('unsupported', '请在桌面应用中选择目录')
@@ -1370,6 +1372,10 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
           }
           case 'reveal':
             if (!native) throw new DesktopError('unsupported', '浏览器预览不支持打开系统目录')
+            if (path === '') {
+              if (await native.open(await files.locate(segments(path, true)))) throw new DesktopError('unsupported', '无法打开文件夹')
+              break
+            }
             native.reveal('identity' in command && typeof command.identity === 'string'
               ? await files.locateFile(path, command.identity)
               : await files.locate(segments(path, true)))

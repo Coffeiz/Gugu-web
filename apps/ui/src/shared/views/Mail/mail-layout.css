@@ -2,7 +2,7 @@
 .mail-columns { display: grid; grid-template-columns: minmax(160px, min(22cqi, 220px)) minmax(220px, min(27cqi, 290px)) minmax(0, 2.25fr); gap: var(--space-md); height: 100%; min-height: 0; }
 .mail-folders, .mail-list, .mail-content { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .mail-columns > [data-overlay-scrollbar-owner] { position: relative; isolation: isolate; }
-.mail-pane-toolbar { flex: none; padding: var(--toolbar-inset); border-bottom: 1px solid var(--content-divider); box-sizing: border-box; }
+.mail-pane-toolbar { flex: none; height: var(--canvas-toolbar-height); min-height: var(--canvas-toolbar-height); padding: var(--space-xs) var(--toolbar-inset); border-bottom: 1px solid var(--content-divider); box-sizing: border-box; }
 @container (max-width: 740px) {
   .mail-columns { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 2fr) minmax(0, 3fr); }
   .mail-columns:not(.show-reading) .mail-content, .show-reading .mail-list, .show-reading .mail-folders { display: none; }

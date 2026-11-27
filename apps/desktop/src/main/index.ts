@@ -1,3 +1,4 @@
+import { nativeTheme } from 'electron'
 import { desktopPlatform } from './platform/index.js'
 import { randomBytes as cliRandomBytes } from 'node:crypto'
 import { publishCliConnection, registerMacCli } from './cli-install.js'
@@ -663,6 +664,7 @@ else {
         const window = new BrowserWindow(
           windowOptions(preload, smoke, size ? { size, workArea: screen.getPrimaryDisplay().workAreaSize } : undefined),
         )
+        if (process.platform === 'win32') window.setMenuBarVisibility(false)
         mainWindow = window
         chatFab.watchMain(window)
         if (!smoke) window.on('close', () => {
@@ -1030,6 +1032,20 @@ else {
         checkForUpdates,
         sendCommand: runMenuCommand,
       })))
+      if (process.platform === 'win32') {
+        ipcMain.on('gugu:window-chrome', (event, action: unknown) => {
+          if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame?.parent !== null) return
+          if (action === 'minimize') mainWindow.minimize()
+          else if (action === 'maximize') {
+            if (mainWindow.isMaximized()) mainWindow.unmaximize()
+            else mainWindow.maximize()
+          } else if (action === 'close') mainWindow.close()
+          else if (typeof action === 'string') {
+            const menu = Menu.getApplicationMenu()?.items.find(item => item.label === action)?.submenu
+            menu?.popup({ window: mainWindow, y: 52 })
+          }
+        })
+      }
       function startReminders() {
         stopReminders?.()
         stopReminders = startLocalReminders(host, () => {
@@ -1070,6 +1086,14 @@ else {
       const { tray: trayPlatform, mac } = desktopPlatform()
       if (trayPlatform) {
         tray = new Tray(trayPlatform.icon(app, join(app.getAppPath(), 'assets')))
+        if (process.platform === 'win32') {
+          nativeTheme.on('updated', () => {
+            for (const window of BrowserWindow.getAllWindows()) {
+              if (!window.isDestroyed()) window.setIcon(join(app.getAppPath(), 'assets', nativeTheme.shouldUseDarkColors ? 'icon-win-dark.ico' : 'icon-win-light.ico'))
+            }
+            if (tray && !tray.isDestroyed()) tray.setImage(trayPlatform.icon(app, join(app.getAppPath(), 'assets')))
+          })
+        }
         tray.setToolTip('咕咕')
         tray.setContextMenu(Menu.buildFromTemplate(buildStatusMenu(
           mac, openMainWindow, () => runMenuCommand('new-note'),

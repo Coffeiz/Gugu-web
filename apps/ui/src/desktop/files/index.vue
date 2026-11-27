@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useFileDropHover } from '@/composables/files/useFileDropHover'
+import FileUploadDropOverlay from '@/components/common/file-browser/FileUploadDropOverlay.vue'
+const fileDropHover = useFileDropHover()
 import { useFileViewMode } from '@/composables/files/useFileViewMode'
 import { computed, onMounted, onScopeDispose, ref, useId, watch } from 'vue'
 import { i18n } from '@/i18n'
@@ -260,7 +263,8 @@ async function createFolder() {
     </template>
     <div ref="main" class="desktop-file-panel glass-card scroll-surface" :class="{ 'is-list': viewMode === 'list' }"
       @mousedown="selection.onContainerMouseDown"
-      @dragover.prevent @drop.prevent="dropFiles">
+      @dragenter="fileDropHover.enter" @dragover="fileDropHover.over" @dragleave="fileDropHover.leave" @drop.prevent="fileDropHover.reset(); dropFiles($event)">
+      <FileUploadDropOverlay :visible="fileDropHover.active.value" />
       <div v-if="selectionRect" class="desktop-file-selection" :style="{
         left: selectionRect.left + 'px', top: selectionRect.top + 'px',
         width: selectionRect.width + 'px', height: selectionRect.height + 'px',

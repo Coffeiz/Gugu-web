@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageLoadingState from '@/components/common/feedback/PageLoadingState.vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { desktopData } from '@desktop/bridge/bridge'
@@ -53,7 +54,7 @@ function open(item: Item) {
       </button>
     </div>
     <div class="related-results">
-      <p v-if="loading" class="related-status" role="status">{{ $t('pageUi.loadingRelated') }}</p>
+      <PageLoadingState v-if="loading" :label="$t('pageUi.loadingRelated')" />
       <p v-else-if="failed" class="related-status" role="alert">{{ $t('pageUi.relatedFailed') }}</p>
       <p v-else-if="!items.length" class="related-status related-status--empty">
         <RiLinksLine size="16px" aria-hidden="true" /> {{ $t('pageUi.noRelated') }}

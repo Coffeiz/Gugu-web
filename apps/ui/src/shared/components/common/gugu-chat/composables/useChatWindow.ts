@@ -36,7 +36,7 @@ export function useChatWindow(options: UseChatWindowOptions) {
   const chatClosing = ref(false)
   const chatZ      = ref(nextZ())
   const miniPinned = ref(localStorage.getItem(MINI_PINNED_KEY) !== 'false')
-  const reopenResume = ref(localStorage.getItem(REOPEN_RESUME_KEY) === '1')
+  const reopenResume = ref(localStorage.getItem(REOPEN_RESUME_KEY) !== '0')
 
   // 每首新打开或刷新后恢复的音频都默认固定播放器，避免播放器被悬浮球遮住。
   // 用户手动取消固定后，在同一首音频生命周期内仍保持取消状态。

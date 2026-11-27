@@ -29,7 +29,7 @@
       <div class="chat-header">
         <template v-if="expanded && sessionId && !previewOnly">
           <SessionTitleEdit
-            class="chat-title"
+            :key="sessionId" class="chat-title"
             header
             :title="currentSessionTitle"
             :on-rename="(t) => onRenameSession(sessionId!, t)"
@@ -39,7 +39,7 @@
             {{ currentSessionGoalStatus === 'paused' ? t('chat.goalPausedShort') : t('chat.goalRunningShort') }}
           </span>
         </template>
-        <span v-else class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : t('chatUi.gugu') }}</span>
+        <span v-else key="chat-placeholder-title" class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : t('chatUi.gugu') }}</span>
         <GuguChatWorkspace v-if="sessionId && currentSessionWorkspaceName && workspaceAccess && !previewOnly && !isGroupSession"
           :key="sessionId" :session-id="sessionId" :name="currentSessionWorkspaceName"
           :access="workspaceAccess" :disabled="streaming || sessionSettling" @change="(id, name) => emit('workspace-change', id, name)" />
@@ -67,10 +67,10 @@
           <button v-if="!expanded" class="popup-icon-btn" @click="onEnterExpanded" :title="t('chat.expand')" :aria-label="t('chat.expand')">
             <Icon name="action.expand" :size="13" />
           </button>
-          <button v-if="expanded" class="exp-icon-btn" @click="onExitExpanded" :title="t('chat.collapse')" :aria-label="t('chat.collapse')">
+          <button v-if="expanded" class="popup-icon-btn" @click="onExitExpanded" :title="t('chat.collapse')" :aria-label="t('chat.collapse')">
             <Icon name="action.collapse" :size="14" />
           </button>
-          <CloseButton :compact="!expanded" @click="onClose" />
+          <button type="button" class="popup-icon-btn chat-close-btn" @click="onClose" :title="t('common.actions.close')" :aria-label="t('common.actions.close')"><Icon name="action.close" :size="14" /></button>
         </div>
       </div>
 
@@ -135,7 +135,7 @@ import GuguChatDropOverlay from './GuguChatDropOverlay.vue'
 import type { ChatHistoryState } from './composables/useChatHistoryPagination'
 import { ref, computed, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import CloseButton from '@/components/common/overlays/CloseButton.vue'
+
 import Icon from '@/components/common/icons/Icon.vue'
 /**
  * 聊天窗口外壳：窗口 DOM、标题栏、展开/收起按钮、消息列表与输入框的挂载点。
@@ -427,7 +427,7 @@ defineExpose({
   color: var(--content-secondary);
 }
 .filesystem-auth-button {
-  width: 26px; height: 26px; flex: 0 0 auto; padding: 0;
+  width: 28px; height: 28px; flex: 0 0 28px; flex: 0 0 auto; padding: 0;
   /* 授权入口紧跟 workspace；收起态由 workspace 的伸展规则自然落在右侧。 */
   margin-left: -6px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -456,7 +456,7 @@ defineExpose({
 .popup-status + .btn-group { margin-inline-start: 0; }
 
 .popup-icon-btn {
-  width: 26px; height: 26px; border-radius: 7px; border: none;
+  width: 28px; height: 28px; flex: 0 0 28px; border-radius: 7px; border: none;
   background: none; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: background 0.12s, color 0.12s;
@@ -468,6 +468,7 @@ defineExpose({
   color: var(--control-fg-strong);
 }
 
+.popup-icon-btn.chat-close-btn:hover:not(:disabled) { background: var(--close-button-danger-bg); color: var(--close-button-danger-fg); }
 /* 消息列表容器与内部结构渲染于 GuguChatMessageList.vue，需要 :deep() 穿透 */
 :deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
@@ -998,6 +999,10 @@ defineExpose({
   border-radius: var(--radius-xs); background: var(--surface-soft);
   font-size: var(--font-size-sm); overflow-wrap: anywhere;
 }
+:deep(.chat-smart-metric) {
+  display: flex; flex-wrap: wrap; justify-content: space-between;
+}
+:deep(.chat-smart-metric > *) { min-width: 0; max-width: 100%; }
 :deep(.chat-smart-metric > strong) { font-size: var(--font-size-lg); }
 :deep(.chat-smart-layout-view [data-smart-color="accent"]) { --smart-view-color: var(--action-primary); }
 :deep(.chat-smart-layout-view [data-smart-color="info"]) { --smart-view-color: var(--status-info); }
@@ -1213,7 +1218,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 }
 :deep(.chat-smart-switch-options > button:focus-visible) { outline: 2px solid var(--border-focus); }
 :deep(.chat-smart-layout[data-columns]:not([data-columns="1"]) > .chat-smart-metric) {
-  grid-template-columns: minmax(0, 1fr); align-content: start; gap: 3px;
+  display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 3px;
 }
 @container (min-width: 250px) {
   :deep(.chat-smart-layout:is([data-columns="2"], [data-columns="3"])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1450,7 +1455,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 }
 :deep(.msg-voice:hover) { background: var(--surface-glass-hover); box-shadow: inset 0 1px 0 var(--highlight-strong), var(--elevation-card-hover); }
 :deep(.msg-voice .mv-btn) {
-  flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+  flex-shrink: 0; width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; color: var(--gugu-chat-user-fg);
   background: var(--gugu-chat-voice-button-bg); box-shadow: var(--elevation-card);
 }

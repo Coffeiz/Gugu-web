@@ -33,6 +33,7 @@
           <RiSubtractLine :size="14" aria-hidden="true" />
           {{ t('mindEditorUi.deleteColumn') }}
         </button>
+        <button type="button" class="ne-tool" :aria-label="t('mindEditorUi.deleteTable')" :disabled="!editor.can().deleteTable()" @mousedown.prevent @click="deleteCurrentTable">{{ t('mindEditorUi.deleteTable') }}</button>
       </div>
     </PopupMenu>
 
@@ -158,6 +159,15 @@
 </template>
 
 <script setup lang="ts">
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
+async function deleteCurrentTable() {
+  const target = editor.value
+  if (!target) return
+  const selection = target.state.selection
+  if (await confirmDialog({ title: t('mindEditorUi.deleteTable'), message: t('mindEditorUi.deleteTableConfirm'), tone: 'danger', confirmText: t('mindEditorUi.deleteTable') })) {
+    if (!target.isDestroyed) target.chain().focus().setTextSelection(selection.from).deleteTable().run()
+  }
+}
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useFileOpenAccess } from '@/services/fileOpenAccess'
@@ -648,7 +658,7 @@ onBeforeUnmount(() => {
   position: fixed; z-index: 2000; transform: translateX(-50%);
 }
 .ne-toolbar:is(.ne-toolbar-floating, .ne-table-actions) {
-  padding: var(--space-xs) var(--space-sm); border-radius: var(--card-radius);
+  padding: var(--space-xs); border-radius: var(--card-radius);
   background: rgba(255,255,255,0.96);
   border: 1px solid rgba(255,255,255,0.9);
   box-shadow: 0 8px 26px rgba(60,70,100,0.18);

@@ -19,7 +19,7 @@
       @drop="onCanvasFileDrop"
     />
 
-    <span v-if="initialLoading" class="canvas-loading-status" role="status">{{ t('common.status.loading') }}</span>
+    <PageLoadingState v-if="initialLoading" class="canvas-page-loading" />
 
     <!-- 桌面抽屉留在画布内，和底部工具栏一起进入弹窗遮罩的采样范围。 -->
     <Teleport to="body" :disabled="isDesktopShell">
@@ -60,6 +60,7 @@
 </template>
 
 <script setup lang="ts">
+import PageLoadingState from '@/components/common/feedback/PageLoadingState.vue'
 import { DEFAULT_CANVAS_NOTE_COLOR } from '@/utils/projectColors'
 import { flashNoteTarget } from './utils/flashNoteTarget'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -611,7 +612,7 @@ html[data-theme='dark'] .canvas-page.is-desktop-shell {
 }
 /* 相机真实视角要等 restoreView() 异步跑完才定下来，之前有一帧是默认原点/1倍缩放——
    进画布/切画布时藏起来，只在相机定好之后才淡入，不让用户看到那帧过渡态。 */
-.canvas-loading-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.canvas-page-loading { position: absolute; inset: 52px 0 0; z-index: 5; pointer-events: none; }
 .canvas-page-canvas { opacity: 0; transition: none; }
 .canvas-page-canvas.canvas-page-canvas-ready { opacity: 1; transition: opacity 0.12s ease; }
 </style>

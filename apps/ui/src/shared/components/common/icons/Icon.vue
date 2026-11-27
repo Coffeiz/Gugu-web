@@ -34,6 +34,7 @@ const numericSizeStyle = computed(() =>
   <component
     :is="icon"
     class="app-icon"
+    :data-close-icon="name === 'action.close' ? '' : undefined"
     :class="[`app-icon--${size}`, `app-icon--${tone}`]"
     :size="sizeValue"
     :style="numericSizeStyle"

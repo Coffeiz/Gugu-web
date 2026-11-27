@@ -143,7 +143,7 @@ const { preference, family, palette, setTheme, setFamily, setPalette } = useThem
 } : undefined)
 const useSystemProxy = ref(false)
 const proxySaving = ref(false)
-const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
+const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') !== '0')
 function setReopenResume(value: boolean) {
   reopenResume.value = value
   localStorage.setItem('gugu_reopen_resume', value ? '1' : '0')

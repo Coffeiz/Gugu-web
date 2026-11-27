@@ -301,3 +301,10 @@ const desktopUpdate: DesktopUpdateBridge = {
   },
 }
 contextBridge.exposeInMainWorld('guguDesktopUpdate', desktopUpdate)
+
+if (process.platform === 'win32') {
+  contextBridge.exposeInMainWorld('guguWindowChrome', {
+    platform: process.platform,
+    command: (action: string) => ipcRenderer.send('gugu:window-chrome', action),
+  })
+}

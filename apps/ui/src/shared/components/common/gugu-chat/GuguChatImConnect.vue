@@ -153,6 +153,8 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
 .im-qr-canvas { width:160px; height:160px; border-radius:var(--radius-xs); background:#fff; padding:var(--space-xs); box-sizing:border-box; box-shadow:var(--elevation-card); }
 .im-qr-hint { font-size:var(--font-size-xs); color:var(--content-secondary); text-align:center; line-height:var(--line-height-body); }
 .im-qr-err { font-size:var(--font-size-xs); color:var(--status-danger); padding:var(--space-xs) 0; }
-.im-qr-cancel { font-size:var(--font-size-xs); color:var(--content-secondary); background:none; border:none; cursor:pointer; padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-compact); }
-.im-qr-cancel:hover { background:var(--surface-soft-hover); color:var(--content-primary); }
+.im-qr-cancel { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-height-sm); font-size:var(--font-size-xs); font-family:inherit; color:var(--content-primary); background:var(--control-bg); border:1px solid var(--content-divider); cursor:pointer; padding:var(--space-xs) var(--space-md); border-radius:var(--radius-compact); transition:background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard); }
+.im-qr-cancel:hover { background:var(--surface-soft-hover); color:var(--content-primary); border-color:var(--input-border-hover); }
+.im-qr-cancel:focus-visible { outline:2px solid var(--action-primary); outline-offset:2px; }
+@media (prefers-reduced-motion: reduce) { .im-qr-cancel { transition:none; } }
 </style>

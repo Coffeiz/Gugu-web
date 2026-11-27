@@ -50,7 +50,7 @@ async function select(value: string) {
 
 <template>
   <SelectPopup class="chat-workspace-picker" :options="options" :selected-label="name" :model-value="selectedOption?.value"
-    :aria-label="`${t('projectWorkspaceUi.select')} · ${name}`" :disabled="disabled || saving" auto-flip
+    :aria-label="`${t('projectWorkspaceUi.select')} · ${name}`" :disabled="disabled || saving" auto-flip horizontal-align="center"
     @click="refresh" @update:model-value="select">
     <template #trigger="{ label }">
       <Icon :name="selectedIcon" size="sm" tone="inherit" />

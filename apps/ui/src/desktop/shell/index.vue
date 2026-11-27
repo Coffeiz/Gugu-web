@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import DesktopWindowsChrome from './components/DesktopWindowsChrome.vue'
+const windowsChrome = (window as Window & { guguWindowChrome?: { platform: string } }).guguWindowChrome?.platform === 'win32'
 import OnboardingModal from '@/components/onboarding/OnboardingModal.vue'
 import { configureOnboardingGuideSave, onboardingGuideState, setOnboardingGuideState, shouldShowOnboarding } from '@/composables/onboarding/useOnboardingGuide'
 import DesktopAgentModel from '../account/DesktopAgentModel.vue'
@@ -264,9 +266,10 @@ onMounted(() => perform(async () => {
 </script>
 
 <template>
-  <div class="desktop-shell" :style="{ '--desktop-sidebar-width': `${sidebarWidth}px` }">
+  <div class="desktop-shell" :class="{ 'has-windows-chrome': windowsChrome }" :style="{ '--desktop-sidebar-width': `${sidebarWidth}px` }">
+
     <DesktopBackdropDefinitions />
-    <div class="desktop-window-drag-region" aria-hidden="true"></div>
+    <div v-if="!windowsChrome" class="desktop-window-drag-region" aria-hidden="true"></div>
     <DesktopSidebar
       :active-section="visibleSection"
       :compact="sidebarCompact"
@@ -280,7 +283,7 @@ onMounted(() => perform(async () => {
       @resize-finish="finishSidebarResize"
       @resize-keydown="handleResizeKeydown"
     />
-    <header class="desktop-topbar">
+    <header class="desktop-topbar"><DesktopWindowsChrome v-if="windowsChrome" />
       <DevWorkbenchButton
         v-if="DevWorkbenchButton"
         :active="activeSection === 'dev-workbench'"
@@ -345,6 +348,11 @@ onMounted(() => perform(async () => {
 </template>
 
 <style scoped>
+.desktop-shell.has-windows-chrome { --desktop-l0-surface: rgb(from var(--surface-card-solid, light-dark(#fafafa, #242424)) r g b / 80%); }
+.has-windows-chrome .desktop-topbar { grid-column: 1 / -1; margin-inline: 0; pointer-events: auto; app-region: drag; -webkit-app-region: drag; }
+.has-windows-chrome :deep(.windows-chrome) { position: absolute; top: 0; left: 0; right: 0; height: var(--desktop-topbar-height); }
+.has-windows-chrome :deep(.dev-tool-button) { inset-inline-start: 280px; }
+.has-windows-chrome .topbar-search { left: calc(400px + (100% - 548px) / 2); width: min(400px, calc(100% - 580px)); }
 .desktop-shell { --desktop-topbar-height: 52px; --desktop-workspace-edge: var(--space-xs); --desktop-workspace-inset: var(--space-sm); position: relative; isolation: isolate; height: 100vh; width: 100vw; overflow: hidden; display: grid; grid-template-columns: var(--desktop-sidebar-width, 204px) minmax(0, 1fr); grid-template-rows: var(--desktop-topbar-height) minmax(0, 1fr); color: var(--text-primary); background: var(--desktop-l0-surface); }
 .desktop-window-drag-region {
   position: absolute;

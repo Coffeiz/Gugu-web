@@ -54,7 +54,7 @@
             {{ o.label }}
           </button>
         </ContextMenu>
-        <button class="reminder-del" @click="form.removeReminderAt(i)" :title="t('common.actions.remove')"><Icon name="action.close" :size="10" /></button>
+        <button class="reminder-del" @click="form.removeReminderAt(i)" :title="t('common.actions.remove')"><Icon name="action.close" :size="14" /></button>
       </div>
     </div>
     <button type="button" class="reminder-add-toggle" :disabled="!form.canAddReminder.value" @click="form.addReminder">＋ {{ t('calendar.addReminder') }}</button>
@@ -220,11 +220,11 @@ function mountAutoGrow(el: unknown) {
 .reminder-settings { display: grid; gap: 6px; }
 .reminder-item { display: flex; align-items: center; gap: 6px; }
 .reminder-del {
-  display: flex; align-items: center; padding: 3px; border: none; border-radius: var(--radius-compact);
+  display: flex; align-items: center; justify-content: center; flex: 0 0 var(--control-sm); width: var(--control-sm); height: var(--control-sm); padding: 0; border: none; border-radius: var(--radius-compact);
   background: transparent; cursor: pointer; color: var(--danger-button-fg);
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.reminder-del:hover { background: var(--danger-button-bg); }
+.reminder-del:hover { background: var(--close-button-danger-bg); color: var(--close-button-danger-fg); }
 .reminder-add-toggle,
 .reminder-test-bar {
   width: 100%; box-sizing: border-box; padding: 6px 10px; border-radius: var(--radius-xs);

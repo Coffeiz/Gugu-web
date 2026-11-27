@@ -1,7 +1,7 @@
 <template>
   <div
     class="fpw-root"
-    :class="{ 'fpw-native': nativeWindow, 'fpw-native-fullscreen': nativeState?.fullscreen, 'fpw-ready': nativeWindow || (ready && (!isImg || imageReady || placeholderReady || imageWasPresented || error)) }"
+    :class="{ 'fpw-native': nativeWindow, 'fpw-native-windows': nativeWindow && isWindowsHost, 'fpw-native-fullscreen': nativeState?.fullscreen, 'fpw-ready': nativeWindow || (ready && (!isImg || imageReady || placeholderReady || imageWasPresented || error)) }"
     :style="nativeWindow ? { zIndex: win.zIndex } : maximized
       ? { left: 0, top: 0, width: '100vw', height: '100vh', zIndex: win.zIndex, borderRadius: 0, transition: animating ? 'left .18s ease, top .18s ease, width .18s ease, height .18s ease, border-radius .18s ease' : 'none' }
       : { left: x+'px', top: y+'px', width: w+'px', height: h+'px', zIndex: win.zIndex, transition: animating ? 'left .18s ease, top .18s ease, width .18s ease, height .18s ease, border-radius .18s ease' : 'none' }"
@@ -54,7 +54,7 @@
           <Icon name="action.expand" v-if="!maximized" :size="13" />
           <Icon name="action.collapse" v-else :size="13" />
         </button>
-        <button type="button" class="fpw-btn" :title="t('sharedUi.close')" :aria-label="t('sharedUi.close')" @click.stop="closePreview">
+        <button type="button" class="fpw-btn fpw-close-btn" :title="t('sharedUi.close')" :aria-label="t('sharedUi.close')" @click.stop="closePreview">
           <Icon name="action.close" :size="13" />
         </button>
       </div>
@@ -123,6 +123,7 @@
 </template>
 
 <script setup lang="ts">
+const isWindowsHost = /Windows/i.test(navigator.userAgent)
 import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useFileOpenAccess } from '@/services/fileOpenAccess'
@@ -923,6 +924,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.fpw-btn.fpw-close-btn:hover { background: var(--close-button-danger-bg); color: var(--close-button-danger-fg); }
 .fpw-root {
   position: fixed;
   display: flex;
@@ -950,6 +952,7 @@ onUnmounted(() => {
   box-shadow: none;
   will-change: auto;
 }
+.fpw-root.fpw-native-windows { border-radius: 0; }
 .fpw-native .fpw-title {
   app-region: drag;
   -webkit-app-region: drag;

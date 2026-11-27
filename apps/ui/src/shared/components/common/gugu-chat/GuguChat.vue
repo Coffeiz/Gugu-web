@@ -142,6 +142,8 @@
 </template>
 
 <script setup lang="ts">
+import { subscribeModelConfigChanged } from '@/services/modelConfigEvents'
+let stopModelConfigRefresh: (() => void) | undefined
 import { selectionDraftEvent, selectionMessageText, type SelectionDraft } from '../selection/selectionDraft'
 import { mailRecipientFromClick } from '@/api/mailLinks'
 import type { ChatHttpStreamAccess } from './chatHttpStream'
@@ -539,6 +541,7 @@ onMounted(() => {
     automaticModeStatusLoaded.value = true
   })
   window.addEventListener('gugu-quota-changed', onQuotaChanged)
+  stopModelConfigRefresh = subscribeModelConfigChanged(() => { void loadVoiceAvailability() })
   window.addEventListener('beforeunload', saveProgress)
   // 小窗也需要会话权限摘要，避免只有展开聊天窗口后才知道当前 Session 的授权状态。
   void fetchSessions()
@@ -598,6 +601,7 @@ async function openSecretPromptLink() {
 onUnmounted(() => {
   stopPendingQueueRecovery = true
   window.removeEventListener('gugu-quota-changed', onQuotaChanged)
+  stopModelConfigRefresh?.()
   window.removeEventListener('beforeunload', saveProgress)
 })
 
@@ -1114,12 +1118,14 @@ async function loadQuota() {
   try { quota.value = await props.readQuota() } catch {}
 }
 const voiceInputAvailable = ref(false)
+let voiceAvailabilityRequest = 0
 async function loadVoiceAvailability() {
+  const request = ++voiceAvailabilityRequest
   try {
     const result = await (props.readVoiceAvailability ?? agentApi.getVoiceAvailability)()
-    voiceInputAvailable.value = result?.available === true
+    if (request === voiceAvailabilityRequest) voiceInputAvailable.value = result?.available === true
   } catch {
-    voiceInputAvailable.value = false
+    if (request === voiceAvailabilityRequest) voiceInputAvailable.value = false
   }
 }
 function onQuotaChanged() { loadQuota(); loadVoiceAvailability() }

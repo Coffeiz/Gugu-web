@@ -22,6 +22,7 @@ const props = defineProps({
   placement: { type: String as PropType<'bottom' | 'top' | 'auto'>, default: 'bottom' },
   position: { type: Object as PropType<{ x: number; y: number } | null>, default: null },
   centered: { type: Boolean, default: false },
+  horizontalAlign: { type: String as PropType<'start' | 'center'>, default: 'start' },
   style: { type: Object as PropType<Record<string, string | number | undefined>>, default: () => ({}) },
 })
 const emit = defineEmits<{ 'after-leave': [] }>()
@@ -66,7 +67,7 @@ function position() {
   if (!rect) return
   const popupWidth = popupRef.value?.offsetWidth || rect.width
   const popupHeight = popupRef.value?.offsetHeight || 0
-  const rawLeft = props.placement !== 'bottom'
+  const rawLeft = props.horizontalAlign === 'center'
     ? rect.left + (rect.width - popupWidth) / 2
     : rect.left
   const placeAbove = props.placement === 'top' || (
@@ -99,7 +100,7 @@ watch(() => props.style, value => {
   }
   popupStyle.value = next
 }, { deep: true })
-watch(() => [props.anchor, props.position, props.placement, props.centered], () => {
+watch(() => [props.anchor, props.position, props.placement, props.centered, props.horizontalAlign], () => {
   if (props.show) refresh()
 })
 watch(() => props.anchor, () => { if (props.show) void nextTick(observePopupSize) })

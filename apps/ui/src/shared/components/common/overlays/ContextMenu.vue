@@ -80,7 +80,7 @@ onUnmounted(() => {
 <style scoped>
 :global(.ctx-menu) {
   width: max-content;
-  min-width: min(160px, calc(100dvw - 12px));
+  min-width: 0;
   max-width: calc(100dvw - 12px);
   box-sizing: border-box;
 }

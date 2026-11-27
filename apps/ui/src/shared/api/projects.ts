@@ -15,7 +15,8 @@ export interface ProjectWorkspaceBinding {
 }
 
 export interface ProjectAccess {
-  pickWorkspace?(): Promise<`desktop:${string}` | null>
+  listContacts?(): Promise<{ name: string }[]>
+  pickWorkspace?(name?: string): Promise<`desktop:${string}` | null>
   listWorkspaceBindings?(id: number): Promise<ProjectWorkspaceBinding[]>
   selectWorkspace?(id: number, directoryId: `project:${number}` | ProjectWorkspaceBinding['id'], workspaceId?: number): Promise<unknown>
   projectFilesEnabled?: boolean

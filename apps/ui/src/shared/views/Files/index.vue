@@ -42,6 +42,7 @@
             :data-bc-idx="i"
             @click="navigateTo(i)"
           >
+
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
             <span class="bc-label">{{ navSegmentLabel(seg) }}</span>
           </RuntimeBreadcrumbTarget>
@@ -49,6 +50,7 @@
             :class="{ active: i === navPath.length - 1 }"
             @click="navigateTo(i)"
           >
+
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
             <span class="bc-label">{{ navSegmentLabel(seg) }}</span>
           </button>
@@ -77,11 +79,12 @@
     <div class="files-body">
       <div class="files-main glass-card scroll-surface" ref="mainRef"
         :class="{ 'is-selecting': pathSelection.boxStart.value !== null }"
-        @dragover.prevent
-        @drop.prevent="dropFiles"
+        @dragenter="fileDropHover.enter" @dragover="fileDropHover.over" @dragleave="fileDropHover.leave"
+        @drop.prevent="fileDropHover.reset(); dropFiles($event)"
         @mousedown="onMainMouseDown"
         style="position:relative"
       >
+        <FileUploadDropOverlay :visible="fileDropHover.active.value" />
 
         <!-- 目录切换直接替换当前投影：不保留上一目录 DOM，不做交叉淡化或 Presence 离场。 -->
         <div class="content-body">
@@ -144,6 +147,9 @@
 </template>
 
 <script setup lang="ts">
+import { useFileDropHover } from '@/composables/files/useFileDropHover'
+import FileUploadDropOverlay from '@/components/common/file-browser/FileUploadDropOverlay.vue'
+const fileDropHover = useFileDropHover()
 import { useFileViewMode } from '@/composables/files/useFileViewMode'
 import SkeletonGate from '@/components/common/feedback/skeleton/SkeletonGate.vue'
 import PageSkeleton from '@/components/common/feedback/skeleton/PageSkeleton.vue'

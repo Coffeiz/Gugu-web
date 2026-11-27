@@ -55,6 +55,7 @@ function persistPopularCache(cache: PopularCache) {
 <script setup lang="ts">
 import { computed, inject, onMounted, ref, useId, watch } from 'vue'
 import DOMPurify from 'dompurify'
+import FirstUseEmptyState from '@/components/common/layout/FirstUseEmptyState.vue'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -202,8 +203,11 @@ async function install(skill: ClawHubSkill) {
       <input v-model="query" class="form-input" :aria-label="t('clawhub.searchSkills')" :placeholder="t('clawhub.searchSkills')" maxlength="200" />
       <ActionButton fit type="submit" :disabled="loading || !query.trim()">{{ loading ? t('clawhub.searching') : t('clawhub.search') }}</ActionButton>
     </form>
-    <p v-if="error" role="alert" class="clawhub-status">{{ error }}</p>
-    <p v-else-if="searched && !skills.length" class="clawhub-status">{{ t('clawhub.noResults') }}</p>
+        <FirstUseEmptyState v-if="loading || error || (searched && !skills.length)" class="clawhub-page-state" :title="loading ? t('clawhub.searching') : error || t('clawhub.noResults')" :aria-busy="loading">
+      <template #icon><Icon name="resource.marketplace" :size="24" /></template>
+      <ActionButton v-if="error" fit variant="secondary" @click="search">{{ t('skills.retry') }}</ActionButton>
+    </FirstUseEmptyState>
+
     <div v-else-if="searched" class="clawhub-results">
       <article v-for="skill in skills" :key="skill.reference" class="clawhub-card">
         <div class="clawhub-card-head"><h3>{{ skill.name }}</h3><span>{{ skill.owner }}</span></div>
@@ -222,8 +226,11 @@ async function install(skill: ClawHubSkill) {
     </div>
     <section v-else class="clawhub-popular" :aria-label="t('clawhub.popularSkills')">
       <div class="clawhub-section-heading"><h2>{{ t('clawhub.popularSkills') }}</h2><span>{{ t('clawhub.popularHint') }}</span></div>
-      <p v-if="loadingPopular" class="clawhub-status" aria-live="polite">{{ t('clawhub.searching') }}</p>
-      <p v-else-if="popularError" role="status" class="clawhub-status">{{ popularError }}</p>
+            <FirstUseEmptyState v-if="loadingPopular || popularError || !popularSkills.length" class="clawhub-page-state" :title="loadingPopular ? t('clawhub.searching') : popularError || t('clawhub.noResults')" :aria-busy="loadingPopular">
+        <template #icon><Icon name="resource.marketplace" :size="24" /></template>
+        <ActionButton v-if="popularError" fit variant="secondary" @click="loadPopular">{{ t('skills.retry') }}</ActionButton>
+      </FirstUseEmptyState>
+
       <div v-else class="clawhub-results">
         <article v-for="(skill, index) in popularSkills" :key="skill.reference" class="clawhub-card">
           <div class="clawhub-card-head"><div class="clawhub-title"><span class="clawhub-rank">{{ index + 1 }}</span><h3>{{ skill.name }}</h3></div><span>{{ skill.owner }}</span></div>
@@ -294,7 +301,12 @@ async function install(skill: ClawHubSkill) {
 </template>
 
 <style scoped>
-.clawhub { display: grid; gap: var(--space-lg); }
+.clawhub { display: flex; flex-direction: column; gap: var(--space-lg); min-height: 100%; }
+.clawhub-page-state { flex: 1; min-height: 280px; }
+.clawhub-page-state[aria-busy='true'] :deep(.first-use-empty__icon) { animation: clawhub-loading 1.4s ease-in-out infinite; }
+@keyframes clawhub-loading { 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .clawhub-page-state[aria-busy='true'] :deep(.first-use-empty__icon) { animation: none; } }
+.clawhub-popular { flex: 1; display: flex; flex-direction: column; }
 .clawhub-search { display: flex; gap: var(--space-sm); }
 .clawhub-search input { flex: 1; min-width: 0; }
 .clawhub-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: var(--space-xs); }

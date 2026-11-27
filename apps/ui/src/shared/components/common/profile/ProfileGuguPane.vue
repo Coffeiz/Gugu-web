@@ -68,7 +68,7 @@ const { t } = useI18n()
 const desktop = useLocalPreferencesAccess()
 
 const prefsStore = usePreferencesStore()
-const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
+const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') !== '0')
 function setReopenResume(value: boolean) { reopenResume.value = value; localStorage.setItem('gugu_reopen_resume', value ? '1' : '0') }
 
 const quota = ref({ used_6h: 0, limit_6h: null as number | null, reset_6h_at: null as string | null, used_weekly: 0, limit_weekly: null as number | null, usage_kind: 'platform', is_byok: false, byok_tokens_today: 0, byok_tokens_month: 0, byok_cache_rate: 0 })
@@ -109,7 +109,7 @@ const attachClearing = ref(false); const attachMsg = ref(''); const attachMsgTyp
 async function clearAttachments() { if (!await confirmDialog({ title: t('profileGuguUi.deleteAttachments'), message: t('profileGuguUi.deleteAttachmentsConfirm'), tone: 'danger', confirmText: t('profileGuguUi.deleteFiles') })) return; attachClearing.value = true; attachMsg.value = ''; try { const result = await (desktop ? desktop.clearAgentAttachments() : agentApi.clearAttachments()); attachMsg.value = result.deleted > 0 ? t('profileGuguUi.attachmentsDeleted', { count: result.deleted }) : t('profileGuguUi.noAttachments'); attachMsgType.value = 'ok' } catch (error) { attachMsg.value = (error instanceof Error ? error.message : '') || t('profileGuguUi.deleteFailed'); attachMsgType.value = 'err' } finally { attachClearing.value = false } }
 
 onActivated(() => { void loadQuota() })
-onMounted(() => { reopenResume.value = localStorage.getItem('gugu_reopen_resume') === '1'; window.addEventListener('gugu-quota-changed', onQuotaChanged) })
+onMounted(() => { reopenResume.value = localStorage.getItem('gugu_reopen_resume') !== '0'; window.addEventListener('gugu-quota-changed', onQuotaChanged) })
 onUnmounted(() => window.removeEventListener('gugu-quota-changed', onQuotaChanged))
 </script>
 

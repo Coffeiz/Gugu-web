@@ -594,4 +594,7 @@ Object.assign(messages['en-US'], { smartView: { timeline_done: 'Done', timeline_
 Object.assign(messages['zh-CN'], { projectWorkspaceUi: { select: '选择工作区', manage: '关联工作区', link: '添加关联', unlink: '解除关联', unavailable: '目录不可用', empty: '没有已登记的工作区' } })
 Object.assign(messages['en-US'], { projectWorkspaceUi: { select: 'Select workspace', manage: 'Linked workspaces', link: 'Link', unlink: 'Unlink', unavailable: 'Directory unavailable', empty: 'No registered workspaces' } })
 Object.assign(messages['ja-JP'], { projectWorkspaceUi: { select: 'ワークスペースを選択', manage: '関連ワークスペース', link: '関連付け', unlink: '関連解除', unavailable: 'フォルダーを利用できません', empty: '登録済みのワークスペースはありません' } })
+Object.assign(messages['zh-CN'], { projectContactUi: { none: '无' } })
+Object.assign(messages['en-US'], { projectContactUi: { none: 'None' } })
+Object.assign(messages['ja-JP'], { projectContactUi: { none: 'なし' } })
 }
