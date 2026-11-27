@@ -35,5 +35,7 @@ export declare function materializeQqMedia(item: Readonly<Record<string, unknown
 export declare function processQqMedia(items: readonly QqMediaRequirement[], budget: Parameters<typeof materializeQqMedia>[1], signal: AbortSignal, options: Parameters<typeof downloadQqMedia>[3] & {
     authorize?: () => Promise<boolean>;
     quote: (media: QqMediaRequirement, sourceId: string) => Promise<boolean>;
-    file: (media: QqMediaRequirement, file: NonNullable<Awaited<ReturnType<typeof materializeQqMedia>>>, index: number) => Promise<void>;
+    file: (media: QqMediaRequirement, file: NonNullable<Awaited<ReturnType<typeof materializeQqMedia>>> & {
+        quoted: boolean;
+    }, index: number) => Promise<void>;
 }): Promise<boolean>;

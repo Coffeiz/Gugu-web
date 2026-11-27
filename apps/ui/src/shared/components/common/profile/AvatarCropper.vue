@@ -30,7 +30,7 @@
         <span class="ac-zoom-ico">＋</span>
       </div>
 
-      <div class="ac-actions">
+      <div class="ac-actions app-card-actions">
         <button class="ac-btn ghost" @click="$emit('close')">{{ t('common.actions.cancel') }}</button>
         <button class="ac-btn primary" :disabled="!loaded || busy" @click="confirm">
           {{ busy ? t('common.status.processing') : t('common.actions.confirm') }}
@@ -185,9 +185,9 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.ac { padding: 20px 22px 18px; display: flex; flex-direction: column; align-items: center; }
+.ac { --card-actions-inset: 22px; padding: var(--space-lg) var(--card-actions-inset) 0; display: flex; flex-direction: column; align-items: center; }
 .ac-title { font-size: 15px; font-weight: 700; color: var(--text-primary); align-self: flex-start; }
-.ac-hint { font-size: 12px; color: var(--text-secondary); margin: 4px 0 14px; align-self: flex-start; }
+.ac-hint { font-size: 12px; color: var(--text-secondary); margin: var(--space-xs) 0 var(--space-md); align-self: flex-start; }
 
 .ac-viewport {
   position: relative; overflow: hidden; border-radius: 12px;
@@ -205,13 +205,13 @@ onBeforeUnmount(() => {
               0 0 0 9999px rgba(20,22,40,0.5);
 }
 
-.ac-zoom { display: flex; align-items: center; gap: 10px; width: 100%; margin: 16px 0 4px; }
+.ac-zoom { display: flex; align-items: center; gap: var(--space-sm); width: 100%; margin: var(--space-lg) 0 var(--space-xs); }
 .ac-zoom-ico { font-size: 15px; color: var(--text-secondary); width: 14px; text-align: center; }
 .ac-zoom-range { flex: 1; accent-color: var(--color-primary); cursor: pointer; }
 
-.ac-actions { display: flex; gap: 10px; width: 100%; margin-top: 16px; }
+.ac-actions { display: flex; gap: var(--space-sm); width: 100%; margin-top: var(--space-lg); }
 .ac-btn {
-  flex: 1; height: 38px; border-radius: 10px; font-size: 14px; font-weight: 600;
+  flex: 1; height: var(--card-actions-control-height); border-radius: 10px; font-size: 14px; font-weight: 600;
   cursor: pointer; border: none; transition: opacity 0.15s, transform 0.1s;
 }
 .ac-btn:active { transform: translateY(1px); }

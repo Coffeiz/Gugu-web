@@ -1,3 +1,4 @@
+import { toolNames } from '../sessions/tool-labels.js'
 import { canonicalAgentToolName } from '../tools/configuration.js'
 import type { CanonicalMessage, Json } from '../models.js'
 
@@ -25,7 +26,7 @@ const calendarTools = new Map([
 ])
 const tools = new Map([
   ['global_search', '站内全局搜索'],
-  ['shell', 'Shell 命令'],
+  ['shell', toolNames['zh-CN'].shell],
   ['list_contacts', '联系人列表'],
   ['create_contact', '新建联系人'],
   ['update_contact', '更新联系人'],
@@ -153,10 +154,19 @@ export function formatToolResult(name: string, content: string, isError: boolean
     }
     return [heading, ...render(value, '', fieldLabels)].join('\n')
   }
-  if (name === 'shell' && Array.isArray(fields?.movedToTrash) && Array.isArray(fields?.failed)) {
-    const { summary, ...details } = fields
-    return [header, `[执行状态]${status}`, ...(typeof summary === 'string' ? [`[摘要]${summary}`] : []),
-      ...render(details, '', { ...labels, movedToTrash: '已移入废纸篓', failed: '未移入废纸篓', cancelled: '已取消' })].join('\n')
+  if (name === 'shell' && fields) {
+    const { ok, scope, network_access, ...details } = fields
+    const reason = details.error
+    const shortError = typeof reason === 'string' && reason.length <= 32 && !/[\r\n]/u.test(reason)
+      ? reason : undefined
+    const summary = status === '失败'
+      ? shortError ?? (details.timed_out === true ? '执行超时'
+        : typeof details.exit_code === 'number' && details.exit_code !== 0 ? `退出码 ${details.exit_code}` : undefined)
+      : undefined
+    if (summary === shortError && summary !== undefined) delete details.error
+    const heading = [header, status, summary].filter(Boolean).join(' · ')
+    const shellLabels = { ...labels, summary: '摘要', movedToTrash: '已移入废纸篓', failed: '未移入废纸篓', cancelled: '已取消' }
+    return [heading, ...(Object.keys(details).length ? render(details, '', shellLabels) : [])].join('\n')
   }
   const summary = !isError && name === 'global_search' && typeof fields?.total === 'number' ? `命中 ${fields.total} 项` : undefined
   return [header, `[执行状态]${status}`, ...(summary ? [`[摘要]${summary}`] : []), ...render(value)].join('\n')

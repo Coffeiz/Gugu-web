@@ -100,7 +100,7 @@ apps/
     └── i18n/sections/mail.ts           【新增】邮箱文案
 ```
 
-当前双端已共用 `packages/core/src/mail/transport.ts` 的 Node 协议适配。Web 使用凭据信封加密后的本地账户文件，按 owner 分目录。Desktop 使用系统安全存储加密本机账户。两端通过独占发送标记拒绝同一提交请求重复投递。
+当前双端已共用 `packages/email/src/transport.ts` 的 Node 协议适配。Web 使用凭据信封加密后的本地账户文件，按 owner 分目录。Desktop 使用系统安全存储加密本机账户。两端通过独占发送标记拒绝同一提交请求重复投递。
 
 当前默认只连接可公开访问的邮件服务器，使用 IMAP TLS 993，以及 SMTP TLS 465 或 STARTTLS 587。附件可显式保存到个人文件，无覆盖行为。SMTP 发送支持文本正文，已发送列表读取服务商的文件夹，服务商未归档时暂未自动补副本。既有系统发信保有独立配置和权限。
 

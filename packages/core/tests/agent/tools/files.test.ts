@@ -4,8 +4,8 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as XLSX from 'xlsx'
 const { openLocalFile } = await import(new URL('../../../../fs/src/node.ts', import.meta.url).href)
-import type { FileArchivePort, FileDeletePort, FileEditPort, ReadFilePorts } from '../../../src/agent/tools/files.js'
-import { createDeleteFileTool, createListRecentAttachmentsTool, createPresentFileTool, createOwnedTextReader, createSaveAttachmentTool } from '../../../src/agent/tools/files.js'
+import type { FileArchivePort, FileDeletePort, FileEditPort, ReadFilePorts } from '../../../src/agent/tools/files/index.js'
+import { createDeleteFileTool, createListRecentAttachmentsTool, createPresentFileTool, createOwnedTextReader, createSaveAttachmentTool } from '../../../src/agent/tools/files/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 
 const identity = { ownerId: '小北', sessionId: '1', runId: 'run' }

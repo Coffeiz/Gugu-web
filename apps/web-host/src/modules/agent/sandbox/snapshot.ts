@@ -10,13 +10,26 @@ export function createAgentShellSnapshotReader<DB>(
   automaticModeGlobalEnabled = false,
 ) {
   const readWorkspace = createSessionWorkspaceTargetReader(db, 'postgres')
+  type Runtime = Awaited<ReturnType<typeof settings>>
+  const sandboxAvailable = (runtime: Runtime) =>
+    runtime.sandboxEnabled && runtime.sandboxReady && runtime.networkProfile === 'none'
+  function readPolicy(runtime: Runtime, preferences: unknown) {
+    const raw = typeof preferences === 'string' ? JSON.parse(preferences) : preferences
+    const prefs = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
+    return {
+      automaticModeEnabled: automaticModeGlobalEnabled && prefs.automatic_mode_enabled === true,
+      systemEnabled: runtime.shellSystemEnabled === true && prefs.shell_system_enabled === true,
+      userEnabled: (prefs.shell_enabled ?? true) === true,
+      userDangerousEnabled: (prefs.shell_dangerous_enabled ?? true) === true,
+    }
+  }
   const read = async (owner: string, session: string,
     diagnose?: (reason: 'invalid_session' | 'shell_disabled' | 'sandbox_unavailable' | 'workspace_unavailable' | 'account_unavailable') => void) => {
     const sessionId = Number(session)
     if (!Number.isSafeInteger(sessionId) || sessionId < 1) { diagnose?.('invalid_session'); return null }
     const runtime = await settings()
     if (!runtime.shellEnabled) { diagnose?.('shell_disabled'); return null }
-    if (!runtime.sandboxEnabled || !runtime.sandboxReady || runtime.networkProfile !== 'none') {
+    if (!sandboxAvailable(runtime)) {
       diagnose?.('sandbox_unavailable'); return null
     }
     const { rows: [row] } = await pool.query<{ preferences: unknown; full_write: boolean; security_version: number; workspace_id: number | null }>(`
@@ -32,28 +45,42 @@ export function createAgentShellSnapshotReader<DB>(
     if (!row) { diagnose?.('account_unavailable'); return null }
     const target = row.workspace_id === null ? null : await readWorkspace(owner, sessionId, { explicitOnly: true })
     if (row.workspace_id !== null && !target) { diagnose?.('workspace_unavailable'); return null }
-    const raw = typeof row.preferences === 'string' ? JSON.parse(row.preferences) : row.preferences
-    const prefs = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
+    const policy = readPolicy(runtime, row.preferences)
     return { workspaceId: target?.workspaceId ?? null, workspaceTarget: JSON.stringify(target ?? { kind: 'personal' }), securityVersion: row.security_version,
       isolatedWorkspace: target?.kind === 'directory' ? `/workspace/${target.directoryName}` : undefined,
-      automaticModeEnabled: automaticModeGlobalEnabled && prefs.automatic_mode_enabled === true,
-      systemEnabled: runtime.shellSystemEnabled === true && (prefs.shell_system_enabled ?? false) === true, facts: {
-      adminEnabled: runtime.shellEnabled, userEnabled: (prefs.shell_enabled ?? true) === true,
+      automaticModeEnabled: policy.automaticModeEnabled,
+      systemEnabled: policy.systemEnabled, facts: {
+      adminEnabled: runtime.shellEnabled, userEnabled: policy.userEnabled,
       sandboxEnabled: runtime.sandboxEnabled, sandboxReady: runtime.sandboxReady,
       sessionOwned: true, workspaceValid: true, filesystemAuthorizationAvailable: true,
       fullUserSandboxWrite: row.full_write, adminDangerousEnabled: runtime.shellDangerousEnabled,
-      userDangerousEnabled: (prefs.shell_dangerous_enabled ?? true) === true,
+      userDangerousEnabled: policy.userDangerousEnabled,
     } }
   }
   return Object.assign(read, {
+    async readScheduledShellPolicy(owner: string) {
+      const runtime = await settings()
+      if (!runtime.shellEnabled) return null
+      const { rows: [row] } = await pool.query<{ preferences: unknown }>(`
+        SELECT p.data_json AS preferences
+        FROM users u LEFT JOIN user_preferences p ON p.user_id=u.id
+        WHERE u.id=$1 AND u.is_active=TRUE AND COALESCE(u.account_status,'active')='active'
+      `, [owner])
+      if (!row) return null
+      const policy = readPolicy(runtime, row.preferences)
+      if (!policy.userEnabled) return null
+      return { systemEnabled: policy.systemEnabled }
+    },
     async allowsReferenceRead(owner: string) {
-      if (!(await settings()).shellEnabled) return false
-      const { rows: [row] } = await pool.query<{ enabled: boolean }>(`
+      return (await settings()).shellEnabled && await ownerAllowsShell(owner)
+    },
+  })
+  async function ownerAllowsShell(owner: string) {
+    const { rows: [row] } = await pool.query<{ enabled: boolean }>(`
         SELECT COALESCE(NULLIF(p.data_json::jsonb -> 'shell_enabled', 'null'::jsonb), 'true'::jsonb) = 'true'::jsonb AS enabled
         FROM users u LEFT JOIN user_preferences p ON p.user_id=u.id
         WHERE u.id=$1 AND u.is_active=TRUE AND COALESCE(u.account_status,'active')='active'
       `, [owner])
-      return row?.enabled === true
-    },
-  })
+    return row?.enabled === true
+  }
 }

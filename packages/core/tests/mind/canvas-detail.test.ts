@@ -3,7 +3,7 @@ import SQLite from 'better-sqlite3'
 import { Kysely,SqliteDialect } from 'kysely'
 import { tablesSql,type Database } from '../../src/data/schema.js'
 import { createSqlMindCanvasReader } from '../../src/mind/canvas-read.js'
-import { createCanvasReadTools } from '../../src/agent/tools/canvas.js'
+import { createCanvasReadTools } from '../../src/agent/tools/canvas/index.js'
 import { createToolRegistry } from '../../src/agent/tools/registry.js'
 
 it('真实SQLite画布快照独立关系分页、几何审计、搜索探测、定位和owner边界',async()=>{
@@ -54,4 +54,32 @@ it('真实SQLite画布快照独立关系分页、几何审计、搜索探测、�
   allowed=false;expect(await call('canvas_search',{canvas_id:1})).toMatchObject({successful:false,executed:false})
   expect(file.prepare('SELECT * FROM mind_maps').all()).toEqual(before)
  }finally{await db.destroy()}
+})
+
+it('画布联系人读取始终使用当前 owner 的最新资料', async () => {
+ const file = new SQLite(':memory:'), ddl = tablesSql('sqlite')
+ file.pragma('foreign_keys=OFF')
+ file.exec([ddl.mindNodes, ddl.mindMaps, ddl.mindItems, ddl.clients].join(';'))
+ const db = new Kysely<Database>({ dialect: new SqliteDialect({ database: file }) })
+ const owner = '00000000-0000-4000-8000-000000000001', key = owner.replaceAll('-', '')
+ const other = '00000000000040008000000000000002', time = '2026-11-15 00:00:00.000001'
+ try {
+  file.prepare("INSERT INTO mind_maps(id,user_id,title,data_json,created_at,updated_at) VALUES(1,?,'合成画布','{}',?,?)").run(key,time,time)
+  const contact = file.prepare("INSERT INTO clients(id,user_id,name,email,phone,address,notes,created_at) VALUES(?,?,'小北','north@example.test','12345','示例路','测试备注',?)")
+  contact.run(1,key,time)
+  contact.run(2,other,time)
+  const node = file.prepare("INSERT INTO mind_nodes(id,user_id,kind,title,content_md,content_plain,origin,version,ref_type,ref_id,captured_at,created_at,updated_at) VALUES(?,?,'ref','原名称','','','user',1,'client',?,?,?,?)")
+  const item = file.prepare("INSERT INTO mind_canvas_items(id,user_id,canvas_id,node_id,x,y,z,collapsed,data_json,created_at,updated_at) VALUES(?,?,1,?,0,0,?,0,'{}',?,?)")
+  for (const id of [1,2]) {
+   node.run(id,key,id,time,time,time)
+   item.run(id,key,id,id,time,time)
+  }
+  const read = () => createSqlMindCanvasReader(db,'sqlite').listItems(owner,1)
+  expect(await read()).toMatchObject([
+   { refData: { name:'小北', email:'north@example.test', phone:'12345', address:'示例路', notes:'测试备注' } },
+   { refData: null },
+  ])
+  file.prepare("UPDATE clients SET name='新名称', notes='' WHERE id=1").run()
+  expect((await read())?.[0]?.refData).toMatchObject({ name:'新名称', notes:'' })
+ } finally { await db.destroy() }
 })

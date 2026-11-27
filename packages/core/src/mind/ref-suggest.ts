@@ -2,7 +2,7 @@ import { CoreError, dataContext } from '../contracts/index.js'
 import { searchSnippet, type GlobalSearchOperations, type GlobalSearchType } from '@gugu/search'
 
 export const MIND_REFERENCE_SUGGESTION_TYPES: readonly GlobalSearchType[] = Object.freeze([
-  'project', 'file', 'folder', 'event', 'canvas_note', 'skill', 'mcp', 'scheduled_task',
+  'project', 'client', 'file', 'folder', 'event', 'canvas_note', 'skill', 'mcp', 'scheduled_task',
 ])
 
 export interface MindReferenceSuggestionItem {

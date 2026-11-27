@@ -1,6 +1,6 @@
 <template>
   <div class="weekday-row">
-    <span v-for="w in weekdays" :key="w" class="weekday-hdr" :class="{ weekend: w === '六' || w === '日' }">{{ w }}</span>
+    <span v-for="(w, index) in weekdays" :key="w" class="weekday-hdr" :class="{ weekend: (monthWeeks[0]?.[index]?.dow ?? 0) >= 5 }">{{ w }}</span>
   </div>
   <div class="month-body">
     <template v-for="(week, wi) in monthWeeks" :key="wi">
@@ -32,7 +32,7 @@
       >
         <div class="cell-head">
           <div class="cell-num">{{ d.date }}</div>
-          <span v-if="!d.other && hdayType(d.iso)" class="hday-badge" :class="'hday-' + hdayType(d.iso)">{{ hdayType(d.iso) === 'holiday' ? '休' : '班' }}</span>
+          <span v-if="!d.other && hdayType(d.iso)" class="hday-badge" :class="'hday-' + hdayType(d.iso)">{{ hdayType(d.iso) === 'holiday' ? $t('pageUi.holiday') : $t('pageUi.workday') }}</span>
         </div>
         <template v-for="lay in [dayLayout(d.iso, week, wi)]" :key="'lay'">
           <div class="cell-chips" :style="{ paddingTop: lay.paddingTop + 'px' }">

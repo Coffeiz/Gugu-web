@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify'
-import { createMailService, MailError } from '@gugu/core/mail/service'
-import { createMailTransport } from '@gugu/core/mail/transport'
+import { MailError } from '@gugu/email/service'
 import { registerProtectedDomain } from '../../http/user.js'
 import type { UserAuthOptions } from '../auth/contracts.js'
-import { createWebMailStore } from './store.js'
+
+import { createWebMailRuntime } from './runtime.js'
 
 export function registerMailRoutes(app: FastifyInstance, auth: UserAuthOptions, env = process.env) {
-  const execute = createMailService(createWebMailStore(env), createMailTransport())
+  const { execute } = createWebMailRuntime(env)
   registerProtectedDomain(app, auth, (routes, userFromRequest) => {
     routes.post('/api/v1/mail/command', async (request, reply) => {
       const owner = userFromRequest(request).requestContext.data.ownerId

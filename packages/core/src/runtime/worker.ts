@@ -1,6 +1,10 @@
-import { matchesScheduledGroup, readDesktopScheduledGroups, readHostedScheduledGroups } from '../scheduled-tasks/desktop-group-targets.js'
+import { prepareDesktopOwnerFiles } from './desktop-owner-files.js'
+import { readDesktopClientRelated } from '../clients/related.js'
+import { matchesScheduledGroup, readDesktopScheduledGroups, readHostedScheduledGroups } from './desktop-schedules/desktop-group-targets.js'
+import { createFileSkillSearchSource } from '../agent/skills/search.js'
+import { cutoverLegacySkillBundles } from '../agent/skills/migration.js'
 import { createKyselySqliteGlobalSearchSources } from '../search/sqlite.js'
-import { desktopScheduleImDeliveryTargets, desktopScheduleImPlatforms, desktopScheduleImTarget, desktopScheduleImReminderVersion, type DesktopScheduleImTarget, ownsDesktopScheduleImTarget, readDesktopScheduleImTargets } from '../scheduled-tasks/desktop-im.js'
+import { desktopScheduleImDeliveryTargets, desktopScheduleImPlatforms, desktopSchedulePrivateBinding, desktopScheduleImReminderVersion, type DesktopScheduleImTarget, ownsDesktopScheduleImTarget, readDesktopScheduleImTargets } from './desktop-schedules/desktop-im.js'
 import { createGlobalSearchOperations, parseGlobalSearchQuery } from '@gugu/search'
 import { createDesktopImProjectionTransfer } from './desktop-im-projection-transfer.js'
 import { mergeSkillToolCatalog, projectSkillToolCatalog } from '../agent/skills/tool-catalog.js'
@@ -71,13 +75,13 @@ import { createSqlMindCanvasRelationCreateRuntime } from '../mind/relation-creat
 import { createSqlMindCanvasRelationDeleteRuntime } from '../mind/relation-delete-canvas-sql.js'
 import { createMindRefNodeCreator } from '../mind/ref-node-create.js'
 import { createSqlMindRefNodeCreateRuntime } from '../mind/ref-node-create-sql.js'
-import { desktopMcp, desktopSkills } from './desktop-resources.js'
+import { desktopMcp } from './desktop-resources.js'
 import { createDesktopMcpAgentRuntime } from '../mcp/desktop-agent-runtime.js'
 import { createNodeProviderTransport, desktopTransportOptions, type NodeProviderTransportOptions, type ProxyEndpoint } from '../agent/providers/transport/node.js'
 import { filterConfiguredAgentTools } from '../agent/tools/configuration.js'
 import { isAllowedDesktopAgentHostRequest } from './desktop-host-method-policy.js'
 import { createDesktopMcpCrypto } from '../mcp/desktop-crypto.js'
-import { desktopScheduledTaskId, desktopScheduledTasks } from '../scheduled-tasks/desktop.js'
+import { desktopScheduledTaskId, desktopScheduledTasks } from './desktop-schedules/desktop.js'
 import { createLocalPreferenceTextFiles } from '../preferences/text-files.js'
 import { importDesktopBusinessArchive } from '../data-portability/desktop-import.js'
 import { exportDesktopBusinessArchive } from '../data-portability/desktop-export.js'
@@ -122,9 +126,10 @@ try {
     exclusive: config.exclusive,
   })
   const context = dataContext(ownerId)
-  const desktopSearch = createGlobalSearchOperations(
-    createKyselySqliteGlobalSearchSources(runtime.db).filter(source => source.type !== 'client'),
-  )
+  const desktopSearch = createGlobalSearchOperations([
+    ...createKyselySqliteGlobalSearchSources(runtime.db).filter(source => source.type !== 'client'),
+    createFileSkillSearchSource(process.env.GUGU_DESKTOP_MEMORY_ROOT ?? dirname(config.database)),
+  ])
   const transferImProjection = createDesktopImProjectionTransfer()
   let hostRequestSequence = 0
   const pendingHostRequests = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void; cleanup(): void }>()
@@ -164,7 +169,10 @@ try {
     })
   }
   const memoryRoot = config.exclusive ? process.env.GUGU_DESKTOP_MEMORY_ROOT : undefined
-  const memoryFiles = memoryRoot ? createDesktopMemoryFiles(runtime.db, memoryRoot, ownerId) : undefined
+  const ownerFilesRoot = memoryRoot ? await prepareDesktopOwnerFiles(memoryRoot, dirname(config.database), ownerId) : undefined
+  // 独占宿主尚未接收请求时完成一次性迁移，避免旧表写入与目录写入并行。
+  if (memoryRoot) await cutoverLegacySkillBundles({ db: runtime.db, backend: 'sqlite', dataRoot: memoryRoot, ownerId })
+  const memoryFiles = ownerFilesRoot ? createDesktopMemoryFiles(runtime.db, ownerFilesRoot, ownerId) : undefined
   await memoryFiles?.initialize()
   await memoryFiles?.flushImportedIm()
   const notifyAgentRunChanged = (sessionId: number, runId?: string, interactionChanged?: true) => {
@@ -303,7 +311,12 @@ try {
         if (!agentRuns && job.method.startsWith('agent.'))
           throw new CoreError('invalid_request', '当前 Core Worker 未装配桌面 Agent')
         let result: unknown
-        if (job.method === 'im.inbox.admit') {
+        if (job.method === 'core.devReloadIdle') {
+          validateCommandParams(job.method, job.params)
+          result = !agentRuns?.hasExecutingTasks?.()
+            && ![...scheduledRuns.values()].some(run => !run.result)
+            && ![...compactions.values()].some(run => !run.result)
+        } else if (job.method === 'im.inbox.admit') {
           validateCommandParams(job.method, job.params)
           result = await admitDesktopImEvent(runtime.db, ownerId, job.params)
         } else if (job.method === 'im.inbox.status') {
@@ -651,13 +664,10 @@ try {
             }
             default: throw new CoreError('invalid_request', '会话操作无效')
           }
-        } else if (/^(skills|mcp)\./.test(job.method)) {
+        } else if (job.method === 'skills.tools' || job.method.startsWith('mcp.')) {
           validateCommandParams(job.method, job.params)
           const id = job.params.id as string
           switch (job.method) {
-            case 'skills.list':
-              result = await desktopSkills(runtime.db, ownerId).list(Number(job.params.offset ?? 0))
-              break
             case 'skills.tools': {
               const preferences = await createDesktopAppearanceService(createKyselyPreferenceDocumentStore(runtime.db, 'sqlite')).get(ownerId)
               const resolveProxy: NodeProviderTransportOptions['resolveProxy'] = preferences.useSystemProxy
@@ -685,15 +695,8 @@ try {
               break
             default: {
               if (!job.operationId) throw new CoreError('invalid_request', '资源写入必须提供稳定操作标识')
-              const fields = job.params.fields
-              const related = fields && typeof fields === 'object' && 'related_tools' in fields ? fields.related_tools : undefined
-              const builtinNames = job.method.startsWith('skills.') && Array.isArray(related)
-                && related.some(name => typeof name === 'string' && !name.startsWith('mcp_'))
-                ? new Set((await builtinSkillTools()).map(tool => tool.name)) : undefined
               const outcome = await runtime.operationWithTransaction<unknown>(context, job.operationId, job.method, job.params, tx => {
-                const resources = job.method.startsWith('skills.')
-                  ? desktopSkills<Database>(tx, ownerId, builtinNames)
-                  : desktopMcp<Database>(tx, ownerId, mcpCrypto)
+                const resources = desktopMcp<Database>(tx, ownerId, mcpCrypto)
                 if (job.method.endsWith('.delete')) return resources.remove(id)
                 return resources.write(id, job.params.fields)
               }, { signal })
@@ -759,11 +762,15 @@ try {
             const run: NonNullable<ReturnType<typeof scheduledRuns.get>> = { result: null, expiresAt: Infinity }
             scheduledRuns.set(id, run)
             void (async () => {
+              let phase: 'targets' | 'execution' = 'targets'
               try {
                 const targets = readDesktopScheduleImTargets(task.delivery_targets, task.channels)
                 const group = targets.find(target => target.chatType === 'group')
-                if (!(await Promise.all(targets.map(ownsScheduledTarget))).every(Boolean))
-                  throw new CoreError('conflict', '定时任务的 IM 会话已不可用')
+                if (!(await Promise.all(targets.map(ownsScheduledTarget))).every(Boolean)) {
+                  run.result = { status: 'failed', text: '定时任务的 IM 会话已不可用，请重新选择投递会话' }
+                  return
+                }
+                phase = 'execution'
                 const outcome = await agentRuns.runScheduledInstruction({
                   id: String(id), ownerId, name: task.name, payload: task.payload, executionMode: 'instruction',
                   channels: task.channels, deliveryTargets: desktopScheduleImDeliveryTargets(targets),
@@ -775,8 +782,14 @@ try {
                 }, fireAt === undefined, assertLease)
                 run.result = { ...outcome, text: outcome.text.slice(0, 4000) }
               } catch (error) {
+                const category = error instanceof CoreError ? error.code
+                  : error instanceof TypeError ? 'type_error' : 'unexpected'
+                void hostRequest('agent.log.append', {
+                  diagnostic: true,
+                  line: JSON.stringify({ event: 'scheduled_instruction_failed', phase, category }) + '\n',
+                }).catch(() => {})
                 run.result = { status: 'failed', text: error instanceof CoreError && error.code === 'invalid_request'
-                  ? error.message : '定时任务指令执行失败，请检查任务和默认对话模型' }
+                  ? error.message : phase === 'targets' ? '无法校验定时任务的投递目标' : '桌面定时任务指令执行失败' }
               } finally {
                 const failed = run.result?.status !== 'success'
                 if (fireAt !== undefined) await tasks.finishInstruction(id, fireAt, failed)
@@ -852,11 +865,10 @@ try {
                       throw new CoreError('invalid_request', 'IM 投递目标格式无效')
                     const existing = saved.find(target => target.platform === platform)
                     if (existing && selection === undefined) { targets.push(existing); continue }
-                    const target = desktopScheduleImTarget.safeParse(await hostRequest('agent.schedules.im.privateTarget', { platform }, signal))
-                    if (!target.success || target.data.platform !== platform || target.data.chatType !== 'c2c'
-                      || target.data.boundUserId !== target.data.recipient)
+                    const target = desktopSchedulePrivateBinding.safeParse(await hostRequest('agent.schedules.im.privateTarget', { platform }, signal))
+                    if (!target.success || target.data.platform !== platform)
                       throw new CoreError('invalid_request', '所选 IM 渠道尚无可用的私聊投递目标')
-                    targets.push(target.data)
+                    targets.push({ platform, chatType: 'c2c' })
                   }
                 }
                 if (targets.filter(target => target.chatType === 'group').length > 1)
@@ -868,6 +880,12 @@ try {
             }, { signal })
             result = outcome.result
           }
+        } else if (job.method === 'clients.related') {
+          validateCommandParams(job.method, job.params)
+          const id = job.params.id
+          if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1)
+            throw new CoreError('invalid_request', '联系人标识无效')
+          result = await readDesktopClientRelated(runtime.db, ownerId, id)
         } else if (job.method === 'desktop.search') {
           validateCommandParams(job.method, job.params)
           const query = parseGlobalSearchQuery(job.params)
@@ -881,16 +899,23 @@ try {
           const { path, digest } = job.params
           if (typeof path !== 'string' || typeof digest !== 'string' || !/^[a-f0-9]{64}$/u.test(digest))
             throw new CoreError('invalid_request', '归档参数无效')
-          result = await importDesktopBusinessArchive(runtime.db, ownerId, path, digest, signal, memoryFiles)
-          await memoryFiles?.flush()
-          await memoryFiles?.flushImportedIm()
+          const skillOperation = memoryRoot ? randomUUID() : undefined
+          if (skillOperation) await hostRequest('agent.files.acquireSkillLock', { operationId: skillOperation }, signal)
+          try {
+            result = await importDesktopBusinessArchive(runtime.db, ownerId, path, digest, signal, memoryFiles)
+            if (memoryRoot) await cutoverLegacySkillBundles({ db: runtime.db, backend: 'sqlite', dataRoot: memoryRoot, ownerId })
+            await memoryFiles?.flush()
+            await memoryFiles?.flushImportedIm()
+          } finally {
+            if (skillOperation) await hostRequest('agent.files.releaseSkillLock', { operationId: skillOperation }).catch(() => {})
+          }
         } else if (job.method === 'preferences.exportBusinessArchive') {
           validateCommandParams(job.method, job.params)
           if (typeof job.params.path !== 'string') throw new CoreError('invalid_request', '归档路径无效')
           await exportDesktopBusinessArchive(runtime.db, ownerId, job.params.path, signal)
           result = null
         } else if (job.method === 'preferences.dataInventory') {
-          result = await readDesktopDataInventory(runtime.db, ownerId, memoryFiles)
+          result = await readDesktopDataInventory(runtime.db, ownerId, memoryFiles, memoryRoot ?? dirname(config.database))
         } else if (job.method === 'preferences.agentUsage') {
           validateCommandParams(job.method, job.params)
           result = await readDesktopAgentUsage(runtime.db, config.database, ownerId)
@@ -924,7 +949,10 @@ try {
           result = outcome.result
         } else if (job.method === 'onboarding.desktop.get') {
           validateCommandParams(job.method, job.params)
-          result = await createOnboardingService(createKyselyOnboardingStore(runtime.db, runtime.backend)).get(ownerId)
+          const onboarding = createOnboardingService(createKyselyOnboardingStore(runtime.db, runtime.backend, { enableNewGuide: true }))
+          if (job.params.reopen === true) result = await onboarding.reopen(ownerId)
+          else if (job.params.patch !== undefined) result = await onboarding.update(ownerId, job.params.patch)
+          else result = await onboarding.get(ownerId)
         } else if (job.method === 'operations.get') {
           validateCommandParams(job.method, job.params)
           const operationId = job.params.operation_id

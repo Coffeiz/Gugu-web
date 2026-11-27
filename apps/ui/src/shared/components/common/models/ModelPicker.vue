@@ -48,6 +48,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', closeOutside))
 .model-fetch-btn:disabled { opacity: .5; cursor: default; }
 .model-options { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px); max-height: 180px; overflow-y: auto; padding: var(--popup-surface-padding); border: 1px solid var(--popup-surface-border); border-radius: var(--popup-surface-radius); background: var(--popup-surface-bg); box-shadow: var(--popup-surface-shadow); }
 .model-option { display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; }
+.model-option + .model-option { margin-block-start: var(--option-gap); }
 .model-option:hover { background: var(--control-bg-hover); }
 .model-option-hint { padding: 7px 9px; color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
 .model-option-hint.error { color: var(--status-danger); }

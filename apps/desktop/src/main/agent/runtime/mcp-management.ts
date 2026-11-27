@@ -5,7 +5,7 @@ import { isPublicAddress } from '#core-source/agent/providers/transport/network.
 import type { NodeProviderTransportOptions } from '#core-source/agent/providers/transport/node.js'
 import { createSqliteToolConfirmation } from '#core-source/agent/interactions/sqlite-confirmation.js'
 import { stageSqliteMcpCredential } from '#core-source/agent/interactions/sqlite-credential.js'
-import { createMcpManagementTool, createMcpManagementEditOperations, createMcpManagementRemoveOperations, createMcpManagementCreateOperations, describeMcpManagementUpdate } from '#core-source/agent/tools/mcp-management.js'
+import { createMcpManagementTool, createMcpManagementEditOperations, createMcpManagementRemoveOperations, createMcpManagementCreateOperations, describeMcpManagementUpdate } from '#core-source/agent/tools/mcp-management/index.js'
 import { testMcp, type McpConfig } from '#core-source/mcp/desktop-connection.js'
 import { createDesktopMcpCrypto } from '#core-source/mcp/desktop-crypto.js'
 import type { createDesktopMcpAgentRuntime } from '#core-source/mcp/desktop-agent-runtime.js'

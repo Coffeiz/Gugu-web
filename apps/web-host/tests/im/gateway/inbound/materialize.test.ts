@@ -1,5 +1,5 @@
 import {createCanvas} from '@napi-rs/canvas'
-import {createImImageProcessor} from '../../../../src/modules/im/gateway/media/image.js'
+import {createImImageProcessor} from '@gugu/gateway/media'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'

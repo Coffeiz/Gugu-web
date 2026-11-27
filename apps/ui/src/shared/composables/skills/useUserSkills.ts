@@ -1,7 +1,7 @@
 import { skillAccessKey } from '@/services/resourceAccess'
 import { inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { userSkillsApi, type UserSkillItem, type UserSkillWrite } from '@/services/api'
+import { userSkillsApi, type FileSkillPatch, type UserSkillItem, type UserSkillWrite } from '@/services/api'
 import { RESOURCE_REFRESH_EVENTS } from '@/services/resourceRefreshEvents'
 import { useSkillToolCatalog } from './useSkillToolCatalog'
 
@@ -41,11 +41,17 @@ export function useUserSkills() {
     error.value = ''
     try {
       if (editing) {
-        const { related_tools, ...fields } = data
-        const previous = new Set(editing.related_tools)
-        const changed = previous.size !== related_tools.length || related_tools.some(name => !previous.has(name))
-        await api.update(editing.id, changed ? { ...fields, related_tools } : fields)
-      } else await api.create(data)
+        const patch: FileSkillPatch = {}
+        if (data.name !== editing.name) patch.name = data.name
+        if (data.description_short !== editing.description_short) patch.description = data.description_short
+        if ((data.description_long ?? null) !== editing.description_long) patch.descriptionLong = data.description_long ?? null
+        if (data.category !== editing.category) patch.category = data.category
+        if (data.body !== editing.body) patch.body = data.body
+        if (data.enabled !== undefined && data.enabled !== editing.enabled) patch.enabled = data.enabled
+        if (data.related_tools.length !== editing.related_tools.length || data.related_tools.some(tool => !editing.related_tools.includes(tool)))
+          patch.relatedTools = data.related_tools
+        if (Object.keys(patch).length) await api.updateFileSkill(editing.id, editing.content_digest, patch, editing.storage_source)
+      } else await api.createFileSkill(data)
       await load()
     } catch (err) {
       error.value = err instanceof Error ? err.message : t('skills.saveFailed')
@@ -59,9 +65,8 @@ export function useUserSkills() {
     error.value = ''
     const enabled = !skill.enabled
     try {
-      // 状态开关只更新当前卡片，避免整页 loading 让卡片短暂卸载。
-      await api.update(skill.id, { enabled })
-      skill.enabled = enabled
+      await api.updateFileSkill(skill.id, skill.content_digest, { enabled }, skill.storage_source)
+      await load()
     } catch (err) {
       error.value = err instanceof Error ? err.message : t('skills.toggleFailed')
       throw err
@@ -71,7 +76,7 @@ export function useUserSkills() {
   async function remove(skill: UserSkillItem) {
     error.value = ''
     try {
-      await api.delete(skill.id)
+      await api.deleteFileSkill(skill.id, skill.content_digest, skill.storage_source)
       await load()
     } catch (err) {
       error.value = err instanceof Error ? err.message : t('skills.deleteFailed')

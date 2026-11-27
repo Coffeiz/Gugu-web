@@ -276,7 +276,7 @@ onMounted(load)
 .flash-fade-enter-from, .flash-fade-leave-to { opacity: 0; transform: translateY(-4px); }
 
 .toolbar {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: var(--space-xs);
   padding: 18px 36px 0;
 }
 .search-input {

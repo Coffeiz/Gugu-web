@@ -18,7 +18,7 @@
               <div class="byok-card-head">
                 <div class="byok-card-main">
                   <div class="byok-name">{{ providerLabel(item.provider) }}<span v-if="item.model"> · {{ item.model }}</span><template v-if="item.capability === 'llm'"><span v-for="dim in mediaDimensions.filter(entry => item[entry.key])" :key="dim.key" class="byok-capability-tag">{{ t(dim.labelKey) }}</span></template></div>
-                  <div class="byok-meta">{{ displayInterfaceFor(item) }} · {{ item.has_value ? t('profileByokUi.encrypted') : t('profileByokUi.noCredential') }}<template v-if="item.capability === 'llm' && supportsReasoningPersistence(item) && item.reasoning_persistence === 'continuation'"> · {{ t('llmExtraUi.reasoningContinuation') }}</template></div>
+                  <div class="byok-meta">{{ displayInterfaceFor(item) }} · {{ item.has_value ? t('profileByokUi.encrypted') : t('profileByokUi.noCredential') }}</div>
                 </div>
               </div>
               <div class="byok-card-actions">
@@ -49,7 +49,7 @@
               <ModelPicker v-model="editors[item.id].model" :models="modelOptions" :open="modelMenuOpen && editor?.id === item.id" :loading="modelLoading" :error="modelError" :placeholder="t('profileByokUi.modelOptional')" @fetch="setActiveEditor(item.id); fetchModels()" @close="modelMenuOpen = false" @select="selectModel" />
               </template>
               <input v-if="editors[item.id].capability === 'embedding'" v-model.number="editors[item.id].dimensions" class="form-input" type="number" min="0" step="1" :placeholder="t('profileByokUi.dimensionsOptional')" />
-              <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(editors[item.id], $event)" /><div v-if="usesGenericThinkingToggle(editors[item.id])" class="byok-subsection-hint">{{ t('profileByokUi.genericThinkingHint') }}</div></div><div v-if="supportsReasoningPersistence(editors[item.id])" class="byok-subsection"><div class="setting-choice-row"><div class="setting-choice-row__copy"><div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div><div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div></div><div class="setting-choice-row__options pm-style-group"><button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: editors[item.id].reasoning_persistence === option.key }" @click="editors[item.id].reasoning_persistence = option.key">{{ option.label }}</button></div></div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
+              <template v-if="editors[item.id].capability === 'llm'"><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.thinkingIntensity') }}</div><AdminSelect v-model="editors[item.id].thinking_mode" :options="thinkingOptionsFor(editors[item.id])" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(editors[item.id], $event)" /><div v-if="usesGenericThinkingToggle(editors[item.id])" class="byok-subsection-hint">{{ t('profileByokUi.genericThinkingHint') }}</div></div><div class="byok-subsection"><div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div><div class="byok-budget-grid"><input v-model.number="editors[item.id].context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" /><input v-model.number="editors[item.id].max_tokens" class="form-input" type="number" step="100" :placeholder="t('profileByokUi.outputTokens')" /></div></div></template>
               <div v-if="providerWebSearchAvailable(editors[item.id])" class="byok-subsection"><div class="setting-choice-row"><div class="setting-choice-row__copy"><div class="byok-subsection-title">{{ t('llmExtraUi.webSearch') }}</div><div class="byok-subsection-hint">{{ editors[item.id].provider === 'minimax' ? t('llmExtraUi.minimaxWebSearchHint') : t('llmExtraUi.webSearchHint') }}</div></div><div class="setting-choice-row__options"><ToggleSwitch :model-value="editors[item.id].web_search_enabled" :aria-label="t('llmExtraUi.webSearch')" @update:model-value="editors[item.id].web_search_enabled = $event" /></div></div></div>
               <MultimodalCapabilities v-if="editors[item.id].capability === 'llm'" :model="editors[item.id]" :dims="localizedMediaDimensions" :probe-label="t('profileByokUi.detect')" :probing-label="t('profileByokUi.detecting')" :title="t('profileByokUi.multimodal')" :probing="mediaTesting" @probe="probeMedia" />
             </div>
@@ -60,7 +60,7 @@
           </div>
           <Teleport to="body" :disabled="!onboarding">
           <Transition name="onboarding-model-backdrop">
-          <div v-if="onboarding && newEditor && newEditor.capability === group.value" class="onboarding-model-dialog-backdrop" @click="closeNewEditor"></div>
+          <div v-if="onboarding && newEditor && newEditor.capability === group.value" class="onboarding-model-dialog-backdrop modal-backdrop" @click="closeNewEditor"></div>
           </Transition>
           <Transition :name="onboarding ? 'onboarding-model' : 'byok-editor-none'">
           <div v-if="newEditor && newEditor.capability === group.value" class="byok-editor byok-editor--new" :class="{ 'onboarding-model-editor': onboarding }" @click.self="onboarding && closeNewEditor()">
@@ -84,18 +84,7 @@
                   <AdminSelect v-model="newEditor.thinking_mode" :options="thinkingOptionsFor(newEditor)" :placeholder="t('profileByokUi.thinkingPlaceholder')" @update:model-value="applyThinkingOption(newEditor, $event)" />
                   <div v-if="usesGenericThinkingToggle(newEditor)" class="byok-subsection-hint">{{ t('profileByokUi.genericThinkingHint') }}</div>
                 </div>
-                <div v-if="supportsReasoningPersistence(newEditor)" class="byok-subsection">
-                  <div class="setting-choice-row">
-                    <div class="setting-choice-row__copy">
-                      <div class="byok-subsection-title">{{ t('llmExtraUi.reasoningPersistence') }}</div>
-                      <div class="byok-subsection-hint">{{ t('llmExtraUi.reasoningPersistenceHint') }}</div>
-                    </div>
-                    <div class="setting-choice-row__options pm-style-group">
-                      <button v-for="option in reasoningPersistenceOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: newEditor.reasoning_persistence === option.key }" @click="newEditor.reasoning_persistence = option.key">{{ option.label }}</button>
-                    </div>
-                  </div>
-                </div>
-                                <div class="byok-subsection">
+                <div class="byok-subsection">
                   <div class="byok-subsection-title">{{ t('profileByokUi.contextBudget') }}</div>
                   <div class="byok-budget-grid">
                     <input v-model.number="newEditor.context_tokens" class="form-input" type="number" step="500" :placeholder="t('profileByokUi.inputTokens')" />
@@ -150,10 +139,9 @@ import { apiFormatsForProvider, defaultApiFormatFromSnapshot, defaultApiFormatFo
 import { buildThinkingOptionsForIdentity } from '@/utils/llmThinkingOptions'
 import { providerWebSearchAvailable } from '@/utils/providerWebSearch'
 
-type ReasoningPersistence = 'off' | 'continuation'
-type Item = { id: number; capability: string; provider: string; api_format: string; base_url: string; model: string; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; reasoning_persistence: ReasoningPersistence; web_search_enabled: boolean; image: boolean; video: boolean; audio: boolean; image_detail: string; has_value: boolean; enabled: boolean; [key: string]: any }
+type Item = { id: number; capability: string; provider: string; api_format: string; base_url: string; model: string; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; web_search_enabled: boolean; image: boolean; video: boolean; audio: boolean; image_detail: string; has_value: boolean; enabled: boolean; [key: string]: any }
 type ThinkingMode = 'default' | 'disabled' | 'adaptive' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-type Editor = { id?: number; capability: string; provider: string; value: string; api_format: string; base_url: string; model: string; dimensions: number | null; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; reasoning_persistence: ReasoningPersistence; web_search_enabled: boolean; thinking_mode: ThinkingMode; image: boolean; video: boolean; audio: boolean; image_detail: string; local_runtime?: string; ollama_mode?: string; ollama_api_mode?: string }
+type Editor = { id?: number; capability: string; provider: string; value: string; api_format: string; base_url: string; model: string; dimensions: number | null; max_tokens: number | null; context_tokens: number | null; thinking: 'disabled' | 'adaptive' | null; reasoning_effort: string | null; web_search_enabled: boolean; thinking_mode: ThinkingMode; image: boolean; video: boolean; audio: boolean; image_detail: string; local_runtime?: string; ollama_mode?: string; ollama_api_mode?: string }
 type ProviderOption = ModelProvider
 
 const modelProviders: readonly ProviderOption[] = MODEL_PROVIDERS
@@ -162,13 +150,6 @@ const groups = [
   { value: 'embedding', labelKey: 'profileByokUi.embeddingModel' },
 ]
 const mediaDimensions = [{ key: 'image', labelKey: 'profileByokUi.image' }, { key: 'video', labelKey: 'profileByokUi.video' }, { key: 'audio', labelKey: 'profileByokUi.audio' }] as const
-const reasoningPersistenceOptions = computed(() => [
-  { key: 'off', label: t('llmExtraUi.reasoningOff') },
-  { key: 'continuation', label: t('llmExtraUi.reasoningContinuation') },
-] as const)
-function normalizeReasoningPersistence(value: unknown): ReasoningPersistence {
-  return value === 'continuation' ? value : 'off'
-}
 const providerChildren: Record<string, Array<{ key: string; labelKey: string }>> = {
   glm: [{ key: 'general', labelKey: 'profileByokUi.generalApi' }, { key: 'coding', labelKey: 'profileByokUi.codingPlan' }],
   local: [{ key: 'llama.cpp', labelKey: 'profileByokUi.llamaCpp' }, { key: 'vllm', labelKey: 'profileByokUi.vllm' }, { key: 'other', labelKey: 'profileByokUi.otherCompatible' }],
@@ -234,18 +215,11 @@ function displayInterfaceFor(item: Pick<Item, 'provider' | 'api_format'>) {
 function interfaceValueFor(draft: Pick<Editor, 'provider' | 'api_format'>) {
   return draft.api_format || defaultInterfaceFor(draft.provider)
 }
-function supportsReasoningPersistence(draft: Pick<Editor, 'provider' | 'api_format'> | null) {
-  if (!draft) return false
-  const format = interfaceValueFor(draft)
-  if (draft.provider === 'ollama' && format === 'native') return false
-  // 推理状态能力由 wire 协议决定；Chat Completions 不支持跨请求状态持久化。
-  return format === 'responses' || format === 'anthropic'
-}
 function applyInterface(draft: Editor, value: string) {
   if (draft.provider === 'glm' && draft.base_url.includes('/api/coding/')) draft.provider = 'glm-coding'
   draft.api_format = value
   if (draft.provider === 'ollama') draft.ollama_api_mode = value === 'native' ? 'native' : 'openai'
-  if (!supportsReasoningPersistence(draft)) draft.reasoning_persistence = 'off'
+
   syncNewWebSearchDefault(draft)
 }
 const { t } = useI18n()
@@ -410,7 +384,7 @@ function applyProvider(draft: Editor, value: string) {
     draft.api_format = value === 'ollama' ? 'native' : defaultApiFormatForProvider(value)
     draft.base_url = provider.base_url || ''
   }
-  if (!supportsReasoningPersistence(draft)) draft.reasoning_persistence = 'off'
+
   if (!thinkingOptionsFor(draft).some(option => option.value === draft.thinking_mode)) applyThinkingOption(draft, 'default')
   syncNewWebSearchDefault(draft)
 }
@@ -539,21 +513,21 @@ async function rebuildVectors(_item: Item) {
   } catch (e) { message.value = e instanceof Error ? e.message : '重建失败'; messageType.value = 'err' }
 }
 function setActiveEditor(id: number) { editor.value = editors.value[id] || null }
-function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft: Editor = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', dimensions: (item as Item).dimensions ?? null, max_tokens: item.max_tokens ?? DEFAULT_LLM_OUTPUT_TOKENS, context_tokens: item.context_tokens ?? DEFAULT_LLM_CONTEXT_TOKENS, thinking: item.thinking, reasoning_effort: item.reasoning_effort, reasoning_persistence: normalizeReasoningPersistence(item.reasoning_persistence), web_search_enabled: Boolean(item.web_search_enabled), thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), image: Boolean(item.image), video: Boolean(item.video), audio: Boolean(item.audio), image_detail: item.image_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode, ollama_api_mode: item.api_format === 'native' ? 'native' : 'openai' }; if (!supportsReasoningPersistence(draft)) draft.reasoning_persistence = 'off'; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newWebSearchTouched.value = false; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', dimensions: null, max_tokens: DEFAULT_LLM_OUTPUT_TOKENS, context_tokens: DEFAULT_LLM_CONTEXT_TOKENS, thinking: null, reasoning_effort: null, reasoning_persistence: 'off' as const, web_search_enabled: false, thinking_mode: 'default', image: false, video: false, audio: false, image_detail: 'auto', ollama_mode: 'local', ollama_api_mode: 'native' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = ''; messageParts.value = []; mediaFeedback.value = ''; mediaFeedbackTarget.value = null }
+function openEditor(capability: string, item?: Item) { if (item) { if (editors.value[item.id]) { closeEditor(item.id); return } lastEditorWasExisting.value = true; const draft: Editor = { id: item.id, capability, provider: item.provider, value: '', api_format: item.api_format || '', base_url: item.base_url || '', model: item.model || '', dimensions: (item as Item).dimensions ?? null, max_tokens: item.max_tokens ?? DEFAULT_LLM_OUTPUT_TOKENS, context_tokens: item.context_tokens ?? DEFAULT_LLM_CONTEXT_TOKENS, thinking: item.thinking, reasoning_effort: item.reasoning_effort, web_search_enabled: Boolean(item.web_search_enabled), thinking_mode: thinkingModeFor(item.thinking, item.reasoning_effort), image: Boolean(item.image), video: Boolean(item.video), audio: Boolean(item.audio), image_detail: item.image_detail || 'auto', local_runtime: item.local_runtime, ollama_mode: item.ollama_mode, ollama_api_mode: item.api_format === 'native' ? 'native' : 'openai' }; editors.value[item.id] = draft; editor.value = draft; newEditor.value = null } else { editor.value = null; newWebSearchTouched.value = false; newEditor.value = { capability, provider: '', value: '', api_format: '', base_url: '', model: '', dimensions: null, max_tokens: DEFAULT_LLM_OUTPUT_TOKENS, context_tokens: DEFAULT_LLM_CONTEXT_TOKENS, thinking: null, reasoning_effort: null, web_search_enabled: false, thinking_mode: 'default', image: false, video: false, audio: false, image_detail: 'auto', ollama_mode: 'local', ollama_api_mode: 'native' } } modelOptions.value = []; modelError.value = ''; modelMenuOpen.value = false; message.value = ''; messageParts.value = []; mediaFeedback.value = ''; mediaFeedbackTarget.value = null }
 function applyProviderTo(target: Editor, value: string) { applyProvider(target, value) }
 function closeNewEditor() { newEditor.value = null }
 function notifyQuotaChanged() {
   if (!props.deviceApi) window.dispatchEvent(new Event('gugu-quota-changed'))
   window.dispatchEvent(new Event('gugu-chat-models-changed'))
 }
-async function saveNewEditor() { if (!newEditor.value) return; saving.value = true; const draft = newEditor.value; messageCapability.value = draft.capability; try { await modelApi.create({ provider: draft.provider, capability: draft.capability, value: draft.value, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, ...deviceOptions(draft), dimensions: draft.capability === 'embedding' ? (draft.dimensions || 0) : undefined, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, reasoning_persistence: draft.reasoning_persistence, web_search_enabled: draft.capability === 'llm' && providerWebSearchAvailable(draft) && draft.web_search_enabled, image: draft.image, video: draft.video, audio: draft.audio, image_detail: draft.image_detail }); newEditor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; // 整表重拉：主密钥校验状态与同能力旧行的停用状态都由服务端裁决，本地拼 items 拿不到
+async function saveNewEditor() { if (!newEditor.value) return; saving.value = true; const draft = newEditor.value; messageCapability.value = draft.capability; try { await modelApi.create({ provider: draft.provider, capability: draft.capability, value: draft.value, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, ...deviceOptions(draft), dimensions: draft.capability === 'embedding' ? (draft.dimensions || 0) : undefined, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, web_search_enabled: draft.capability === 'llm' && providerWebSearchAvailable(draft) && draft.web_search_enabled, image: draft.image, video: draft.video, audio: draft.audio, image_detail: draft.image_detail }); newEditor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; // 整表重拉：主密钥校验状态与同能力旧行的停用状态都由服务端裁决，本地拼 items 拿不到
 await load(); notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '保存失败'; messageType.value = 'err' } finally { saving.value = false } }
 function probeNewVision(dim: string) { if (!newEditor.value) return; const previous = editor.value; editor.value = newEditor.value; void probeMedia(dim as typeof mediaDimensions[number]['key']).finally(() => { if (newEditor.value) newEditor.value = editor.value; editor.value = previous }) }
 // 新建卡无已存凭据可回源，Key 必填才能试呼；能力受限的 provider 由后端提示。
 async function testNewEditor() { if (!newEditor.value) return; const draft = newEditor.value; testing.value = -1; messageCapability.value = draft.capability; try { const body = await modelApi.testPreview({ provider: draft.provider, capability: draft.capability, value: draft.value, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, ...deviceOptions(draft), dimensions: draft.capability === 'embedding' ? (draft.dimensions || undefined) : undefined }); message.value = stripStatusMarks(body.message || (body.ok ? '检查通过' : '检查失败')); messageType.value = body.ok ? 'ok' : 'err' } catch (e) { message.value = e instanceof Error ? e.message : '检查失败'; messageType.value = 'err' } finally { testing.value = null } }
 function clearClosingEditor(id: number) { closingEditors.value.delete(id) }
 function closeEditor(id?: number) { if (id !== undefined) { closingEditors.value.add(id); delete editors.value[id] }; editor.value = id !== undefined && editor.value?.id === id ? null : editor.value; modelMenuOpen.value = false }
-async function saveEditor(id: number) { const draft = editors.value[id]; if (!draft) return; saving.value = true; message.value = ''; messageCapability.value = draft.capability; try { const payload: Record<string, unknown> = { provider: draft.provider, capability: draft.capability, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, ...deviceOptions(draft), dimensions: draft.capability === 'embedding' ? (draft.dimensions || 0) : undefined, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, reasoning_persistence: draft.reasoning_persistence, web_search_enabled: draft.capability === 'llm' && providerWebSearchAvailable(draft) && draft.web_search_enabled, image: draft.image, video: draft.video, audio: draft.audio, image_detail: draft.image_detail }; // 切到无鉴权本地服务时显式 PATCH 空串，把旧云端 Key 清掉——漏发会把旧 Key 留给新 endpoint（跨 Provider 泄漏）
+async function saveEditor(id: number) { const draft = editors.value[id]; if (!draft) return; saving.value = true; message.value = ''; messageCapability.value = draft.capability; try { const payload: Record<string, unknown> = { provider: draft.provider, capability: draft.capability, api_format: draft.api_format, base_url: draft.base_url, model: draft.model, ...deviceOptions(draft), dimensions: draft.capability === 'embedding' ? (draft.dimensions || 0) : undefined, max_tokens: draft.max_tokens, context_tokens: draft.context_tokens, thinking: draft.thinking, reasoning_effort: draft.reasoning_effort, web_search_enabled: draft.capability === 'llm' && providerWebSearchAvailable(draft) && draft.web_search_enabled, image: draft.image, video: draft.video, audio: draft.audio, image_detail: draft.image_detail }; // 切到无鉴权本地服务时显式 PATCH 空串，把旧云端 Key 清掉——漏发会把旧 Key 留给新 endpoint（跨 Provider 泄漏）
 if (draft.value || !keyRequiredFor(draft)) payload.value = draft.value; await modelApi.update(id, payload); delete editors.value[id]; if (editor.value?.id === id) editor.value = null; message.value = '模型配置已保存'; messageType.value = 'ok'; // 整表重拉让 needsReconfigure 提示随最新校验状态即时消失，不必手动刷新页面
 await load(); notifyQuotaChanged() } catch (e) { message.value = e instanceof Error ? e.message : '保存失败'; messageType.value = 'err' } finally { saving.value = false } }
 const settingDefault = ref(false)
@@ -632,11 +606,11 @@ onBeforeUnmount(() => { stopRebuildPolling() })
 .profile-byok-pane--settings .byok-group + .byok-group {
   border-block-start: 1px solid var(--panel-divider);
   margin-block-start: 0;
-  padding-block-start: 14px;
+  padding-block-start: var(--space-md);
 }
-.profile-byok-pane--auxiliary .pm-section { padding-block-start: 14px; }
+.profile-byok-pane--auxiliary .pm-section { padding-block-start: var(--space-md); }
 .profile-byok-pane--auxiliary .byok-group:first-child { margin-block-start: 0; }
-.profile-byok-pane--settings:has(+ .pm-sep) > .pm-section { padding-block-end: 14px; }
+.profile-byok-pane--settings:has(+ .pm-sep) > .pm-section { padding-block-end: var(--space-md); }
 .profile-byok-pane--compact .pm-section { padding: 0; }
 .profile-byok-pane--compact .byok-group { margin-top: 0; }
 .profile-byok-pane--compact .byok-group-heading { margin-bottom: var(--space-sm); }
@@ -653,27 +627,26 @@ onBeforeUnmount(() => { stopRebuildPolling() })
   border-color: var(--choice-chip-border-hover); background: var(--choice-chip-bg-hover); color: var(--choice-chip-fg-hover);
 }
 .profile-byok-pane--onboarding .byok-card {
-  gap: var(--space-md); padding: 13px 14px;
+  gap: var(--space-md); padding: var(--space-md) var(--space-md);
   border-color: var(--workspace-card-border); border-radius: var(--radius-sm);
   background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow);
   transition: border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .profile-byok-pane--onboarding .byok-card:hover { border-color: var(--workspace-card-border-hover); }
-.byok-capability-tag { display: inline-flex; margin-left: 5px; padding: 2px 6px; border: 1px solid color-mix(in srgb, var(--accent-color, var(--action-primary)) 35%, transparent); border-radius: var(--choice-chip-radius); color: var(--text-secondary); font-size: 10px; vertical-align: 1px; }
+.byok-capability-tag { display: inline-flex; margin-left: var(--space-xs); padding: var(--space-xs) var(--space-xs); border: 1px solid color-mix(in srgb, var(--accent-color, var(--action-primary)) 35%, transparent); border-radius: var(--choice-chip-radius); color: var(--text-secondary); font-size: 10px; vertical-align: 1px; }
 .byok-expired { color: var(--color-danger, #c66); }
-.byok-message { margin-top: 12px; }
+.byok-message { margin-top: var(--space-md); }
 .byok-message-part { color: var(--text-secondary, #8f95aa); }
 .byok-message-part.is-supported { color: var(--status-success, #5ab899); }
 .byok-message-part.is-unsupported { color: var(--status-danger, #e07878); }
 .byok-message-part.is-unknown { color: var(--status-warning, #c89b56); }
-.byok-message-separator { color: var(--text-secondary, #8f95aa); margin: 0 8px; }
-.byok-message-dot { display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 50%; background: currentColor; }
+.byok-message-separator { color: var(--text-secondary, #8f95aa); margin: 0 var(--space-sm); }
+.byok-message-dot { display: inline-block; width: 6px; height: 6px; margin: 0 var(--space-xs) 1px 0; border-radius: 50%; background: currentColor; }
 .byok-message-dot.is-supported { color: var(--status-success, #5ab899); }
 .byok-message-dot.is-unsupported { color: var(--status-danger, #e07878); }
-.byok-editor-feedback::before { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 50%; background: currentColor; }
+.byok-editor-feedback::before { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 var(--space-xs) 1px 0; border-radius: 50%; background: currentColor; }
 .onboarding-model-dialog-backdrop {
   position: fixed; inset: 0; z-index: 30000;
-  background: var(--surface-scrim); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 .onboarding-model-editor {
   position: fixed; z-index: 30001; top: 50%; left: 50%; width: min(520px, calc(100vw - 32px));
@@ -685,15 +658,15 @@ onBeforeUnmount(() => { stopRebuildPolling() })
   transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
 }
 .onboarding-model-enter-from, .onboarding-model-leave-to { opacity: 0; }
-.onboarding-model-backdrop-enter-active, .onboarding-model-backdrop-leave-active { transition: opacity var(--modal-enter-duration) var(--modal-enter-easing); }
-.onboarding-model-backdrop-enter-from, .onboarding-model-backdrop-leave-to { opacity: 0; }
+.onboarding-model-backdrop-enter-active, .onboarding-model-backdrop-leave-active { transition: background-color var(--modal-enter-duration) var(--modal-enter-easing), --modal-overlay-blur-radius var(--modal-enter-duration) var(--modal-enter-easing); }
+.onboarding-model-backdrop-enter-from, .onboarding-model-backdrop-leave-to { background-color: transparent; --modal-overlay-blur-radius: 0px; }
 :global(.onboarding-provider-popup) { z-index: 30002 !important; }
 :global(.onboarding-model-popup) { z-index: 30002 !important; }
-.provider-selection-row { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:6px; grid-column:1 / -1; }
+.provider-selection-row { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-xs); grid-column:1 / -1; }
 .provider-selection-row--single { grid-template-columns:1fr; }
 .provider-selection-row .provider-select { min-width:0; width:100%; }
 :deep(.interface-type-select) { grid-column:1 / -1; }
 .api-format-field { grid-column: 1 / -1; }
 :deep(.byok-editor .multimodal-capabilities) { grid-column: 1 / -1; width: 100%; }
-.api-format-grid { display: flex; gap: 6px; }
+.api-format-grid { display: flex; gap: var(--space-xs); }
 </style>

@@ -2,7 +2,7 @@
  * 日历活动的编辑态业务逻辑（全天切换/提醒 CRUD/保存删除），从
  * Calendar/index.vue 抽出来，好让日历新建表单与跨页面活动引用弹窗复用同一套字段和提醒逻辑。
  */
-import { ref, computed } from 'vue'
+import { inject, ref, computed } from 'vue'
 import { requireScheduleAccess } from '@/services/scheduleAccess'
 import { eventsApi } from '@/api/calendar'
 import { scheduledTasksApi } from '@/services/api'
@@ -69,8 +69,8 @@ function _reminderAtIso(date: string, time: string | undefined, leadMin: number)
 export function useEventEditForm() {
   const authStore = useAuthStore()
   const liveStore = useLiveStore()
-  const schedules = requireScheduleAccess()
-  const desktop = schedules.storesSchedulesLocally
+  const schedules = inject('gugu-calendar-reminders', true) ? requireScheduleAccess() : null
+  const desktop = schedules?.storesSchedulesLocally ?? false
   const desktopImChannels = ref<string[]>([])
   const imChannels = computed(() => desktop ? desktopImChannels.value : authStore.user?.imChannels ?? [])
 
@@ -115,7 +115,7 @@ export function useEventEditForm() {
 
   async function loadReminders(ev: { id: string | number; date?: string; time?: string }) {
     resetReminder()
-    if (typeof ev.id !== 'number') return   // 临时事件（还没存）：保持 reset 态
+    if (!schedules || typeof ev.id !== 'number') return   // 临时事件（还没存）：保持 reset 态
     const generation = reminderGeneration
     loadingReminders.value = true
     try {
@@ -143,6 +143,7 @@ export function useEventEditForm() {
   }
 
   async function loadImTargets() {
+    if (!schedules) return
     if (desktop) {
       const result = await schedules.channels?.()
       desktopImChannels.value = (result?.channels ?? []).filter(channel => channel !== 'web')
@@ -171,6 +172,7 @@ export function useEventEditForm() {
 
   // 保存活动后调用：对账该活动的提醒——删掉移除的、改已存在的渠道/时刻、建新增的
   async function applyReminders(eventId: number, name: string, date: string, time: string | undefined) {
+    if (!schedules) return
     try {
       while (removedReminderIds.value.length) {
         const id = removedReminderIds.value[0]!
@@ -197,6 +199,7 @@ export function useEventEditForm() {
 
   // 测试提醒渠道：往当前选的渠道发一条测试消息（不建任务，新建/编辑活动都能测）
   async function testReminderChannels(name: string) {
+    if (!schedules) return
     return scheduledTasksApi.testNotify({
       channels: reminderChannels.value,
       name: name || '活动提醒',
@@ -248,7 +251,7 @@ export function useEventEditForm() {
     }
   }
 
-  return { desktop, loadingReminders,
+  return { desktop, remindersAvailable: !!schedules, loadingReminders,
     imChannels, reminders, reminderChannels, deliveryTargets, deliveryGroups, privateAvailable, removedReminderIds,
     resetReminder, leadLabelOf, toggleReminderChannel, addReminder, removeReminderAt, canAddReminder,
     loadReminders, loadImTargets, setDeliveryTarget, imDeliveryFields, applyReminders, testReminderChannels, saving,

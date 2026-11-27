@@ -16,6 +16,7 @@ type TrustedIntentStore = ReturnType<typeof createPostgresTrustedIntentStore>
 export interface WebAgentConfirmationDescription {
   summary: string
   context?: ConfirmationContext
+  emailCompose?: Readonly<Record<string, unknown>>
 }
 
 export interface WebAgentToolConfirmationOptions {
@@ -201,6 +202,7 @@ export function createWebAgentToolConfirmation(options: WebAgentToolConfirmation
       }
       const trusted: TrustedPromptIntent = {
         kind: 'confirmation',
+        ...(options.action === 'send_email' && description.emailCompose ? { emailCompose: description.emailCompose } : {}),
         summary,
         action: options.action,
         targets,

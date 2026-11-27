@@ -15,6 +15,15 @@
       <span class="es-kind">{{ label }}</span>
     </div>
     <h3>{{ title }}</h3>
+    <template v-if="contactDisplay">
+      <ul v-if="contactDetails.length" class="es-contact-details">
+        <li v-for="detail in contactDetails" :key="detail.kind">
+          <component :is="detail.icon" :size="13" aria-hidden="true" />
+          <span :title="detail.value">{{ detail.value }}</span>
+        </li>
+      </ul>
+      <p v-if="contactDisplay.notes?.trim()" class="es-desc es-contact-notes">{{ contactDisplay.notes }}</p>
+    </template>
     <span v-if="isTombstone" class="es-deleted">{{ t('mindUi.deletedSnapshot') }}</span>
     <p v-if="eventDisplay?.description" class="es-desc">{{ eventDisplay.description }}</p>
     <span v-if="eventTimeLabel" class="es-time">
@@ -40,7 +49,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PhCalendarBlank, PhClock, PhFile, PhStack, PhTrash } from '@phosphor-icons/vue'
+import { PhCalendarBlank, PhClock, PhEnvelopeSimple, PhFile, PhMapPin, PhPhone, PhStack, PhTrash, PhUser } from '@phosphor-icons/vue'
 import { eventsApi } from '@/api/calendar'
 import type { MindCanvasItem } from '@/services/api'
 import { useMindRuntimeObject } from '@/composables/mind/useMindRuntimeObject'
@@ -64,12 +73,21 @@ const emit = defineEmits<{
 }>()
 
 // 项目/文件已有自己的引用卡，这个组件只承担活动等系统对象贴纸。
-const TYPE_ICON = { project: PhStack, file: PhFile, event: PhCalendarBlank } as const
+const TYPE_ICON = { project: PhStack, file: PhFile, event: PhCalendarBlank, client: PhUser } as const
 const { t, locale } = useI18n()
 const refType = computed(() => props.item.node.refType || 'event')
 const icon = computed(() => TYPE_ICON[refType.value as keyof typeof TYPE_ICON] || PhCalendarBlank)
 const label = computed(() => t(`mindEditorUi.referenceTypes.${refType.value}`, t('mindUi.object')))
-const title = computed(() => props.item.node.title || t('mindUi.unnamedObject'))
+const contactDisplay = computed(() => {
+  const data = props.item.refData
+  return refType.value === 'client' && data && 'name' in data ? data : null
+})
+const contactDetails = computed(() => [
+  { kind: 'email', icon: PhEnvelopeSimple, value: contactDisplay.value?.email },
+  { kind: 'phone', icon: PhPhone, value: contactDisplay.value?.phone },
+  { kind: 'address', icon: PhMapPin, value: contactDisplay.value?.address },
+].filter(detail => detail.value?.trim()))
+const title = computed(() => contactDisplay.value?.name || props.item.node.title || t('mindUi.unnamedObject'))
 const stickerStyle = computed(() => {
   const { w, h } = itemSize(props.item)
   return {
@@ -85,7 +103,12 @@ const stickerStyle = computed(() => {
 const event = ref<Awaited<ReturnType<typeof eventsApi.get>> | null>(null)
 const missingEvent = ref(false)
 const isTombstone = computed(() => !!props.item.node.deletedAt || missingEvent.value)
-const eventDisplay = computed(() => event.value ?? props.item.refData ?? props.item.node.refSnapshot ?? null)
+const eventRefData = computed(() => {
+  const data = props.item.refData
+  return refType.value === 'event' && data && !('name' in data) ? data : null
+})
+const eventDisplay = computed(() => refType.value === 'event'
+  ? event.value ?? eventRefData.value ?? props.item.node.refSnapshot ?? null : null)
 async function loadEvent() {
   const refId = props.item.node.refId
   missingEvent.value = false
@@ -93,7 +116,7 @@ async function loadEvent() {
     event.value = null
     return
   }
-  if (props.item.refData?.date) {
+  if (eventRefData.value?.date) {
     event.value = null
     return
   }
@@ -158,11 +181,6 @@ function onCardClick() {
 </script>
 
 <style scoped>
-/* 活动卡与 FileCard.canvas-mode 共用同一套系统对象玻璃基线。
-   这里不再额外叠 inset 1px 描边：--card-shadow 在 Glass 暗色主题里本身已经包含顶部高光，
-   再补一层顶部/左侧 inset 会在画布连续缩放时栅格化成肉眼可见的 1px 双边/叠影。
-   同时把静止/hover 全部收敛到语义 token，让 Runtime 在 dark 模式关闭 dragGlass 后，
-   grabbing -> landing 可以直接从抓取阴影插值回目标卡真实的主题表面。 */
 .entity-sticker {
   position: absolute;
   box-sizing: border-box;
@@ -176,17 +194,12 @@ function onCardClick() {
   border: 1px solid var(--border-strong);
   border-radius: var(--mind-canvas-card-radius);
   corner-shape: round;
-  background: var(--surface-glass);
+  background: var(--surface-card-solid);
   box-shadow: var(--card-shadow);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
 }
-/* 全局 hover-card-fx 的阴影是历史固定色，只适合亮色卡。活动卡显式使用主题阴影，
-   与项目/文件卡一样在暗色模式消费 --card-shadow-hover，避免 hover/grabbing 看起来像另一种材质。 */
 .entity-sticker:hover {
-  background: var(--surface-glass-hover);
-  border-color: var(--border-hover);
-  box-shadow: var(--card-shadow-hover);
+  background: var(--file-card-bg-hover);
+  border-color: var(--file-card-border-hover);
 }
 
 .es-head { display: flex; align-items: center; gap: 6px; color: var(--color-primary); }
@@ -211,6 +224,11 @@ h3 {
   -webkit-line-clamp: 3;
   overflow: hidden;
 }
+.es-contact-details { display: grid; gap: var(--space-xs); padding: 0; margin: 0; list-style: none; }
+.es-contact-details li { display: flex; align-items: center; min-width: 0; gap: var(--space-xs); color: var(--content-secondary); font-size: var(--font-size-sm); }
+.es-contact-details svg { flex: none; }
+.es-contact-details span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.es-contact-notes { margin-top: var(--space-xs); -webkit-line-clamp: 2; }
 .es-time {
   display: inline-flex;
   align-items: center;

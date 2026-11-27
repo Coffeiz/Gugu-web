@@ -1,3 +1,4 @@
+import type { ProfileUpdateStore } from '@gugu/users'
 import { InvalidProfileTimezoneError, prepareProfilePatch, profileTimezoneChanged, type ProfilePatch, type UpdateProfileInput } from '@gugu/users'
 import { PasswordChangeError, preparePasswordChange } from '@gugu/auth'
 import { isValidTimezone } from '@gugu/core/date-time'
@@ -8,25 +9,7 @@ export interface ProfileUpdateInput extends UpdateProfileInput {
   readonly newPassword?: string
 }
 
-export interface ProfileUpdatePatch {
-  readonly displayName?: string | null
-  readonly timezone?: string | null
-  readonly emailSubscribed?: boolean
-  readonly hashedPassword?: string
-  readonly incrementSecurityVersion?: true
-}
-
-export interface ProfileUpdateTransaction {
-  loadForUpdate(ownerId: string): Promise<{
-    timezone: string | null
-    hashedPassword: string
-    securityVersion: number | null
-  } | null>
-  update(ownerId: string, patch: ProfileUpdatePatch): Promise<{ securityVersion: number | null } | null>
-}
-
-export interface ProfileUpdatePorts {
-  transaction<T>(work: (transaction: ProfileUpdateTransaction) => Promise<T>): Promise<T>
+export interface ProfileUpdatePorts extends ProfileUpdateStore {
   verifyPassword(rawPassword: string, hashedPassword: string): Promise<boolean>
   hashPassword(rawPassword: string): Promise<string>
 }

@@ -1,3 +1,5 @@
+import { createWebScheduledShellBinding } from '../modules/scheduled-tasks/run/shell.js'
+import { createWebMailRuntime } from '../modules/mail/runtime.js'
 import { sceneAllowsPrompt } from '@gugu/core/agent'
 import { createWebProjectWorkspaceBinding, webWorkspaceLocation } from '../modules/workspaces/project-links.js'
 import { createPostgresUserQuotaReader } from '../modules/auth/quota/read.js'
@@ -8,7 +10,7 @@ import { createPostgresInteractionActivator } from '../modules/agent/interaction
 import { agentDispatchReadyChannel, createAgentInbox, createDelegatedAgentHarness, searcherPreset, createSubagentDeliveryStore, createSubagentService, createSubagentServiceTools } from '@gugu/core/agent'
 import type { CanonicalRunContext, RunIdentity } from '@gugu/core/agent'
 import { connectProviderHarness } from '@gugu/core/providers'
-import { createToolRegistry, createHttpGetTool, createAgentShellTool } from '@gugu/core/tools'
+import { createToolRegistry, createHttpGetTool, createAgentShellTool, createListMailTool } from '@gugu/core/tools'
 import { createRedisAgentRunCancellationPort, isWebSubagentParentCancelled } from '../modules/agent/run/cancel.js'
 import { createPostgresAgentRunLeasePort } from '../modules/agent/run/lease.js'
 import { recordAgentUsage } from '../modules/agent/run/usage.js'
@@ -37,12 +39,12 @@ import { createImPlatformSettingsReader } from '../modules/im/settings.js'
 import { createConfiguredByokEnvelope, readConfiguredByokMasterKeys } from '../modules/byok/crypto.js'
 import { createPostgresAgentEmbeddingSettingsResolver } from '../modules/byok/store.js'
 import { createAgentRagEmbeddingTransportFactory } from '../modules/agent/rag/transport.js'
-import { createUserSkillManager } from '@gugu/core/agent/skills/user-management'
-import { createUserSkillReader } from '@gugu/core/agent/skills/user-body'
+import { createWebAgentSkillDeleteStorage, createWebAgentSkillMutationAdapter } from '../modules/skills/agent-storage.js'
+import { createDurableFileSkillDeletePort, createFileSkillDeleteTool, describeFileSkillDeleteTarget, createDurableFileSkillManagementPort, createFileSkillManagementWriteTools } from '@gugu/core/tools'
 import { createLocalAgentRememberPort } from '../modules/agent/tools/memory/write.js'
 import { filterConfiguredWebAgentTools } from '../modules/agent/tools/registry.js'
-import { createAgentSkillRuntimePorts, createBuiltinSkillDefinitions, formatBuiltinSkillIndex } from '@gugu/core/skills'
-import { createSkillMetadataReader } from '@gugu/core/skills'
+import { createAgentSkillRuntimePorts, createBuiltinSkillDefinitions, createFileSkillDefinitions, formatBuiltinSkillIndex, isUserSkillBundleEnabled, withFileSkillMetadata } from '@gugu/core/skills'
+import { createBuiltinSkillMetadataReader } from '@gugu/core/skills'
 import { createSafeEgressSettingsReader } from '../modules/admin/network.js'
 import { resolve } from 'node:path'
 import { Pool, type PoolClient } from 'pg'
@@ -53,13 +55,14 @@ import { type WebUiConfig } from '../config.js'
 import { readConfigOverride, resolveConfigOverridePath } from '../adapters/config/config-override-file.js'
 import { createRedisLiveSubscription } from '../adapters/cache/redis-live-subscription.js'
 import { createAgentMindReader, createAgentPlaceableSearch, createSqlMindCanvasReader } from '@gugu/core/mind'
-import { createKnowledgeDeleteTool, createProjectDeleteTool, createCanvasCreationPort, createClientDeletePort, createNoteWritePort, createSkillDeleteTool, createSkillManagementWriteTools, createMcpManagementTool, createMcpManagementCreateOperations, createMcpManagementRemoveOperations, createMcpManagementEditOperations, createScheduledTaskDeleteTool, formatScheduledTaskDeleteSummary, createDurableProjectMutationPort, createWebLinkButtonDeliveryPort, createWorkspaceMutationPort, createUndoLastActionTool } from '@gugu/core/tools'
+import { createKnowledgeDeleteTool, createProjectDeleteTool, createCanvasCreationPort, createClientDeletePort, createNoteWritePort, createMcpManagementTool, createMcpManagementCreateOperations, createMcpManagementRemoveOperations, createMcpManagementEditOperations, createScheduledTaskDeleteTool, formatScheduledTaskDeleteSummary, createDurableProjectMutationPort, createWebLinkButtonDeliveryPort, createWorkspaceMutationPort, createUndoLastActionTool } from '@gugu/core/tools'
 import { createHostCoreUndoOperations } from '../modules/undo/service.js'
+import { createLocalSkillUndoStorage } from '../modules/skills/undo-storage.js'
 import { createLocalFileUndoStorage } from '../modules/files/storage/undo.js'
 import { createRuntimeUndoTransactionPort } from '@gugu/core/undo'
-import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/scheduled-task-list'
+import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/tasks/list'
 import { createAgentMemoryVectorSearchFactory } from '../modules/agent/memory/vectors.js'
-import { createScheduledTaskContextLoader, scheduledTaskSupportsFileDelivery } from '@gugu/core/scheduled-task-run-now'
+import { createScheduledTaskContextLoader, scheduledTaskSupportsFileDelivery } from '@gugu/core/agent/scenes/task'
 import { createWebScheduledTaskAgentAttempt } from '../modules/scheduled-tasks/run/attempt.js'
 import { createWebScheduledTaskContextSources } from '../modules/scheduled-tasks/run/context.js'
 import { createWebScheduledTaskToolResources } from '../modules/scheduled-tasks/run/tools.js'
@@ -172,7 +175,7 @@ interface AgentDependencies {
   scheduledNotifyImPlatforms: ReturnType<typeof createImPlatformSettingsReader>
   workspaceCreate: ReturnType<typeof createPostgresWorkspaceCreator>
   workspaceDirectories: ReturnType<typeof createPostgresWorkspaceDirectoryOperations>
-  userSkillManager: ReturnType<typeof createUserSkillManager<Database>>
+  userSkillKnownTools(owner: string, related: readonly string[]): Promise<ReadonlySet<string>>
   globalSearch: ReturnType<typeof createGlobalSearchOperations>
   resolveEmbeddingSettings: ReturnType<typeof createPostgresAgentEmbeddingSettingsResolver>
   createEmbeddingTransport: ReturnType<typeof createAgentRagEmbeddingTransportFactory>
@@ -198,7 +201,7 @@ export async function createAgentServices(options: AgentDependencies) {
     projectCreateRuntime,
     publishProjectMutation, projectUpdateRuntime, publishCanvasChanged, scheduledNotifyImPlatforms,
     workspaceCreate, workspaceDirectories,
-    userSkillManager, globalSearch, resolveEmbeddingSettings, createEmbeddingTransport,
+    userSkillKnownTools, globalSearch, resolveEmbeddingSettings, createEmbeddingTransport,
     publishCalendarCreate, publishCalendarMutation, loopScopeTrace, readStateLabelOverrides,
   } = options
   let bindImSubagentParent: import('../modules/im/gateway/bootstrap.js').ImSubagentParentBinder | undefined
@@ -234,7 +237,28 @@ export async function createAgentServices(options: AgentDependencies) {
   const searchMindFiles = createMindFileReferences(pool, config.storageLocalPath)
   const resolveMindFile = createMindFileReferenceResolver(pool, config.storageLocalPath)
   const knowledgeStore = createLocalAgentKnowledgeReadStore(config.storageLocalPath)
-  const skillMetadataReady = config.redisUrl ? capabilitySkills.then(definitions => createSkillMetadataReader(core.db, 'postgres', definitions)) : null
+  const skillMetadataReady = config.redisUrl ? capabilitySkills.then(definitions => createBuiltinSkillMetadataReader(definitions)) : null
+  const ownerResources = {
+    projects: projectCreateRuntime,
+    search: globalSearch,
+    conversations: createAgentConversationReadPort(pool),
+    workspaces: agentWorkspaces,
+    workspaceMutations: createWorkspaceMutationPort(core),
+    fileOverview: createProjectFileOverviewPort(pool, config.storageLocalPath),
+    canvases: createSqlMindCanvasReader(core.db, 'postgres'),
+    canvasPlaceableSearch: createAgentPlaceableSearch(core.db, 'postgres', searchMindFiles),
+    canvasCreation: createCanvasCreationPort(core, publishCanvasChanged),
+    notes: createAgentMindReader(core.db, 'postgres', resolveMindFile),
+    projectMutations: createDurableProjectMutationPort({
+      core,
+      runtime: {
+        renameProjectDirectory: projectUpdateRuntime.renameProjectDirectory,
+        getFileCount: projectUpdateRuntime.getFileCount,
+        publishProjectUpdated: projectUpdateRuntime.publishProjectUpdated,
+      },
+      metadata: identity => ({ undoContextId: `agent:${identity.sessionId}:${identity.runId}`.slice(0, 128) }),
+    }),
+  } satisfies SharedOwnerToolOptions
   async function commonTools(lease: AgentDispatchLease, timezone: string,
     deleteConfirmation?: Parameters<typeof createWebAgentCalendarWritePorts>[0]['deleteConfirmation'],
     authorize?: () => Promise<boolean>,
@@ -286,33 +310,22 @@ export async function createAgentServices(options: AgentDependencies) {
     const authorizeRunWrite: Parameters<typeof createMcpManagementEditOperations>[1]['authorize'] = async (tx, identity, signal) =>
       (await authorization.authorizeInTransaction(tx, identity, signal))?.endsWith(`:${lease.input.accessVersion}`) === true
     return {
-      skillMetadata: await skillMetadataReady ?? undefined,
-      ...(core.receipts ? { skillManagement: createSkillManagementWriteTools(core, userSkillManager, authorizeRunWrite) } : {}),
+      ...ownerResources,
+      skillMetadata: lease.input.source === 'web' && skillMetadataReady ? withFileSkillMetadata({
+        dataRoot: config.storageLocalPath, list: await skillMetadataReady,
+        mapPath: (_path, slug, source = 'user') => `/skills/${source}/${slug}`,
+      }) : await skillMetadataReady ?? undefined,
+      ...(core.receipts ? { skillManagement: createFileSkillManagementWriteTools(createDurableFileSkillManagementPort({ core, authorize: authorizeRunWrite,
+          adapter: createWebAgentSkillMutationAdapter({ dataRoot: config.storageLocalPath, knownTools: userSkillKnownTools,
+            async publish(ownerId) { await publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }) },
+          }),
+        })) } : {}),
       knowledge: createWebOwnerAgentKnowledgeReadPort(core, knowledgeStore, { timezone: async () => timezone }),
       ...(process.platform === 'linux' ? {
         knowledgeWrites: createLocalAgentKnowledgeWritePort(core, config.storageLocalPath, knowledgeStore),
       } : {}),
-      projects: projectCreateRuntime,
-      search: globalSearch,
-      conversations: createAgentConversationReadPort(pool),
-      workspaces: agentWorkspaces,
-      workspaceMutations: createWorkspaceMutationPort(core),
-      fileOverview: createProjectFileOverviewPort(pool, config.storageLocalPath),
-      projectMutations: createDurableProjectMutationPort({
-        core,
-        runtime: {
-          renameProjectDirectory: projectUpdateRuntime.renameProjectDirectory,
-          getFileCount: projectUpdateRuntime.getFileCount,
-          publishProjectUpdated: projectUpdateRuntime.publishProjectUpdated,
-        },
-        metadata: identity => ({ undoContextId: `agent:${identity.sessionId}:${identity.runId}`.slice(0, 128) }),
-      }),
-      canvases: createSqlMindCanvasReader(core.db, 'postgres'),
-      canvasPlaceableSearch: createAgentPlaceableSearch(core.db, 'postgres', searchMindFiles),
-      canvasCreation: createCanvasCreationPort(core, publishCanvasChanged),
       ...mind,
       ...(lease.input.source === 'im' ? { noteLifecycle: undefined } : {}),
-      notes: createAgentMindReader(core.db, 'postgres', resolveMindFile),
       noteWrites: createNoteWritePort(core, {
         timezone,
         async validateFileReference(owner, id) { return Boolean(await resolveMindFile(owner, id)) },
@@ -380,6 +393,11 @@ export async function createAgentServices(options: AgentDependencies) {
     if (Object.values(readPrompts()).some(value => !value.trim())) throw new Error('Web Agent 提示词不可用')
     const builtinSkillDefinitions = await capabilitySkills
     const skillMetadata = await skillMetadataReady!
+    const isFileSkillEnabled = (owner: string, slug: string, source?: 'user' | 'clawhub') => isUserSkillBundleEnabled(config.storageLocalPath, owner, slug, source)
+    const fileSkillDefinitions = (ownerId: string) => createFileSkillDefinitions({
+      dataRoot: config.storageLocalPath, ownerId, mapPath: (_path, slug, source = 'user') => `/skills/${source}/${slug}`,
+      isEnabled: isFileSkillEnabled,
+    })
     const skillIndex = formatBuiltinSkillIndex(builtinSkillDefinitions)
     const redisValues = createRedisValueReader(config.redisUrl)
     const imPlatforms = createImPlatformSettingsReader(env, overridePath)
@@ -449,7 +467,8 @@ export async function createAgentServices(options: AgentDependencies) {
             || action === 'delete_item' || action === 'restore_file' || action === 'restore_folder'
             || action === 'create_scheduled_task' || action === 'update_scheduled_task' || action === 'shell') {
             if (!snapshot.displaySummary) throw new Error('操作确认摘要不可用')
-            return { summary: snapshot.displaySummary }
+            return { summary: snapshot.displaySummary, ...(action === 'send_email' && lease.input.source === 'web' && snapshot.emailCompose
+              ? { emailCompose: snapshot.emailCompose } : {}) }
           }
           if (action === 'delete_project') {
             const ids = snapshot.targetIds?.project_id
@@ -475,15 +494,9 @@ export async function createAgentServices(options: AgentDependencies) {
             return { summary: `将删除联系人：${visible}，共 ${names.length} 个，此操作不可恢复` }
           }
           if (action === 'delete_skill') {
-            const ids = snapshot.targetIds?.skill_row_id
+            const ids = snapshot.targetRefs?.skill
             if (ids?.length !== 1) throw new Error('技能删除确认目标无效')
-            const result = await pool.query<{ skill_id: string; name: string }>(
-              "SELECT skill_id,name FROM user_skills WHERE owner_id=$1 AND id=$2 AND source='user'",
-              [_binding.ownerId, ids[0]],
-            )
-            const skill = result.rows[0]
-            if (!skill) throw new Error('技能删除确认目标已变化')
-            return { summary: `将删除技能「${skill.name}」（${skill.skill_id}），此操作不可恢复` }
+            return { summary: await describeFileSkillDeleteTarget(config.storageLocalPath, _binding.ownerId, { id: ids[0] }, snapshot) }
           }
           if (action === 'delete_scheduled_task') {
             const ids = snapshot.targetIds?.task_id
@@ -552,6 +565,9 @@ export async function createAgentServices(options: AgentDependencies) {
       const projectDeleteConfirmation = projectDeleteJournal ? confirmation('delete_project') : undefined
       const scheduledTaskDeleteConfirmation = confirmation('delete_scheduled_task')
       const skillDeleteConfirmation = confirmation('delete_skill')
+      const skillAuthorization = createWebAgentConfirmationAuthorization({ pool, lease, accessVersion: async identity => authorize
+        ? await authorize() ? lease.input.accessVersion : ''
+        : providerBinding.accessVersion(identity, lease.input.source === 'web' ? lease.input.model : undefined) })
       const knowledgeDeleteConfirmation = process.platform === 'linux' && core.receipts ? confirmation('delete_knowledge') : undefined
       const emailConfirmation = confirmation('send_email')
       const canvasDeleteConfirmation = confirmation('canvas_delete')
@@ -611,6 +627,8 @@ export async function createAgentServices(options: AgentDependencies) {
         ...(emailConfirmation ? {
           sendEmail: createWebAgentEmailTool({
             core, pool, confirmation: emailConfirmation, secretKey: config.secretKey, globalSmtp: config.smtp,
+            showConfirmationAddresses: lease.input.source === 'web',
+            mail: lease.input.source === 'web' ? createWebMailRuntime(env) : undefined,
             storageRoot: config.storageLocalPath, send: createSmtpTestDelivery(env), sanitizeHtml: sanitizeEmailHtml,
           }),
         } : {}),
@@ -627,8 +645,13 @@ export async function createAgentServices(options: AgentDependencies) {
           }),
         } : {}),
         ...(skillDeleteConfirmation ? {
-          skillDelete: createSkillDeleteTool(core, { gate: skillDeleteConfirmation.gate, claim: skillDeleteConfirmation.claim }, async ownerId =>
-            publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' })),
+          skillDelete: createFileSkillDeleteTool(config.storageLocalPath, skillDeleteConfirmation,
+            createDurableFileSkillDeletePort({ core, dataRoot: config.storageLocalPath, confirmation: skillDeleteConfirmation,
+              authorize: async (tx, identity, signal) => (await skillAuthorization.authorizeInTransaction(tx, identity, signal))?.endsWith(`:${lease.input.accessVersion}`) === true,
+              storage: createWebAgentSkillDeleteStorage({ dataRoot: config.storageLocalPath, async publish(ownerId) {
+                await publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' })
+              } }),
+            })),
         } : {}),
         ...(knowledgeDeleteConfirmation ? { knowledgeDelete: createKnowledgeDeleteTool(createLocalAgentKnowledgeDeletePort(
           core, config.storageLocalPath, knowledgeStore, knowledgeDeleteConfirmation,
@@ -865,6 +888,7 @@ export async function createAgentServices(options: AgentDependencies) {
     })
     const scheduledTools = createWebScheduledTaskToolResources({
       core, now: () => new Date(), timezone: identity => scheduledContext.data.loadTimezone(identity),
+      filterConfigured: filterConfiguredWebAgentTools, ownerResources,
       email: core.receipts ? (automation, assertLease) => createWebAgentEmailTool({
         core, pool, automation, secretKey: config.secretKey, globalSmtp: config.smtp,
         storageRoot: config.storageLocalPath, sanitizeHtml: sanitizeEmailHtml,
@@ -873,8 +897,11 @@ export async function createAgentServices(options: AgentDependencies) {
           await createSmtpTestDelivery(env)(delivery, signal)
         },
       }) : undefined,
-      skillCatalog: { builtins: builtinSkillDefinitions, fingerprint: createSecurityEventFingerprint(config.secretKey) },
+      skillCatalog: { builtins: builtinSkillDefinitions, fingerprint: createSecurityEventFingerprint(config.secretKey), dataRoot: config.storageLocalPath },
       mcp: { directory: mcpSkillTools, runtime: mcpRuntime },
+    })
+    const scheduledShell = createWebScheduledShellBinding({
+      core, readPolicy: readAgentShellSnapshot.readScheduledShellPolicy,
     })
     scheduledAttempt = createWebScheduledTaskAgentAttempt({
       bindProvider: providerBinding.bind, usagePool: pool,
@@ -882,7 +909,7 @@ export async function createAgentServices(options: AgentDependencies) {
       async prepareHarness({ identity, task, model, prompt, assertLease, toolsForRun }) {
         if (!assertLease) throw new Error('定时任务租约未绑定')
         await assertLease()
-        const { webSearch } = await createWebAgentSearchPorts({
+        const { webSearch, httpGet } = await createWebAgentSearchPorts({
           identity, binding: { resolve: model.resolve, selection: {
             modelIdentity: model.modelIdentity, contextWindow: model.contextWindow, locale: 'zh-CN',
             groupChat: Boolean(task.groupScope), workspaceBinding: null,
@@ -890,8 +917,9 @@ export async function createAgentServices(options: AgentDependencies) {
           } },
           readSafeEgress: createSafeEgressSettingsReader(env, overridePath), secretKey: config.secretKey, digest,
         })
-        const { tools, preparation } = await scheduledTools({ identity, task, assertLease,
-          additionalReadTools: [...(toolsForRun?.(identity) ?? []), ...(webSearch ? [webSearch] : [])],
+        const { tools, preparation } = await scheduledTools({ identity, task, assertLease, shell: scheduledShell?.(task),
+          additionalReadTools: [...(toolsForRun?.(identity) ?? []), ...(webSearch ? [webSearch] : []),
+            ...(httpGet && !task.groupScope ? [createHttpGetTool(httpGet)] : [])],
           sendFile: scheduledTaskSupportsFileDelivery(task.channels)
             ? assertCurrent => options.scheduledAttachments.toolForRun(assertCurrent, task.channels.every(channel => ['im', 'feishu', 'qq', 'wechat', 'telegram'].includes(channel))) : undefined })
         return {
@@ -913,7 +941,7 @@ export async function createAgentServices(options: AgentDependencies) {
         ownerId, resource: String(event.resource), operation: String(event.operation),
         origin: String(event.origin), entityIds: event.entity_ids as Array<number | string>,
       })
-    }, { trash: projectTrashStorage, renameDirectory: projectDirectoryRenamer }, createLocalFileUndoStorage(config.storageLocalPath))
+    }, { trash: projectTrashStorage, renameDirectory: projectDirectoryRenamer }, createLocalFileUndoStorage(config.storageLocalPath), createLocalSkillUndoStorage(config.storageLocalPath))
     const writeTitle = createFirstTurnTitleWriter(core.db, 'postgres')
     const resourceFactory = createWebAgentRagResources({
       async writeSessionTitle(lease, reply, complete) {
@@ -939,6 +967,7 @@ export async function createAgentServices(options: AgentDependencies) {
             create_scheduled_task: makeConfirmation(lease, 'create_scheduled_task'),
             update_scheduled_task: makeConfirmation(lease, 'update_scheduled_task'),
           } : undefined
+          const fileSkills = lease.input.source === 'web' ? (await fileSkillDefinitions(lease.identity.ownerId)).definitions : []
           const downloadEgress = createPublicAgentEgress(createSafeEgressSettingsReader(env, overridePath), config.secretKey)
           let webDownload: ReturnType<typeof createWebAgentDiskDownloadTool> | undefined
           if (process.platform === 'linux') {
@@ -976,6 +1005,13 @@ export async function createAgentServices(options: AgentDependencies) {
             ...confirmedOwnerTools(lease),
             ...await commonTools(lease, await context.loadTimezone(lease.identity), makeConfirmation(lease, 'delete_event'), undefined,
               scheduledEmailAuthorization, () => providerBinding.accessVersion(lease.identity, lease.input.source === 'web' ? lease.input.model : undefined)),
+            ...(lease.input.source === 'web' ? {
+              listMail: createListMailTool(async (query, identity, signal) => {
+                if (!await core.db.transaction().execute(tx => authorizeRunWrite(tx, identity, signal)))
+                  throw new Error('当前会话无权读取邮箱')
+                return createWebMailRuntime(env).listForAgent(lease.identity.ownerId, query, signal)
+              }),
+            } : {}),
             time: { now: () => new Date(), timezone: (identity: import('@gugu/core/agent').RunIdentity) => context.loadTimezone(identity) },
             projectWorkspaceBinding: createWebProjectWorkspaceBinding(core.db, authorizeRunWrite),
             workspaceCreation: createWebAgentWorkspaceCreatePort({
@@ -1000,8 +1036,7 @@ export async function createAgentServices(options: AgentDependencies) {
             skills: await createAgentSkillRuntimePorts({
               ownerId: lease.identity.ownerId,
               builtins: builtinSkillDefinitions,
-              listUser: skillMetadata,
-              readUser: createUserSkillReader(core.db, 'postgres'),
+              fileSkills, isFileSkillEnabled,
               fingerprint: createSecurityEventFingerprint(config.secretKey),
             }),
             ...(memoryEnabled && process.platform === 'linux' && core.receipts && canRebuildAgentMemoryIndex() ? {
@@ -1041,7 +1076,10 @@ export async function createAgentServices(options: AgentDependencies) {
               signal?.throwIfAborted()
               const preferences = await pool.query('SELECT data_json FROM user_preferences WHERE user_id=$1', [identity.ownerId])
               signal?.throwIfAborted()
-              const brief = createAgentToolBrief(preferences.rows[0]?.data_json, tools ?? [], context?.userSkillSnapshot)
+              const snapshot = context?.userSkillSnapshot ?? (_names.includes('use_skill') && identity.subject.kind === 'session'
+                ? (await fileSkillDefinitions(identity.ownerId)).definitions.map(skill => ({ id: skill.id, name: skill.name,
+                  description: skill.description, path: skill.path! })) : [])
+              const brief = createAgentToolBrief(preferences.rows[0]?.data_json, tools ?? [], snapshot)
               const enabled = ['search_tools', 'call_tool'].every(name => _names.includes(name))
               return { ...brief, mcpReminder: enabled ? mcpServiceReminder(await mcpSkillTools.services(identity.ownerId)) : '' }
             },
@@ -1216,6 +1254,7 @@ export async function createAgentServices(options: AgentDependencies) {
       } catch (error) { binding.release(); throw error }
     }
     const reconstruct = createWebAgentReconstructor({
+      authorizeReasoning: lease => dispatch.isCurrent(lease),
       subagentTools: lease => createToolRegistry({
         tools: createSubagentServiceTools(subagents),
         authorize: async (candidate) => candidate.ownerId === lease.identity.ownerId

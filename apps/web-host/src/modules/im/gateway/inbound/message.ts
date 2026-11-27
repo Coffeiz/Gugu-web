@@ -4,7 +4,7 @@ import type {VendorMediaSource} from '@gugu/core/providers'
 import type { Pool } from 'pg'
 import { openLocalFile } from '@gugu/fs/node'
 import { imageSize } from 'image-size'
-import { assertDurableCanonical, formatGroupMessage, formatQuotedContext, resolveCurrentTurnTextAttachments, stableJson,
+import { assertDurableCanonical, formatGroupMessage, formatQuotedContext, formatQuotedImageNotice, resolveCurrentTurnTextAttachments, stableJson,
   type Block, type CanonicalMessage, type ContextReferenceCodec, type CurrentTurnSources, type CurrentUser, type Json, type MessageEntry, type RunIdentity } from '@gugu/core/agent'
 import { createCurrentMessageAttachmentReader } from '../../../agent/context/attachments.js'
 import type { OwnedCurrentMessage } from '../../../agent/context/source.js'
@@ -219,11 +219,17 @@ export function createImMessageMaterializer(options: {
         let text = (await resolveCurrentTurnTextAttachments(row.content, resolved.attachments,
           async attachment => extracted.get(attachment.attach_id)!)).rawText
         const blocks: Block[] = []
+        const quotedImagePositions: number[] = []
+        let imageCount = 0
         const transcripts: ImNativeVoiceTranscript[] = []
         const quotedTranscripts: string[] = []
         const nativeCaptionEnabled=checked.some(item=>item.kind==='voice'&&item.extra?.quoted!==true)
         for (const attachment of checked) {
-          if (attachment.kind === 'image') blocks.push(await image(attachment, signal))
+          if (attachment.kind === 'image') {
+            blocks.push(await image(attachment, signal))
+            imageCount += 1
+            if (attachment.extra?.quoted === true) quotedImagePositions.push(imageCount)
+          }
           else if (attachment.kind === 'audio' || attachment.kind === 'voice') {
             const quoted = attachment.extra?.quoted === true
             if (quoted) {
@@ -273,6 +279,8 @@ export function createImMessageMaterializer(options: {
           await options.persistTranscript(id, transcript, failed?'failed':transcript?'completed':'empty', signal)
           await authorize(signal)
         }
+        const imageNotice = formatQuotedImageNotice(imageCount, quotedImagePositions)
+        if (imageNotice) text = [text, imageNotice].filter(Boolean).join('\n\n')
         const quotedText = [row.quoted_text, ...quotedTranscripts].filter(Boolean).join('\n') || null
         const content = scope.chatType === 'group'
           ? formatGroupMessage({ body: text, quote: quotedText,

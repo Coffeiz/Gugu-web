@@ -2,10 +2,9 @@ import { bindDesktopScheduledIm } from '../src/main/schedules/im.ts'
 import { createDesktopPaidSearchHost, isDesktopPaidSearchMethod } from '../src/main/agent/paid-search-host.ts'
 import { MAX_DESKTOP_SEARCH_IMAGE_BYTES } from '@gugu/core/agent/search-contracts'
 import { createDesktopMailService } from '../src/main/mail/index.ts'
-import { createDesktopPersonalSmtp } from '../src/main/mail/personal-smtp.ts'
 import { createRemoteAccountHandlers } from '../src/main/auth/session.ts'
+import { getDesktopDeviceId } from '../src/main/auth/device-id.ts'
 import { createRemoteSessionStore } from '../src/main/auth/store.ts'
-import { createRemoteAuthClient } from '@gugu/auth/client'
 import { createDesktopImInbox } from '../src/main/im/gateway/inbound/inbox.ts'
 import { createDesktopImDispatch } from '../src/main/im/gateway/delivery/dispatch.ts'
 import { createDesktopImCallback } from '../src/main/im/gateway/interactions/callback.ts'
@@ -15,10 +14,11 @@ import { createDesktopFeishuPairing } from '../src/main/im/connect/platforms/fei
 import { createDesktopFeishuGateway } from '../src/main/im/gateway/platforms/feishu/index.ts'
 import { createDesktopWechatPairing } from '../src/main/im/connect/platforms/wechat/index.ts'
 import { createDesktopWechatCursor, createDesktopWechatGateway, createDesktopWechatReach } from '../src/main/im/gateway/platforms/wechat/index.ts'
-import { agentModelPreviewPath, agentSessionPreviewPath, desktopPreviewRoutes, resourcesPreviewRoute, workspacePreviewRoutes, previewAttachmentPath } from '@gugu/desktop-contracts'
+import { agentModelPreviewPath, agentSessionPreviewPath, previewAttachmentPath } from '@gugu/desktop-contracts'
+import { desktopPreviewRoutes, mailPreviewRoute, resourcesPreviewRoute, workspacePreviewRoutes } from '../../../packages/desktop-contracts/src/preview-routes.ts'
 import { streamPreviewRunChanges } from '../src/main/agent/preview-run-changes.ts'
 import { createDesktopRecordingTranscriber } from '../src/main/agent/voice-recording.ts'
-import { createDesktopRuntimeLog } from '../src/main/log/index.ts'
+import { createDesktopRuntimeLog, desktopLogSinks } from '../src/main/log/index.ts'
 import { desktopLogHandlers } from '../src/main/log/read.ts'
 import { request } from 'node:http'
 import { randomUUID } from 'node:crypto'
@@ -96,9 +96,9 @@ export function desktopCorePreview(desktopRoot) {
     apply: 'serve',
     configureServer(server) {
       if (!server.httpServer || !loopbackHosts.has(server.config.server.host)) return
-      // 每个检出目录和 Vite 端口各自使用独立预览库，避免并行 Electron/Vite 进程争用 SQLite。
-      const directory = desktopPreviewDataDirectory(desktopRoot, homedir(), server.config.server.port ?? 5176)
+      const directory = desktopPreviewDataDirectory(desktopRoot, homedir())
       const report = createDesktopRuntimeLog(directory)
+      const { diagnostic } = desktopLogSinks(directory)
       const filesRoot = join(directory, 'Gugu-data')
       lifecycle = new DesktopLifecycle(async () => {
         const artifact = await verifyArtifact(artifactRoot).catch(() => {
@@ -108,6 +108,11 @@ export function desktopCorePreview(desktopRoot) {
         const host = await CoreHost.launch(artifact.node, artifact.entry, join(directory, 'core.db'),
           artifact.manifest, undefined, filesRoot, artifact.workerEntry, artifact.agentRuntimeModule)
         host.setHostRequestHandler(async ({ method, params, signal }) => {
+          if (method === 'agent.log.append' && params.diagnostic === true && typeof params.line === 'string'
+            && /^\{"event":"scheduled_instruction_failed","phase":"(?:targets|execution)","category":"[a-z_]{1,32}"\}\n$/u.test(params.line)) {
+            diagnostic(params.line)
+            return null
+          }
           if (method === 'agent.tools.policy' && Object.keys(params).length === 0) return { disabledTools: [] }
           if (method.startsWith('agent.schedules.im.')) return desktopScheduledImRequest(method, params, signal) ?? scheduledIm(method, params, signal)
           if (method === 'agent.im.authorizeGroupTool' || method === 'agent.im.readGroupMemoryContext') {
@@ -129,6 +134,7 @@ export function desktopCorePreview(desktopRoot) {
             return model.resolveReflectionModel(params.modelIdentity, params.modelId)
           if (isDesktopPaidSearchMethod(method)) return paidSearch(method, params, signal)
           if (method === 'agent.email.accounts' && Object.keys(params).length === 0) return desktopMail.listAccounts()
+          if (method === 'agent.email.list') return desktopMail.listForAgent(params, signal)
           if (method === 'agent.email.attachments') return desktopMail.inspectAgentAttachments(params, signal)
           if (method === 'agent.email.send') return desktopMail.sendForAgent(params, signal)
           if (Object.keys(params).length === 1 && Number.isSafeInteger(params.projectId) && params.projectId > 0) {
@@ -139,6 +145,8 @@ export function desktopCorePreview(desktopRoot) {
             if (method === 'agent.files.projectOverview') return files.agentProjectFileOverview(params.projectId, signal)
             if (method === 'agent.files.projectPath') return files.agentProjectFilePath(params.projectId)
           }
+          if (method === 'agent.files.workspaceRoot' && Object.keys(params).length === 1 && typeof params.directoryId === 'string')
+            return files.agentWorkspaceRoot(params.directoryId)
           if (method === 'agent.files.globalSearch') return files.globalFileSearch(params.queries, params.mode, params.perType, signal)
           if (method === 'agent.files.searchReferences' && Object.keys(params).length === 1
             && typeof params.query === 'string' && params.query.length <= 4096)
@@ -153,29 +161,40 @@ export function desktopCorePreview(desktopRoot) {
       })
       let activeManifest
       let starting
+      let waitingForIdle
+      async function activateCore(manifest, replace = false) {
+        if (replace) {
+          await lifecycle.pause()
+          activeManifest = undefined
+          report('host.stopped')
+        }
+        await lifecycle.start()
+        activeManifest = manifest
+        report('host.started')
+        void lifecycle.request('agent.memory.resumeReflections').catch(() => {})
+      }
       function startCore() {
         if (starting) return starting
-        starting = (async () => {
-          const info = await stat(join(artifactRoot, 'manifest.json')).catch(() => {
-            throw new DesktopError('artifact_invalid', '桌面预览需要 Core 制品，请先运行桌面 dev:prepare')
-          })
+        return stat(join(artifactRoot, 'manifest.json')).catch(() => {
+          throw new DesktopError('artifact_invalid', '桌面预览需要 Core 制品，请先运行桌面 dev:prepare')
+        }).then(info => {
+          if (starting) return starting
           const manifest = `${info.ino}:${info.mtimeMs}:${info.size}`
-          // 制品替换后复用 Vite 中的模型配置，只重启使用旧模块的 Core。
-          if (activeManifest && activeManifest !== manifest) {
-            await lifecycle.pause()
-            report('host.stopped')
+          if (activeManifest === manifest) return
+          if (!activeManifest) {
+            starting = activateCore(manifest).catch(error => {
+              report('host.start_failed', { error })
+              throw error
+            }).finally(() => { starting = undefined })
+            return starting
           }
-          await lifecycle.start()
-          if (activeManifest !== manifest) {
-            activeManifest = manifest
-            report('host.started')
-            void lifecycle.request('agent.memory.resumeReflections').catch(() => {})
-          }
-        })().catch(error => {
-          report('host.start_failed', { error })
-          throw error
-        }).finally(() => { starting = undefined })
-        return starting
+          // 等待期间仍向旧 Core 转发请求，包括任务继续执行所需的请求。
+          waitingForIdle ??= lifecycle.whenIdle(() => {
+            starting = activateCore(manifest, true).finally(() => { starting = undefined })
+            return starting
+          }).catch(error => report('host.start_failed', { error }))
+            .finally(() => { waitingForIdle = undefined })
+        })
       }
       const files = desktopFiles(filesRoot, undefined, join(directory, 'file-workspaces.json'), directory,
         async id => {
@@ -214,18 +233,16 @@ export function desktopCorePreview(desktopRoot) {
       const resolveEmbedding = createDesktopEmbeddingResolver(credentialDirectory, encryption)
       gateways.push(telegram, wechat, feishu, qq)
       let startingIm
+      const getDeviceId = () => getDesktopDeviceId(directory)
       const remoteSessions = createRemoteSessionStore(credentialDirectory, encryption)
-      const personalSmtp = createDesktopPersonalSmtp(credentialDirectory, encryption, async () => {
-        const session = await remoteSessions.read()
-        return session ? (await createRemoteAuthClient().restore(session).catch(() => null))?.email ?? '' : ''
-      })
-      const desktopMail = createDesktopMailService(credentialDirectory, encryption, undefined, undefined, personalSmtp)
+      const desktopMail = createDesktopMailService(credentialDirectory, encryption, undefined, undefined, undefined, resolveModelProxy)
       const paidSearch = createDesktopPaidSearchHost(remoteSessions, fetch, id =>
         readDesktopAgentAttachment(host, directory, id, MAX_DESKTOP_SEARCH_IMAGE_BYTES))
       const handlers = {
-        ...createRemoteAccountHandlers(remoteSessions),
-        [DESKTOP_CHANNELS.personalSmtp]: personalSmtp.command,
+        [DESKTOP_CHANNELS.deviceInfo]: async () => ({ deviceId: await getDeviceId(), platform: process.platform }),
+        ...createRemoteAccountHandlers(remoteSessions, undefined, undefined, getDeviceId),
         ...desktopLogHandlers(directory),
+        ...desktopMail.handlers,
         ...files.handlers,
         ...workspaceHandlers(lifecycle, async () => null, files.globalFileSearch, async id => {
           const file = await files.resolveWorkspaceReference(id)
@@ -270,7 +287,7 @@ export function desktopCorePreview(desktopRoot) {
         const socketPath = process.env.GUGU_DESKTOP_PREVIEW_SOCKET
         const secret = process.env.GUGU_DESKTOP_PREVIEW_SECRET
         if ((trustedCall || permittedFile) && socketPath && secret &&
-          (content || upload || workspacePreviewEndpoints.has(req.url) || req.url === resourcesPreviewRoute.endpoint || req.url === '/__desktop-preview/files' || req.url === '/__desktop-preview/im' || req.url === '/__desktop-preview/logs' || req.url === '/__desktop-preview/preferences' || req.url === agentModelPreviewPath || req.url === agentSessionPreviewPath || attachment)) {
+          (content || upload || workspacePreviewEndpoints.has(req.url) || req.url === mailPreviewRoute.endpoint || req.url === resourcesPreviewRoute.endpoint || req.url === '/__desktop-preview/files' || req.url === '/__desktop-preview/im' || req.url === '/__desktop-preview/logs' || req.url === '/__desktop-preview/preferences' || req.url === agentModelPreviewPath || req.url === agentSessionPreviewPath || attachment)) {
           const upstream = request({
             socketPath, path: req.url, method: req.method,
             headers: { ...(req.headers['content-type'] ? { 'Content-Type': req.headers['content-type'] } : {}),
@@ -318,7 +335,7 @@ export function desktopCorePreview(desktopRoot) {
         void desktopReply(trustedCall, async () => {
           const { method, args } = await readCall(req, methods)
           if (req.url === '/__desktop-preview/im') await (startingIm ??= Promise.all(gateways.map(gateway => gateway.start())))
-          else if (method !== 'readLogs' && method !== 'files' && method !== 'agentModel' && method !== 'auxiliaryModel' && method !== 'personalSmtp' && !method.startsWith('remote')) await startCore()
+          else if (method !== 'mail' && method !== 'readLogs' && method !== 'files' && method !== 'agentModel' && method !== 'auxiliaryModel' && !method.startsWith('remote')) await startCore()
           const handler = handlers[DESKTOP_CHANNELS[method]]
           const command = args[0]
           if (!wantsChatStream || method !== 'agentSessions') return handler(...args)

@@ -78,7 +78,7 @@ export function createSqlAgentSessionLister(db: Kysely<any>, backend: 'postgres'
     if (backend === 'sqlite' && sqliteEnabled) await sql`SELECT 1 FROM filesystem_authorization_grants LIMIT 0`.execute(db)
     const workspaceUnavailable = backend === 'sqlite' && runtime.sqliteWorkspace === 'unavailable'
     const workspaceName = workspaceUnavailable ? sql`NULL` : sql`w.name`
-    const workspaceJoin = workspaceUnavailable ? sql`` : sql`LEFT JOIN workspaces w ON w.id=s.workspace_id AND w.user_id=s.user_id`
+    const workspaceJoin = workspaceUnavailable ? sql`` : sql`LEFT JOIN workspaces w ON w.id=s.workspace_id AND w.user_id=s.user_id AND w.enabled`
     const bound = workspaceUnavailable ? sql`EXISTS (SELECT 1 FROM conversation_sessions x WHERE x.user_id=${owner} AND x.workspace_id IS NOT NULL)` : sql`0`
     const updated = backend === 'postgres' ? sql`to_char(s.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')` : sql`s.updated_at`
     const created = backend === 'postgres' ? sql`to_char(s.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')` : sql`s.created_at`
@@ -119,11 +119,11 @@ export function createSqlAgentSessionLister(db: Kysely<any>, backend: 'postgres'
       webIds.length ? sql<{ session_id: number; id: number }>`WITH latest AS (SELECT session_id,max(conversation_seq) AS conversation_seq FROM conversation_messages AS message WHERE session_id IN (${sql.join(webIds)}) AND role='assistant' AND content_json IS NULL AND (content<>'' OR (files IS NOT NULL AND ${files} NOT IN ('[]','null'))) GROUP BY session_id) SELECT message.session_id,message.id FROM conversation_messages message JOIN latest ON latest.session_id=message.session_id AND latest.conversation_seq=message.conversation_seq`.execute(db).then(result => result.rows) : Promise.resolve([]),
     ])
     const grants = new Set(grantRows.filter(row => backend === 'postgres' || row.expires_at === null || databaseTime(row.expires_at, 'sqlite') > cutoff!).map(row => /^\d+$/.test(row.subject_id) ? Number(row.subject_id) : 0).filter(id => id > 0))
-    const last = new Map(replies.map(row => [row.session_id, row.id])), shell = backend === 'sqlite' ? sqliteShell : runtime.workspaceShellSupported()
+    const last = new Map(replies.map(row => [row.session_id, row.id]))
     return sessions.map(session => {
       const state = readAgentSessionContext(session.session_context, backend), row: Record<string, unknown> = {
         id: session.id, title: session.title_bot_id ? replacePlatformMentionIds(session.title, new Map([[session.title_bot_id, '咕咕']])) : session.title, source: session.source, chatType: session.chat_type,
-        workspaceName: shell ? session.workspace_name : null,
+        workspaceName: session.workspace_name,
         ...projectAgentSessionGoal(state),
         filesystemAuthorized: enabled && grants.has(session.id), filesystemAuthorizationEnabled: enabled,
         updatedAt: isoUtc(session.updated_at_iso), createdAt: isoUtc(session.created_at_iso), isRunning: running.get(session.id),

@@ -1,3 +1,4 @@
+import { selectionSnapshotSchema } from './selection-reference.js'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { Kysely, PostgresDialect, sql, type Transaction } from 'kysely'
 import type { Pool } from 'pg'
@@ -20,8 +21,10 @@ export const pendingQueueAttachmentSchema = z.object({
   img_width: z.number().int().nonnegative().nullish(), img_height: z.number().int().nonnegative().nullish(),
   transcript: z.string().max(8000).optional(),
 })
-export const pendingQueueReferenceSchema = z.union([z.object({ type: z.enum(['project', 'event', 'conversation', 'canvas_note', 'skill', 'mcp', 'scheduled_task']), id: z.union([z.number().int().positive(), z.string().uuid()]), label: z.string().max(512) }).strict(), z.object({
-  type: z.enum(['file', 'folder']), id: z.string().regex(/^path-[A-Za-z0-9_-]{1,24000}$/u), label: z.string().max(512),
+export const pendingQueueReferenceSchema = z.union([z.object({ type: z.enum(['project', 'client', 'event', 'conversation', 'canvas_note', 'skill', 'mcp', 'scheduled_task']), id: z.union([z.number().int().positive(), z.string().uuid()]), label: z.string().max(512), selection: selectionSnapshotSchema.optional() }).strict(), z.object({
+  type: z.literal('skill'), id: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u), label: z.string().max(512),
+}).strict(), z.object({
+  type: z.enum(['file', 'folder']), id: z.string().regex(/^path-[A-Za-z0-9_-]{1,24000}$/u), label: z.string().max(512), selection: selectionSnapshotSchema.optional(),
 }).strict()])
 export const pendingQueueItemSchema = z.object({ key: z.number().int().positive(), text: z.string().max(200_000), attachments: z.array(pendingQueueAttachmentSchema).max(32).default([]), references: z.array(pendingQueueReferenceSchema).max(50).default([]) }).strict()
 const desktopPendingQueueItemSchema = pendingQueueItemSchema.extend({

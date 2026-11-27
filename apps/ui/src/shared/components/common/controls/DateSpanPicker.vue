@@ -379,5 +379,5 @@ watch(() => props.startDate, v => {
 }
 .drp-clear { background: none; }
 
-.popup-menu-host.drp-popup-host { width: min(240px, calc(100vw - 12px)); padding: var(--space-md); box-sizing: border-box; }
+.popup-menu-host.drp-popup-host { width: min(240px, calc(100vw - 12px)); padding: var(--popup-content-inset); box-sizing: border-box; }
 </style>

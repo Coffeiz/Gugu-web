@@ -15,5 +15,5 @@ defineProps({ showContent: { type: Boolean, default: true } })
 </template>
 
 <style scoped>
-.projects-loading-column { min-width: 0; padding: 16px; display: grid; align-content: start; gap: 16px; }
+.projects-loading-column { min-width: 0; padding: var(--page-content-inset); display: grid; align-content: start; gap: var(--space-xs); }
 </style>

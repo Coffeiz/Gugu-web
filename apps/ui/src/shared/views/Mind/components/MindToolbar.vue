@@ -48,27 +48,24 @@ function jumpToDate(date: string) {
 
 <style scoped>
 .mind-bar {
-  --mind-toolbar-control-height: var(--desktop-toolbar-control-height, var(--control-height-sm));
-  height: var(--topbar-height);
   gap: var(--space-sm);
-  padding-inline: var(--space-lg);
 }
 .mind-dev-badge { color: var(--content-secondary); font-size: var(--font-size-xs); }
 .mind-bar .mind-cal-picker {
   flex: none;
-  width: var(--mind-toolbar-control-height);
+  width: var(--toolbar-compact-control-height);
   margin-inline-start: auto;
 }
 .mind-cal-picker :deep(.dp-input) {
   width: 100%;
-  height: var(--mind-toolbar-control-height);
+  height: var(--toolbar-compact-control-height);
   padding: 0;
 }
 .mind-cal-picker :deep(.dp-input span) { display: none; }
 .mind-bar .mind-filter {
   width: 224px;
   min-width: 0;
-  height: var(--mind-toolbar-control-height);
-  min-height: var(--mind-toolbar-control-height);
+  height: var(--toolbar-compact-control-height);
+  min-height: var(--toolbar-compact-control-height);
 }
 </style>

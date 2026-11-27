@@ -1,3 +1,5 @@
+import { assertInboundRecordContract } from '../../../../../../packages/core/tests/im/inbox-contract.js'
+import { createPostgresInboundStore } from '../../../../src/modules/im/gateway/inbound/postgres-inbound-store.js'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
@@ -42,8 +44,10 @@ test('PostgreSQL 收件跨 worker 重启续接，过期领取不能确认且原�
     await pool.query(`INSERT INTO user_bots(id,user_id,platform,name,app_id,app_secret,enabled,owner_platform_user_id)
       VALUES($1,$2,'qq','合成','synthetic-bot','synthetic',true,'synthetic-owner')`, [binding.botId, ownerId])
     const inbox = createPostgresImInbox(pool, secretKey)
-    const queued = await inbox.enqueue(binding, envelope.sealAdmitted(binding, payload))
-    assert.ok(queued)
+    const sealed = envelope.sealAdmitted(binding, payload)
+    const queued = await assertInboundRecordContract(() => createPostgresInboundStore(pool).recordInbound({
+      ...binding, connectionId: binding.botId, eventKey: String(sealed.message_id), groupId: null, payload: JSON.stringify(sealed),
+    }))
     const rowId = queued.split('-')[1]!
     const original = randomUUID()
     const consumption = inbox.consume(new AbortController().signal)

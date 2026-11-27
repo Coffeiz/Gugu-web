@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { downloadSendFileImage } from '../../../src/agent/tools/send-file-image.js'
+import { downloadSendFileImage } from '../../../src/agent/tools/files/send-file-image.js'
 
 const imageUrl = 'https://files.example.invalid/photo'
 const mebibyte = 1024 * 1024

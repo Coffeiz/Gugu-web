@@ -135,14 +135,6 @@
     "keyBehavior": "技能内容及工具关联校验",
     "ci": "node-webui"
   },
-  "apps/web-host/tests/agent/tools/skills/manage.test.ts": {
-    "domain": "agent",
-    "layer": "L2",
-    "owner": "packages/core/src/agent/skills/user-management.ts",
-    "productionEntry": "apps/web-host/src/main.ts",
-    "keyBehavior": "技能owner隔离、并发创建序列、写入前后租约复核、撤权回滚、持久收据重放和正文不进入收据",
-    "ci": "node-webui"
-  },
   "apps/web-host/tests/agent/tools/mcp/directory.test.ts": {
     "domain": "agent",
     "layer": "L2",
@@ -269,14 +261,6 @@
     "owner": "packages/core/src/files/read.ts:planAttachmentThumbnail",
     "productionEntry": "apps/web-host/src/modules/agent/attachments/thumbnail.ts",
     "keyBehavior": "附件缩略图 owner 隔离、图片格式、动画原图与安全缓存响应",
-    "ci": "node-webui"
-  },
-  "apps/web-host/tests/agent/tools/skills/delete.test.ts": {
-    "domain": "agent",
-    "layer": "L2",
-    "owner": "packages/core/src/agent/skills/user-delete.ts",
-    "productionEntry": "apps/web-host/src/main.ts",
-    "keyBehavior": "技能删除owner隔离及事件",
     "ci": "node-webui"
   },
   "apps/web-host/tests/agent/tools/schedules.postgres.test.ts": {
@@ -1549,22 +1533,6 @@
     "owner": "packages/core/src/agent/tools",
     "productionEntry": "canvas_create/canvas_search_placeable",
     "keyBehavior": "真实SQL候选与owner隔离、创建Undo收据重放、取消和Agent续轮",
-    "ci": "core-node"
-  },
-  "packages/core/tests/agent/tools/skill-management.test.ts": {
-    "domain": "agent-tools",
-    "layer": "L1",
-    "owner": "packages/core/src/agent/tools",
-    "productionEntry": "list_skills",
-    "keyBehavior": "Markdown head和用户元数据目录、停用项、正文与owner隔离",
-    "ci": "core-node"
-  },
-  "packages/core/tests/agent/skills/user-management-sqlite.test.ts": {
-    "domain": "skills",
-    "layer": "L1",
-    "owner": "packages/core/src/agent/skills/user-management.ts",
-    "productionEntry": "Core Skill 管理器与 Agent 工具的共享事务",
-    "keyBehavior": "隔离SQLite技能创建与局部更新的结果契约、关联工具保留、用户接管及owner隔离",
     "ci": "core-node"
   },
   "packages/core/tests/agent/tools/canvas-edits.test.ts": {

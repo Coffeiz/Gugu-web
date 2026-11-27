@@ -5,7 +5,7 @@ import { projectAccessKey, type ProjectAccess } from '@/api/projects'
 import { mapProjectResponse, type Project } from '@/types/project'
 import { accountBoundaryEpoch } from '@/utils/accountBoundary'
 import { sanitizeChatHtml } from '@/utils/markdown'
-import { extractProjectAccent, PROJECT_COLOR_PRESETS } from '@/utils/projectColors'
+import { extractProjectAccent } from '@/utils/projectColors'
 import { projectDeadlinePresentation } from '@/composables/shared/useProjectCardBasics'
 import { projectProgress } from '@/utils/projectProgress'
 import { projectStatusLabelKey } from '@/utils/projectStages'
@@ -52,14 +52,20 @@ export function useChatProjectCards(html: () => string, enabled: () => boolean) 
     if (!access || !keys) return
     let current = true
     onCleanup(() => { current = false })
-    for (const id of keys.split(',').map(Number)) {
-      const project = await readProject(access, id, epoch)
-      if (!current || accountBoundaryEpoch.value !== epoch) return
-      if (project) projects.value = new Map(projects.value).set(id, project)
-      const remaining = new Set(pending.value)
-      remaining.delete(id)
-      pending.value = remaining
+    const queue = [...pending.value]
+    let next = 0
+    const load = async () => {
+      while (current && accountBoundaryEpoch.value === epoch && next < queue.length) {
+        const id = queue[next++]!
+        const project = await readProject(access, id, epoch)
+        if (!current || accountBoundaryEpoch.value !== epoch) return
+        if (project) projects.value = new Map(projects.value).set(id, project)
+        const remaining = new Set(pending.value)
+        remaining.delete(id)
+        pending.value = remaining
+      }
     }
+    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, load))
   }, { immediate: true })
 
   function text(className: string, value: string) {
@@ -99,7 +105,7 @@ export function useChatProjectCards(html: () => string, enabled: () => boolean) 
       const completion = project.status === 'done' ? 100 : projectProgress(project)
       const progress = document.createElement('progress')
       progress.className = 'chat-project-meter'
-      const fill = PROJECT_COLOR_PRESETS.includes(project.color) ? project.color : extractProjectAccent(project.color)
+      const fill = extractProjectAccent(project.color)
       progress.style.setProperty('--chat-project-fill', fill)
       progress.max = 100
       progress.value = completion

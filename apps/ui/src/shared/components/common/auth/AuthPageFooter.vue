@@ -2,7 +2,7 @@
   <div class="page-footer">
     <AuthLanguageSwitcher />
     <div class="footer-copy">
-      <span>Create with agents and love</span>
+      <span>{{ $t('pageUi.authTagline') }}</span>
       <template v-if="siteConfig.icpNumber">
         <span class="footer-sep">·</span>
         <a :href="siteConfig.icpUrl" target="_blank" rel="noopener">{{ siteConfig.icpNumber }}</a>

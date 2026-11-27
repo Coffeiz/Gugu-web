@@ -210,7 +210,7 @@ function trackName(track: AudioTrack) {
   transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
   background: var(--glass-card-background); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-card-border); border-radius: var(--card-radius);
-  box-shadow: var(--glass-card-shadow); padding: 12px 14px 10px;
+  box-shadow: var(--glass-card-shadow); padding: var(--space-md);
   display: flex; flex-direction: column; gap: 7px;   /* z-index 由 :style 动态(跟随聊天窗 ±1) */
 }
 .mp-info { display: flex; align-items: center; gap: 7px; min-width: 0; }
@@ -271,7 +271,7 @@ function trackName(track: AudioTrack) {
    播放器跟聊天窗口经常联动出现（比如小窗打开顶起播放器），用不同的时长/曲线会让两者
    一个先到位、一个还在动，看着不同步（2026-07-17 复现：播放器隐藏后再打开跟窗口动画对不上）。 */
 
-.btn-group { display: flex; align-items: center; gap: 2px; }
+.btn-group { display: flex; align-items: center; gap: var(--space-xs); }
 .popup-close-btn {
   width: 26px; height: 26px; border-radius: 7px; border: none;
   background: none; color: var(--text-secondary);

@@ -88,7 +88,7 @@ type UpdateRow = QueryResultRow & Record<string, any>
 
 type Folder = { id: number; parentId: number | null; name: string; projectId: number | null; workspaceId: number | null }
 
-const TEXT_EXTS = new Set('md markdown txt text json csv tsv yaml yml xml html htm css js ts jsx tsx py java c cpp h hpp go rs rb php sh bash sql ini toml conf log vue svg env m3u m3u8'.split(' '))
+const TEXT_EXTS = new Set('md markdown txt text json csv tsv yaml yml xml html htm css js mjs cjs ts mts cts jsx tsx py java c cpp h hpp go rs rb php sh bash sql ini toml conf log vue svg env m3u m3u8'.split(' '))
 
 const BINARY_EXTS = new Set('pdf doc docx odt rtf xls xlsx ods ppt pptx odp pyc'.split(' '))
 

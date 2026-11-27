@@ -37,7 +37,7 @@ export function registerPreviewWindows(options: {
   url.searchParams.set('filePreview', '1')
   const windows = new Map<string, { window: BrowserWindow; file: DesktopPreviewWindowFile; reveal?: () => Promise<unknown> }>()
   const externalContent = new Map<string, (range: string | null) => Promise<Response>>()
-  const find = (event: IpcMainInvokeEvent) =>
+  const find = (event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>) =>
     [...windows.values()].find(({ window }) => trustedCaller(event, [window], url.href))
   const readState = (window: BrowserWindow) => ({
     fullscreen: window.isFullScreen(), pinned: window.isAlwaysOnTop(),
@@ -215,6 +215,9 @@ export function registerPreviewWindows(options: {
     content(token: string, range: string | null) {
       return externalContent.get(token)?.(range) ?? Promise.resolve(new Response(null, { status: 404 }))
     },
+    trustsSelection(event: Parameters<typeof find>[0]) {
+      return Boolean(find(event))
+    },
     trusts(event: IpcMainInvokeEvent, channel: string, argument: unknown) {
       if (channel !== DESKTOP_CHANNELS.files || !argument || typeof argument !== 'object') return false
       const file = find(event)?.file
@@ -222,7 +225,7 @@ export function registerPreviewWindows(options: {
       if (!target) return false
       const command = argument as Record<string, unknown>
       return command.directoryId === target.directoryId && command.path === target.relativePath
-        && (command.action === 'download' || command.action === 'open' || command.action === 'upload')
+        && (command.action === 'download' || command.action === 'open' || command.action === 'upload' || command.action === 'reference')
     },
   }
 }

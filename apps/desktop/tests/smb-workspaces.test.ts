@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { fileWorkspaces } from '../src/main/files/workspaces'
-import { smbShareUrl } from '../src/main/files/smb-workspaces'
+import { smbShareUrl } from '../src/main/platform/macos/smb-workspaces'
 
 it('SMB 工作区打开时有限次重连，并拒绝原挂载点上的不同共享', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-smb-workspace-'))

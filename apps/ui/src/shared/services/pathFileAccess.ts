@@ -8,6 +8,7 @@ export interface PathFileAccess {
   compressArchive?: typeof pathFilesApi.compressArchive
   extractArchive?: typeof pathFilesApi.extractArchive
   resolveRelative?: typeof pathFilesApi.resolveRelative
+  resolveLibraryLink?: (url: string) => Promise<{ id: string; kind: 'file' | 'folder' } | null>
   openRelativePreview?: (href: string) => Promise<void> | undefined
   reference: typeof pathFilesApi.reference
   entries: typeof pathFilesApi.entries

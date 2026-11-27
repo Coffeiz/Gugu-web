@@ -133,3 +133,47 @@ it('Web 接入会话接口后仍补读历史并续接实时运行', async () => 
     readMessages.mockRestore()
   }
 })
+
+it('上翻立即取消待执行的贴底，回到底部后恢复跟随', async () => {
+  const el = document.createElement('div')
+  Object.defineProperties(el, { scrollHeight: { value: 1000 }, clientHeight: { value: 400 } })
+  el.scrollTop = 600
+  const scrollToBottom = vi.fn()
+  const cancelScroll = vi.fn()
+  const list = { el, scrollToBottom, cancelScroll, getVirtualRangeStart: () => 12 }
+  const chatList: Parameters<typeof useChatConversation>[0]['messageListRef'] = ref(null)
+  let chat!: ReturnType<typeof useChatConversation>
+  const app = createApp({
+    setup() {
+      chat = useChatConversation({
+        composerRef: ref(null), messageListRef: chatList, pendingAtt: ref([]),
+        refreshAfterTools: async () => {}, loadQuota: () => {}, playIncomingMessageSfx: () => {},
+        onSyncSmallH: () => {},
+      })
+      return () => null
+    },
+  }).use(createPinia())
+  app.mount(document.createElement('div'))
+  try {
+    // 按正常组件 ref 绑定的时序挂载滚动容器，确保监听已装配。
+    chatList.value = list as unknown as NonNullable<typeof chatList.value>
+    await nextTick()
+    const pending = chat.scrollBottom()
+    el.dispatchEvent(new WheelEvent('wheel', { deltaY: -20 }))
+    await pending
+    expect(cancelScroll).toHaveBeenCalledOnce()
+    expect(scrollToBottom).not.toHaveBeenCalled()
+
+    el.scrollTop = 580
+    el.dispatchEvent(new Event('scroll'))
+    await chat.scrollBottom()
+    expect(scrollToBottom).not.toHaveBeenCalled()
+
+    el.scrollTop = 600
+    el.dispatchEvent(new Event('scroll'))
+    await chat.scrollBottom()
+    expect(scrollToBottom).toHaveBeenCalledOnce()
+  } finally {
+    app.unmount()
+  }
+})

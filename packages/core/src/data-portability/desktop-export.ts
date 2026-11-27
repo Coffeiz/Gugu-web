@@ -86,8 +86,8 @@ export async function exportDesktopBusinessArchive(db: Kysely<Database>, ownerId
       }
       async function* clients() {
         for await (const row of tx.selectFrom('clients').selectAll().where('user_id', '=', owner).orderBy('id').stream()) {
-          const { id, created_at, name, contact, email, phone, notes } = clientRecord(row)
-          yield record('client', id, created_at, null, null, { name, contact, email, phone, notes })
+          const { id, created_at, name, email, phone, address, notes } = clientRecord(row)
+          yield record('client', id, created_at, null, null, { name, ...(row.contact == null ? {} : { contact: row.contact }), email, phone, address, notes })
         }
       }
       await add('records/projects.jsonl', projects(), 'projects')

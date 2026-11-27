@@ -12,7 +12,7 @@ Desktop 和 Web Host 共用这里的平台连接、收发和事件契约。各�
 | `@gugu/gateway/qq`、`/feishu`、`/wechat`、`/telegram` | 各平台连接、授权、解析、发送与平台回执处理 | 两端的平台适配器 |
 | `@gugu/gateway/media` | 共享入站媒体处理能力 | 两端的附件和媒体接线 |
 
-Core 决定消息是否触发 Agent、绑定哪个会话、使用哪些场景权限，并管理 Run 生命周期。Host 提供可信身份、连接凭据、存储和进程装配。Database 提供表结构、事务和原子持久化能力。当前 Web 在可信准入后封装消息并写入 Redis inbox，Desktop 经 IPC 写入 SQLite inbox。两端已复用平台 sender，入站交接和部分投递编排仍由宿主分别实现。
+Core 决定消息是否触发 Agent、绑定哪个会话、使用哪些场景权限，并管理 Run 生命周期。Host 提供可信身份、连接凭据、存储和进程装配。Database 提供表结构、事务和原子持久化能力。当前 Web 在可信准入后封装消息并写入 PostgreSQL inbox，Desktop 经 IPC 写入 SQLite inbox。两端已复用平台 sender，入站交接和部分投递编排仍由宿主分别实现。
 
 ## 平台实现
 
@@ -24,11 +24,13 @@ Core 决定消息是否触发 Agent、绑定哪个会话、使用哪些场景权
 | Telegram | [轮询](src/platforms/telegram/polling.ts)、[对话回复](src/platforms/telegram/sender.ts)、[定时投递](src/platforms/telegram/delivery.ts) | [Token 与 Webhook 校验](src/platforms/telegram/pairing.ts)、[消息解析](src/platforms/telegram/message.ts) |
 
 - [IR](src/ir/) 定义消息、交互回调和回复。平台载荷中的身份需与宿主提供的连接对照。
-- [连接监督](src/runtime.ts) 管理连接生命周期。[入站预检](src/runtime/inbound-preflight.ts) 处理交互、绑定与控制消息。宿主在发起 Agent 或发送回复前复核当前绑定。
+- [连接监督](src/runtime.ts) 管理连接生命周期。[入站预检](src/runtime/inbound/preflight.ts) 处理交互、绑定与控制消息。宿主在发起 Agent 或发送回复前复核当前绑定。
 - Desktop 的[连接设置](../../apps/desktop/src/main/im/connect/)与[网关](../../apps/desktop/src/main/im/gateway/)使用本机加密凭据和 SQLite。Web Host 的[连接设置](../../apps/web-host/src/modules/im/connect/)与[网关](../../apps/web-host/src/modules/im/gateway/)装配账户、PostgreSQL 和 Redis。
 - 微信的桌面入口可从[扫码绑定](../../apps/desktop/src/main/im/connect/platforms/wechat/index.ts)追到[轮询和回复](../../apps/desktop/src/main/im/gateway/platforms/wechat/index.ts)，再查看[扫码测试](../../apps/desktop/tests/wechat-pairing.test.ts)和 [Web Host 平台测试](../../apps/web-host/tests/im/gateway/wechat/)。
 
 ## 入站 API
+
+Gateway 拥有消息 IR 和入站、投递的状态语义。Web 的 PostgreSQL 仓储位于 Web Host IM 模块，Desktop 的 SQLite 仓储位于 Core IM 模块。Database 提供两端共用的结构与事务基础设施。见 [数据库基础层实施计划](../../docs/architecture/database-implementation.md)。
 
 `receiveMessage(connection, event, store)` 接收平台适配器产出的 `ImReceivedMessage`，核对可信连接后，通过 `ImInboundStore.recordInbound` 写入。回执为 `queued`、`recorded`、`duplicate` 或 `ignored`。写入失败或提交结果未知时由适配器抛出错误。
 
@@ -36,8 +38,8 @@ Web Host 将 QQ、飞书、微信写入 PostgreSQL 收件表。Telegram 在同�
 
 | 消费端口 | Web Host | Desktop |
 |---|---|---|
-| `claimInbound` | 设置 PostgreSQL 租约。租约到期后可以重新领取原收件 | 从 SQLite 读取当前连接队首，并通过稳定客户端消息 ID 找回已有 Run |
-| `settleInbound` | 会话与 Run 调度事务提交后，用仍有效的租约确认 | 使用收件与 Run 标识确认最终投递，或者关闭尚未创建 Run 的被拒收件 |
+| `claimInbound` | 设置 PostgreSQL 租约。租约到期后可以重新领取原收件 | 从 SQLite 读取当前连接的待准入收件，通过稳定客户端消息 ID 找回已登记的 Run。已关联的收件由投递恢复路径读取 |
+| `settleInbound` | 会话与 Run 调度事务提交后，用仍有效的租约确认 | 发现对应的 Run 已持久登记后，将收件关联到该 Run。最终投递通过独立回执确认 |
 
 Web 定期扫描数据库补领，未确认的收件须等原租约到期（默认 120 秒）。完成的收件保留去重键，后台清理超过 30 分钟的密封载荷。Desktop 的收件与附件元数据原子提交，发送中的回复继续使用已有的投递收据。两端使用独立数据库，去重作用域限于各自数据库。
 

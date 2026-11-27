@@ -78,7 +78,7 @@ function actionHref(value: unknown) {
   return `gugu://open-object/${action.kind}/${action.id}`
 }
 
-export function renderSmartLayout(layout: unknown, t: Translate, initialState?: unknown): string {
+export function renderSmartLayout(layout: unknown, t: Translate, initialState?: unknown, isolateChildren = false, partial = false): string {
   let count = 0
   const entries = initialState == null ? [] : Object.entries(fields(initialState))
   if (entries.length > 16) throw new Error()
@@ -100,6 +100,8 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
   const numericInputs = new Set<string>()
   const chartFilters = new Set<string>()
   const rankingWeights = new Set<string>()
+  const dependentBlocks: Array<{ html: string; ready: () => boolean }> = []
+  const failure = () => `<div class="chat-smart-view-notice">${t('invalidRegion')}</div>`
   function registerControl(value: unknown) {
     const key = id(value)
     if (controlIds.has(key)) throw new Error()
@@ -110,7 +112,21 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
     // 模型有时会直接输出单个子组件，统一按单元素列表校验和渲染。
     const items = Array.isArray(children) ? children : [fields(children)]
     if (!items.length || items.length > 24) throw new Error()
-    const html = items.map(child => render(child, depth + 1)).join('')
+    const html = items.map(child => {
+      if (!isolateChildren) return render(child, depth + 1)
+      const tracked = [controlIds, sliders, filters, numericInputs, chartFilters, rankingWeights]
+      const previous = tracked.map(set => new Set(set))
+      const previousDependencies = dependentBlocks.length
+      try {
+        const component = render(child, depth + 1)
+        if (component) return component
+      } catch { /* 保留同组其他组件。 */ }
+      tracked.forEach((set, index) => {
+        for (const key of set) if (!previous[index]!.has(key)) set.delete(key)
+      })
+      dependentBlocks.length = previousDependencies
+      return failure()
+    }).join('')
     return html ? `<div class="chat-smart-layout" data-columns="${columns}">${html}</div>` : ''
   }
 
@@ -118,7 +134,15 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
     const component = fields(value)
     if (depth > 6 || ++count > 80) throw new Error()
     const html = renderComponent(component, depth)
-    return html && component.when != null ? `<div${condition(component.when)}>${html}</div>` : html
+    const result = html && component.when != null ? `<div${condition(component.when)}>${html}</div>` : html
+    if (!isolateChildren || !result) return result
+    const filter = component.filter == null ? null : fields(component.filter)
+    const ready = component.type === 'list' && filter ? () => sliders.has(String(filter.slider))
+      : component.type === 'chart' && filter ? () => sliders.has(String(filter.source)) || numericInputs.has(String(filter.source))
+      : component.type === 'ranking' ? () => (component.criteria as Fields[]).every(item => sliders.has(String(item.weight)))
+      : null
+    if (!ready) return result
+    return `<!--smart-dependency-${dependentBlocks.push({ html: result, ready }) - 1}-->`
   }
 
   function renderComponent(component: Fields, depth: number): string {
@@ -171,7 +195,7 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
           const state = status === 'done' || status === 'current' || status === 'planned' ? status : ''
           const href = actionHref(item.action)
           const title = `${iconSlot(item.icon)}${text(item.label)}`
-          const detail = item.detail == null ? '' : `<span class="chat-smart-list-detail">${text(item.detail, 240)}</span>`
+          const detail = item.detail == null ? '' : `<span class="chat-smart-list-detail">${text(item.detail, 320)}</span>`
           return `<li data-smart-time-state="${state}"><span class="chat-smart-list-detail">${text(item.when, 80)}${state ? ` · ${t(`timeline_${state}`)}` : ''}</span>
             <strong class="chat-smart-label">${href ? `<a href="${href}">${title}</a>` : title}</strong>${detail}</li>`
         }).join('')
@@ -295,7 +319,7 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
         const items = component.items.map(value => {
           const item = fields(value)
           const amount = number(item.value ?? 0)
-          const detail = item.detail == null ? '' : `<span class="chat-smart-list-detail">${text(item.detail, 240)}</span>`
+          const detail = item.detail == null ? '' : `<span class="chat-smart-list-detail">${text(item.detail, 320)}</span>`
           return `<label class="chat-smart-checklist-item"><input type="checkbox" data-smart-checklist="${key}" value="${amount}"${item.checked === true ? ' checked' : ''}>
             <span><strong>${text(item.label)}</strong>${detail}</span></label>`
         })
@@ -372,7 +396,7 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
         const items = component.items.map(value => {
           const item = fields(value)
           const label = text(item.label)
-          const detail = item.detail == null ? '' : `<span class="chat-smart-list-detail">${text(item.detail, 240)}</span>`
+          const detail = item.detail == null ? '' : `<span class="chat-smart-list-detail">${text(item.detail, 320)}</span>`
           const href = actionHref(item.action)
           const tag = href ? 'a' : 'div'
           return `<li${source ? ` data-smart-compare="${number(item.value)}"` : ''}><${tag} class="chat-smart-row"${href ? ` href="${href}"` : ''}><strong class="chat-smart-label">${iconSlot(item.icon)}${label}</strong>${detail}</${tag}></li>`
@@ -385,10 +409,13 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
       default: return ''
     }
   }
-  const html = render(layout, 0)
-  if (!html || [...filters].some(source => !sliders.has(source))
+  const html = render(layout, 0).replace(/<!--smart-dependency-(\d+)-->/gu, (_, index) => {
+    const block = dependentBlocks[Number(index)]!
+    return block.ready() ? block.html : partial ? '<div hidden></div>' : failure()
+  })
+  if (!html || html === failure() || (!isolateChildren && ([...filters].some(source => !sliders.has(source))
     || [...chartFilters].some(source => !sliders.has(source) && !numericInputs.has(source))
-    || [...rankingWeights].some(source => !sliders.has(source))) throw new Error()
+    || [...rankingWeights].some(source => !sliders.has(source))))) throw new Error()
   const initial = state.size ? ` data-smart-state="${escapeHtml(JSON.stringify(Object.fromEntries(state)))}"` : ''
   return `<section class="chat-smart-view chat-smart-layout-view"${initial}>${html}</section>`
 }

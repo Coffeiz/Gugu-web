@@ -43,7 +43,7 @@ const { t } = useI18n()
 .language-preview-user { display: flex; align-items: center; gap: 7px; margin-top: auto; padding: 8px 5px 0; border-top: 1px solid var(--panel-divider); color: var(--content-tertiary); font-size: 9px; }
 .user-avatar { width: 20px; height: 20px; border-radius: 50%; font-size: 9px; background: var(--control-bg-active); color: var(--action-primary); }
 .language-preview-chat { display: flex; min-width: 0; flex: 1; flex-direction: column; background: var(--panel-bg); }
-.language-preview-toolbar { display: flex; align-items: center; gap: var(--space-sm); padding: 18px 20px 14px; border-bottom: 1px solid var(--panel-divider); }
+.language-preview-toolbar { display: flex; align-items: center; gap: var(--space-xs); padding: 18px 20px 14px; border-bottom: 1px solid var(--panel-divider); }
 .language-preview-toolbar > div { display: grid; gap: 3px; min-width: 0; }
 .toolbar-kicker { color: var(--content-tertiary); font-size: 9px; }
 .language-preview-toolbar strong { overflow: hidden; color: var(--content-primary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }

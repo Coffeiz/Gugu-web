@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { RagDocument } from '../../../src/agent/rag/contracts.js'
-import { createRagDocumentTermCache } from '../../../src/agent/rag/lexical-index.js'
+import { createRagLexicalCorpusCache } from '../../../src/agent/rag/lexical-index.js'
 import { createMemoryRagSource } from '../../../src/agent/rag/memory-source.js'
 import { createScopedRagSearch } from '../../../src/agent/rag/scoped-search.js'
 import { readRagDocumentVectors } from '../../../src/agent/rag/vector-reader.js'
@@ -29,12 +29,12 @@ function setup(embed: (owner: string, query: string, signal?: AbortSignal) => Pr
   return { search, authorize, source, snapshotForScope }
 }
 
-it('复用词频时仍使用本轮授权、消息水位和当前索引正文', async () => {
+it.each(['无缓存', '词法语料'] as const)('复用%s时仍使用本轮授权、消息水位和当前索引正文', async cache => {
   const first = { ...document, source_type: 'conversation', metadata: { kind: 'message', message_id: 12 } }
   let documents = [first]
   let authorized = true
   const index = { snapshotForScope: async () => ({ revision: 'same-revision', documents, watermark: null }) } as unknown as Parameters<typeof createScopedRagSearch>[0]['index']
-  const search = createScopedRagSearch({ index, authorize: async () => authorized, documentTerms: createRagDocumentTermCache() })
+  const search = createScopedRagSearch({ index, authorize: async () => authorized, ...(cache === '无缓存' ? {} : { lexicalCorpus: createRagLexicalCorpusCache() }) })
   const find = (query: string, beforeMessageId = 13) => search('owner-a', { scope_type: 'owner' }, query, { sourceTypes: ['conversation'], limit: 5, beforeMessageId })
 
   expect((await find('项目进度')).results.map(result => result.id)).toEqual([first.id])
@@ -47,6 +47,34 @@ it('复用词频时仍使用本轮授权、消息水位和当前索引正文', a
   authorized = false
   await expect(find('验收完成')).rejects.toThrow('未授权')
 })
+
+it('词法语料增删改后的排名与从头构建一致，切换 owner 后只返回当前快照', async () => {
+  const cache = createRagLexicalCorpusCache()
+  const initial = Array.from({ length: 12 }, (_, i) => ({
+    ...document, id: String(i), title: `项目进度 ${i}`, text: `项目进度 ${i}`,
+  }))
+  let current = initial
+  const snapshotForScope = async () => ({ revision: 'revision', documents: structuredClone(current), watermark: null })
+  const index = { snapshotForScope } as unknown as Parameters<typeof createScopedRagSearch>[0]['index']
+  const options = { index, authorize: async () => true }
+  const baseline = createScopedRagSearch(options)
+  const updated = createScopedRagSearch({ ...options, lexicalCorpus: cache })
+  for (const [owner, documents] of [
+    ['owner-a', initial],
+    ['owner-a', [{ ...initial[0]!, title: '新进度', text: '项目进度 完成交付', document_version: 'v2' },
+      ...initial.slice(2), { ...initial[1]!, id: 'new' }]],
+    ['owner-b', [{ ...initial[0]!, id: 'owner-b-doc' }]],
+  ] as const) {
+    current = [...documents]
+    const args = [owner, { scope_type: 'owner' }, '项目进度', { sourceTypes: ['memory'], limit: 5 }] as const
+    const actual = await updated(...args)
+    const expected = await baseline(...args)
+    expect(actual.results).toEqual(expected.results)
+    expect(actual.fusion).toBe(expected.fusion)
+  }
+})
+
+const matchingVector = JSON.stringify({ 'rag:fact:v1:0': { v: [1, 0], t: 'embed-v1' } })
 
 describe('scoped RAG embedding fallback', () => {
   it('多个可信scope在同一语料排名与预算，逐scope前后授权且事实过滤先于候选投影', async () => {
@@ -84,7 +112,7 @@ describe('scoped RAG embedding fallback', () => {
   })
 
   it('preserves owner-scoped BM25 results when query embedding fails', async () => {
-    const ports = setup(async () => { throw new Error('synthetic transport failure') })
+    const ports = setup(async () => { throw new Error('synthetic transport failure') }, [document], matchingVector)
     const result = await ports.search('owner-a', { scope_type: 'owner', scope_id: '' }, '项目进度', {
       sourceTypes: ['memory'], limit: 5,
     })
@@ -92,7 +120,7 @@ describe('scoped RAG embedding fallback', () => {
     expect(result.fusion).toBe('bm25')
     expect(result.results.map(item => item.document.source_id)).toEqual(['fact'])
     expect(ports.authorize).toHaveBeenCalledTimes(2)
-    expect(ports.source).not.toHaveBeenCalled()
+    expect(result.diagnostics.fallback_reason).toBe('embedding_failed')
   })
 
   it('keeps cancellation observable instead of converting it into lexical success', async () => {
@@ -100,10 +128,26 @@ describe('scoped RAG embedding fallback', () => {
     const ports = setup(async () => {
       controller.abort(new Error('caller cancelled'))
       throw new Error('embedding cancelled')
-    })
+    }, [document], matchingVector)
     await expect(ports.search('owner-a', { scope_type: 'owner', scope_id: '' }, '项目进度', {
       sourceTypes: ['memory'], limit: 5,
     }, controller.signal)).rejects.toThrow('caller cancelled')
+  })
+
+  it('只为词法候选读取向量，候选没有匹配向量时不请求 embedding', async () => {
+    const unrelated = { ...document, id: 'unrelated', parent_id: 'unrelated', title: '天气预报',
+      text: '天气预报', content: '天气预报', source_id: 'pattern', metadata: { vector_key: 'pattern-1' } }
+    const embed = vi.fn(async () => [1, 0])
+    const { search, source } = setup(embed, [document, unrelated],
+      JSON.stringify({ 'rag:unrelated:v1:0': { v: [1, 0], t: 'embed-v1' } }))
+    const find = (query: string) => search('owner-a', { scope_type: 'owner' }, query, { sourceTypes: ['memory'], limit: 5 })
+    expect((await find('面包烘焙')).results).toEqual([])
+    expect(source).not.toHaveBeenCalled()
+    const lexical = await find('项目进度')
+    expect(lexical.results.map(item => item.id)).toEqual([document.id])
+    expect(lexical.diagnostics.fallback_reason).toBe('no_matching_document_vectors')
+    expect(source.mock.calls).toEqual([['memory', undefined]])
+    expect(embed).not.toHaveBeenCalled()
   })
 
   it('uses matching owner vector versions in hybrid recall and lets the matching vector lead', async () => {
@@ -154,7 +198,7 @@ describe('scoped RAG embedding fallback', () => {
     const second = await ports.search('owner-a', ...args)
 
     expect(second.results.map(item => item.fused_score)).not.toEqual(first.results.map(item => item.fused_score))
-    expect(ports.source).toHaveBeenCalledTimes(6)
+    expect(ports.source).toHaveBeenCalledTimes(2)
   })
 
   it('reads 1.7.7 memory vectors after persistent IDs are namespaced by authorized scope', async () => {
@@ -201,4 +245,15 @@ it('持久索引中的行为模式按原始来源匹配向量', async () => {
   const vectors = await readRagDocumentVectors([pattern], 'embed-v1', async kind =>
     kind === 'pattern' ? JSON.stringify({ 'pattern-1': { v: [1, 0], t: 'embed-v1' } }) : null)
   expect(vectors).toEqual({ 'namespaced-pattern': [1, 0] })
+})
+
+it('预热超限语料后仍允许检索，当前快照缩小后可复用索引', async () => {
+  const cache = createRagLexicalCorpusCache()
+  const oversized = Array.from({ length: 50_001 }, (_, id) => ({ ...document, id: String(id) }))
+  cache.warm('owner-a', async () => ({ revision: 'large', documents: oversized }), 'owner')
+  await expect.poll(() => Boolean(cache.bindReady('owner-a', 'owner'))).toBe(true)
+  const use = cache.bindReady('owner-a', 'owner')!
+  const index = use('owner-a', 'small', [document])
+  expect(index.search('owner-a', '项目进度', 5, [document.source_type]).results.map(hit => hit.id)).toEqual([document.id])
+  expect(cache.bindReady('owner-a', 'owner')?.('owner-a', 'small', [document])).toBe(index)
 })

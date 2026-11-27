@@ -201,6 +201,14 @@ body {
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.65);
 }
 
+/* 全窗遮罩共用同一模糊契约。桌面透明窗口额外补偿 L1 背景的 alpha。 */
+.modal-backdrop,
+.md-mermaid-dialog::backdrop {
+  background: var(--modal-overlay-bg);
+  backdrop-filter: blur(var(--modal-overlay-blur-radius)) var(--desktop-backdrop-alpha, );
+  -webkit-backdrop-filter: blur(var(--modal-overlay-blur-radius)) var(--desktop-backdrop-alpha, );
+}
+
 /* 弹窗进场「玻璃 ramp」（机制注释见 BaseModal.vue 的过渡段）：遮罩、玻璃面和卡片位移
    必须使用同一节奏。模糊半径本身从 0 过渡到各自满值，全程不碰 opacity——否则半透明
    祖先形成隔离组，backdrop-filter 采不到弹窗后面的页面/窗口。规则放全局是因为

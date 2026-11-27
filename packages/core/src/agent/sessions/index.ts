@@ -19,3 +19,4 @@ export { createSqlConversationHistoryTrimmer } from './retention.js'
 
 export { createAgentConversationSearchPort, createCoreAgentConversationSearchPort } from './tool-search.js'
 export { createPostgresSubagentRetention } from '../subagent/retention.js'
+export { projectAgentHistoryPage } from './history-page.js'

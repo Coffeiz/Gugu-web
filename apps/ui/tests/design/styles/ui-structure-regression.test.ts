@@ -581,9 +581,7 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(projectCard).toContain('popup-class="todo-pop-popup card-close-anchor"')
     expect(projectCard).not.toContain('<Transition name="todo-pop"')
     expect(sortMenu).toContain('<ContextMenu :show="sortMenuOpen"')
-    expect(sortMenu).toContain('r.left + r.width / 2 - 80')
     expect(sortMenu).not.toContain('<Transition')
-    expect(contextMenu).toContain(':global(.ctx-menu) {\n  width: 160px;\n  min-width: 160px;\n  box-sizing: border-box;\n}')
 
     // 日期弹层及其年份子弹层必须各自只有一个 PopupMenu 根，不能再套重复 surface。
     expect(datePicker).toContain('<PopupMenu :show="open"')

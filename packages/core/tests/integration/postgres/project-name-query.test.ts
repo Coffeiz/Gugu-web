@@ -4,7 +4,7 @@ import { expect, test } from 'vitest'
 import { dataContext } from '../../../src/contracts/index.js'
 import { createPostgresRuntime } from '../../../src/data/postgres.js'
 import { tablesSql } from '../../../src/data/schema.js'
-import { createGetProjectTool } from '../../../src/agent/tools/projects.js'
+import { createGetProjectTool } from '../../../src/agent/tools/projects/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 
 const url = process.env.GUGU_CORE_TEST_POSTGRES_URL

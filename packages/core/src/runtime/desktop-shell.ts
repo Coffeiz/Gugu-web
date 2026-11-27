@@ -3,7 +3,7 @@ import { createHostShellGrants, evaluateSandboxShell, shellConfirmationMode } fr
 import { isIsolatedWorkspaceWrite } from '../agent/security/workspace-write.js'
 import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { desktopTrashTarget, parseDesktopTrashCommand } from './desktop-shell-trash.js'
 import { executeDesktopHostShell } from './desktop-host-shell.js'
 import type { Database } from '../data/schema.js'
@@ -11,7 +11,7 @@ import type { Kysely } from 'kysely'
 import { Executor } from '../agent/executor/executor.js'
 import { desktopShellPlatform } from '@gugu/sandbox/desktop'
 import { ExecutionError } from '../agent/executor/contracts.js'
-import { createAgentShellTool } from '../agent/tools/shell.js'
+import { createAgentShellTool, type AgentShellInput } from '../agent/tools/shell/index.js'
 import { actionApprovalMode } from '../agent/tools/confirmation.js'
 import type { createSqliteToolConfirmation } from '../agent/interactions/sqlite-confirmation.js'
 import type { ToolResult } from '../agent/models.js'
@@ -42,7 +42,6 @@ export async function createDesktopShellTool(
   const platform = desktopShellPlatform()
   if (!platform) return undefined
   const diagnostics = await platform.diagnostics()
-  if (readSharedWorkspace && !permissionIdentity && (!diagnostics.supported || !diagnostics.methods.includes(platform.method))) return undefined
   const fail = (error: string): ToolResult => ({
     kind: 'completed', successful: false, executed: false, mutated: false, value: { error },
   })
@@ -52,33 +51,42 @@ export async function createDesktopShellTool(
       return fail('Shell 命令包含无法安全显示的控制字符')
     const access = await readAccess(scope)
     if (!access) return fail('当前会话没有可用的 Shell 执行范围')
-    const system = isAbsolute(input.cwd)
-    if (readSharedWorkspace && input.cwd !== '.' && !(system && permissionIdentity)) return fail('子任务只能在父会话的工作区内执行')
-    const sharedRoot = readSharedWorkspace && !system ? await readSharedWorkspace() : null
-    if (readSharedWorkspace && !system && !sharedRoot) return fail('父会话的工作区已失效')
-    if (!system && input.cwd !== '.') return fail('隔离命令使用 cwd=.，宿主机命令请提供绝对工作目录')
-    const isolatedWorkspace = !readSharedWorkspace && scope.resolution === null && isIsolatedWorkspaceWrite(input.command, input.cwd, '.')
+    if (/[\p{Cc}\p{Cf}]/u.test(input.cwd)) return fail('工作目录无效')
+    const sharedRoot = await readSharedWorkspace?.()
+    if (readSharedWorkspace && !sharedRoot) return fail('会话绑定的工作区已失效')
+    if (!sharedRoot && !isAbsolute(input.cwd) && input.cwd !== '.') return fail('相对工作目录需要先绑定会话工作区')
+    const workspacePath = sharedRoot ? await realpath(sharedRoot.path).catch(() => undefined) : undefined
+    if (sharedRoot && !workspacePath) return fail('会话绑定的工作区已失效')
+    const directory = workspacePath || isAbsolute(input.cwd)
+      ? await realpath(resolve(workspacePath ?? '.', input.cwd)).catch(() => undefined)
+      : undefined
+    if ((sharedRoot || isAbsolute(input.cwd)) && (!directory || !(await stat(directory).catch(() => null))?.isDirectory()))
+      return fail('工作目录无效')
+    const fromRoot = workspacePath && directory ? relative(workspacePath, directory) : undefined
+    const inWorkspace = fromRoot !== undefined && fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot)
+    const hostCwd = !inWorkspace ? directory : undefined
+    if (hostCwd && sharedRoot && !isAbsolute(input.cwd)) return fail('相对工作目录必须位于当前工作区内')
+    const system = hostCwd !== undefined
+    const isolatedWorkspace = !sharedRoot && !system && scope.resolution === null && isIsolatedWorkspaceWrite(input.command, input.cwd, '.')
+    const deletion = parseDesktopTrashCommand(input.command)
     const decision = evaluateSandboxShell(input.command, {
       adminEnabled: true, userEnabled: access.shellEnabled, sandboxEnabled: true,
       sandboxReady: system || (diagnostics.supported && diagnostics.methods.includes(platform.method)),
       sessionOwned: true, workspaceValid: true, filesystemAuthorizationAvailable: true,
-      fullUserSandboxWrite: false, adminDangerousEnabled: true, userDangerousEnabled: access.dangerousEnabled,
+      fullUserSandboxWrite: false, adminDangerousEnabled: true, userDangerousEnabled: access.dangerousEnabled || deletion.kind === 'trash',
     }, { isolatedWorkspaceWrite: isolatedWorkspace })
     if (!decision.allowed) return fail(decision.reason)
-    let hostCwd: string | undefined
-    if (system) {
-      if (/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/u.test(input.cwd)) return fail('宿主机工作目录无效')
-      hostCwd = await realpath(input.cwd).catch(() => undefined)
-      if (!hostCwd || !(await stat(hostCwd).catch(() => null))?.isDirectory()) return fail('宿主机工作目录无效')
-    }
-    const deletion = parseDesktopTrashCommand(input.command)
     if (deletion.kind === 'blocked') return fail('请用独立的 rm 命令和明确路径移入废纸篓')
     let trash: Awaited<ReturnType<typeof desktopTrashTarget>>[] | undefined
-    const trashCwd = hostCwd ?? sharedRoot?.path
+    let trashCwd = directory
     if (deletion.kind === 'trash') {
-      if (!trashCwd || !moveToTrash || !access.dangerousEnabled) return fail('当前执行范围不可移入系统废纸篓')
+      if (!moveToTrash) return fail('当前执行范围不可移入系统废纸篓')
+      if (!trashCwd && !deletion.paths.every(isAbsolute))
+        return fail('未绑定工作区时，相对路径指向本次调用的临时目录，临时文件不会跨调用保留。删除本机文件请提供目标绝对路径或指定绝对工作目录。')
       try {
-        trash = await Promise.all(deletion.paths.map(path => desktopTrashTarget(path, trashCwd, sharedRoot?.path)))
+        const cwd = trashCwd ?? await realpath(dirname(deletion.paths[0]!))
+        trash = await Promise.all(deletion.paths.map(path => desktopTrashTarget(path, cwd, sharedRoot?.path)))
+        trashCwd = cwd
       } catch {
         return fail('废纸篓目标不存在或超出允许范围')
       }
@@ -89,13 +97,13 @@ export async function createDesktopShellTool(
       authorization?.permits() ? 'never' : 'ask',
       true, scope.resolution !== null,
     )
-    const mode = trash ? actionApprovalMode('ask', true, scope.resolution !== null) : system ? systemMode() : shellConfirmationMode(decision, {
+    const mode = trash ? actionApprovalMode(access.automaticMode ? 'never' : 'ask', true, scope.resolution !== null) : system ? systemMode() : shellConfirmationMode(decision, {
       system: false, isolatedWorkspace, approvalPolicy: access.automaticMode ? 'never' : 'ask', hasResolution: scope.resolution !== null,
     })
     if (mode === 'stale') return fail('命令确认对应的权限已变化')
     const snapshot = {
       targetIds: {},
-      targetsDigest: digest(trash ?? hostCwd ?? sharedRoot ?? 'desktop-shell-temporary-directory'),
+      targetsDigest: digest(trash ?? (sharedRoot ? [directory, sharedRoot.identity] : hostCwd ?? 'desktop-shell-temporary-directory')),
       versionsDigest: digest([platform.id, access.shellEnabled, access.dangerousEnabled]),
     }
     const argsDigest = digest(input)
@@ -109,7 +117,7 @@ export async function createDesktopShellTool(
     if (trash && trashCwd && moveToTrash) {
       if (digest(access) !== digest(await readAccess(scope))
         || (sharedRoot && digest(await readSharedWorkspace?.()) !== digest(sharedRoot))) return fail('Shell 执行权限已变化')
-      if (!confirmed?.ok || !await db.transaction().execute(tx => confirmation.claim(tx, confirmed.value, scope.signal)))
+      if (confirmed && !await db.transaction().execute(tx => confirmation.claim(tx, confirmed.value, scope.signal)))
         return fail('废纸篓确认已使用或已失效')
       const moved: string[] = []
       const failed: string[] = []
@@ -132,7 +140,8 @@ export async function createDesktopShellTool(
     }
 
     if (hostCwd) {
-      if (digest(access) !== digest(await readAccess(scope))) return fail('Shell 执行权限已变化')
+      if (digest(access) !== digest(await readAccess(scope))
+        || (readSharedWorkspace && digest(await readSharedWorkspace()) !== digest(sharedRoot))) return fail('Shell 执行权限已变化')
       if (confirmed) {
         if (!await db.transaction().execute(tx => confirmation.claim(tx, confirmed.value, scope.signal)))
           return fail('Shell 确认已使用或已失效')
@@ -146,36 +155,93 @@ export async function createDesktopShellTool(
 
     const backend = await platform.createExecutor().catch(() => null)
     if (!backend) return fail('桌面原生隔离不可用')
-    const cwd = sharedRoot?.path ?? await mkdtemp(join(await realpath(tmpdir()), 'gugu-agent-shell-'))
+    const cwd = directory ?? await mkdtemp(join(await realpath(tmpdir()), 'gugu-agent-shell-'))
     try {
       const currentAccess = await readAccess(scope)
       if (digest(access) !== digest(currentAccess) || (readSharedWorkspace && digest(await readSharedWorkspace()) !== digest(sharedRoot))) return fail('Shell 执行权限已变化')
       if (confirmed && !await db.transaction().execute(tx => confirmation.claim(tx, confirmed.value, scope.signal)))
         return fail('Shell 确认已使用或已失效')
       const writable = isolatedWorkspace || decision.risk !== 'safe'
-      const request = {
-        id: confirmed?.value.operationId ?? randomUUID(), command: platform.command(input.command), cwd,
-        timeoutMs: Math.ceil(input.timeout * 1000), destructive: decision.needsConfirmation,
-      }
-      try {
-        const result = await new Executor([backend]).execute(request, {
-          requestId: request.id, backend: backend.id, command: request.command, cwd,
-          confirmed: Boolean(confirmed) || access.automaticMode,
-          readonlyPaths: writable ? [] : [cwd], readwritePaths: writable ? [cwd] : [], environment: {},
-          timeoutMs: request.timeoutMs, maxOutputBytes: input.max_output_chars * 4,
-        }, scope.signal)
-        const successful = result.exitCode === 0 && !result.timedOut
-        return { kind: 'completed', successful, executed: true, mutated: Boolean(sharedRoot && writable), value: {
-          ok: successful, stdout: result.stdout.slice(0, input.max_output_chars),
-          stderr: result.stderr.slice(0, input.max_output_chars), exit_code: result.exitCode,
-          timed_out: result.timedOut, cwd: '.', scope: 'sandbox', network_access: 'none',
-        } }
-      } catch (error) {
-        if (!(error instanceof ExecutionError)) throw error
-        return { kind: 'completed', successful: false, executed: true, mutated: false, value: { error: error.message } }
-      }
+      return await executeDesktopSandboxShell(input, {
+        backend, platform, cwd, root: workspacePath ?? cwd, displayCwd: fromRoot || '.',
+        writable, destructive: decision.needsConfirmation, confirmed: Boolean(confirmed) || access.automaticMode,
+        requestId: confirmed?.value.operationId, signal: scope.signal, persistent: Boolean(sharedRoot),
+      })
     } finally {
       if (!sharedRoot) await rm(cwd, { recursive: true, force: true }).catch(() => {})
     }
-  }, (readSharedWorkspace ? '使用 cwd=. 在父会话共享工作区内执行。绝对工作目录和读写操作按父会话的宿主权限规则判定。' : '使用 cwd=. 在隔离临时目录执行。需要在宿主机执行时，提供明确的绝对工作目录，普通模式首次授权后同一会话可执行 30 分钟。自动模式可直接执行宿主机命令。隔离空间不联网且临时文件不跨调用保存。') + ' 删除持久文件时请使用独立的 rm 命令和明确路径，确认后移入系统废纸篓。', false)
+  }, (readSharedWorkspace ? '省略 cwd 时从已绑定的会话工作区根目录执行。cwd 可指定工作区内的子目录。工作区内使用隔离执行，显式指定工作区外的本机绝对目录时按宿主权限规则确认。' : '未绑定工作区时，省略 cwd 使用隔离临时目录。处理用户指定的本机项目或目录时，将该目录的绝对路径作为 cwd，普通模式首次授权后同一会话可执行 30 分钟。自动模式可直接执行宿主机命令。隔离空间不联网且临时文件不跨调用保存。') + ' 删除持久文件时请使用独立的 rm 命令。未绑定工作区时请提供目标绝对路径或指定绝对工作目录。符合条件的目标将移入系统废纸篓。', false)
+}
+
+
+type DesktopSandboxPlatform = NonNullable<ReturnType<typeof desktopShellPlatform>>
+
+async function executeDesktopSandboxShell(input: AgentShellInput, options: {
+  backend: NonNullable<Awaited<ReturnType<DesktopSandboxPlatform['createExecutor']>>>
+  platform: DesktopSandboxPlatform
+  cwd: string
+  root: string
+  displayCwd: string
+  writable: boolean
+  destructive: boolean
+  confirmed: boolean
+  requestId?: string
+  signal: AbortSignal
+  persistent: boolean
+}): Promise<ToolResult> {
+  const { backend, platform, cwd, root, writable, signal } = options
+  const request = {
+    id: options.requestId ?? randomUUID(),
+    command: platform.command(input.command),
+    cwd,
+    timeoutMs: Math.ceil(input.timeout * 1000),
+    destructive: options.destructive,
+  }
+  try {
+    const result = await new Executor([backend]).execute(request, {
+      requestId: request.id, backend: backend.id, command: request.command, cwd,
+      confirmed: options.confirmed,
+      readonlyPaths: writable ? [] : [root], readwritePaths: writable ? [root] : [], environment: {},
+      timeoutMs: request.timeoutMs, maxOutputBytes: input.max_output_chars * 4,
+    }, signal)
+    const successful = result.exitCode === 0 && !result.timedOut
+    return { kind: 'completed', successful, executed: true, mutated: options.persistent && writable, value: {
+      ok: successful, stdout: result.stdout.slice(0, input.max_output_chars),
+      stderr: result.stderr.slice(0, input.max_output_chars), exit_code: result.exitCode,
+      timed_out: result.timedOut, cwd: options.displayCwd, scope: 'sandbox', network_access: 'none',
+    } }
+  } catch (error) {
+    if (!(error instanceof ExecutionError)) throw error
+    return { kind: 'completed', successful: false, executed: true, mutated: false, value: { error: error.message } }
+  }
+}
+
+/** 任务端口只接受 Core 已复核的工作区；任何目录解析失败都停止执行。 */
+export async function executeDesktopScheduledSandboxShell(input: AgentShellInput, options: {
+  root: string
+  writable: boolean
+  signal: AbortSignal
+  assertAuthorized(): Promise<void>
+}): Promise<ToolResult> {
+  const fail = (error: string): ToolResult => ({
+    kind: 'completed', successful: false, executed: false, mutated: false, value: { error },
+  })
+  if (input.scope !== 'sandbox' || isAbsolute(input.cwd) || /[\p{Cc}\p{Cf}]/u.test(input.cwd))
+    return fail('定时任务只接受工作区内的相对工作目录')
+  const root = await realpath(options.root).catch(() => null)
+  const cwd = root && await realpath(resolve(root, input.cwd)).catch(() => null)
+  if (!root || !cwd || !(await stat(cwd).catch(() => null))?.isDirectory())
+    return fail('定时任务的工作目录不可用')
+  const displayCwd = relative(root, cwd)
+  if (displayCwd === '..' || displayCwd.startsWith(`..${sep}`) || isAbsolute(displayCwd))
+    return fail('定时任务的工作目录超出授权工作区')
+  const platform = desktopShellPlatform()
+  const backend = await platform?.createExecutor().catch(() => null)
+  if (!platform || !backend) return fail('桌面原生隔离不可用')
+  await options.assertAuthorized()
+  options.signal.throwIfAborted()
+  return executeDesktopSandboxShell(input, {
+    backend, platform, cwd, root, displayCwd: displayCwd || '.', persistent: true,
+    writable: options.writable, destructive: options.writable, confirmed: options.writable, signal: options.signal,
+  })
 }

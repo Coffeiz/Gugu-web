@@ -6,7 +6,7 @@ import { Pool } from 'pg'
 import { createPostgresRuntime } from '@gugu/core/data'
 import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
 import { createNodeProviderTransport } from '@gugu/core/providers/node'
-import { createKyselyScheduledTaskExecutionReader } from '@gugu/core/scheduled-task-run-now-read'
+import { createKyselyScheduledTaskExecutionReader } from '@gugu/core/tasks/execution-read'
 import { createMcpRuntime } from '../../../src/modules/mcp/runtime.js'
 import { createMcpSkillToolDirectory } from '../../../src/modules/mcp/skill-tool-directory.js'
 import { createWebScheduledTaskToolResources } from '../../../src/modules/scheduled-tasks/run/tools.js'
@@ -59,7 +59,9 @@ test('定时 MCP 经 SDK 执行，按任务及当前确认模式授权，并拒�
     await admin.query(`CREATE SCHEMA "${schema}"`)
     await pool.query(`CREATE TABLE scheduled_tasks (id int PRIMARY KEY,user_id uuid,enabled boolean,name text,payload text,
       channels text,delivery_targets jsonb,authorized_tools jsonb,email_attachment_file_paths jsonb,workspace_id int,
-      filesystem_authorization_grant_id int,schedule_kind text,end_at timestamptz,last_run_failed boolean);
+      filesystem_authorization_grant_id int,schedule_kind text,end_at timestamptz,last_run_failed boolean,
+      event_id int,execution_mode text NOT NULL DEFAULT 'instruction');
+      CREATE TABLE calendar_events(id int,user_id uuid,title text,date text,time text,deleted_at timestamptz);
       CREATE TABLE user_mcp_servers(id uuid PRIMARY KEY,user_id uuid,scope text,name text,transport text,endpoint text,
         encrypted_endpoint text,endpoint_nonce text,encrypted_endpoint_key text,endpoint_key_version int,command text,credential_slots jsonb,
         encrypted_credentials text,credentials_nonce text,encrypted_credentials_key text,credentials_key_version int,
@@ -103,34 +105,41 @@ test('定时 MCP 经 SDK 执行，按任务及当前确认模式授权，并拒�
     assert.ok(!(await prepare()).names.includes('mcp_test_ping'))
     await pool.query("UPDATE scheduled_tasks SET authorized_tools='[\"send_email\"]' WHERE id=1")
     assert.ok(!(await prepare()).names.includes('mcp_test_ping'))
+    await pool.query("UPDATE user_mcp_servers SET confirm_mode='auto' WHERE id=$1", [serverId])
+    const automaticWithLegacyList = await prepare()
+    assert.ok(automaticWithLegacyList.names.includes('mcp_test_ping'))
+    const automaticResult = await automaticWithLegacyList.dispatch()
+    assert.ok(automaticResult.kind === 'completed' && automaticResult.successful)
+    assert.equal(calls, 1)
+    await pool.query("UPDATE user_mcp_servers SET confirm_mode='confirm_all' WHERE id=$1", [serverId])
     await pool.query("UPDATE scheduled_tasks SET authorized_tools='[\"mcp_test_ping\"]' WHERE id=1")
     const historical = await prepare()
     assert.ok(historical.names.includes('mcp_test_ping'))
     const approved = await historical.dispatch()
     assert.ok(approved.kind === 'completed' && approved.successful)
     assert.deepEqual(approved.value, { result: '合成 MCP 工具结果' })
-    assert.equal(calls, 1)
+    assert.equal(calls, 2)
     await pool.query("UPDATE scheduled_tasks SET authorized_tools='[]' WHERE id=1")
     await pool.query("UPDATE user_mcp_servers SET confirm_mode='auto' WHERE id=$1", [serverId])
     const revoked = await historical.dispatch()
     assert.ok(revoked.kind === 'completed' && !revoked.successful)
-    assert.equal(calls, 1)
+    assert.equal(calls, 2)
     const inFlight = await prepare()
     held = false
     const lost = await inFlight.dispatch()
     assert.ok(lost.kind === 'completed' && !lost.successful)
-    assert.equal(calls, 1)
+    assert.equal(calls, 2)
     held = true
     await runtime.invalidate(owner, serverId)
     onToolsList = async () => { held = false }
     const lostDuringHandshake = await inFlight.dispatch()
     assert.ok(lostDuringHandshake.kind === 'completed' && !lostDuringHandshake.successful)
-    assert.equal(calls, 1)
+    assert.equal(calls, 2)
     onToolsList = undefined
     held = true
     unknown = true
     assert.deepEqual(await inFlight.dispatch(), { kind: 'unknown' })
-    assert.equal(calls, 2)
+    assert.equal(calls, 3)
   } finally {
     await runtime.close()
     server.closeAllConnections()

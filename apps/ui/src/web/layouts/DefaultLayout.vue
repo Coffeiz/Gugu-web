@@ -87,7 +87,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, provide } from 'vue'
+import { provideMailInboxStatus } from '@/views/Mail/useMailInboxStatus'
+import { ref, computed, onMounted, onBeforeUnmount, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { runOnboarding, shouldShowOnboarding } from '@/composables/onboarding/useOnboarding'
 import { useUiStore } from '@/stores/ui'
@@ -121,7 +122,7 @@ import ProfileModal        from '@/components/common/profile/ProfileModal.vue'
 import OnboardingModal     from '@/components/onboarding/OnboardingModal.vue'
 import FloatPreviewWindow    from '@/components/common/layout/FloatPreviewWindow.vue'
 import NotificationBubble   from '@/components/common/feedback/NotificationBubble.vue'
-import { usePreviewStore, isAudioExt } from '@/stores/preview'
+import { usePreviewStore } from '@/stores/preview'
 import { useAudioStore } from '@/stores/audio'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useI18n } from 'vue-i18n'
@@ -146,14 +147,6 @@ function trackChatEvent(event: 'chat_open' | 'chat_expanded') {
 const previewStore = usePreviewStore()
 const audioStore   = useAudioStore()
 
-// 音频文件不走预览框，直接交给迷你播放器
-watch(() => previewStore.file, (f) => {
-  if (f && isAudioExt(f.ext)) {
-    audioStore.play(f, previewStore.singleSiblings)
-    previewStore.close()
-  }
-})
-
 const skeletonRoute = useRouteSkeleton()
 const route          = useRoute()
 const router         = useRouter()
@@ -164,6 +157,7 @@ provide(chatModelCatalogKey, createWebChatModelCatalog(() => authStore.user?.id)
 const liveStore      = useLiveStore()
 const prefsStore     = usePreferencesStore()
 const { t, locale }  = useI18n()
+provideMailInboxStatus()
 
 const uploadDialogOpen = ref(false)
 const projectsApi = useProjectAccess()
@@ -252,8 +246,8 @@ const todayStr = computed(() => {
   z-index: 40;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 20px;
+  gap: var(--space-md);
+  padding: var(--space-lg);
   background: var(--glass-card-background);
   overflow: visible;  /* 按钮外发阴影不能被顶栏裁掉 */
 }
@@ -267,7 +261,7 @@ const todayStr = computed(() => {
 .topbar-title p {
   font-size: 12px;
   color: var(--text-secondary);
-  margin-top: 2px;
+  margin-top: var(--space-xs);
 }
 
 .search-box {
@@ -276,20 +270,20 @@ const todayStr = computed(() => {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   font-size: 13px;
   color: var(--text-secondary);
   background: rgba(255, 255, 255, 0.52);
   border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: var(--radius-xs);
-  padding: 8px 12px;
+  padding: var(--space-sm) var(--space-md);
   cursor: text;
 }
 
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 /* 顶栏搜索框和操作按钮共享同一个中号控件高度，避免 Arco 默认尺寸让按钮比搜索框短。 */
@@ -344,7 +338,7 @@ html[data-theme='dark'] .topbar-actions .topbar-upload-button {
   height: 100%;
   overflow-y: auto;
   scrollbar-gutter: auto;
-  padding: 128px 34px 24px 30px;
+  padding: 128px 34px var(--space-xl) 30px;
   box-sizing: border-box;
 }
 

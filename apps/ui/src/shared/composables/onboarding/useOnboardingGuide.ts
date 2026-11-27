@@ -16,8 +16,14 @@ export type OnboardingGuideState = {
 export const onboardingGuideState = ref<OnboardingGuideState | null>(null)
 export const shouldShowOnboarding = computed(() => onboardingGuideState.value?.should_show === true)
 
+let saveGuide = (patch: Record<string, unknown>) => onboardingApi.updateState(patch) as Promise<{ guide: OnboardingGuideState }>
+
+export function configureOnboardingGuideSave(save: typeof saveGuide) {
+  saveGuide = save
+}
+
 const progressSaver = createOnboardingProgressSaver(
-  patch => onboardingApi.updateState(patch) as Promise<{ guide: OnboardingGuideState }>,
+  patch => saveGuide(patch),
   response => {
     const guide = (response as { guide?: OnboardingGuideState } | null)?.guide
     if (guide) setOnboardingGuideState(guide)
@@ -30,7 +36,7 @@ export function setOnboardingGuideState(guide: OnboardingGuideState) {
 
 export async function updateOnboardingGuide(patch: Record<string, unknown>) {
   await progressSaver.flush()
-  const response = await onboardingApi.updateState(patch) as { guide: OnboardingGuideState }
+  const response = await saveGuide(patch)
   setOnboardingGuideState(response.guide)
   return response
 }

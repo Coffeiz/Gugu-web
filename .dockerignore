@@ -35,7 +35,11 @@ node_modules
 packages/core/.venv
 packages/core/build
 packages/core/dist
+packages/scheduler/dist
+packages/scheduler/node_modules
 packages/core/node_modules
+packages/email/dist
+packages/email/node_modules
 packages/database/dist
 packages/database/node_modules
 packages/fs/node_modules

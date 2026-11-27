@@ -3,11 +3,7 @@
     <div class="ucd">
       <div class="ucd-header">
         <h2>{{ t('viewerUi.conflictTitle', { count: conflicts.length }) }}</h2>
-        <button class="close-btn" @click="cancel">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-            <path d="M3 3l10 10M13 3L3 13"/>
-          </svg>
-        </button>
+        <CloseButton @click="cancel" />
       </div>
 
       <div class="ucd-bulk">
@@ -34,7 +30,7 @@
         </div>
       </div>
 
-      <div class="ucd-footer">
+      <div class="ucd-footer app-card-actions">
         <button class="btn-cancel" @click="cancel">{{ t('viewerUi.cancelUpload') }}</button>
         <button class="btn-confirm" @click="confirm">{{ t('common.actions.confirm') }}</button>
       </div>
@@ -45,6 +41,7 @@
 <script setup lang="ts">
 import { ref, onBeforeUnmount } from 'vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -128,14 +125,6 @@ defineExpose({ show })
 }
 .ucd-header h2 { font-size: 15px; font-weight: 700; }
 
-.close-btn {
-  width: 28px; height: 28px; border-radius: 8px;
-  background: var(--control-bg); border: none;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; color: var(--text-secondary);
-  transition: background 0.15s;
-}
-.close-btn:hover { background: var(--control-bg-hover); }
 
 .ucd-bulk {
   display: flex; align-items: center; gap: 6px;
@@ -181,9 +170,9 @@ defineExpose({ show })
 
 .ucd-footer {
   display: flex; justify-content: flex-end; gap: 10px;
-  padding: 14px 24px;
-  border-top: 1px solid var(--panel-divider);
-  flex-shrink: 0;
+
+
+
 }
 .btn-cancel {
   padding: 8px 18px; border-radius: var(--radius-xs);

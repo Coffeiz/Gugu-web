@@ -155,7 +155,7 @@ function submitPageEdit() {
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: var(--space-xs);
   background: var(--iv-toolbar-bg);
   backdrop-filter: var(--iv-toolbar-filter);
   -webkit-backdrop-filter: var(--iv-toolbar-filter);

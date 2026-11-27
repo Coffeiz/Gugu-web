@@ -311,7 +311,7 @@ watch(() => props.modelValue, v => {
 <style>
 /* Popup and calendar paint live in adoption/popovers.css. This block owns geometry/typography only,
    so Teleport consumers cannot accumulate a second light-only theme layer. */
-.dp-popup { padding: 12px; user-select: none; }
+.dp-popup { padding: var(--popup-content-inset); user-select: none; }
 
 .dp-header {
   display: flex; align-items: center; justify-content: space-between;

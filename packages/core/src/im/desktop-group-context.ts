@@ -1,5 +1,5 @@
 import { sql, type Kysely } from 'kysely'
-import { resolveGroupSpeaker, type GroupContextSearchPort } from '../agent/tools/group-context.js'
+import { resolveGroupSpeaker, type GroupContextSearchPort } from '../agent/tools/im/group-context.js'
 import type { RunIdentity } from '../agent/models.js'
 import { dataContext } from '../contracts/index.js'
 import type { Database } from '../data/schema.js'

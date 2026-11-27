@@ -1,5 +1,5 @@
 <template>
-  <div class="project-info-panel" :class="{ 'info-expanded': infoExpanded }">
+  <div class="project-info-panel" :class="{ 'info-expanded': infoExpanded, 'info-compact': compact }">
     <div class="info-block">
       <div class="section">
         <label class="section-label">{{ t('projects.client') }}</label>
@@ -19,11 +19,15 @@
         <label class="section-label">{{ t('projects.color') }}</label>
         <div class="color-grid">
           <button
-            v-for="preset in colorPresets"
-            :key="preset"
+            v-for="{ key, value: preset } in PROJECT_COLOR_OPTIONS"
+            :key="key"
+            :title="t(`mindUi.colors.${key}`)"
+            :aria-label="t(`mindUi.colors.${key}`)"
+            :aria-pressed="color === preset"
+            type="button"
             class="color-chip"
             :class="{ active: color === preset }"
-            :style="{ background: preset }"
+            :style="{ backgroundColor: extractProjectAccent(preset) }"
             @click="$emit('set-color', preset)"
           >
             <Icon name="status.success" v-if="color === preset" :size="11" style="color:white" />
@@ -35,8 +39,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, type PropType } from 'vue'
+import { computed } from 'vue'
 import DateSpanPicker from '@/components/common/controls/DateSpanPicker.vue'
+import { extractProjectAccent, PROJECT_COLOR_OPTIONS } from '@/utils/projectColors'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
@@ -45,8 +50,8 @@ const props = defineProps({
   startDate: { type: String, required: true },
   deadline: { type: String, required: true },
   color: { type: String, required: true },
+  compact: Boolean,
   infoExpanded: { type: Boolean, default: false },
-  colorPresets: { type: Array as PropType<string[]>, required: true },
 })
 
 const emit = defineEmits(['update:client', 'update:startDate', 'update:deadline', 'set-color'])
@@ -71,6 +76,13 @@ function computedModel(key: 'client' | 'startDate' | 'deadline') {
 .info-expanded .info-block > .section:nth-of-type(3) { grid-column: 1 / -1; }
 .info-expanded .info-block > .section:nth-of-type(1), .info-expanded .info-block > .section:nth-of-type(2) { border-bottom: 1px solid rgba(0,0,0,0.07); }
 .info-expanded .info-block > .section:nth-of-type(1)::after { content: ''; position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 1px; height: 28px; background: rgba(0,0,0,0.07); }
+.info-compact { container-type: inline-size; }
+@container (min-width: 320px) {
+  .info-compact .info-block { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 12px; }
+  .info-compact .info-block > .col-divider:first-of-type { display: none; }
+  .info-compact .info-block > .col-divider:last-of-type,
+  .info-compact .info-block > .section:last-child { grid-column: 1 / -1; }
+}
 .section { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; }
 .section-label { font-size: 10px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.07em; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .field-input { width: 100%; height: var(--control-height-md); padding: 0 11px; box-sizing: border-box; border: 1px solid var(--input-border); border-radius: var(--control-radius); background: var(--input-bg); font-size: 13px; line-height: var(--line-height-ui); font-family: var(--font-sans); color: var(--input-fg); outline: none; transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; }

@@ -29,7 +29,7 @@ const { t } = useI18n()
   color: var(--content-secondary);
 }
 .desktop-project-files.is-shell { background: var(--desktop-l0-surface); }
-.desktop-files-toolbar { height: 52px; box-sizing: border-box; padding: 0 12px 0 16px; cursor: grab; }
+.desktop-files-toolbar { cursor: grab; }
 .desktop-files-toolbar.is-native { app-region: drag; -webkit-app-region: drag; cursor: default; }
 .desktop-files-toolbar.is-native :deep(button) { app-region: no-drag; -webkit-app-region: no-drag; }
 .desktop-files-toolbar :deep(.breadcrumb-viewport) { cursor: inherit; font-size: 12px; }

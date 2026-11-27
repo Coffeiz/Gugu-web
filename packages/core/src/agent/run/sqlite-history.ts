@@ -75,6 +75,12 @@ export async function writeSqliteAgentHistory(
   const at = databaseTime(nowUtc(), 'sqlite')
   await sql`INSERT INTO conversation_batches(session_id,version,run_id,round_id,digest,created_at)
     VALUES(${session},'finalize-v1',${run},'round-1',${projection.receipt},${at})`.execute(tx)
+  const cache = history.context.providerCacheAnchor
+  if (cache && (history.outcome === 'success' || history.outcome === 'silent')
+    && !history.context.compactions.length && !history.context.overflowTrimmed)
+    await sql`UPDATE conversation_sessions
+      SET session_context=json_set(coalesce(session_context,'{}'),'$.provider_cache_anchor',json(${JSON.stringify(cache.anchor)}))
+      WHERE id=${session} AND user_id=${owner} AND active_run_id=${run}`.execute(tx)
   if (history.outcome === 'silent') return
 
   await sql`UPDATE conversation_messages SET run_id=${run},round_id='round-1',run_outcome=${projection.outcome}

@@ -93,6 +93,7 @@
       <!-- Markdown 渲染；txt/代码类扩展名走上面的 CodeMirror，不会落到这里 -->
       <div v-if="mdHtml" ref="mdRoot" class="tv-md" v-html="mdHtml" @click="onMdClick" />
     </div>
+    <SelectionToolbar v-if="pathFile || fileContext?.filePath" :read="readFileSelection" />
   </div>
 </template>
 
@@ -100,6 +101,8 @@
 import { ref, watch, nextTick, computed, defineAsyncComponent, onMounted, onBeforeUnmount, type PropType } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import SelectionToolbar from '../selection/SelectionToolbar.vue'
+import { readRenderedSelection } from '../selection/selectionDraft'
 import Icon from '@/components/common/icons/Icon.vue'
 import RefreshButton from '@/components/common/controls/RefreshButton.vue'
 import { filesApi } from '@/services/api'
@@ -237,7 +240,7 @@ const LANG_LOADERS: Record<string, () => Promise<any>> = {
 
 // 常见扩展名保留语法高亮；未知但被后端标为 text/* 的自定义文件也走同样的文本编辑能力。
 const EDITABLE_EXTS = new Set([
-  'md', 'txt', 'json', 'csv', 'yaml', 'yml', 'log', 'py', 'js', 'ts', 'tsx', 'jsx',
+  'md', 'txt', 'json', 'csv', 'yaml', 'yml', 'log', 'py', 'js', 'mjs', 'cjs', 'ts', 'mts', 'cts', 'tsx', 'jsx',
   'vue', 'html', 'htm', 'css', 'scss', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'sh',
   'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'tex', 'lrc', 'srt', 'ass', 'ssa', 'vtt',
   'sub', 'sbv', 'smi', 'ttml', 'dfxp', 'scc', 'cue', 'm3u', 'm3u8', 'pls',
@@ -286,8 +289,8 @@ const CM_LANG_LOADERS: Record<string, (source?: string) => Promise<any>> = {
     const language = (name: string, alias: string[], load: () => Promise<any>) =>
       LanguageDescription.of({ name, alias, load })
     const codeLanguages = [
-      language('javascript', ['js', 'jsx'], () => import('@codemirror/lang-javascript').then(m => m.javascript())),
-      language('typescript', ['ts', 'tsx'], () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true }))),
+      language('javascript', ['js', 'mjs', 'cjs', 'jsx'], () => import('@codemirror/lang-javascript').then(m => m.javascript())),
+      language('typescript', ['ts', 'mts', 'cts', 'tsx'], () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true }))),
       language('python', ['py'], () => import('@codemirror/lang-python').then(m => m.python())),
       language('json', [], () => import('@codemirror/lang-json').then(m => m.json())),
       language('css', [], () => import('@codemirror/lang-css').then(m => m.css())),
@@ -424,6 +427,36 @@ async function loadCmExtensions(ext: string, source = '') {
     cm.keymap.of([{ key: 'Tab', run: acceptCompletion }]),
   ]
 }
+function readFileSelection() {
+  const view = cmView.value
+  const file = pathFile.value
+  const filePath = props.fileContext?.filePath
+  if (!file && !filePath) return null
+  const resolve = async () => {
+    const target = file ?? (filePath ? (await filesApi.location(filePath)).pathFile : undefined)
+    if (!target) throw new Error(t('mindUi.referenceMissing'))
+    return pathFilesApi.reference(target)
+  }
+  if (!view?.hasFocus || !viewerRoot.value?.contains(view.dom)) {
+    const snapshot = readRenderedSelection(mdRoot.value)
+    return snapshot && { ...snapshot, location: file?.relativePath ?? filePath!, resolve }
+  }
+  const { from, to, empty } = view.state.selection.main
+  const rect = view.coordsAtPos(from)
+  if (empty || !rect) return null
+  const doc = view.state.doc
+  const first = doc.lineAt(from)
+  const last = doc.lineAt(to)
+  return {
+    position: { x: rect.left, y: rect.top },
+    location: `${file?.relativePath ?? filePath}:${first.number}:${from - first.from + 1}–${last.number}:${to - last.from + 1}`,
+    content: doc.sliceString(from, to),
+    unsaved: doc.toString() !== rawText.value,
+    version: filePath ? contentVersions.get(filePath) ?? props.fileContext?.version : undefined,
+    resolve,
+  }
+}
+
 function onCmReady({ view }: { view: any }) {
   cmView.value = view
 }
@@ -583,7 +616,8 @@ async function renderMarkdown(text: string) {
     hljs = mod.default
   }
   const aliases: Record<string, string> = {
-    js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+    ts: 'typescript', mts: 'typescript', cts: 'typescript', tsx: 'typescript',
     py: 'python', yml: 'yaml', sh: 'bash', shell: 'bash', zsh: 'bash',
     html: 'xml', htm: 'xml', svg: 'xml',
   }
@@ -986,6 +1020,7 @@ onBeforeUnmount(() => {
 }
 
 .tv-html-toolbar {
+  gap: var(--space-xs);
   min-height: 42px;
   flex-shrink: 0;
   display: flex;
@@ -995,8 +1030,8 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--content-divider);
   background: var(--surface-raised);
 }
-.tv-html-tabs { display: flex; align-items: center; gap: 3px; }
-.tv-html-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.tv-html-tabs { display: flex; align-items: center; gap: var(--space-xs); }
+.tv-html-actions { display: flex; align-items: center; gap: var(--space-xs); margin-left: auto; }
 .tv-html-tab {
   border: 0;
   border-radius: 6px;

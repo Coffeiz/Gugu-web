@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { createApp, h, nextTick, ref } from 'vue'
+import { createI18n } from 'vue-i18n'
+import MarkdownView from '@/components/common/content/MarkdownView.vue'
+import { renderMdStream } from '@/components/common/gugu-chat/markdown'
 import { cleanupMarkdownMermaid, renderMarkdownMermaid, renderMermaidSvg } from '@/utils/chart/mermaidRenderer'
 import type { MermaidInteractionLabels } from '@/utils/chart/mermaidInteraction'
 import { createMermaidThemeConfig, MERMAID_NEUTRAL_THEME_COLORS } from '@gugu/charts/theme'
@@ -34,6 +37,35 @@ describe('共享 Mermaid 渲染', () => {
       cleanupMarkdownMermaid(root)
       root.remove()
       root = null
+    }
+  })
+
+  it('聊天仍在流式输出时，闭合代码块即显示图表', async () => {
+    const source = '```mermaid\nflowchart LR\n  StreamingStart-->StreamingEnd'
+    const html = ref(renderMdStream(source))
+    root = document.createElement('div')
+    document.body.append(root)
+    const host = root
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    const app = createApp({ render: () => h(MarkdownView, { html: html.value, chat: true, streamMotion: true }) })
+    app.use(createI18n({ legacy: false, missingWarn: false, fallbackWarn: false }))
+    app.mount(host)
+    try {
+      expect(host.querySelector('pre code')?.textContent).toContain('StreamingStart')
+      expect(mermaidMock.render).not.toHaveBeenCalled()
+
+      html.value = renderMdStream(source + '\n```')
+      await vi.waitFor(() => expect(host.querySelector('.md-mermaid svg')).not.toBeNull())
+
+      html.value = renderMdStream(source + '\n```\n\n后续文字')
+      await vi.waitFor(() => {
+        expect(host.textContent).toContain('后续文字')
+        expect(host.querySelector('.md-mermaid svg')).not.toBeNull()
+      })
+      expect(mermaidMock.render).toHaveBeenCalledTimes(1)
+    } finally {
+      app.unmount()
+      vi.unstubAllGlobals()
     }
   })
 

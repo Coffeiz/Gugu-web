@@ -69,6 +69,7 @@ export const BUILTIN_AGENT_TOOL_STATE_LABELS: Readonly<Record<string, string>> =
   save_knowledge: '保存知识',
   search_conversations: '搜历史对话',
   search_memory: '搜索记忆',
+  list_mail: '查询邮件',
   send_email: '发送邮件',
   send_link_buttons: '发送链接按钮',
   set_color: '设置项目颜色',

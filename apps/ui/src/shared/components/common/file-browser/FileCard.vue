@@ -87,10 +87,6 @@ defineProps({
   border-color: var(--file-card-border-hover);
   box-shadow: var(--file-card-shadow-hover);
 }
-/* 画布文件卡 hover 不回退到文件库的半透明 hover 底色；高亮仍由共享 ::after 提供。 */
-.fc-card.canvas-mode:hover:not(.selected):not(.pre-selected) {
-  background: var(--file-card-canvas-bg, var(--surface-canvas-card));
-}
 .fc-card.selected {
   border-color: var(--file-card-border-selected);
 }
@@ -128,7 +124,7 @@ defineProps({
   font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--fc-color, var(--color-primary));
   background: var(--file-card-badge-bg);
-  border-radius: 4px; padding: 2px 5px; line-height: 1.5;
+  border-radius: 4px; padding: var(--space-xs) var(--space-xs); line-height: 1.5;
 }
 
 .fc-icon-area {
@@ -160,16 +156,16 @@ defineProps({
 .fc-has-thumb .fc-label { position: relative; z-index: 1; }
 .fc-has-thumb .fc-ext-badge { background: var(--file-card-image-badge-bg); color: var(--file-card-image-badge-fg); }
 
-.fc-label { padding: 0 13px 13px; flex: 1; min-width: 0; }
+.fc-label { padding: 0 var(--space-md) var(--space-md); flex: 1; min-width: 0; }
 .fc-name {
   color: var(--content-primary);
   font-size: var(--font-size-sm); font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
+  line-height: 1.35; padding-bottom: var(--space-xs); margin-bottom: calc(-1 * var(--space-xs));
 }
 /* 输入框宽度限制在名称栏内，卡片根节点负责最终裁切。 */
 .fc-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }
-.fc-meta { color: var(--content-secondary); font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: 2px; }
+.fc-meta { color: var(--content-secondary); font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: var(--space-xs); }
 
 .sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
 /* leave 只走 opacity（同 filesListRows.css 的注释）：退出多选时 clearSelection 同帧移除

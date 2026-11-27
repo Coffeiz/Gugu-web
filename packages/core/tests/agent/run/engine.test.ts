@@ -8,22 +8,25 @@ ToolPort,
 ToolResult
 } from "../../../src/agent/index.js"
 import { createPortableReplyPolicy,createAgentRunner,AgentRunError,RunStoreRejected } from "../../../src/agent/index.js"
-import { createLinkButtonsTools, createWebLinkButtonDeliveryPort } from '../../../src/agent/tools/link-buttons.js'
+import { createLinkButtonsTools, createWebLinkButtonDeliveryPort } from '../../../src/agent/tools/im/link-buttons.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { Context } from './fixtures.js'
 import { collect,deferred,fixture,identity,replyFacts,stream,toolCall,usage } from './fixtures.js'
 
 describe('Harness Run生命周期与持久化边界', () => {
   it('为上下文准备和用量压缩记录带耗时的LoopScope阶段事件', async () => {
-    const f = fixture()
+    const f = fixture([
+      [{ type: 'usage', usage }, { type: 'complete', text: '', calls: [toolCall] }],
+      [{ type: 'complete', text: '合成回复', calls: [] }],
+    ])
     const observations: import('../../../src/agent/observation.js').AgentObservation[] = []
     f.ports.observation = { record: event => observations.push(event) }
     f.ports.context.afterUsage = vi.fn(async context => ({ context, applied: false }))
     await collect(f.harness.start(identity))
-    const phases = observations.filter(event => event.name === 'Agent context prepared' || event.name === 'Usage based context compaction')
+    const phases = observations.filter(event => event.name === 'Agent context prepared' || event.name === 'Context compaction')
     expect(phases.map(event => [event.name, event.status])).toEqual([
       ['Agent context prepared', 'success'],
-      ['Usage based context compaction', 'skipped'],
+      ['Context compaction', 'skipped'],
     ])
     expect(phases.every(event => typeof event.durationMs === 'number' && event.durationMs >= 0 && event.startedAt! <= event.endedAt!)).toBe(true)
   })
@@ -515,8 +518,20 @@ describe('Harness Run生命周期与持久化边界', () => {
     expect(result.state.context?.some((item) => item.startsWith('tool:'))).toBe(false)
   })
 
-  it('用量压缩在等摘要之前发布开始事件，失败时也结束压缩状态', async () => {
+  it('最终正文已可提交时不等待下一次模型请求才需要的用量压缩', async () => {
     const f = fixture()
+    const summary = vi.fn(async () => { throw new Error('最终答复不应发起摘要请求') })
+    f.ports.context.afterUsage = summary
+    const run = await collect(f.harness.start(identity))
+    expect(run.events.at(-1)).toMatchObject({ type: 'final', payload: { status: 'completed', text: '合成回复' } })
+    expect(summary).not.toHaveBeenCalled()
+  })
+
+  it('用量压缩在等摘要之前发布开始事件，失败时也结束压缩状态', async () => {
+    const f = fixture([
+      [{ type: 'usage', usage }, { type: 'complete', text: '', calls: [toolCall] }],
+      [{ type: 'complete', text: '合成回复', calls: [] }],
+    ])
     const summary = deferred<void>()
     const started = deferred<RunEvent>()
     f.ports.context.afterUsage = vi.fn(async (context, _usage, _signal, onStart) => {
@@ -547,7 +562,10 @@ describe('Harness Run生命周期与持久化边界', () => {
   })
 
   it('压缩未应用也保存无进展策略元数据，不发布虚假压缩成功事件', async () => {
-    const f = fixture()
+    const f = fixture([
+      [{ type: 'usage', usage }, { type: 'complete', text: '', calls: [toolCall] }],
+      [{ type: 'complete', text: '合成回复', calls: [] }],
+    ])
     f.ports.context.afterUsage = vi.fn(async (context) => ({ context: [...context, 'failed-pressure:9'], applied: false }))
     const result = await collect(f.harness.start(identity))
     expect(result.state.context).toContain('failed-pressure:9')
@@ -984,7 +1002,7 @@ describe('Harness Run生命周期与持久化边界', () => {
 })
 
 it('历史对话工具的实际结果进入 Agent 后续轮次',async()=>{
- const {createConversationReadTool}=await import('../../../src/agent/tools/conversations.js')
+ const {createConversationReadTool}=await import('../../../src/agent/tools/conversations/index.js')
  const {createToolRegistry}=await import('../../../src/agent/tools/registry.js')
  const call={id:'read-history',name:'read_conversation',input:{session_id:7}}
  const f=fixture([[{type:'complete',text:'',calls:[call]}],[{type:'complete',text:'完成',calls:[]}]])

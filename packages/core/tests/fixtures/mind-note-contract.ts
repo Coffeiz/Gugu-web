@@ -36,13 +36,14 @@ export async function contract(db: Kysely<MindDatabase>, backend: 'sqlite' | 'po
   await sql.raw(tablesSql(backend).ragJobs).execute(db)
   const owner = randomUUID(), other = randomUUID()
   const insert = createSqlMindNoteInserter(db, backend, () => '2026-11-14T10:00:00.000Z')
-  const input = prepareMindNoteCreate({ contentMd: '# 标题\n正文', title: '索引', capturedAt: '2026-11-13T00:00:00Z' }, new Date('2026-11-14T10:00:00Z'))
+  const input = prepareMindNoteCreate({ contentMd: '# 标题\n正文', title: '索引', color: 'project:sage', capturedAt: '2026-11-13T00:00:00Z' }, new Date('2026-11-14T10:00:00Z'))
   const note = await insert(owner, input, 'tab')
   assert.equal(note.contentMd, '# 标题\n正文')
   assert.equal(note.capturedAt, '2026-11-13T00:00:00.000+00:00')
   const storedOwner = backend === 'sqlite' ? owner.replaceAll('-', '') : owner
   const row = await db.selectFrom('mind_nodes').selectAll().where('id', '=', note.id).executeTakeFirstOrThrow()
   assert.equal(row.user_id, storedOwner)
+  assert.equal(row.color, 'project:sage')
   assert.equal(row.content_plain, '标题\n正文')
   const undo = await db.selectFrom('undo_operations').selectAll().where('user_id', '=', storedOwner).executeTakeFirstOrThrow()
   const after = typeof undo.after_state === 'string' ? JSON.parse(undo.after_state) : undo.after_state as any
@@ -76,7 +77,7 @@ export async function contract(db: Kysely<MindDatabase>, backend: 'sqlite' | 'po
     async publishDeleted() { events.push('deleted') },
     reportFailure() { events.push('reported') },
   })
-  await app.update(owner, note.id, { version: 2, color: 'blue' }, { undoContextId: 'tab', clientId: null })
+  await app.update(owner, note.id, { version: 2, color: 'project:sky' }, { undoContextId: 'tab', clientId: null })
   assert.deepEqual(events, ['updated', 'reported'])
   await app.update(owner, note.id, { version: 0 }, { undoContextId: 'tab', clientId: null })
   assert.deepEqual(events, ['updated', 'reported'])
@@ -286,8 +287,9 @@ export async function contract(db: Kysely<MindDatabase>, backend: 'sqlite' | 'po
   const canvasNoteOps = createMindCanvasNoteMutations(createSqlMindCanvasNoteRuntime(db, backend, async () => { canvasNoteEvents.push('published'); throw new Error('notification') }, () => { canvasNoteEvents.push('reported') }, () => '2026-11-14T21:00:00.000Z'))
   const canvasNoteMetadata = { undoContextId: 'canvas-note-create', clientId: null, mutationId: null }
   await assert.rejects(canvasNoteOps.create(other, relationCanvas.id, {}, canvasNoteMetadata), { statusCode: 404 })
-  const newCanvasNote = await canvasNoteOps.create(owner, relationCanvas.id, { title: '  ', contentMd: '# 标题\n正文', w: 100, h: 999 }, canvasNoteMetadata)
+  const newCanvasNote = await canvasNoteOps.create(owner, relationCanvas.id, { title: '  ', contentMd: '# 标题\n正文', w: 100, h: 999, color: 'project:amber' }, canvasNoteMetadata)
   assert.equal(newCanvasNote.node.title, '新便签')
+  assert.equal(newCanvasNote.node.color, 'project:amber')
   assert.deepEqual([newCanvasNote.w, newCanvasNote.h], [180, 420])
   const newNode = await db.selectFrom('mind_nodes').selectAll().where('id', '=', newCanvasNote.nodeId).executeTakeFirstOrThrow()
   assert.equal(newNode.content_plain, '标题\n正文')
@@ -301,8 +303,9 @@ export async function contract(db: Kysely<MindDatabase>, backend: 'sqlite' | 'po
   assert.equal((await canvasNoteOps.update(owner, newCanvasNote.nodeId, { version: 0 }, canvasNoteUpdateMetadata)).version, 1)
   assert.equal((await db.selectFrom('undo_operations').selectAll().where('undo_context_id', '=', 'canvas-note-update').execute()).length, 0)
   assert.deepEqual(canvasNoteEvents, ['published', 'reported'])
-  const changedCanvasNote = await canvasNoteOps.update(owner, newCanvasNote.nodeId, { version: 1, contentMd: '**变更**' }, canvasNoteUpdateMetadata)
+  const changedCanvasNote = await canvasNoteOps.update(owner, newCanvasNote.nodeId, { version: 1, contentMd: '**变更**', color: 'project:rose' }, canvasNoteUpdateMetadata)
   assert.equal(changedCanvasNote.version, 2)
+  assert.equal(changedCanvasNote.color, 'project:rose')
   assert.equal((await db.selectFrom('mind_nodes').select('content_plain').where('id', '=', newCanvasNote.nodeId).executeTakeFirstOrThrow()).content_plain, '变更')
   assert.deepEqual(canvasNoteEvents, ['published', 'reported', 'published', 'reported'])
   const itemsBeforeUpdateRollback = await db.selectFrom('mind_canvas_items').selectAll().where('canvas_id', '=', relationCanvas.id).orderBy('id').execute()

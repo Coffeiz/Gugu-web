@@ -1,25 +1,29 @@
-const LEGACY_SUNSET_COLOR = 'linear-gradient(135deg,#be8b8f,#c8aa72)'
-
 /** 项目弹窗提供的可选颜色。 */
-export const SELECTABLE_PROJECT_COLORS: readonly string[] = [
-  'linear-gradient(135deg,#c8aa72,#b88060)',
-  'linear-gradient(135deg,#8fbe8b,#7ab8a8)',
-  'linear-gradient(135deg,#7ab8a8,#7ab8c8)',
-  'linear-gradient(135deg,#7ab8c8,#7b7fb2)',
-  'linear-gradient(135deg,#5e73b2,#7b7fb2)',
-  'linear-gradient(135deg,#7b7fb2,#c4afc8)',
-  'linear-gradient(135deg,#c4afc8,#b07090)',
-]
+export const PROJECT_COLOR_OPTIONS = [
+  { key: 'amber', value: 'linear-gradient(135deg,#c8aa72,#b88060)' },
+  { key: 'sage', value: 'linear-gradient(135deg,#8fbe8b,#7ab8a8)' },
+  { key: 'teal', value: 'linear-gradient(135deg,#7ab8a8,#7ab8c8)' },
+  { key: 'sky', value: 'linear-gradient(135deg,#7ab8c8,#7b7fb2)' },
+  { key: 'indigo', value: 'linear-gradient(135deg,#5e73b2,#7b7fb2)' },
+  { key: 'lavender', value: 'linear-gradient(135deg,#7b7fb2,#c4afc8)' },
+  { key: 'rose', value: 'linear-gradient(135deg,#c4afc8,#b07090)' },
+] as const
 
-/** 已保存项目使用的预设色，包含历史上的第八色。 */
-export const PROJECT_COLOR_PRESETS: readonly string[] = [
-  ...SELECTABLE_PROJECT_COLORS,
-  LEGACY_SUNSET_COLOR,
-]
+export const SELECTABLE_PROJECT_COLORS = PROJECT_COLOR_OPTIONS.map(option => option.value)
+export const NOTE_COLOR_OPTIONS = PROJECT_COLOR_OPTIONS.map(({ key, value }) => ({
+  key, color: `project:${key}`, background: key === 'amber' ? '#cda370' : extractProjectAccent(value),
+}))
+export const DEFAULT_CANVAS_NOTE_COLOR = NOTE_COLOR_OPTIONS[0].color
 
-export function projectColorSelection(color: string): string {
-  return color === LEGACY_SUNSET_COLOR ? SELECTABLE_PROJECT_COLORS[0] : color
+export function notePaletteOption(color: string | null | undefined) {
+  return NOTE_COLOR_OPTIONS.find(option => option.color === color)
 }
+
+export function notePaletteAccent(color: string | null | undefined): string | undefined {
+  return notePaletteOption(color)?.background
+}
+
+export const PROJECT_COLOR_PRESETS: readonly string[] = SELECTABLE_PROJECT_COLORS
 
 export const DEFAULT_PROJECT_COLOR: string = PROJECT_COLOR_PRESETS[5]
 
@@ -37,3 +41,5 @@ export function projectAccentBackground(color: string): string {
   const [red, green, blue] = channels.map(channel => parseInt(channel, 16))
   return `rgba(${red},${green},${blue},0.12)`
 }
+
+export const PROJECT_STATUS_COLORS: Readonly<Record<string, string>> = { pending: '#d46b6b', active: '#c9943a', done: '#5a9e88' }

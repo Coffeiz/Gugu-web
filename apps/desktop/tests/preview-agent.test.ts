@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { expect, it, vi } from 'vitest'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
+import { DesktopError } from '../src/main/core-host.js'
 import { startDesktopPreviewAgent } from '../src/main/preview-agent.js'
 
 it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连接', async () => {
@@ -15,6 +16,7 @@ it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连�
   let reloads = 0
   let emitRunChange: ((sessionId: number) => void) | undefined
   const stopRunChanges = vi.fn()
+  const mail = vi.fn(async () => [{ email: 'synthetic@example.test' }])
   let useSystemProxy = false
   const updateAppearance = vi.fn(async (patch: { useSystemProxy: boolean }) => {
     useSystemProxy = patch.useSystemProxy
@@ -37,6 +39,7 @@ it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连�
       [DESKTOP_CHANNELS.canvasItems]: async canvasId => [{ canvasId, id: 'synthetic-item' }],
       [DESKTOP_CHANNELS.agentAttachment]: attachment,
       [DESKTOP_CHANNELS.files]: files,
+      [DESKTOP_CHANNELS.mail]: mail,
       [DESKTOP_CHANNELS.openDroppedFileReference]: openDroppedFileReference,
       [DESKTOP_CHANNELS.search]: search,
       [DESKTOP_CHANNELS.appearance]: async () => ({ useSystemProxy }),
@@ -44,7 +47,9 @@ it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连�
       [DESKTOP_CHANNELS.wechatPairing]: async () => ({ configured: true }),
       [DESKTOP_CHANNELS.agentModel]: async () => ({ items: [{ model: 'synthetic-model' }] }),
       [DESKTOP_CHANNELS.agentSessions]: async () => [{ id: 1, title: '合成会话' }],
-    }, () => { reloads += 1 }, listener => { emitRunChange = listener; return stopRunChanges }, undefined,
+    }, async ready => { ready(); reloads += 1 }, listener => { emitRunChange = listener; return stopRunChanges }, async () => {
+      throw new DesktopError('schema_upgrade_required', '合成数据库错误')
+    },
       { content, handlers: { [DESKTOP_CHANNELS.files]: files } })
     const call = (path: string, method: string, authorization: string, body?: string | Buffer, headers: Record<string, string> = {}, verb = 'POST') => new Promise<{ status?: number; body: string }>((resolve, reject) => {
       const req = request({ socketPath, path, method: verb,
@@ -57,6 +62,13 @@ it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连�
       req.on('error', reject)
       req.end(body ?? JSON.stringify({ method, args: [{ action: 'list' }] }))
     })
+    const mailPath = '/__desktop-preview/mail'
+    const accountsCall = JSON.stringify({ method: 'mail', args: [{ action: 'accounts' }] })
+    await expect(call(mailPath, 'mail', 'invalid', accountsCall)).resolves.toEqual({ status: 403, body: '' })
+    expect(mail).not.toHaveBeenCalled()
+    expect(JSON.parse((await call(mailPath, 'mail', secret, accountsCall)).body))
+      .toEqual({ ok: true, result: [{ email: 'synthetic@example.test' }] })
+    expect(mail).toHaveBeenCalledExactlyOnceWith({ action: 'accounts' })
     const board = JSON.stringify({ method: 'projectBoard', args: ['archived', 20] })
     const workspaceReads = [
       ['/__desktop-preview/projects', 'projectBoard', board,
@@ -157,6 +169,9 @@ it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连�
     })
     const downloaded = await call(path, '', secret, JSON.stringify({ action: 'download', attachId: 'synthetic' }))
     expect(JSON.parse(downloaded.body)).toMatchObject({ ok: true, result: { data: 'AP8=', name: '合成.txt' } })
+    await expect(call('/__desktop-preview/reload-core', '', secret)).resolves.toEqual({
+      status: 503, body: JSON.stringify({ code: 'schema_upgrade_required' }),
+    })
     await expect(call('/__desktop-preview/reload', '', 'invalid')).resolves.toEqual({ status: 403, body: '' })
     expect(reloads).toBe(0)
     await expect(call('/__desktop-preview/reload', '', secret)).resolves.toEqual({ status: 202, body: '' })

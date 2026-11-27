@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
 import { createPinia, setActivePinia } from 'pinia'
 import { isFloatingPreviewable, isPreviewable, isTextExt, isTextFallbackCandidate, isCsvExt, normalizeTextBlob } from '@/stores/preview'
 import { isPreviewAffectedByFileEvent, isPreviewReloadRequested, usePreviewStore } from '@/stores/preview'
@@ -13,6 +14,15 @@ describe('文件预览类型判断', () => {
     expect(isFloatingPreviewable('custom', 'text/plain')).toBe(true)
   })
 
+  it('有迷你播放器的界面直接播放音乐，其他类型遵循系统打开偏好', () => {
+    const options = { audioPlayerAvailable: true }
+    expect(shouldOpenFileInSystem('preview', 'mp3', 'audio/mpeg', options)).toBe(false)
+    expect(shouldOpenFileInSystem('system', 'mp3', 'audio/mpeg', options)).toBe(false)
+    expect(shouldOpenFileInSystem('system', 'yml', 'text/yaml', options)).toBe(true)
+    expect(shouldOpenFileInSystem('preview', 'mp3', 'audio/mpeg')).toBe(true)
+    expect(shouldOpenFileInSystem('preview', 'zip', null, options)).toBe(true)
+  })
+
   it('允许未知扩展名通过文本 MIME 预览和编辑', () => {
     expect(isTextExt('custom', 'text/plain')).toBe(true)
     expect(isPreviewable('custom', 'text/plain')).toBe(true)
@@ -23,6 +33,15 @@ describe('文件预览类型判断', () => {
     expect(isTextFallbackCandidate('custom', 'application/octet-stream')).toBe(true)
     expect(isPreviewable('custom', 'application/octet-stream')).toBe(true)
   })
+
+  it.each(['yml', 'yaml', 'mjs', 'cjs', 'mts', 'cts', 'jsx', 'tsx', 'VUE'])(
+    '%s 即使没有文本 MIME 也直接进入代码预览', ext => {
+      expect(isTextExt(ext, 'application/octet-stream')).toBe(true)
+      expect(isFloatingPreviewable(ext, null)).toBe(true)
+      expect(shouldOpenFileInSystem('preview', ext, 'application/octet-stream')).toBe(false)
+      expect(isTextFallbackCandidate(ext, null)).toBe(false)
+    },
+  )
 
   it('字幕文件按扩展名作为文本预览，不受上传 MIME 影响', () => {
     expect(isTextExt('srt', 'application/octet-stream')).toBe(true)
@@ -43,6 +62,7 @@ describe('文件预览类型判断', () => {
     expect(isTextFallbackCandidate('custom', 'application/octet-stream')).toBe(true)
     expect(isPreviewable('custom', 'application/octet-stream')).toBe(true)
     expect(isTextFallbackCandidate('exe', null)).toBe(false)
+    expect(isTextFallbackCandidate('blend', null)).toBe(false)
     expect(isTextFallbackCandidate('custom', 'video/x-custom')).toBe(false)
     expect(isTextFallbackCandidate('', null)).toBe(false)
   })
@@ -135,7 +155,6 @@ describe('预览窗口复用', () => {
 
     expect(store.windows).toEqual([])
     expect(store.singleFile).toBeNull()
-    expect(store.singleSiblings).toEqual([])
   })
 
   it('只有实时事件明确命中当前文件时才刷新预览', () => {

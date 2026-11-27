@@ -1,10 +1,10 @@
 import {createCipheriv,createDecipheriv,createHash,createHmac,hkdfSync,randomBytes} from 'node:crypto'
 import type {Pool,PoolClient} from 'pg'
 import {assertRunCapabilities,stableJson,type CanonicalRunContext,type RunCheckpoint,type RunIdentity} from '@gugu/core/agent'
-import {ProviderError,type ProviderRuntime} from '@gugu/core/providers'
+import {ProviderError,supportsCrossRunProviderReasoning,type ProviderRuntime} from '@gugu/core/providers'
 import {withPostgresTransaction} from '../../../../adapters/database/postgres-transaction.js'
 import {commitStagedResponsesReasoning,stageLoadedResponsesReasoning,commitStagedAnthropicReasoning,stageLoadedAnthropicReasoning,validatePrivateContinuation,type ProviderReasoningBinding} from './bridge.js'
-import {invalidateReasoningState,loadReasoningState} from './state.js'
+import {invalidateReasoningState} from './state.js'
 
 export class AgentReasoningUnavailableError extends Error{constructor(){super('私有推理状态暂不可恢复');this.name='AgentReasoningUnavailableError'}}
 const invalid=()=>new AgentReasoningUnavailableError()
@@ -15,14 +15,14 @@ type Provider=Pick<ProviderRuntime,'stageContinuation'|'withStagedContinuation'|
 
 /** 成功跨Run状态与活动精确引用分开保存；不能拿上一成功Run补当前丢失ref。 */
 export function createProviderReasoningPersistence(options:{pool:Pick<Pool,'query'|'connect'>;secretKey:string;provider:Provider;
- binding:ProviderReasoningBinding;mode:'off'|'continuation';authorize(signal?:AbortSignal):Promise<boolean>}){
+ binding:ProviderReasoningBinding;authorize(signal?:AbortSignal):Promise<boolean>}){
  const binding=structuredClone(options.binding),identity:RunIdentity={ownerId:binding.identity.ownerId,sessionId:binding.identity.sessionId,runId:binding.runId}
- if(!options.secretKey||!['off','continuation'].includes(options.mode)||typeof options.authorize!=='function'
+ if(!options.secretKey||typeof options.authorize!=='function'
   ||!Number.isSafeInteger(binding.expectedVersion)||binding.expectedVersion<0)throw invalid()
  const key=Buffer.from(hkdfSync('sha256',Buffer.from(options.secretKey),Buffer.alloc(0),Buffer.from('gugu-active-reasoning-v1'),32))
  const mac=(value:unknown)=>createHmac('sha256',key).update(stableJson(value)).digest('hex')
  const aad=()=>Buffer.from(stableJson([1,identity.ownerId,identity.sessionId,identity.runId]))
- const crossRun=binding.identity.apiFormat==='responses'||binding.identity.apiFormat==='anthropic'
+ const crossRun=supportsCrossRunProviderReasoning(binding.identity.apiFormat, identity.sessionId)
  let baseVersion=binding.expectedVersion
  function effective(context:CanonicalRunContext):ProviderReasoningBinding{
   if(context.capabilities)assertRunCapabilities(context.capabilities)
@@ -64,10 +64,6 @@ export function createProviderReasoningPersistence(options:{pool:Pick<Pool,'quer
      await client.query('SELECT id FROM conversation_sessions WHERE user_id=$1 AND id=$2 FOR UPDATE',[identity.ownerId,identity.sessionId])
      const prior=(await client.query<{version:number}>('SELECT version FROM provider_reasoning_states WHERE user_id=$1 AND session_id=$2 FOR UPDATE',[identity.ownerId,identity.sessionId])).rows[0]
      const frozen={...effective(context),expectedVersion:prior?.version??0}
-     if(options.mode==='off'){
-      const loaded=await loadReasoningState(client,frozen.identity,'off',()=>options.secretKey)
-      return{continuationRef:null,version:loaded.version}
-     }
      if(!crossRun)return{continuationRef:null,version:frozen.expectedVersion}
      return (binding.identity.apiFormat==='anthropic'?stageLoadedAnthropicReasoning:stageLoadedResponsesReasoning)(client,options.provider,identity,frozen,areaDigest,()=>options.secretKey)
     })
@@ -83,7 +79,7 @@ export function createProviderReasoningPersistence(options:{pool:Pick<Pool,'quer
      if(previous?.context?.continuationRef)await client.query('DELETE FROM gugu_agent_active_reasoning WHERE user_id=$1 AND session_id=$2 AND run_id=$3',[identity.ownerId,identity.sessionId,identity.runId])
      return
     }
-    validate(context);if(binding.identity.apiFormat==='responses'&&options.mode!=='continuation')throw invalid()
+    validate(context)
     if(previous?.context?.continuationRef===context.continuationRef&&effective(previous.context).identity.reasoningConfigDigest!==effective(context).identity.reasoningConfigDigest)throw invalid()
     let packet:Packet
     try{packet=await options.provider.withStagedContinuation(context,async staged=>validatePacket({v:1,reference:context.continuationRef,
@@ -113,7 +109,6 @@ export function createProviderReasoningPersistence(options:{pool:Pick<Pool,'quer
   async ensure(context:CanonicalRunContext,signal:AbortSignal):Promise<void>{
    try{
     validate(context);await authorized(signal);if(!context.continuationRef)return
-    if(binding.identity.apiFormat==='responses'&&options.mode!=='continuation')throw invalid()
     const rows=(await options.pool.query<Row>(`SELECT a.*,a.expires_at>clock_timestamp() AS fresh FROM gugu_agent_active_reasoning a
       JOIN agent_run_checkpoints c ON c.user_id=a.user_id AND c.session_id=a.session_id AND c.run_id=a.run_id AND c.version=a.checkpoint_version
       WHERE a.user_id=$1 AND a.session_id=$2 AND a.run_id=$3`,[identity.ownerId,identity.sessionId,identity.runId])).rows
@@ -136,8 +131,7 @@ export function createProviderReasoningPersistence(options:{pool:Pick<Pool,'quer
   async commitSuccess(client:PoolClient,context:CanonicalRunContext):Promise<void>{
    try{
     validate(context);if(!context.continuationRef)return
-    if(binding.identity.apiFormat==='responses'&&options.mode!=='continuation')throw invalid()
-    if(options.mode!=='continuation'||!crossRun)return
+    if(!crossRun)return
     const staged=await options.provider.withStagedContinuation(context,async value=>value)
     if(staged.round===0)return
     await (binding.identity.apiFormat==='anthropic'?commitStagedAnthropicReasoning:commitStagedResponsesReasoning)(client,options.provider,context,{...effective(context),expectedVersion:baseVersion},options.secretKey,1)

@@ -15,7 +15,9 @@ export function getCookieValue(name: string): string {
   return item ? decodeURIComponent(item.slice(prefix.length)) : ''
 }
 
-export function getCsrfHeaders(cookieName = 'gugu_user_csrf_token'): Record<string, string> {
+const csrfCookieName = import.meta.env.VITE_CSRF_COOKIE_NAME || 'gugu_user_csrf_token'
+
+export function getCsrfHeaders(cookieName = csrfCookieName): Record<string, string> {
   const token = getCookieValue(cookieName)
   return token ? { 'X-CSRF-Token': token } : {}
 }
@@ -50,7 +52,7 @@ const inFlightGetRequests = new Map<string, Promise<unknown>>()
 
 export async function request<T = any>(method: string, path: string, body: any = null, isForm = false,
                                        signal?: AbortSignal, meta?: RequestMeta): Promise<T> {
-  const sessionKey = getCookieValue('gugu_user_csrf_token')
+  const sessionKey = getCookieValue(csrfCookieName)
   const canDeduplicate = method.toUpperCase() === 'GET' && !!sessionKey && !signal && !meta && body === null
   if (!canDeduplicate) return performRequest<T>(method, path, body, isForm, signal, meta)
 

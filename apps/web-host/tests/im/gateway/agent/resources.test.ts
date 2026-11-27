@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createUserSkillBundle, patchSkillDocument } from '@gugu/core/skills'
 import { test } from 'node:test'
 import { createBuiltinSkillDefinitions } from '@gugu/core/skills'
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
@@ -53,10 +57,34 @@ test('IM 简介模式仅列出当前群聊已开放的工具，全量模式省�
   assert.equal(full.toolCatalog, '')
 })
 
-test('生产Skill资源使用真实PG元数据与按需正文：跨用户隔离、成员不可读取owner技能、停用后即时撤权', {
+test('IM 私聊加载当前用户文件技能，停用后即时撤权且群聊隔离', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-im-skill-'))
+  const ownerId = '00000000-0000-4000-8000-000000000001'
+  const identity = { ownerId, sessionId: '1', runId: 'run' }
+  const actor = { ownerId, botId: '1', platform: 'qq' as const, chatType: 'c2c' as const, chatId: null,
+    platformUserId: 'owner', role: 'owner' as const, verifiedOwner: true, ownerMentionAuthorized: false,
+    speakerRoles: null, allowedToolNames: ['use_skill'] }
+  const pool = { async query() { return { rows: [] } } } as unknown as Parameters<typeof createImProductionSkills>[0]['pool']
+  try {
+    const original = '---\nname: 示例\ndescription: 描述\n---\n私有正文'
+    await createUserSkillBundle(root, ownerId, 'demo', original)
+    const resources = await createImProductionSkills({ pool, storageRoot: root, identity, actor, loadOwnerContext: true, authorize: async () => true })
+    assert.ok((await resources.registry.catalog(identity)).some(item => item.id === 'demo' && item.path === '/workspace/.agent/skills/demo'))
+    assert.equal((await resources.registry.load('demo', identity, new AbortController().signal)).content, '私有正文')
+    assert.deepEqual(await resources.registry.catalog({ ...identity, ownerId: '00000000-0000-4000-8000-000000000002' }), [])
+    const group = await createImProductionSkills({ pool, storageRoot: root, identity, actor: { ...actor, chatType: 'group', chatId: 'group' },
+      loadOwnerContext: true, authorize: async () => true })
+    assert.ok(!(await group.registry.catalog(identity)).some(item => item.id === 'demo'))
+    await writeFile(join(root, ownerId, '.agent', 'skills', 'demo', 'SKILL.md'), patchSkillDocument(original, { enabled: false }))
+    await assert.rejects(resources.registry.load('demo', identity, new AbortController().signal))
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('生产文件技能使用真实 IM 授权与按需正文：跨用户隔离、成员不可读取owner技能、停用后即时撤权', {
   skip: !(databaseUrl && python) && '需显式隔离PG及只读ORM编译解释器', timeout: 120000,
 }, async () => {
   const f = await createImProductionFixture({ python: python!, databaseUrl })
+  const root = await mkdtemp(join(tmpdir(), 'gugu-im-skill-auth-'))
   try {
     const identity = { ownerId: f.ownerId, sessionId: '1', runId: randomUUID() }
     const input = { ownerId: f.ownerId, botId: f.botId, platform: 'telegram' as const,
@@ -64,26 +92,26 @@ test('生产Skill资源使用真实PG元数据与按需正文：跨用户隔离�
     const access = createPostgresImAccess({ query: (sql, values) => f.pool.query(sql, values), supportedPlatforms: () => ['telegram'] })
     const snapshot = await access.snapshot(input), actor = snapshot.actor(input)
     for (const [ownerId, body] of [[f.ownerId, '仅当前owner正文'], [f.otherOwnerId, '禁止跨用户正文']]) {
-      await f.insert('user_skills', { owner_id: ownerId, skill_id: 'U1', name: '合成技能', description_short: '合成摘要',
-        body, enabled: true, source: 'user', content_digest: 'a'.repeat(64), related_tools: [] })
+      await createUserSkillBundle(root, ownerId, 'demo', '---\nname: 合成技能\ndescription: 合成摘要\n---\n' + body)
     }
-    const resources = await createImProductionSkills({ pool: f.pool, identity, actor, loadOwnerContext: true,
+    const resources = await createImProductionSkills({ pool: f.pool, storageRoot: root, identity, actor, loadOwnerContext: true,
       authorize: () => access.authorizeDelivery(actor, snapshot.bot) })
-    assert.ok((await resources.registry.catalog(identity)).some(item => item.id === 'U1'))
-    const loaded = await resources.registry.load('U1', identity, new AbortController().signal)
+    assert.ok((await resources.registry.catalog(identity)).some(item => item.id === 'demo'))
+    const loaded = await resources.registry.load('demo', identity, new AbortController().signal)
     assert.equal(loaded.content, '仅当前owner正文')
     assert.ok(!JSON.stringify(await resources.registry.catalog(identity)).includes(loaded.content))
     assert.deepEqual(await resources.registry.catalog({ ...identity, ownerId: f.otherOwnerId }), [])
-    await assert.rejects(resources.registry.load('U1', { ...identity, sessionId: '2' }, new AbortController().signal))
+    await assert.rejects(resources.registry.load('demo', { ...identity, sessionId: '2' }, new AbortController().signal))
 
     const member = { ...actor, role: 'member' as const, verifiedOwner: false, allowedToolNames: ['use_skill'] }
-    const restricted = await createImProductionSkills({ pool: f.pool, identity, actor: member, loadOwnerContext: false,
+    const restricted = await createImProductionSkills({ pool: f.pool, storageRoot: root, identity, actor: member, loadOwnerContext: false,
       authorize: () => access.authorizeDelivery(actor, snapshot.bot) })
-    assert.ok(!(await restricted.registry.catalog(identity)).some(item => item.id === 'U1'))
-    await assert.rejects(restricted.registry.load('U1', identity, new AbortController().signal))
-    await f.pool.query('UPDATE user_skills SET enabled=false WHERE owner_id=$1 AND skill_id=$2', [f.ownerId, 'U1'])
-    await assert.rejects(resources.registry.load('U1', identity, new AbortController().signal))
+    assert.ok(!(await restricted.registry.catalog(identity)).some(item => item.id === 'demo'))
+    await assert.rejects(restricted.registry.load('demo', identity, new AbortController().signal))
+    const path = join(root, f.ownerId, '.agent', 'skills', 'demo', 'SKILL.md')
+    await writeFile(path, patchSkillDocument('---\nname: 合成技能\ndescription: 合成摘要\n---\n仅当前owner正文', { enabled: false }))
+    await assert.rejects(resources.registry.load('demo', identity, new AbortController().signal))
     await f.pool.query('UPDATE user_bots SET enabled=false WHERE user_id=$1 AND id=$2', [f.ownerId, f.botId])
     assert.deepEqual(await resources.registry.catalog(identity), [])
-  } finally { await f.close() }
+  } finally { await f.close(); await rm(root, { recursive: true, force: true }) }
 })

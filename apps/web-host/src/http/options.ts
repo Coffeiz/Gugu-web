@@ -1,3 +1,4 @@
+import type { ClientFields, ClientSummary } from '@gugu/core'
 import type { DataExportPreviewOptions } from '../modules/data-portability/exports.js'
 import type { createDataImportRecoverer } from '@gugu/core/data-portability/apply-import'
 import type { createDataImportRollbackCreator } from '@gugu/core/data-portability/apply-import'
@@ -67,7 +68,7 @@ import { type UserBotUnbindOptions } from '../modules/im/connect/unbind.js'
 import type { createPortabilityJobReader } from '@gugu/core/data-portability/read-jobs'
 import type { UserBotsListOptions } from '../modules/im/routes.js'
 import type { CredentialDeleteOptions, CredentialCreateOptions, CredentialListOptions, CredentialPatchRouteOptions, CredentialModelsPreviewRouteOptions, CredentialTestPreviewRouteOptions, ByokMediaProbeOptions, ProviderCapabilityPreviewOptions } from '../modules/byok/routes.js'
-import { type UserSkillDeleteOptions, type UserSkillListOptions, type UserSkillWriteOptions } from '../modules/skills/routes.js'
+import { type UserSkillListOptions } from '../modules/skills/routes.js'
 import { type ImMemorySummaryOptions } from '../modules/admin/memory.js'
 import { type AdminUserBanOptions } from '../modules/admin/users.js'
 import { type AdminEmailPreviewOptions } from '../modules/admin/email.js'
@@ -130,7 +131,7 @@ import {
 } from '../modules/mind/items.js'
 import { type MindCanvasRelationMutationOptions } from '../modules/mind/relations.js'
 import { type UndoOperations } from '../modules/undo/routes.js'
-import type { createScheduledTaskDeleter } from '@gugu/core/scheduled-task-delete'
+import type { createScheduledTaskDeleter } from '@gugu/scheduler/tasks'
 import { type ScheduledTaskList, type ScheduledTaskTestNotifier, type ScheduledTaskRunNow } from '../modules/scheduled-tasks/routes.js'
 import { type createScheduledTaskDeliveryTargets } from '../modules/scheduled-tasks/delivery/targets.js'
 import type { createPostgresTaskWrites } from '../modules/scheduled-tasks/store.js'
@@ -176,22 +177,8 @@ export interface WriteRequestMetadata {
   readonly clientId: string | null
 }
 
-export interface ClientResponse {
-  id: number
-  name: string
-  contact: string | null
-  email: string | null
-  phone: string | null
-  notes: string
-}
-
-export interface ClientCreateInput extends Record<string, unknown> {
-  name: string
-  contact?: string | null
-  email?: string | null
-  phone?: string | null
-  notes: string
-}
+export type ClientResponse = ClientSummary
+export type ClientCreateInput = ClientFields & { notes: string }
 
 export interface ClientOptions {
   list: (ownerId: string) => Promise<ClientResponse[]>
@@ -396,9 +383,7 @@ export interface WebUiOptions {
   providerCapabilityPreview?: Omit<ProviderCapabilityPreviewOptions, 'requireUser'>
   desktopAgentDeepResearch?: DesktopAgentDeepResearchOptions
   desktopAgentSimilarImageSearch?: DesktopAgentSimilarImageOptions
-  userSkillDelete?: Omit<UserSkillDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   userSkillList?: Omit<UserSkillListOptions, 'requireUser' | 'ownerIdFromRequest'>
-  userSkillWrite?: Omit<UserSkillWriteOptions, 'requireUser' | 'ownerIdFromRequest'>
   accountDelete?: Omit<AccountDeleteOptions, 'requireUser' | 'ownerIdFromRequest'>
   secretPromptCancel?: Omit<SecretPromptCancelOptions, 'requireUser' | 'ownerIdFromRequest'>
   safeEgressRead?: { readSettings(): SafeEgressReadSettings }

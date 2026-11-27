@@ -61,9 +61,9 @@ function deliveryFixture(events: RunEvent[]) {
     setAuthorized(value: boolean) { authorized = value }, setOutcome(value: ImDeliveryResult) { outcome = value } }
 }
 
-test('Shell 提示按动作显示并兼容已提交的旧回执', async () => {
+test('Shell 提示按操作说明显示并兼容已提交的旧回执', async () => {
   const display = { shellActivity: { action: 'search', target: '合成内部目录' },
-    toolInput: { command: 'rg synthetic src' }, toolLabelOverride: '通用 Shell 标签' }
+    toolInput: { command: 'rg synthetic src', description: '搜索内容' }, toolLabelOverride: '通用 Shell 标签' }
   const events = [
     event(1, 'tool_done', { name: 'shell', status: 'success', display }),
     event(2, 'tool_done', { name: 'shell', status: 'success', display }),
@@ -470,25 +470,25 @@ test('启用整理提示时先投影开始事件，再发送提示，完成事�
   assert.deepEqual(ordered, ['compaction', '上下文较长，正在整理后继续处理。', '上下文整理完成。'])
 })
 
-test('工具回执按语言显示真实工具名称，Shell 回执只显示动作', () => {
+test('工具回执按语言显示真实工具名称，Shell 回执缺少说明时显示统一默认名', () => {
   const wrapped = { name: 'call_tool', status: 'success', display: { toolInput: { tool_name: 'get_project' } } }
   assert.equal(formatImToolReceipt(wrapped), '✅ 项目详情完成')
   assert.equal(formatImToolReceipt(wrapped, undefined, 'ja-JP'), '✅ プロジェクト詳細：完了')
   assert.equal(formatImToolReceipt(wrapped, undefined, 'en-US'), '✅ Project details completed')
   assert.equal(formatImToolReceipt({
     name: 'shell', status: 'error', display: { shellActivity: { action: 'git_diff', target: 'private-file' } },
-  }, undefined, 'en-US'), '⚠️ View Git diff not completed')
+  }, undefined, 'en-US'), '⚠️ Run terminal operation not completed')
 })
 
-test('未匹配专用动作的 Shell 回执使用共享命令名词条', () => {
-  const event = { name: 'shell', status: 'success', display: { toolInput: { command: '/usr/bin/rsync input output' } } }
-  assert.equal(formatImToolReceipt(event), '✅ 运行 rsync 命令完成')
-  assert.equal(formatImToolReceipt(event, undefined, 'ja-JP'), '✅ rsync コマンドを実行：完了')
-  assert.equal(formatImToolReceipt(event, undefined, 'en-US'), '✅ Run rsync command completed')
+test('Shell 回执优先使用历史投影的说明', () => {
+  const event = { name: 'shell', status: 'success', display: { shellDescription: '同步项目资料' } }
+  assert.equal(formatImToolReceipt(event), '✅ 同步项目资料完成')
+  assert.equal(formatImToolReceipt(event, undefined, 'ja-JP'), '✅ 同步项目资料：完了')
+  assert.equal(formatImToolReceipt(event, undefined, 'en-US'), '✅ 同步项目资料 completed')
 })
 
-test('Shell 诊断回执显示共享分类和实际命令数', () => {
+test('多条 Shell 命令缺少说明时使用统一默认名', () => {
   const receipt = { name: 'shell', status: 'success', display: { toolInput: { command: 'uptime; sysctl -n hw.ncpu; ps | head -6' } } }
-  assert.equal(formatImToolReceipt(receipt), '✅ 查看系统负载与进程 · 3 条命令完成')
-  assert.equal(formatImToolReceipt(receipt, undefined, 'en-US'), '✅ View system load and processes · 3 commands completed')
+  assert.equal(formatImToolReceipt(receipt), '✅ 执行终端操作完成')
+  assert.equal(formatImToolReceipt(receipt, undefined, 'en-US'), '✅ Run terminal operation completed')
 })

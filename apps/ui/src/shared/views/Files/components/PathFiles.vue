@@ -14,15 +14,15 @@
         <button v-for="key in sortColumns" :key="key" class="lh-sortable workspace-file-open"
           :class="{ active: sortKey === key }" type="button" @click="emit('sortSelect', key)">
           {{ t(`filesViewUi.${key}`) }}
-          <span v-if="sortKey === key" aria-hidden="true">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+          <FileListSortArrow :descending="sortKey === key && sortDir === 'desc'" />
         </button>
         <span />
       </div>
       <PathFileTree :entries="sortedEntries" :children-by-path="treeChildren" :open-paths="openPaths" :depth="0">
         <template #default="{ entry, depth }">
-          <RuntimeListRow class="list-row"
+          <RuntimeListRow class="list-row" data-list-columns="4"
             :style="depth ? { '--path-tree-depth': depth } : undefined"
-            :class="{ 'path-tree-nested': depth > 0, 'folder-row': entry.kind === 'directory', 'downloads-row': isDownloads(entry), cut: cutPaths?.has(entry.relativePath), selected: selected(entry), 'pre-selected': preSelected(entry) }"
+            :class="{ 'has-system-file-open': fileOpenAccess, 'path-tree-nested': depth > 0, 'folder-row': entry.kind === 'directory', 'downloads-row': isDownloads(entry), cut: cutPaths?.has(entry.relativePath), selected: selected(entry), 'pre-selected': preSelected(entry) }"
             :data-path-file="entry.kind === 'file' ? entry.relativePath : undefined"
             :data-path-folder="entry.kind === 'directory' && !isDownloads(entry) ? entry.relativePath : undefined"
             :runtime-selected="selected(entry)"
@@ -180,6 +180,7 @@
 </template>
 
 <script setup lang="ts">
+import FileListSortArrow from './FileListSortArrow.vue'
 import { useDelayedSkeleton } from '@/composables/core/useDelayedSkeleton'
 import PageSkeleton from '@/components/common/feedback/skeleton/PageSkeleton.vue'
 
@@ -718,7 +719,7 @@ function openFile(entry: PathFileEntry) {
   const { ext } = fileName(entry)
   if (fileOpenAccess) {
     if (!fileOpenAccess?.canOpenInSystem(file)) return previewFile(entry)
-    if (shouldOpenFileInSystem(fileOpenAccess.getOpenPreference(), ext, entry.mimeType))
+    if (shouldOpenFileInSystem(fileOpenAccess.getOpenPreference(), ext, entry.mimeType, { audioPlayerAvailable: true }))
       return void fileOpenAccess?.openInSystem(file)
   } else if (!isPreviewable(ext, entry.mimeType)) return download(entry)
   previewFile(entry)
@@ -762,11 +763,6 @@ function previewFile(entry: PathFileEntry) {
 }
 .workspace-error p { max-inline-size: 30em; margin: 0; color: var(--content-secondary); }
 
-
-.workspace-file-list :is(.list-head, .list-row) {
-  grid-template-columns: minmax(0, 1fr) 64px 72px var(--path-file-actions-width, 76px);
-}
-.workspace-file-list.has-system-file-open { --path-file-actions-width: 50px; }
 .workspace-file-open {
   max-width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit;
   text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;

@@ -27,7 +27,7 @@ async function seedSample() {
   const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3600e3).toISOString()
   const samples: MindNote[] = [
     {
-      id: -1, kind: 'note', title: '提问系统设计思路', color: 'amber',
+      id: -1, kind: 'note', title: '提问系统设计思路', color: 'project:amber',
       capturedAt: iso(2), createdAt: iso(2), updatedAt: iso(1.5), version: 1,
       contentMd: [
         '# 提问系统设计思路', '',
@@ -45,7 +45,7 @@ async function seedSample() {
       ].join('\n'),
     },
     {
-      id: -2, kind: 'note', title: null, color: 'coral',
+      id: -2, kind: 'note', title: null, color: 'project:rose',
       capturedAt: iso(5), createdAt: iso(5), updatedAt: iso(5), version: 1,
       contentMd: [
         '夏天太热，脑子也是。适合放弃一些事。', '',
@@ -56,7 +56,7 @@ async function seedSample() {
       ].join('\n'),
     },
     {
-      id: -3, kind: 'note', title: '周视图设计优化', color: 'teal',
+      id: -3, kind: 'note', title: '周视图设计优化', color: 'project:teal',
       capturedAt: iso(7), createdAt: iso(7), updatedAt: iso(6.5), version: 1,
       contentMd: [
         '# 周视图设计优化', '',
@@ -69,7 +69,7 @@ async function seedSample() {
       ].join('\n'),
     },
     {
-      id: -4, kind: 'note', title: '文件存储架构升级', color: 'blue',
+      id: -4, kind: 'note', title: '文件存储架构升级', color: 'project:sky',
       capturedAt: iso(26), createdAt: iso(26), updatedAt: iso(25.5), version: 1,
       refType: 'file', refId: 1,
       contentMd: [
@@ -88,7 +88,7 @@ async function seedSample() {
       contentMd: '补录：上周想到的——待办超期三天自动降级到「本周补救」分组，而不是一直挂在原日期下面制造愧疚感。周末验证一下这个心理假设。',
     },
     {
-      id: -6, kind: 'note', title: '画布连接方向提示词', color: 'amber',
+      id: -6, kind: 'note', title: '画布连接方向提示词', color: 'project:amber',
       capturedAt: iso(74), createdAt: iso(74), updatedAt: iso(72), version: 1,
       contentMd: [
         '# 画布连接方向提示词', '',

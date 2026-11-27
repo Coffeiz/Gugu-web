@@ -3,7 +3,7 @@ import type { Pool } from 'pg'
 import { createFeishuBotApi, feishuAttachmentLimit } from '@gugu/core/im/feishu-bot-api'
 import type { ProviderTransport } from '@gugu/core/providers'
 import { bindScheduledImRecipient, fixedDeliveryTarget, type PreparedScheduledImDelivery, type ScheduledTaskDeliveryPlan } from './targets.js'
-import { InvalidScheduledTaskDeliveryTarget } from '@gugu/core/scheduled-task-test-notify'
+import { InvalidScheduledTaskDeliveryTarget } from '@gugu/scheduler/tasks'
 import { readEnabledFeishuBot } from '../../im/routes.js'
 import type { createWebScheduledAttachmentResources } from './files.js'
 

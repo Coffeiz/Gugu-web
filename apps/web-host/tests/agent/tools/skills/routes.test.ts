@@ -3,71 +3,46 @@ import Fastify from 'fastify'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'
 import { installHttpErrorHandler } from '../../../../src/http/errors.js'
-import { registerUserSkillWriteRoutes } from '../../../../src/modules/skills/routes.js'
+import { registerUserSkillListRoute } from '../../../../src/modules/skills/routes.js'
 
-const skillRow = (id: string, name: string, related_tools: readonly string[] = []) => ({
-  id, name, description_short: '摘要', description_long: null, category: 'personal', related_tools: [...related_tools],
-  body: '正文', source: 'user', managed_by: 'user', enabled: true, content_digest: 'digest',
-  created_at: null, updated_at: null,
-})
-
-test('Skill 创建与更新经过认证 owner，保留 Python 的状态码和 DTO', async () => {
+test('文件技能管理验证身份、使用可信 owner 和版本，并拒绝旧表接口', async () => {
   const app = Fastify({ logger: false })
   const calls: unknown[][] = []
-  registerUserSkillWriteRoutes(app, {
+  registerUserSkillListRoute(app, {
     requireUser: async (request, reply) => {
       if (request.headers.authorization !== 'user') return reply.code(401).send({ detail: '未授权' })
     },
     ownerIdFromRequest: () => 'trusted-owner',
-    manager: {
-      create: async (owner, input) => {
-        calls.push(['create', owner, input])
-        return skillRow('U1', input.name.trim(), input.related_tools)
-      },
-      update: async (owner, id, patch) => {
-        calls.push(['update', owner, id, patch])
-        if (id === 'missing') throw new CoreError('not_found', 'Skill 不存在')
-        return { ...skillRow(id, patch.name ?? '原名称'), description_short: patch.description_short?.trim() ?? '摘要', enabled: patch.enabled ?? true }
-      },
+    async list() { return [] },
+    async createFileSkill(owner, input, context) { calls.push(['create', owner, input, context]); return { id: 'demo' } },
+    async updateFileSkill(owner, id, digest, patch, context) {
+      calls.push(['update', owner, id, digest, patch, context])
+      if (id === 'missing') throw new CoreError('not_found', '技能不存在')
+      return { id, content_digest: digest }
     },
+    async deleteFileSkill(owner, id, digest, context) { calls.push(['delete', owner, id, digest, context]); return { id } },
   })
   installHttpErrorHandler(app)
+  const headers = { authorization: 'user', 'x-undo-context-id': 'editor' }, digest = 'a'.repeat(64)
   try {
-    const unauthorized = await app.inject({ method: 'POST', url: '/api/v1/skills', payload: { name: '合成' } })
-    assert.equal(unauthorized.statusCode, 401)
+    assert.equal((await app.inject({ method: 'POST', url: '/api/v1/skills/files', payload: {} })).statusCode, 401)
     assert.deepEqual(calls, [])
-
-    const created = await app.inject({
-      method: 'POST', url: '/api/v1/skills', headers: { authorization: 'user' },
-      payload: { name: '  合成技能 ', description_short: ' 摘要 ', body: ' 正文 ', related_tools: [], user_id: 'attacker' },
-    })
+    const created = await app.inject({ method: 'POST', url: '/api/v1/skills/files', headers,
+      payload: { name: '示例', description_short: '摘要', body: '正文', related_tools: [] } })
     assert.equal(created.statusCode, 201)
-    assert.deepEqual(created.json(), skillRow('U1', '合成技能'))
-    assert.deepEqual(calls[0], ['create', 'trusted-owner', {
-      name: '  合成技能 ', description_short: ' 摘要 ', description_long: null,
-      category: 'personal', related_tools: [], body: ' 正文 ', enabled: true, managed_by: 'user',
-    }])
-
-    const updated = await app.inject({
-      method: 'PATCH', url: '/api/v1/skills/U1', headers: { authorization: 'user' },
-      payload: { description_short: ' 新摘要 ', enabled: false, user_id: 'attacker' },
-    })
-    assert.equal(updated.statusCode, 200)
-    assert.deepEqual(updated.json(), { ...skillRow('U1', '原名称'), description_short: '新摘要', enabled: false })
-    assert.deepEqual(calls[1], ['update', 'trusted-owner', 'U1', { description_short: ' 新摘要 ', enabled: false, managed_by: 'user' }])
-
-    const invalid = await app.inject({
-      method: 'POST', url: '/api/v1/skills', headers: { authorization: 'user' },
-      payload: { name: '', description_short: '摘要', body: '正文' },
-    })
-    assert.equal(invalid.statusCode, 422)
-
-    const missing = await app.inject({
-      method: 'PATCH', url: '/api/v1/skills/missing', headers: { authorization: 'user' }, payload: { name: '新名' },
-    })
-    assert.equal(missing.statusCode, 404)
-    assert.deepEqual(missing.json(), { detail: 'Skill 不存在' })
-  } finally {
-    await app.close()
-  }
+    assert.deepEqual(calls[0], ['create', 'trusted-owner', { name: '示例', description_short: '摘要', description_long: null,
+      category: 'personal', related_tools: [], body: '正文', enabled: true }, 'editor'])
+    assert.equal((await app.inject({ method: 'PATCH', url: '/api/v1/skills/files/demo', headers,
+      payload: { expectedDigest: digest, patch: { enabled: false } } })).statusCode, 200)
+    assert.deepEqual(calls[1], ['update', 'trusted-owner', 'demo', digest, { enabled: false }, 'editor'])
+    assert.equal((await app.inject({ method: 'POST', url: '/api/v1/skills/files/demo/delete', headers,
+      payload: { expectedDigest: digest } })).statusCode, 200)
+    assert.deepEqual(calls[2], ['delete', 'trusted-owner', 'demo', digest, 'editor'])
+    assert.equal((await app.inject({ method: 'PATCH', url: '/api/v1/skills/files/missing', headers,
+      payload: { expectedDigest: digest, patch: { name: '新名' } } })).statusCode, 404)
+    assert.equal((await app.inject({ method: 'PATCH', url: '/api/v1/skills/files/demo', headers,
+      payload: { expectedDigest: 'invalid', patch: { name: '新名' } } })).statusCode, 422)
+    for (const [method, url] of [['POST', '/api/v1/skills'], ['PATCH', '/api/v1/skills/U1'], ['DELETE', '/api/v1/skills/U1']] as const)
+      assert.equal((await app.inject({ method, url, headers, payload: {} })).statusCode, 404)
+  } finally { await app.close() }
 })

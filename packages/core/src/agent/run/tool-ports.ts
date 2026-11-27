@@ -3,7 +3,7 @@ import { canonicalAgentToolName } from '../tools/configuration.js'
 import type { PreparedToolDefinition, RunIdentity, ToolResult } from '../models.js'
 import type { CanonicalRunPreparationPorts, ToolPort } from '../ports.js'
 import { AgentRunReconstructionVersionError } from './dispatch-worker.js'
-import { resolveCallTool } from '../tools/call-adapter.js'
+import { resolveCallTool } from '../tools/meta/call-adapter.js'
 
 type AgentRunConfiguration = Awaited<ReturnType<CanonicalRunPreparationPorts['configuration']>>
 

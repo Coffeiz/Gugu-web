@@ -6,7 +6,7 @@ import type { ProjectCreateRuntime } from '../../../projects/project-create.js'
 import { DEFAULT_PROJECT_COLOR, projectColorValue } from '../../../projects/colors.js'
 import { normalizeProjectStages } from '../../../projects/domain.js'
 import type { RunIdentity } from '../../models.js'
-import type { CreateProjectToolResult, ProjectCreatePort } from '../projects.js'
+import type { CreateProjectToolResult, ProjectCreatePort } from './tools.js'
 
 const defaultStages: readonly Stage[] = [
   { key: 's0', label: '计划', todos: [] },
@@ -109,7 +109,7 @@ export function createProjectCreationPort(options: ProjectCreationPortOptions): 
 }
 
 export interface AgentProjectDispatch {
-  sessionId: number | null
+  sessionId: number | `scheduled-task:${number}` | null
   toolCallId: string | null
   runId?: string
   roundId?: string
@@ -122,6 +122,6 @@ export function agentProjectDispatchKey(dispatch: AgentProjectDispatch): string 
     const tuple = JSON.stringify([dispatch.sessionId, dispatch.runId, dispatch.roundId, dispatch.toolCallId])
     return `agent:v2:${createHash('sha256').update(tuple).digest('hex')}`
   }
-  if (dispatch.sessionId === null || !dispatch.toolCallId) return null
+  if (dispatch.sessionId === null || typeof dispatch.sessionId !== 'number' || !dispatch.toolCallId) return null
   return `agent:${dispatch.sessionId}:create_project:${dispatch.toolCallId}`
 }

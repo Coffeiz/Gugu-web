@@ -32,11 +32,11 @@ function makeApp() {
     clients: {
       async list(ownerId) {
         calls.push(['list', ownerId])
-        return [{ id: 12, name: 'Example', contact: null, email: null, phone: null, notes: '' }]
+        return [{ id: 12, name: 'Example', email: null, phone: null, notes: '' }]
       },
       async create(ownerId, input) {
         calls.push(['create', ownerId, input])
-        return { id: 13, name: input.name, contact: input.contact ?? null, email: null, phone: null, notes: input.notes ?? '' }
+        return { id: 13, name: input.name, email: null, phone: null, notes: input.notes ?? '' }
       },
       async delete(ownerId, id) {
         calls.push(['delete', ownerId, id])
@@ -55,17 +55,17 @@ test('clients list and create use the authenticated owner and existing response 
     const list = await app.inject({ method: 'GET', url: '/api/v1/clients', headers: auth })
     const create = await app.inject({
       method: 'POST', url: '/api/v1/clients', headers: auth,
-      payload: { name: 'New client', contact: 'Alex', notes: 'Synthetic' },
+      payload: { name: 'New client', notes: 'Synthetic' },
     })
     assert.equal(list.statusCode, 200)
-    assert.deepEqual(list.json(), [{ id: 12, name: 'Example', contact: null, email: null, phone: null, notes: '' }])
+    assert.deepEqual(list.json(), [{ id: 12, name: 'Example', email: null, phone: null, notes: '' }])
     assert.equal(create.statusCode, 201)
     assert.deepEqual(create.json(), {
-      id: 13, name: 'New client', contact: 'Alex', email: null, phone: null, notes: 'Synthetic',
+      id: 13, name: 'New client', email: null, phone: null, notes: 'Synthetic',
     })
     assert.deepEqual(calls, [
       ['list', userId],
-      ['create', userId, { name: 'New client', contact: 'Alex', notes: 'Synthetic' }],
+      ['create', userId, { name: 'New client', notes: 'Synthetic' }],
     ])
   } finally {
     await app.close()
@@ -82,6 +82,11 @@ test('clients reject unauthenticated and invalid create requests', async () => {
     })
     assert.equal(missing.statusCode, 401)
     assert.equal(invalid.statusCode, 422)
+    const oldField = await app.inject({
+      method: 'POST', url: '/api/v1/clients', headers: auth,
+      payload: { name: 'New client', contact: 'Alex' },
+    })
+    assert.equal(oldField.statusCode, 422)
   } finally {
     await app.close()
   }

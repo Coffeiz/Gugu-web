@@ -170,7 +170,7 @@ function formatScore(value: number | null | undefined) { return value == null ? 
 .field-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .field { display: grid; gap: var(--space-xs); min-width: 0; margin-bottom: var(--space-md); }
 .field-title { color: var(--content-secondary); font-size: .8rem; }
-.message-input { min-height: 5rem; resize: vertical; }
+.message-input { min-height: 5rem; }
 .conversation-section { display: grid; gap: var(--space-sm); margin-top: var(--space-lg); }
 .section-heading, .result-topline { display: flex; justify-content: space-between; gap: var(--space-md); align-items: center; }
 .section-heading h3, .breakdown h3 { margin: 0; font-size: .95rem; }

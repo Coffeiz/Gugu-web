@@ -2,6 +2,7 @@ import { desktopShellPlatform } from '@gugu/sandbox/desktop'
 import { parseAgentCommand } from '../agent/commands/menu.js'
 import { isAgentCommandHelpArgument } from '../agent/commands/help.js'
 import { CoreError, frameSchema } from '../contracts/index.js'
+import { clientSummary } from '../clients/clients.js'
 import type { Fields } from '../contracts/index.js'
 import type { DataServices } from '../data/services.js'
 import type { LocalRuntime } from './local.js'
@@ -100,13 +101,9 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'agent.sessions.respond': ['id', 'runId', 'promptId', 'eventId', 'token', 'selectedOptionIds', 'customAnswer', 'text', 'secrets', 'model', 'embedding'],
   'agent.sessions.append': ['id', 'text', 'reply', 'clientId'],
   'agent.sessions.queue': ['action', 'queue_id', 'session_id', 'items', 'removed_keys', 'key', 'claim_token'],
-  'skills.list': ['offset'],
   'skills.tools': ['offset'],
   'mcp.list': ['offset'],
   'mcp.config': ['id'],
-  'skills.create': ['fields'],
-  'skills.update': ['id', 'fields'],
-  'skills.delete': ['id'],
   'mcp.create': ['fields'],
   'mcp.update': ['id', 'fields'],
   'mcp.delete': ['id'],
@@ -123,6 +120,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'schedules.instruction.result': ['id'],
   'schedules.reminder.deliverIm': ['id', 'fireAt'],
   'core.info': [],
+  'core.devReloadIdle': [],
   'desktop.search': ['queries'],
   'executor.diagnostics': [],
   'desktop.terminal': ['action', 'terminalId', 'root', 'cols', 'rows', 'data'],
@@ -137,6 +135,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'projects.board.restore': ['id'],
   'projects.board.purge': ['id'],
   'clients.list': [],
+  'clients.related': ['id'],
   'clients.update': ['id', 'fields'],
   'clients.delete': ['id'],
   'projects.createWithClient': ['project', 'client'],
@@ -156,7 +155,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'preferences.preflightBusinessArchive': ['path'],
   'preferences.applyBusinessArchive': ['path', 'digest'],
   'preferences.desktop.update': ['patch'],
-  'onboarding.desktop.get': [],
+  'onboarding.desktop.get': ['patch', 'reopen'],
   'mind.notes.list': [],
   'mind.notes.create': ['contentMd', 'title', 'color', 'capturedAt'],
   'mind.notes.update': ['id', 'fields'],
@@ -460,13 +459,13 @@ export function validateCommandParams(method: string, params: Fields): void {
     if (typeof params.context_id !== 'string' || !params.context_id.trim() || params.context_id.length > 128) throw new CoreError('invalid_request', '撤销上下文无效')
     if (method !== 'undo.preview' && (typeof params.undo_id !== 'string' || !params.undo_id || params.undo_id.length > 80)) throw new CoreError('invalid_request', '撤销标识无效')
   }
-  if ((method === 'skills.list' || method === 'skills.tools' || method === 'mcp.list') && params.offset !== undefined &&
+  if ((method === 'skills.tools' || method === 'mcp.list') && params.offset !== undefined &&
       (!Number.isSafeInteger(params.offset) || Number(params.offset) < 0))
     throw new CoreError('invalid_request', '资源分页无效')
-  if (/^(skills|mcp)\.(update|delete|config)$/.test(method) &&
+  if (/^mcp\.(update|delete|config)$/.test(method) &&
       (typeof params.id !== 'string' || !params.id || params.id.length > 64))
     throw new CoreError('invalid_request', '资源标识无效')
-  if (/^(skills|mcp)\.(create|update)$/.test(method)) object(params.fields)
+  if (/^mcp\.(create|update)$/.test(method)) object(params.fields)
   if (method.startsWith('schedules.') && params.eventId !== undefined) safeInteger(params.eventId)
   if (method === 'schedules.list' && params.before !== undefined) safeInteger(params.before)
   if (['schedules.get', 'schedules.update', 'schedules.delete', 'schedules.instruction.start', 'schedules.instruction.result', 'schedules.reminder.deliverIm'].includes(method)) safeInteger(params.id)
@@ -523,7 +522,7 @@ export async function execute(
         safeInteger(params.id), safeInteger(params.version), desktopProjectFields(params.fields),
       ), 0)
     case 'clients.list':
-      return (await data.clients.list()).map(({ id, name }) => ({ id, name }))
+      return (await data.clients.list()).map(clientSummary)
     case 'clients.create':
       return data.clients.create(params)
     case 'clients.update':

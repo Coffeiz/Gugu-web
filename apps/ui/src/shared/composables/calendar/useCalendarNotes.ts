@@ -1,9 +1,11 @@
-import { computed, ref, watch, type Ref } from 'vue'
+import { computed, inject, ref, watch, type Ref } from 'vue'
 import { useMindStore } from '@/stores/mind'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
 
 /** 按日期补齐笔记分页，避免较早日期被首页的最近 100 条截断。 */
 export function useCalendarNotes(selectedDate: Ref<string | null>) {
+  if (!inject('gugu-calendar-notes', true))
+    return { selectedNotes: computed(() => []), loading: ref(false), failed: ref(false) }
   const mindStore = useMindStore()
   let requestSeq = 0
   const loading = ref(false)

@@ -60,6 +60,7 @@
 </template>
 
 <script setup lang="ts">
+import { DEFAULT_CANVAS_NOTE_COLOR } from '@/utils/projectColors'
 import { flashNoteTarget } from './utils/flashNoteTarget'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -526,9 +527,7 @@ function centerOfViewport() {
 async function createCanvasNote() {
   if (activeCanvasId.value == null) return
   const { x, y } = centerOfViewport()
-  // 画布便签不再有"无色"这个选项（见 ColorSwatches.vue 的 allowNone），新建时就得落一个
-  // 默认色，不能留 null 等用户自己再点——按用户要求，默认色是橙（'amber'）。
-  await store.createCanvasNote(activeCanvasId.value, { x, y, title: t('mindUi.newNote'), color: 'amber' })
+  await store.createCanvasNote(activeCanvasId.value, { x, y, title: t('mindUi.newNote'), color: DEFAULT_CANVAS_NOTE_COLOR })
 }
 async function addRef(refItem: CanvasRefItem) {
   if (activeCanvasId.value == null) return

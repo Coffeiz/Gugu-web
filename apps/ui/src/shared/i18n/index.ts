@@ -15,8 +15,11 @@ export const i18n = createI18n({
   fallbackWarn: import.meta.env.DEV,
 })
 
+if (typeof document !== 'undefined') document.documentElement.lang = initialLocale
+
 export function setLocale(locale: SupportedLocale, persist = false) {
   i18n.global.locale.value = locale
+  if (typeof document !== 'undefined') document.documentElement.lang = locale
   if (persist && typeof localStorage !== 'undefined') localStorage.setItem(LOCALE_KEY, locale)
 }
 

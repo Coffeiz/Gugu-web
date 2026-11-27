@@ -2,21 +2,21 @@
 .card-collection--schedules {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(264px, 100%), 1fr));
-  gap: 12px;
+  gap: var(--space-xs);
 }
 .card-collection--skills {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--space-xs);
 }
 .card-collection--mcp {
   column-count: 2;
-  column-gap: 12px;
+  column-gap: var(--space-xs);
 }
 .card-collection--files {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
-  gap: 10px;
+  gap: var(--space-xs);
   align-content: start;
 }
 @media (max-width: 720px) {

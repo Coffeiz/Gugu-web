@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { PoolClient } from 'pg'
 
 export interface ForwardUndoOperation {
+  operationId?: string
   userId: string
   contextId: string
   resource: string
@@ -44,7 +45,7 @@ export async function recordForwardUndoOperation(
        CURRENT_TIMESTAMP + INTERVAL '30 days', NULL, NULL
      )`,
     [
-      undoId('op'), record.userId, record.contextId, undoId('group'), record.resource, record.action,
+      record.operationId ?? undoId('op'), record.userId, record.contextId, undoId('group'), record.resource, record.action,
       serialize(record.targetRefs), serialize(record.beforeState), serialize(record.afterState),
       serialize(record.baseVersions),
     ],

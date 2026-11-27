@@ -11,7 +11,7 @@ import { createPostgresInteractionConsumeStore, createPostgresInteractionTextSto
 export interface AgentInteractionRespondService {
   respond(ownerId: string, promptId: number, token: string, eventId?: string, selectedOptionIds?: string[], customAnswer?: string): Promise<InteractionConsumeResult & { run_id?: string }>
   findResolvedRun?(ownerId: string, promptId: number, token: string): Promise<{ session_id: number; run_id: string; status: string; option_id: string } | null>
-  resumeText?(ownerId: string, promptId: number, text: string, eventId?: string): Promise<{
+  resumeText?(ownerId: string, promptId: number, text: string, eventId?: string, questionIndex?: number): Promise<{
     prompt_id: number; session_id: number; kind: string; context: Record<string, unknown>; result: Record<string, unknown>; event_id?: string
   }>
 }
@@ -71,15 +71,16 @@ export function createAgentInteractionRespondService(options: {
       })
       const result = await consumeInteractionAction(store, { ownerId, promptId, token, selectedOptionIds, customAnswer, ...(eventId != null ? { eventId } : {}) })
       const resolved = result.result
-      if (typeof result.context.tool_call_id === 'string' && result.context.tool_call_id && resolved.status !== 'awaiting_text' && resolved.status !== 'error') {
+      if (typeof result.context.tool_call_id === 'string' && result.context.tool_call_id && !['awaiting_text', 'question_next', 'error'].includes(String(resolved.status))) {
         try { await options.wake(ownerId, result.session_id) } catch { try { options.diagnose() } catch { /* 诊断不得影响已提交结果。 */ } }
       }
       return { ...result, ...(typeof runId === 'string' ? { run_id: runId } : {}),
         ...(displaySessionId === undefined ? {} : { session_id: displaySessionId }) }
     },
-    async resumeText(ownerId, promptId, text, eventId) {
-      const result = await consumeInteractionText(textStore, { ownerId, promptId, text, ...(eventId != null ? { eventId } : {}) })
-      if (typeof result.context.tool_call_id === 'string' && result.context.tool_call_id) {
+    async resumeText(ownerId, promptId, text, eventId, questionIndex) {
+      const result = await consumeInteractionText(textStore, { ownerId, promptId, text, questionIndex, ...(eventId != null ? { eventId } : {}) })
+      if (typeof result.context.tool_call_id === 'string' && result.context.tool_call_id
+        && (result.result.status === 'answered' || result.result.status === 'cancelled')) {
         try { await options.wake(ownerId, result.session_id) } catch { try { options.diagnose() } catch { /* 已提交事务不受诊断失败影响。 */ } }
       }
       return result
@@ -87,7 +88,7 @@ export function createAgentInteractionRespondService(options: {
   }
 }
 
-const bodySchema = z.object({ token: z.string(), custom_answer: z.string().max(8_000).optional(), selected_option_ids: z.array(z.string().min(1).max(64)).optional(), event_id: z.string().nullish() })
+const bodySchema = z.object({ token: z.string(), custom_answer: z.string().max(80_000).optional(), selected_option_ids: z.array(z.string().min(1).max(64)).optional(), event_id: z.string().nullish() })
 const textBodySchema = z.object({ text: z.string(), event_id: z.string().nullish() })
 const errorDetails: Record<InteractionConsumeError['code'], string> = {
   interaction_not_found: '交互不存在', interaction_ended: '交互已结束', interaction_expired: '交互已过期',

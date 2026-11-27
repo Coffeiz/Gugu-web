@@ -1,5 +1,5 @@
 /* Markdown 行内代码由各渲染容器共享。 */
-:is(.md-view, .tv-md, .privacy-body.md-content) code:not(pre code) {
+:is(.md-view, .tv-md, .privacy-body.md-content, .md-preview, .ne-body .ProseMirror) code:not(pre code) {
   font-family: var(--font-mono, var(--font-family-mono));
   font-size: 0.88em;
   color: var(--content-primary);

@@ -1,3 +1,4 @@
+import { validateEmailComposeSubmission, type EmailComposeSubmission } from '../interactions/email-compose.js'
 import { z } from 'zod'
 import type { InteractionResolution, PendingInteraction, ToolCall } from '../models.js'
 import type { ToolScope } from './contracts.js'
@@ -39,6 +40,7 @@ export interface ConfirmationClaimReference extends ConfirmationIntentReference 
   readonly versionsDigest: string
   readonly authorizationEpoch: string
   readonly expiresAt: number
+  readonly emailSubmission?: EmailComposeSubmission
 }
 export interface ConfirmationTargetSnapshot {
   readonly targetsDigest: string
@@ -49,6 +51,7 @@ export interface ConfirmationTargetSnapshot {
   readonly targetRefs?: Readonly<Record<string, readonly string[]>>
   /** 领域适配器提供的确认界面摘要；只在准备阶段供可信 Host 使用。 */
   readonly displaySummary?: string
+  readonly emailCompose?: Readonly<Record<string, unknown>>
 }
 export interface ConfirmationGatePorts {
   now(): number
@@ -74,6 +77,7 @@ function freezeTargets(targets: ConfirmationTargetSnapshot): ConfirmationTargetS
     .map(([key, refs]) => [key, Object.freeze([...refs])])))
   return Object.freeze({ targetsDigest: targets.targetsDigest, versionsDigest: targets.versionsDigest,
     ...(targets.displaySummary !== undefined ? { displaySummary: targets.displaySummary } : {}),
+    ...(targets.emailCompose ? { emailCompose: structuredClone(targets.emailCompose) } : {}),
     ...(targetIds ? { targetIds } : {}), ...(targetRefs ? { targetRefs } : {}) })
 }
 
@@ -130,10 +134,13 @@ export function createConfirmationGate(ports: ConfirmationGatePorts, configurati
         const epoch = await ports.authorize(expected, policy.purpose, policy.action, scope.signal)
         scope.signal.throwIfAborted()
         if (epoch === null) return reject
-        const loaded = z.object({ intent: intentSchema, receipt: receiptSchema }).strict().safeParse(await ports.load(expected, { interactionId: resolution.interactionId, receiptId: resolution.receiptId }, scope.signal))
+        const loaded = z.object({ intent: intentSchema, receipt: receiptSchema, emailSubmission: z.unknown().optional() }).strict().safeParse(await ports.load(expected, { interactionId: resolution.interactionId, receiptId: resolution.receiptId }, scope.signal))
         scope.signal.throwIfAborted()
         if (!loaded.success) return reject
-        const { intent, receipt } = loaded.data
+        const { intent, receipt, emailSubmission } = loaded.data
+        const approvedEmail = policy.action === 'send_email' && emailSubmission != null
+          ? validateEmailComposeSubmission(emailSubmission) : null
+        if (emailSubmission != null && !approvedEmail) return reject
         if (intent.interactionId !== resolution.interactionId || receipt.interactionId !== resolution.interactionId || receipt.receiptId !== resolution.receiptId || receipt.intentId !== intent.intentId || receipt.expiresAt <= ports.now() || receipt.purpose !== policy.purpose || receipt.action !== policy.action || !equalBinding(receipt.binding, expected)) return reject
         const valid = await validate(intent, expected, snapshot, scope.signal)
         scope.signal.throwIfAborted()
@@ -142,7 +149,8 @@ export function createConfirmationGate(ports: ConfirmationGatePorts, configurati
         return { ok: true, value: { intentId: intent.intentId, operationId: intent.operationId, interactionId: intent.interactionId,
           receiptId: receipt.receiptId, binding: expected, purpose: intent.purpose, action: intent.action,
           targetsDigest: intent.targetsDigest, versionsDigest: intent.versionsDigest,
-          authorizationEpoch: intent.authorizationEpoch, expiresAt: intent.expiresAt } }
+          authorizationEpoch: intent.authorizationEpoch, expiresAt: intent.expiresAt,
+          ...(approvedEmail ? { emailSubmission: approvedEmail } : {}) } }
       } catch { scope.signal.throwIfAborted(); return reject }
     },
   }

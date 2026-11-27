@@ -13,7 +13,7 @@
         <strong>{{ t('common.filesystemAuthScope') }}</strong>
         <span>/workspace · /personal · /project</span>
       </div>
-      <div class="dialog-actions">
+      <div class="dialog-actions app-card-actions">
         <ActionButton variant="secondary" :disabled="props.busy" @click="emit('close')">
           {{ t('common.filesystemAuthCancel') }}
         </ActionButton>
@@ -45,7 +45,7 @@ const { t } = useI18n()
 </script>
 
 <style scoped>
-.filesystem-auth-dialog { padding: 20px; }
+.filesystem-auth-dialog { --card-actions-inset: 20px; padding: 20px var(--card-actions-inset) 0; }
 .dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 h2 { margin: 0; color: var(--content-primary); font: 700 18px/1.35 var(--font-sans); }
 .dialog-heading p { margin: 5px 0 0; color: var(--content-secondary); font-size: 12px; }

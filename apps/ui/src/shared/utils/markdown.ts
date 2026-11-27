@@ -5,20 +5,6 @@ import { escapeHtml } from '@/utils/escapeHtml'
 // 通知/轻量场景专用的独立 marked 实例。
 // 与 GuguChat 聊天里的全局 marked 配置互不影响（那套带 hljs 代码高亮 + 复制按钮，是聊天专用）。
 // 这里只要标准 GFM + 软换行，渲染加粗/斜体/链接/列表/标题/行内代码/引用/表格等完整 markdown。
-const md = new Marked({ breaks: true, gfm: true })
-
-// Mermaid 需要在组件挂载后异步生成 SVG；这里先保留安全的源码占位节点。
-// MarkdownView 会负责调用 mermaid，并继续经过 DOMPurify 清洗生成结果。
-md.use({
-  renderer: {
-    code(token) {
-      if (String(token.lang || '').trim().toLowerCase() !== 'mermaid') return false
-      return `<pre class="md-mermaid-source"><code>${escapeHtml(token.text)}</code></pre>`
-    },
-  },
-})
-
-// ── XSS 防护（见 docs/security/代码审查-GPT复审核实版-2026-07-10.md P0）──
 // 属性值转义：防 title/href 里的引号逃逸出属性、注入新标签。
 const _ATTR_ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
 function escAttr(s: string): string {
@@ -31,18 +17,43 @@ function safeHref(href: string): string {
   return _SAFE_HREF.test(h) ? h : ''
 }
 
-// 链接统一新标签打开 + 安全 rel；href 走协议白名单、title 走属性转义（防属性逃逸注入）。
-md.use({
-  renderer: {
-    link(token) {
-      const href     = safeHref(token.href)
-      const hrefAttr = href ? ` href="${escAttr(href)}"` : ''
-      const title    = token.title ? ` title="${escAttr(token.title)}"` : ''
-      const text     = this.parser.parseInline(token.tokens)
-      return `<a${hrefAttr}${title} target="_blank" rel="noopener noreferrer">${text}</a>`
+// ── XSS 防护（见 docs/security/代码审查-GPT复审核实版-2026-07-10.md P0）──
+function createMarkdownParser(allowHtml: boolean): Marked {
+  const parser = new Marked({ breaks: true, gfm: true })
+
+  // 技能等不可信 Markdown 里的 <placeholder> 很容易被识别为未闭合 HTML，
+  // DOM 净化时连带移除后面的正文。关闭 HTML 标签 tokenizer 后会按文本转义显示。
+  if (!allowHtml) parser.use({ tokenizer: { html: () => undefined, tag: () => undefined } })
+
+  // Mermaid 需要在组件挂载后异步生成 SVG；这里先保留安全的源码占位节点。
+  // MarkdownView 会负责调用 mermaid，并继续经过 DOMPurify 清洗生成结果。
+  parser.use({
+    renderer: {
+      code(token) {
+        if (String(token.lang || '').trim().toLowerCase() !== 'mermaid') return false
+        return `<pre class="md-mermaid-source"><code>${escapeHtml(token.text)}</code></pre>`
+      },
     },
-  },
-})
+  })
+
+  // 链接统一新标签打开 + 安全 rel；href 走协议白名单、title 走属性转义（防属性逃逸注入）。
+  parser.use({
+    renderer: {
+      link(token) {
+        const href     = safeHref(token.href)
+        const hrefAttr = href ? ` href="${escAttr(href)}"` : ''
+        const title    = token.title ? ` title="${escAttr(token.title)}"` : ''
+        const text     = this.parser.parseInline(token.tokens)
+        return `<a${hrefAttr}${title} target="_blank" rel="noopener noreferrer">${text}</a>`
+      },
+    },
+  })
+
+  return parser
+}
+
+const md = createMarkdownParser(true)
+const mdWithoutHtml = createMarkdownParser(false)
 
 // 全站唯一 HTML 消毒出口：任何 v-html 前都必经它（marked 直出的、或后端/流式预渲染好的 HTML）。
 // DOMPurify 默认即剥离 <script> / on* 事件属性 / javascript: 协议，同时保留标准排版标签、
@@ -98,8 +109,10 @@ function ensureExternalLinksOpenInNewTab(html: string, preserveChatActions = fal
   return root.innerHTML
 }
 
-export function renderMarkdown(text: string | null | undefined): string {
-  return text ? sanitizeHtml(md.parse(String(text)) as string) : ''
+export function renderMarkdown(text: string | null | undefined, options: { allowHtml?: boolean } = {}): string {
+  if (!text) return ''
+  const parser = options.allowHtml === false ? mdWithoutHtml : md
+  return sanitizeHtml(parser.parse(String(text)) as string)
 }
 
 export interface MarkdownFrontmatterEntry {

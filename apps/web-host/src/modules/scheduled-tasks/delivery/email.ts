@@ -4,7 +4,7 @@ import { createEmailAttachmentResolver, EmailAttachmentError, renderSmtpDraftMes
   type EmailAttachmentReferences, type SmtpTestDelivery } from '@gugu/core/email/smtp-test'
 import { lookup as lookupMimeType } from 'mime-types'
 import type { FileHandle } from 'node:fs/promises'
-import type { ScheduledTaskTestNotificationPlan } from '@gugu/core/scheduled-task-test-notify'
+import type { ScheduledTaskTestNotificationPlan } from '@gugu/scheduler/tasks'
 import { decryptEncryptedString } from '../../../adapters/security/encrypted-string.js'
 
 type OpenFile = { handle: FileHandle; size: number }

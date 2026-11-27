@@ -162,7 +162,8 @@ export async function consumeSqliteInteraction(
       throw error
     })
     if (result instanceof InteractionConsumeError || result instanceof InteractionTextError) return result
-    const status = result.result.status
+    const answer = result.result
+    const status = answer.status
     if (status === 'awaiting_text') return { resolution: null, awaitingText: true }
     let receiptId = `desktop-prompt:${promptId}`
     if (row.kind === 'confirm' && status === 'confirmed') {
@@ -178,7 +179,7 @@ export async function consumeSqliteInteraction(
     const resolution: InteractionResolution = {
       interactionId: row.interaction_id, receiptId,
       status: status === 'cancelled' ? 'cancelled' : status === 'confirmed' ? 'confirmed' : 'answered',
-      value: row.kind === 'confirm' ? null : result.result,
+      value: row.kind === 'confirm' ? null : answer,
     }
     return { resolution, awaitingText: false }
   }).then(result => {

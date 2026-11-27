@@ -1,6 +1,5 @@
 import { isImInternalDelegationTool } from '../agent/scenes/im/index.js'
-import { describeShellActivity, type ShellActivity } from '../agent/shell-activity.js'
-import { shellActivityLabel, toolDisplayIdentity, toolLabelLocale, toolNames } from '../agent/sessions/tool-labels.js'
+import { resolveToolDisplayLabel, toolLabelLocale, toolNames } from '../agent/sessions/tool-labels.js'
 import { BUILTIN_AGENT_TOOL_STATE_LABELS } from '../agent/sessions/state-labels.js'
 import type { AgentRunner, PortableValue, RunEvent, RunIdentity } from '../agent/models.js'
 import { normalizePersistentArtifact } from '../agent/context/history/attachment-refs.js'
@@ -16,22 +15,16 @@ function defaultToolLabel(name: string): string {
   return Object.hasOwn(BUILTIN_AGENT_TOOL_STATE_LABELS, name) ? BUILTIN_AGENT_TOOL_STATE_LABELS[name]! : name
 }
 
-/** IM 标题只使用动作，不带命令参数或本机文件名。 */
 export function resolveImToolLabel(name: string | undefined, display?: unknown, label?: string, locale?: string | null): string {
   const item = display && typeof display === 'object'
-    ? display as { shellActivity?: ShellActivity; toolInput?: unknown; toolResult?: unknown; toolLabelOverride?: unknown }
+    ? display as { shellDescription?: unknown; toolInput?: unknown; toolLabel?: string; toolLabelOverride?: unknown }
     : undefined
-  const selected = toolDisplayIdentity(name?.trim(), item?.toolInput)
   const language = toolLabelLocale(locale)
   const labels: Readonly<Record<string, string>> = toolNames[language]
-  if (selected.name === 'shell') {
-    const shellLabel = shellActivityLabel(item?.shellActivity ?? describeShellActivity(selected.input, item?.toolResult), language)
-    if (shellLabel) return shellLabel
-  }
-  const override = typeof item?.toolLabelOverride === 'string' ? item.toolLabelOverride.trim() : ''
-  const key = selected.name
-  return override || (Object.hasOwn(labels, key) ? labels[key]! : label?.trim() || selected.name)
-    || ({ 'zh-CN': '工具', 'ja-JP': 'ツール', 'en-US': 'Tool' })[language]
+  return resolveToolDisplayLabel({ name, input: item?.toolInput, shellDescription: item?.shellDescription,
+    override: item?.toolLabelOverride, label: label ?? item?.toolLabel },
+    key => Object.hasOwn(labels, key) ? labels[key] : undefined,
+    ({ 'zh-CN': '工具', 'ja-JP': 'ツール', 'en-US': 'Tool' })[language])
 }
 
 function toolStatusText(label: string, status: unknown, locale?: string | null): string {
@@ -72,7 +65,7 @@ export function formatImToolReceipt(event: ImToolReceipt, sanitize: (label: stri
     if (delivery === 'failed') return { 'zh-CN': '⚠️ 文件未能发送，请检查原因后重新发起请求', 'ja-JP': '⚠️ ファイルを送信できませんでした。原因を確認して再試行してください', 'en-US': '⚠️ File delivery failed. Check the cause and try again' }[language]
     if (succeeded) return { 'zh-CN': '📎 文件已准备，将在回复结束后尝试发送', 'ja-JP': '📎 ファイルを準備しました。返信後に送信します', 'en-US': '📎 File prepared for delivery after this reply' }[language]
   }
-  return formatImToolStatus(event.label?.trim() || resolveImToolLabel(event.name, event.display, undefined, locale), event.status, sanitize, locale)
+  return formatImToolStatus(resolveImToolLabel(event.name, event.display, event.label, locale), event.status, sanitize, locale)
 }
 
 export type ImDeliveryResult = 'accepted' | 'rejected' | 'unknown'

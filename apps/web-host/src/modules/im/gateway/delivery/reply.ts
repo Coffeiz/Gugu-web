@@ -1,3 +1,4 @@
+import { questionBatchText, readQuestionBatch } from '@gugu/core/agent'
 import { resolveQqNoticeTarget } from '@gugu/gateway/qq'
 import { createImRequestedReply } from '@gugu/gateway'
 import { createHmac } from 'node:crypto'
@@ -24,6 +25,9 @@ function appOrigin(value: string): string {
 /** 旧版无原生交互的平台仅展示安全文字；不把动作token或secret字段值拼进文案。 */
 function interactionText(prompt: Awaited<ReturnType<ReturnType<typeof createPostgresInteractionProjection>['interaction']>>, publicAppUrl: string | null, platform: string, group: boolean): string {
   const title = typeof prompt.title === 'string' && prompt.title ? prompt.title : '需要确认', body = typeof prompt.body === 'string' ? prompt.body : ''
+  const questions = readQuestionBatch({ questions: prompt.questions })
+  if (questions) return `${title}
+${questionBatchText(questions, 0)}`
   const prefix = prompt.task_paused ? '⏸️ 任务已暂停，等待确认。\n' : ''
   if (prompt.options.length) return `${prefix}${title}\n${body}\n${prompt.options.map((option, index) => `${index + 1}. ${option.label || option.id || '选项'}`).join('\n')}\n${prompt.allow_text_input
     ? '请回复选项序号或选项文字；如需其他回答，请回复“自定义回复”后发送内容。' : '请直接回复选项序号或选项文字。'}`

@@ -1,6 +1,18 @@
 import { expect, it } from 'vitest'
-import { describeShellActivity } from '../../src/agent/shell-activity.js'
+import { createAgentShellTool } from '../../src/agent/tools/shell/index.js'
+import { describeShellActivity, shellOperationDescription } from '../../src/agent/shell-activity.js'
 import { projectAgentTimelineEvents } from '../../src/agent/sessions/message-projection.js'
+
+it('终端工具接受可选的单行说明，历史调用仍可验证', () => {
+  const tool = createAgentShellTool(async () => ({ kind: 'unknown' }))
+  expect(tool.validate({ command: 'pwd' }).success).toBe(true)
+  expect(tool.validate({ command: 'pwd', description: ' 查看当前目录 ' }))
+    .toMatchObject({ success: true, data: { command: 'pwd', description: '查看当前目录' } })
+  for (const description of [' ', '查看\n目录', '查'.repeat(81)]) {
+    expect(tool.validate({ command: 'pwd', description }).success).toBe(false)
+    expect(shellOperationDescription({ description })).toBeUndefined()
+  }
+})
 
 const miss = { ok: false, exit_code: 1, timed_out: false, stdout: '', stderr: '' }
 
@@ -45,9 +57,9 @@ it('只有可以归因的搜索退出码才显示未找到匹配，历史摘要�
   expect(describeShellActivity({ command: 'rg version src' }, { ...miss, timed_out: true }))
     .toEqual({ action: 'search', target: 'src' })
   const [event] = projectAgentTimelineEvents([{ id: 1, displayTimeline: [
-    { kind: 'tool', toolName: 'shell', toolInput: { command: 'rg synthetic-token src' }, toolResult: miss },
+    { kind: 'tool', toolName: 'shell', toolInput: { command: 'rg synthetic-token src', description: '搜索项目文件' }, toolResult: miss },
   ] }])
-  expect(event).toMatchObject({ shellActivity: { action: 'search', target: 'src', noMatches: true }, detailsAvailable: true })
+  expect(event).toMatchObject({ shellDescription: '搜索项目文件', shellActivity: { action: 'search', target: 'src', noMatches: true }, detailsAvailable: true })
   expect(event).not.toHaveProperty('toolInput')
   expect(event).not.toHaveProperty('toolResult')
 })

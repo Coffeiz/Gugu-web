@@ -25,9 +25,7 @@
               <button v-if="!desktopFile" class="fp-action-btn" :title="t('common.actions.download')" @click="handleDownload">
                 <Icon name="action.download" :size="16" />
               </button>
-              <button class="fp-action-btn fp-close-btn" :title="`${t('common.actions.close')} (Esc)`" @click="$emit('close')">
-                <Icon name="action.close" :size="16" />
-              </button>
+              <CloseButton :title="`${t('common.actions.close')} (Esc)`" @click="$emit('close')" />
             </div>
           </div>
 
@@ -64,6 +62,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onUnmounted, nextTick, type PropType } from 'vue'
 import { useRouter } from 'vue-router'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useFileOpenAccess } from '@/services/fileOpenAccess'
@@ -462,7 +461,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 13px;
+  padding: var(--space-md) var(--space-lg) var(--space-md);
   border-bottom: 1px solid var(--panel-divider);
   background: var(--surface-glass);
   flex-shrink: 0;
@@ -470,7 +469,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 .fp-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   min-width: 0;
   flex: 1;
 }
@@ -480,7 +479,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   letter-spacing: 0.06em;
   text-transform: uppercase;
   border-radius: 4px;
-  padding: 2px 5px;
+  padding: var(--space-xs) var(--space-xs);
   flex-shrink: 0;
 }
 .fp-name {
@@ -490,8 +489,8 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-bottom: 2px;
-  margin-bottom: -2px;
+  padding-bottom: var(--space-xs);
+  margin-bottom: calc(-1 * var(--space-xs));
 }
 .fp-header-actions { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
 .fp-action-btn {
@@ -502,7 +501,6 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 }
 .fp-action-btn svg { display: block; }
 .fp-action-btn:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
-.fp-close-btn:hover { background: var(--status-danger-bg); color: var(--status-danger); }
 
 /* ── 内容区 ── */
 .fp-body {
@@ -520,7 +518,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   position: absolute; inset: 0;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  gap: 12px; color: var(--text-secondary); font-size: 13px;
+  gap: var(--space-md); color: var(--text-secondary); font-size: 13px;
 }
 .fp-error { color: var(--status-danger); }
 .fp-spinner {

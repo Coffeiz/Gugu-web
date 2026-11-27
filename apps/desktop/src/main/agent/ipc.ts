@@ -4,7 +4,7 @@ import { cleanGreeting } from '@gugu/core/agent'
 import { parseAgentCommand, parseDesktopWorkspaceCommand, desktopWorkspaceReply } from '@gugu/core/agent/commands/menu'
 import { isAgentCommandHelpArgument } from '@gugu/core/agent/commands/help'
 import { setTimeout as delay } from 'node:timers/promises'
-import { DESKTOP_CHANNELS, type DesktopAgentChatEvent, type DesktopAgentEventPage } from '@gugu/core/desktop'
+import { DESKTOP_CHANNELS, type DesktopAgentChatEvent, type DesktopAgentEventPage, type DesktopAgentMessage } from '@gugu/core/desktop'
 import type { RagQueryEmbeddingSettings } from '@gugu/core/agent/rag'
 import { DesktopError } from '../core-host.js'
 import type { createDesktopAgentModelService } from './model.js'
@@ -20,7 +20,7 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
   const opening = new Map<string, AbortController>()
   const observers = new Map<string, AbortController>()
   async function observeRun(id: number, runId: string, operationId: string,
-    streaming: ((event: DesktopAgentChatEvent) => void) | undefined, connection: unknown) {
+    streaming: ((event: DesktopAgentChatEvent) => void) | undefined, connection: unknown, replaying = false) {
     const observed = connection instanceof AbortSignal ? connection : undefined
     // 和 Web SSE 一样，持续观察直到 Run 终态或 Renderer 断开，不用固定时限截断长任务。
     if (observers.has(operationId)) throw new DesktopError('conflict', '聊天事件连接已存在')
@@ -61,7 +61,8 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
           }
           if (streaming && !signal.aborted && ['round_start', 'run_waiting', 'display_event', 'tool_done', 'interaction_required',
             'interaction_resolved', '_context_compaction', 'retry', 'notice', 'error', 'done', 'session_title', 'session_goal']
-            .includes(event.type)) streaming({ type: 'projected', operationId, event })
+            .includes(event.type)) streaming({ type: 'projected', operationId,
+              event: replaying && event.type === 'display_event' ? { ...event, replayed: true } : event })
           if (event.type !== 'display_event' || !event.item || typeof event.item !== 'object') continue
           const item = event.item as { kind?: string; eventId?: string; text?: string }
           if (item.kind !== 'assistant' || typeof item.eventId !== 'string' || typeof item.text !== 'string') continue
@@ -71,6 +72,7 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
             streaming({ type: 'content', operationId, text: item.text.slice(previous.length) })
         }
         if (page.hasMore) continue
+        replaying = false
         if (page.status === 'cancelled') throw new DesktopError('cancelled', '操作已取消')
         if (['failed', 'startup_failed', 'unknown'].includes(page.status))
           throw new DesktopError('model_unavailable', error ?? '生成失败，请稍后重试')
@@ -151,7 +153,7 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
                 reply = desktopWorkspaceReply(workspaceCommand.action, result)
               }
               reply ??= '请使用 /workspace help 查看可用操作。'
-              const appended = await host.request<{ userMessageId?: number }>('agent.sessions.append', { id, text, reply, ...(clientMessageId ? { clientId: clientMessageId } : {}) }, operationId)
+              const appended = await host.request<{ userMessageId?: number; messages?: DesktopAgentMessage[] }>('agent.sessions.append', { id, text, reply, ...(clientMessageId ? { clientId: clientMessageId } : {}) }, operationId)
               if (streaming && !deliverySignal.aborted) {
                 streaming({ type: 'session_id', operationId, session_id: id,
                   ...(Number.isSafeInteger(appended.userMessageId) ? { user_message_id: appended.userMessageId } : {}),
@@ -159,7 +161,8 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
                 streaming({ type: 'content', operationId, text: reply })
                 streaming({ type: 'projected', operationId, event: { type: 'done', command_reply: true } })
               }
-              return host.request('agent.sessions.messages', { id })
+              // 旧版幂等记录可能只保存用户消息 ID。
+              return appended.messages ?? host.request('agent.sessions.messages', { id })
             }
             if (slash?.recognized && slash.name === 'compact' && !isAgentCommandHelpArgument(slash.argument)
               && !attachments.length && !references.length) {
@@ -199,7 +202,7 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
           && 'runId' in command && typeof command.runId === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(command.runId)
           && 'operationId' in command && typeof command.operationId === 'string' && /^[0-9a-f-]{36}$/i.test(command.operationId)) {
           const sink = typeof responseSink === 'function' ? responseSink as (event: DesktopAgentChatEvent) => void : publish
-          return observeRun(command.id, command.runId, command.operationId, sink, connection)
+          return observeRun(command.id, command.runId, command.operationId, sink, connection, true)
         }
         if ((command.action === 'rename' || command.action === 'delete') && 'id' in command
           && 'operationId' in command && typeof command.operationId === 'string') {
@@ -224,6 +227,14 @@ export function agentSessionHandlers(host: IpcHost, model: ReturnType<typeof cre
         if (command.action === 'readMemory') return host.request('agent.memory.read')
         if (command.action === 'goal' && 'id' in command && 'goalAction' in command)
           return host.request('agent.sessions.goal', { id: command.id, action: command.goalAction })
+        if (command.action === 'workspace' && 'id' in command && 'workspaceAction' in command) {
+          const action = command.workspaceAction
+          if (action === 'list' || action === 'show')
+            return host.request('agent.sessions.workspace', { id: command.id, action })
+          if (action === 'bind' || action === 'unlink')
+            return host.request('agent.sessions.setWorkspace', { id: command.id, action,
+              ...('directoryId' in command ? { directoryId: command.directoryId } : {}) })
+        }
         if (command.action === 'list') return host.request('agent.sessions.list', {})
         if (command.action === 'queue') {
           const queueCommand = command as Extract<import('@gugu/core/desktop').DesktopAgentSessionCommand, { action: 'queue' }>

@@ -10,6 +10,7 @@ export interface TraceSession {
   external_session_id: string
   source: string
   title: string
+  im_platform?: 'feishu' | 'qq' | 'wechat' | 'telegram'
   parent_session_id?: string
   parent_run_id?: string
   child_id?: string

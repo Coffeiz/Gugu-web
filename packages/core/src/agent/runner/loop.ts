@@ -12,7 +12,7 @@ import { cancellable,checkCancellationForRun,requestRunCancellation,stoppedResul
 import { closeToolsForRun,finishForRun } from '../run/finalization.js'
 import { assertRunCheckpoint,assertRunIdentity,assertRunTransition,decideReply,decideReplyGate,emptyRunUsage,goalCompleted,initialReplyState,readRunCheckpoint,runIdentityKey,stripGoalMarker,terminalRunStates,toolReplyProgress } from '../run/lifecycle.js'
 import { parallelBatchForRun,providerStreamLifetime,publishRunEvent,replayRunEvents } from '../run/streaming.js'
-import { rejectAdapterCall } from '../tools/call-adapter.js'
+import { rejectAdapterCall } from '../tools/meta/call-adapter.js'
 import { contextSummaryMetrics, createRunnerObservation, skillInjectionMetadata } from './observation.js'
 import { projectProviderDiagnostic } from './provider-diagnostics.js'
 import { sealDisplayTimeline, updateDisplayItem } from './display-timeline.js'
@@ -179,6 +179,8 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
           ...(patch.subagentWaitChildId !== undefined ? { subagentWaitChildId: patch.subagentWaitChildId } : {}) })
       }
       catch (error) {
+        try { ports.diagnose('run_failed', { identity, phase: next.phase, error }) }
+        catch { /* 持久化故障仍按原错误退出。 */ }
         if (error instanceof RunStoreRejected) {
           controller.abort()
           throw error
@@ -784,6 +786,79 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             yield await finish('failed', 'round_limit', '运行已达到执行轮次上限。')
             return state
           }
+          // 只有确实要发下一次模型请求时才按上一轮实际用量压缩。
+          if (state.round > 0 && state.usageAppliedRound === state.round
+            && !state.overflowRecoveryPending && state.usage.contextInput !== null) {
+            const compactionStartedAt = observedAt()
+            const before = contextSummaryMetrics(ports.observationSnapshot?.(state.context))
+            let adjusted: Awaited<ReturnType<typeof ports.context.afterUsage>>
+            let announced = false
+            try {
+              let announce!: (event: RunEvent) => void
+              let rejectAnnouncement!: (error: unknown) => void
+              const start = new Promise<RunEvent>((resolve, reject) => {
+                announce = resolve
+                rejectAnnouncement = reject
+              })
+              let release!: (proceed: boolean) => void
+              const resume = new Promise<boolean>(resolve => { release = resolve })
+              const work = ports.context.afterUsage(state.context, state.usage, controller.signal, async () => {
+                try {
+                  const event = await commit({}, 'compaction', { phase: 'started', reason: 'usage_threshold' })
+                  announce(event!)
+                } catch (error) {
+                  rejectAnnouncement(error)
+                  throw error
+                }
+                if (!await resume)
+                  throw new AgentRunError('cancelled', '当前任务已取消')
+              })
+              const first = await Promise.race([
+                start.then(event => ({ event })),
+                work.then(result => ({ result })),
+              ])
+              if ('event' in first) {
+                announced = true
+                let proceed = false
+                try {
+                  yield first.event
+                  proceed = true
+                } finally {
+                  release(proceed)
+                }
+                adjusted = await work
+              } else {
+                adjusted = first.result
+              }
+              const after = contextSummaryMetrics(ports.observationSnapshot?.(adjusted.context))
+              observePhase(identity, 'Context compaction', compactionStartedAt, state.round,
+                adjusted.applied ? 'success' : 'skipped', {
+                  phase: 'completed', applied: adjusted.applied, reason: adjusted.reason ?? 'not_applied',
+                  before_messages: before.message_count, after_messages: after.message_count,
+                  before_summary_count: before.summary_count, after_summary_count: after.summary_count,
+                  before_summary_chars: before.summary_chars, after_summary_chars: after.summary_chars,
+                })
+              if (!adjusted.applied && adjusted.reason !== 'below_threshold') {
+                const failed = adjusted.reason === 'failed'
+                logRun(identity, failed ? 'error' : 'info', failed ? 'agent.context.compaction_failed' : 'agent.context.compaction_skipped', state.round,
+                  { reason: failed ? 'summary_failed' : adjusted.reason ?? 'not_applied' })
+              }
+            }
+            catch (error) {
+              observePhase(identity, 'Context compaction', compactionStartedAt, state.round,
+                error instanceof AgentRunError && error.code === 'cancelled' ? 'cancelled' : 'error', {
+                  phase: 'failed', reason: 'error', before_messages: before.message_count,
+                  before_summary_count: before.summary_count, before_summary_chars: before.summary_chars,
+                })
+              throw error
+            }
+            if (adjusted.applied || announced)
+              yield (await commit({ context: adjusted.context }, 'compaction', {
+                phase: 'completed', reason: adjusted.applied ? 'usage' : adjusted.reason ?? 'not_applied', applied: adjusted.applied,
+              }))!
+            else if (adjusted.context !== state.context)
+              await commit({ context: adjusted.context })
+          }
           let nextContext: C = state.context
           const finals = queuedFinals ?? (state.acceptsSubagentFinals ? await ports.store.readSubagentFinals?.(identity) : undefined) ?? []
           queuedFinals = undefined
@@ -1151,78 +1226,6 @@ export function createAgentRunner<C>(ports: AgentRunnerPorts<C>): AgentRunner<C>
             yield rejected
           yield await finish('failed', 'incomplete_continuation', '工具结果已返回，但后续回复没有完成，请重试。')
           return state
-        }
-        // 仅按本次 provider 实际用量决定压缩，不能拿字符或累计token推算。
-        if (state.usage.contextInput !== null) {
-          const compactionStartedAt = observedAt()
-          const before = contextSummaryMetrics(ports.observationSnapshot?.(state.context))
-          let adjusted: Awaited<ReturnType<typeof ports.context.afterUsage>>
-          let announced = false
-          try {
-            let announce!: (event: RunEvent) => void
-            let rejectAnnouncement!: (error: unknown) => void
-            const start = new Promise<RunEvent>((resolve, reject) => {
-              announce = resolve
-              rejectAnnouncement = reject
-            })
-            let release!: (proceed: boolean) => void
-            const resume = new Promise<boolean>(resolve => { release = resolve })
-            const work = ports.context.afterUsage(state.context, state.usage, controller.signal, async () => {
-              try {
-                const event = await commit({}, 'compaction', { phase: 'started', reason: 'usage_threshold' })
-                announce(event!)
-              } catch (error) {
-                rejectAnnouncement(error)
-                throw error
-              }
-              if (!await resume)
-                throw new AgentRunError('cancelled', '当前任务已取消')
-            })
-            const first = await Promise.race([
-              start.then(event => ({ event })),
-              work.then(result => ({ result })),
-            ])
-            if ('event' in first) {
-              announced = true
-              let proceed = false
-              try {
-                yield first.event
-                proceed = true
-              } finally {
-                release(proceed)
-              }
-              adjusted = await work
-            } else {
-              adjusted = first.result
-            }
-            const after = contextSummaryMetrics(ports.observationSnapshot?.(adjusted.context))
-            observePhase(identity, 'Context compaction', compactionStartedAt, state.round,
-              adjusted.applied ? 'success' : 'skipped', {
-                phase: 'completed', applied: adjusted.applied, reason: adjusted.reason ?? 'not_applied',
-                before_messages: before.message_count, after_messages: after.message_count,
-                before_summary_count: before.summary_count, after_summary_count: after.summary_count,
-                before_summary_chars: before.summary_chars, after_summary_chars: after.summary_chars,
-              })
-            if (!adjusted.applied && adjusted.reason !== 'below_threshold') {
-              const failed = adjusted.reason === 'failed'
-              logRun(identity, failed ? 'error' : 'info', failed ? 'agent.context.compaction_failed' : 'agent.context.compaction_skipped', state.round,
-                { reason: failed ? 'summary_failed' : adjusted.reason ?? 'not_applied' })
-            }
-          }
-          catch (error) {
-            observePhase(identity, 'Context compaction', compactionStartedAt, state.round,
-              error instanceof AgentRunError && error.code === 'cancelled' ? 'cancelled' : 'error', {
-                phase: 'failed', reason: 'error', before_messages: before.message_count,
-                before_summary_count: before.summary_count, before_summary_chars: before.summary_chars,
-              })
-            throw error
-          }
-          if (adjusted.applied || announced)
-            yield (await commit({ context: adjusted.context }, 'compaction', {
-              phase: 'completed', reason: adjusted.applied ? 'usage' : adjusted.reason ?? 'not_applied', applied: adjusted.applied,
-            }))!
-          else if (adjusted.context !== state.context)
-            await commit({ context: adjusted.context })
         }
       }
       return state

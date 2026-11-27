@@ -1,63 +1,33 @@
-import { createHash } from 'node:crypto'
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
+import { isDeepStrictEqual } from 'node:util'
 import type { RagDocument, RagSearchScope, RagSearchResult, RagSearchDiagnostics } from './contracts.js'
 import { corpusStatistics, scoreTerms, termFrequency, tokenize as tokens } from './ranking/bm25.js'
 import { rankingText } from './ranking/document-text.js'
 import type { Posting } from './ranking/types.js'
 import { hybridFuseScores } from './ranking/hybrid.js'
 type Document = RagDocument
-type State = { revision:string; documents:Document[]; documentsById:Map<string,Document>; postings:Map<string,Posting>; lengths:Map<string,number>; docFreq:Map<string,number>; avgLength:number; totalLength:number; fingerprints:Map<string,string> }
-type DocumentTermFrequency = (document: Document) => ReadonlyMap<string, number>
+type State = { revision:string; documents:Document[]; documentsById:Map<string,Document>; postings:Map<string,Posting>; lengths:Map<string,number>; docFreq:Map<string,number>; avgLength:number; totalLength:number }
 
 function tokenizeDocument(document: Document): ReadonlyMap<string, number> {
   return termFrequency(tokens(rankingText(document)))
 }
 
-/** 只复用词频。文档、授权范围和语料统计仍由本轮快照决定。 */
-export function createRagDocumentTermCache() {
-  const entries = new Map<string, ReadonlyMap<string, number>>()
-  const maxEntries = 2_048
-  const maxTerms = 250_000
-  let termCount = 0
-  return (owner: string, document: Document): ReadonlyMap<string, number> => {
-    const text = rankingText(document)
-    const key = createHash('sha256').update(owner).update('\0').update(text).digest('hex')
-    const previous = entries.get(key)
-    if (previous) {
-      entries.delete(key)
-      entries.set(key, previous)
-      return previous
-    }
-    const frequency = termFrequency(tokens(text))
-    if (frequency.size > maxTerms) return frequency
-    while (entries.size >= maxEntries || termCount + frequency.size > maxTerms) {
-      const oldest = entries.entries().next().value
-      if (!oldest) break
-      entries.delete(oldest[0])
-      termCount -= oldest[1].size
-    }
-    entries.set(key, frequency)
-    termCount += frequency.size
-    return frequency
-  }
-}
-
-function replaceInMemory(state: State, revision: string, documents: Document[], frequencyFor: DocumentTermFrequency): void {
+function replaceInMemory(state: State, revision: string, documents: Document[]): void {
   state.revision = revision;
   state.documents = [];
   state.documentsById = new Map();
-  state.fingerprints = new Map();
   state.postings = new Map();
   state.lengths = new Map();
   state.docFreq = new Map();
   state.totalLength = 0;
-  for (const document of documents) addDocument(state, document, frequencyFor);
+  for (const document of documents) addDocument(state, document);
   state.avgLength = state.documents.length ? state.totalLength / state.documents.length : 0;
 }
 
-function addDocument(state: State, document: Document, frequencyFor: DocumentTermFrequency): void {
+function addDocument(state: State, document: Document): void {
   state.documents.push(document);
   state.documentsById.set(document.id, document);
-  const frequency = frequencyFor(document);
+  const frequency = tokenizeDocument(document);
   const length = [...frequency.values()].reduce((sum, value) => sum + value, 0);
   state.lengths.set(document.id, length);
   state.totalLength += length;
@@ -70,89 +40,18 @@ function addDocument(state: State, document: Document, frequencyFor: DocumentTer
   }
 }
 
-interface InstallTiming {
-  tokenizeMs: number;
-  structureMs: number;
-  documents: number;
-  skippedDocuments: number;
-}
-
-/**
- * 词法指纹：参与 BM25/过滤/展示的字段规范化哈希。
- *
- * 对齐 Python agent/rag/delta.py 的契约——document_version / updated_at
- * 不参与（版本推进单独不构成重新索引的理由）。来源级重建会整表重写行
- * （indexed_at/updated_at 全部推新），install 阶段凭此指纹跳过内容未变的
- * 文档，避免对未变更正文反复分词（2026-09-14 冷加载尖峰的根因）。
- */
-function lexicalFingerprint(document: Document): string {
-  return createHash("sha256").update([
-    document.source_type,
-    document.parent_id ?? "",
-    String(document.chunk_index ?? 0),
-    String(document.chunk_count ?? 1),
-    document.ranking_text ?? document.text ?? "",
-    document.text ?? "",
-    document.context_text ?? "",
-    document.title ?? "",
-    document.summary ?? "",
-    document.scope_type,
-    document.scope_id,
-    document.platform ?? "",
-    document.bot_id ?? "",
-    document.group_id ?? "",
-    JSON.stringify(document.metadata ?? null),
-  ].join("\x1f")).digest("hex");
-}
-
-function patchInMemory(
-  state: State,
-  revision: string,
-  upserts: Document[],
-  deletes: string[],
-  timing?: InstallTiming,
-): void {
-  // 逐条 removeDocument/addDocument 在冷启动全量补丁上是 O(n²)：每条 upsert 触发
-  // 一次 documents 数组全量 filter 拷贝、每个词项 posting 一次 indexOf+splice 线性
-  // 搬移——20237 条实测 install 68s，把 30s 构建预算顶爆（2026-09-13 devserver
-  // 全量超时事故）。这里改成标记-清扫：账目（docFreq/lengths/documentsById）先
-  // 全部处理完并收集脏词项，最后对脏词项 posting 一次性重建、documents 数组
-  // 单次 filter。复杂度从 O(n²) 降到 O(总变更词项出现数)。
-  const removedIds = new Set<string>(deletes);
-
-  // 先识别内容未变的 upsert：词法指纹一致 → 保留现条目，不分词、不动账目。
-  // 来源级重建整表重写行（updated_at/indexed_at 推新）时，这里把 install 的
-  // 分词成本从「全表」压到「真实变更」。
-  const fingerprintStart = timing ? performance.now() : 0;
-  const changedUpserts: Document[] = [];
-  for (const document of upserts) {
-    const newFp = lexicalFingerprint(document);
-    const existingFp = state.fingerprints.get(document.id);
-    const existing = state.documentsById.get(document.id);
-    const oldFp = existingFp ?? (existing ? lexicalFingerprint(existing) : null);
-    if (existing !== undefined && oldFp === newFp && !removedIds.has(document.id)) {
-      if (timing) timing.skippedDocuments += 1;
-      continue;
-    }
-    state.fingerprints.set(document.id, newFp);
-    changedUpserts.push(document);
-    removedIds.add(document.id);
-  }
-  if (timing) timing.structureMs += performance.now() - fingerprintStart;
-
-  const dirtyTerms = new Set<string>();
-  // 同 id 多条 upsert 只保留最后一条（与原逐条 remove→add 的「后者胜」语义一致）。
-  const added = new Map<string, { document: Document; frequency: Map<string, number> }>();
+function patchInMemory(state: State, revision: string, upserts: Document[], deletes: string[]): void {
+  // 先收集变更文档，再一次性重建受影响词项的倒排列表。
+  const removedIds = new Set([...deletes, ...upserts.map(document => document.id)]);
+  // 分词可能失败。先算完词频，再修改当前可检索的索引。
+  const removed = new Map<string, ReadonlyMap<string, number>>();
   for (const id of removedIds) {
     const existing = state.documentsById.get(id);
-    if (!existing) continue;
-    state.fingerprints.delete(id);
-    const tokenizeStarted = performance.now();
-    const frequency = termFrequency(tokens(rankingText(existing)));
-    if (timing) {
-      timing.tokenizeMs += performance.now() - tokenizeStarted;
-      timing.documents += 1;
-    }
+    if (existing) removed.set(id, tokenizeDocument(existing));
+  }
+  const added = new Map(upserts.map(document => [document.id, { document, frequency: tokenizeDocument(document) }]));
+  const dirtyTerms = new Set<string>();
+  for (const [id, frequency] of removed) {
     state.totalLength -= state.lengths.get(id) ?? 0;
     state.lengths.delete(id);
     state.documentsById.delete(id);
@@ -163,18 +62,11 @@ function patchInMemory(
       else state.docFreq.delete(term);
     }
   }
-  for (const document of changedUpserts) {
-    const tokenizeStarted = performance.now();
-    const frequency = termFrequency(tokens(rankingText(document)));
-    if (timing) {
-      timing.tokenizeMs += performance.now() - tokenizeStarted;
-      timing.documents += 1;
-    }
+  for (const { document, frequency } of added.values()) {
     const length = [...frequency.values()].reduce((sum, value) => sum + value, 0);
     state.lengths.set(document.id, length);
     state.totalLength += length;
     state.documentsById.set(document.id, document);
-    added.set(document.id, { document, frequency });
     for (const term of frequency.keys()) {
       dirtyTerms.add(term);
       state.docFreq.set(term, (state.docFreq.get(term) ?? 0) + 1);
@@ -183,7 +75,6 @@ function patchInMemory(
   // 新增侧按词项倒排预聚合：若在重建阶段对每个脏词项都扫一遍 added 全表，
   // 全量重灌场景仍是 O(dirtyTerms × n)（20237 条全量重灌实测仍 71s）。先按
   // 词项收集一次 [docId, count]，重建时只取自己的条目，整体线性。
-  const structureStarted = timing ? performance.now() : 0;
   const addsByTerm = new Map<string, Array<[string, number]>>();
   for (const [docId, entry] of added) {
     for (const [term, count] of entry.frequency) {
@@ -213,7 +104,6 @@ function patchInMemory(
   }
   state.documents = state.documents.filter((item) => !removedIds.has(item.id));
   for (const entry of added.values()) state.documents.push(entry.document);
-  if (timing) timing.structureMs += performance.now() - structureStarted;
   state.revision = revision;
   state.avgLength = state.documents.length ? state.totalLength / state.documents.length : 0;
 }
@@ -294,30 +184,133 @@ function search(
 }
 
 
+/** 向量只对已经进入词法候选的文档重排。 */
+export function rerankRagLexicalResults(
+ lexical: ReturnType<typeof search>, queryVector: readonly number[], documentVectors: ReadonlyMap<string, readonly number[]>,
+) {
+ if(!queryVector.every(Number.isFinite))throw new Error('RAG 查询向量无效')
+ const hits=lexical.results.map(row=>({chunk_id:row.id}))
+ const vectors=new Map<string,readonly number[]>()
+ for(const hit of hits){const value=documentVectors.get(hit.chunk_id);if(value?.every(Number.isFinite))vectors.set(hit.chunk_id,value)}
+ const {fusedScores,vectorScores}=hybridFuseScores(hits,queryVector,vectors)
+ if(!fusedScores.size)return {...structuredClone(lexical),fusion:'bm25' as const,vectorDocCount:0}
+ const results=lexical.results.map(row=>({...row,score:fusedScores.get(row.id)!,...(vectorScores.has(row.id)?{semantic_score:vectorScores.get(row.id)!}:{})}))
+  .sort((a,b)=>b.score-a.score||(a.id<b.id?-1:a.id>b.id?1:0))
+ return {results:structuredClone(results),diagnostics:structuredClone(lexical.diagnostics),fusion:'hybrid-rrf' as const,vectorDocCount:vectorScores.size}
+}
+
 /** 每个实例仅绑定一个可信 owner；来源装载和 ACL 仍由 Host 承担。 */
-export function createRagLexicalIndex(ownerId:string, frequencyFor: DocumentTermFrequency = tokenizeDocument) {
+export function createRagLexicalIndex(ownerId:string) {
  if (!ownerId.trim()) throw new Error('RAG owner 未指定')
- let state:State={revision:'',documents:[],documentsById:new Map(),postings:new Map(),lengths:new Map(),docFreq:new Map(),avgLength:0,totalLength:0,fingerprints:new Map()}
+ let state:State={revision:'',documents:[],documentsById:new Map(),postings:new Map(),lengths:new Map(),docFreq:new Map(),avgLength:0,totalLength:0}
  function authorize(owner:string){if(owner!==ownerId)throw new Error('RAG owner 不匹配')}
  return {
-  replace(owner:string,revision:string,documents:Document[]){authorize(owner);const next:State={revision:'',documents:[],documentsById:new Map(),postings:new Map(),lengths:new Map(),docFreq:new Map(),avgLength:0,totalLength:0,fingerprints:new Map()};replaceInMemory(next,revision,structuredClone(documents),frequencyFor);state=next},
-  patch(owner:string,baseRevision:string,revision:string,upserts:Document[],deletes:string[]){authorize(owner);if(state.revision!==baseRevision)throw new Error('RAG 索引版本不匹配');const next=structuredClone(state);const unique=[...new Map(upserts.map(item=>[item.id,item])).values()];patchInMemory(next,revision,structuredClone(unique),[...deletes]);state=next},
+  replace(owner:string,revision:string,documents:Document[]){authorize(owner);const next:State={revision:'',documents:[],documentsById:new Map(),postings:new Map(),lengths:new Map(),docFreq:new Map(),avgLength:0,totalLength:0};replaceInMemory(next,revision,structuredClone(documents));state=next},
+  async warm(owner: string, revision: string, documents: readonly Document[]) {
+   authorize(owner)
+   const next: State = { revision, documents: [], documentsById: new Map(), postings: new Map(),
+     lengths: new Map(), docFreq: new Map(), avgLength: 0, totalLength: 0 }
+   for (let offset = 0; offset < documents.length; offset += 32) {
+    await yieldToEventLoop(undefined, { ref: false })
+    for (const document of documents.slice(offset, offset + 32)) addDocument(next, structuredClone(document))
+   }
+   next.avgLength = next.documents.length ? next.totalLength / next.documents.length : 0
+   state = next
+  },
+  /** 用本轮完整授权语料核对增删改，版本和历史水位可以独立变化。 */
+  synchronize(owner: string, revision: string, documents: Document[]) {
+   authorize(owner)
+   const current = new Set(documents.map(document => document.id))
+   const deletes = state.documents.filter(document => !current.has(document.id)).map(document => document.id)
+   const upserts: Document[] = []
+   const refreshed = new Map<string, Document>()
+   for (const document of documents) {
+    const previous = state.documentsById.get(document.id)
+    if (isDeepStrictEqual(document, previous)) continue
+    if (previous && rankingText(previous) === rankingText(document)) refreshed.set(document.id, structuredClone(document))
+    else upserts.push(document)
+   }
+   if (upserts.length || deletes.length) patchInMemory(state, revision, structuredClone(upserts), deletes)
+   else state.revision = revision
+   if (refreshed.size) {
+    state.documents = state.documents.map(document => refreshed.get(document.id) ?? document)
+    for (const [id, document] of refreshed) {
+     state.documentsById.set(id, document)
+    }
+   }
+  },
   search(owner:string,query:string,limit:number,allowedSources:ReadonlyArray<string>,scope?:RagSearchScope){authorize(owner);if(scope)validateScope(scope);return structuredClone(search(state,query,limit,new Set(allowedSources),scope))},
   searchHybrid(owner:string,query:string,limit:number,allowedSources:ReadonlyArray<string>,scope: RagSearchScope | undefined,options:{queryVector:readonly number[];vectorVersion:string;expectedVersion:string;vectors:ReadonlyMap<string,readonly number[]>}){
    authorize(owner);if(scope)validateScope(scope)
    if(!options.queryVector.every(Number.isFinite))throw new Error('RAG 查询向量无效')
    const lexical=search(state,query,limit,new Set(allowedSources),scope)
    if(!options.expectedVersion||options.vectorVersion!==options.expectedVersion||!options.queryVector.length||!options.vectors.size)return {...structuredClone(lexical),fusion:'bm25' as const,vectorDocCount:0}
-   const hits=lexical.results.map(row=>({chunk_id:row.id}))
-   const vectors=new Map<string,readonly number[]>()
-   for(const hit of hits){const value=options.vectors.get(hit.chunk_id);if(value?.every(Number.isFinite))vectors.set(hit.chunk_id,value)}
-   const {fusedScores,vectorScores}=hybridFuseScores(hits,options.queryVector,vectors)
-   if(!fusedScores.size)return {...structuredClone(lexical),fusion:'bm25' as const,vectorDocCount:0}
-   const results=lexical.results.map(row=>({...row,score:fusedScores.get(row.id)!,...(vectorScores.has(row.id)?{semantic_score:vectorScores.get(row.id)!}:{})}))
-    .sort((a,b)=>b.score-a.score||(a.id<b.id?-1:a.id>b.id?1:0))
-   return {results:structuredClone(results),diagnostics:structuredClone(lexical.diagnostics),fusion:'hybrid-rrf' as const,vectorDocCount:vectorScores.size}
+   return rerankRagLexicalResults(lexical, options.queryVector, options.vectors)
   },
   revision(){return state.revision},
   statistics(owner:string){authorize(owner);return structuredClone(corpusStatistics(state))},
  }
+}
+
+/** 以 owner 隔离近期词法语料，同一 owner 的冷启动只安排一次。 */
+export function createRagLexicalCorpusCache() {
+ const recent = new Map<string, { index?: ReturnType<typeof createRagLexicalIndex>; size: number }>()
+ const warming = new Set<string>()
+ const maxDocuments = 50_000
+ function retain(key: string, index: ReturnType<typeof createRagLexicalIndex> | undefined, size: number) {
+  recent.delete(key)
+  recent.set(key, { index, size })
+  let total = [...recent.values()].reduce((sum, entry) => sum + entry.size, 0)
+  while (recent.size > 1 && (recent.size > 4 || total > maxDocuments)) {
+   const oldest = recent.entries().next().value
+   if (!oldest) break
+   total -= oldest[1].size
+   recent.delete(oldest[0])
+  }
+ }
+ const cacheKey = (owner: string, scope: string) => JSON.stringify([owner, scope])
+ function synchronize(owner: string, revision: string, documents: Document[], key: string, pinned?: ReturnType<typeof createRagLexicalIndex>) {
+  const previous = recent.get(key)?.index ?? pinned
+  recent.delete(key)
+  const index = previous ?? createRagLexicalIndex(owner)
+  if (previous) index.synchronize(owner, revision, documents)
+  else index.replace(owner, revision, documents)
+  if (documents.length <= maxDocuments) retain(key, index, documents.length)
+  else retain(key, undefined, 0)
+  return index
+ }
+ const use = (owner: string, revision: string, documents: Document[], scope = '') =>
+  synchronize(owner, revision, documents, cacheKey(owner, scope))
+ return Object.assign(use, {
+  bindReady(owner: string, scope: string) {
+   const key = cacheKey(owner, scope)
+   const entry = recent.get(key)
+   if (!entry) return undefined
+   const pinned = entry.index
+   // 查询期间即使发生 LRU 淘汰，也能使用已预热的索引核对当前文档。
+   return (candidate: string, revision: string, documents: Document[]) => {
+    if (candidate !== owner) throw new Error('RAG owner 不匹配')
+    return synchronize(owner, revision, documents, key, pinned)
+   }
+  },
+  warm(owner: string, load: () => Promise<{ revision: string | null; documents: Document[] }>, scope = '') {
+   const key = cacheKey(owner, scope)
+   if (warming.has(key) || warming.size >= 2 || recent.has(key)) return
+   warming.add(key)
+   void (async () => {
+    await yieldToEventLoop(undefined, { ref: false })
+    const { revision, documents } = await load()
+    const unique = [...new Map(documents.map(document => [document.id, document])).values()]
+    if (unique.length > maxDocuments) {
+     if (!recent.has(key)) retain(key, undefined, 0)
+     return
+    }
+    const index = createRagLexicalIndex(owner)
+    await index.warm(owner, revision ?? 'empty', unique)
+    if (!recent.has(key)) retain(key, index, unique.length)
+   })().catch(() => {
+    // 预热独立于当前对话，失败后允许下一次自动召回重试。
+   }).finally(() => { warming.delete(key) })
+  },
+ })
 }

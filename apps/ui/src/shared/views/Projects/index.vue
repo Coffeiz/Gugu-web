@@ -193,7 +193,7 @@ function openNewWithStatus(status) {
   isolation: isolate;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
+  gap: var(--space-lg);
   height: 100%;
   align-items: stretch;
 }

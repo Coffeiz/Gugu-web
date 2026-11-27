@@ -3,7 +3,7 @@ import { sql } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 import { databaseTime, nowUtc } from '../data/codec.js'
 import type { Backend } from '../data/repositories.js'
-import { enqueueScheduledTaskRagIndex } from '../scheduled-tasks/rag-index-job.js'
+import { enqueueScheduledTaskRagIndex } from '../agent/rag/scheduled-task-index-job.js'
 import { enqueueCalendarRagIndex } from './create-store.js'
 import {
   UndoAdapterConflict,

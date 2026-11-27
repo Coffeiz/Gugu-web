@@ -6,7 +6,7 @@ import type { createSubagentService } from '../../../src/agent/subagent/service.
 import { createSearcherReferenceShell } from '../../../src/agent/subagent/searcher/references.js'
 import { createDelegatedAgentHarness } from '../../../src/agent/subagent/runner.js'
 import { searcherPreset } from '../../../src/agent/subagent/searcher/context.js'
-import { createSubagentServiceTools } from '../../../src/agent/tools/subagent.js'
+import { createSubagentServiceTools } from '../../../src/agent/tools/subagent/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { AgentRunnerPorts, ToolPort } from '../../../src/agent/ports.js'
 import type { CanonicalRunContext, ProviderEvent, RunIdentity, ToolCall } from '../../../src/agent/models.js'

@@ -20,7 +20,7 @@
       <transition name="gs-pop">
         <div v-if="open && q.trim()" ref="panelEl" class="gs-panel" :style="panelStyle">
           <div class="gs-scroll scroll-surface scroll-surface--compact">
-            <div v-if="loading" class="gs-hint">
+            <div v-if="loading && !loadingMore" class="gs-hint">
               <Icon name="status.loading" class="gs-spin" size="md" tone="inherit" /> {{ t('common.searching') }}
             </div>
             <div v-else-if="failed" class="gs-hint" role="alert">{{ t('common.desktopSearchFailed') }}</div>
@@ -40,7 +40,13 @@
                 </button>
               </div>
             </template>
-            <div v-if="!loading && partial" class="gs-hint">{{ t('common.desktopSearchPartial') }}</div>
+            <div v-if="partial && (loadingMore || !loading)" class="gs-hint">
+              <ActionButton v-if="desktop" fit variant="secondary"
+                :disabled="loadingMore" @click="runSearch(q.trim(), expansion + 1)">
+                {{ t(loadingMore ? 'common.searching' : moreFailed ? 'common.actions.retry' : 'common.desktopSearchLoadMore') }}
+              </ActionButton>
+              <span v-else>{{ t('common.desktopSearchPartial') }}</span>
+            </div>
           </div>
         </div>
       </transition>
@@ -57,6 +63,7 @@ import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import SearchInput from '@/components/common/controls/SearchInput.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useSearchAccess, type SearchGroup, type SearchItem } from '@/services/searchAccess'
 import { useFileOpenAccess } from '@/services/fileOpenAccess'
 import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
@@ -84,6 +91,9 @@ const groups  = ref<SearchGroup[]>([])
 const total   = ref(0)
 const failed = ref(false)
 const partial = ref(false)
+const expansion = ref(0)
+const loadingMore = ref(false)
+const moreFailed = ref(false)
 
 // 面板 Teleport 到 body，脱离页面布局的层叠上下文后再绘制浮层 blur；用 fixed 跟随搜索框定位
 const panelStyle = ref({})
@@ -114,6 +124,9 @@ function onInput() {
   reqSeq++
   failed.value = false
   partial.value = false
+  expansion.value = 0
+  loadingMore.value = false
+  moreFailed.value = false
   searchAbort?.abort()
   searchAbort = null
   const text = q.value.trim()
@@ -127,25 +140,37 @@ function onCompositionEnd() {
   onInput()
 }
 
-async function runSearch(text: string) {
+async function runSearch(text: string, nextExpansion = 0) {
+  const loadMore = nextExpansion > 0
+  loadingMore.value = loadMore
+  loading.value = true
+  moreFailed.value = false
   const seq = ++reqSeq
   searchAbort?.abort()
   searchAbort = new AbortController()
   const queries = [...new Set(text.split(/\s+/).map(item => item.trim()).filter(Boolean))]
   try {
     if (!searchAccess) throw new Error('搜索接口未装配')
-    const r = await searchAccess.query(queries, searchAbort.signal)
+    const r = await searchAccess.query(queries, searchAbort.signal, nextExpansion || undefined)
     if (seq !== reqSeq) return   // 有更新的请求了，丢弃这次
     groups.value = r.groups || []
     total.value  = r.total || 0
     partial.value = r.partial === true
+    expansion.value = nextExpansion
   } catch (error: any) {
     if (seq !== reqSeq) return
     if (error?.name === 'AbortError') return
+    if (loadMore) {
+      moreFailed.value = true
+      return
+    }
     failed.value = props.desktop === true
     groups.value = []; total.value = 0
   } finally {
-    if (seq === reqSeq) loading.value = false
+    if (seq === reqSeq) {
+      loading.value = false
+      loadingMore.value = false
+    }
   }
 }
 
@@ -164,7 +189,7 @@ function go(type: string, it: SearchItem) {
     if (type === 'file') {
       const { base, ext } = splitName(it.title)
       if (props.desktop && fileOpenAccess?.canOpenInSystem(it.path_file)
-        && shouldOpenFileInSystem(fileOpenAccess.getOpenPreference(), base ? ext : '')) {
+        && shouldOpenFileInSystem(fileOpenAccess.getOpenPreference(), base ? ext : '', undefined, { audioPlayerAvailable: true })) {
         void fileOpenAccess.openInSystem(it.path_file)
       } else if (isPreviewable(base ? ext : '')) {
         const { directoryId, relativePath } = it.path_file
@@ -177,7 +202,8 @@ function go(type: string, it: SearchItem) {
   } else if (type === 'conversation') {
     uiStore.requestChatNavigation(numericId, it.message_id || null)
   } else if (type === 'client') {
-    Message.info('联系人页面还在开发中，先在项目里看吧～')
+    if (props.desktop) void router.push({ path: '/contacts', query: { object_id: String(numericId) } })
+    else Message.info('联系人页面还在开发中，先在项目里看吧～')
   } else if (type === 'note') {
     router.push({ path: '/notes', query: { object_id: String(numericId) } })
   } else if (type === 'canvas_note') {
@@ -200,6 +226,9 @@ function clear() {
   clearTimeout(timer ?? undefined)
   failed.value = false
   partial.value = false
+  expansion.value = 0
+  loadingMore.value = false
+  moreFailed.value = false
   loading.value = false
   searchAbort?.abort()
   searchAbort = null

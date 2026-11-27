@@ -3,7 +3,7 @@ import test from 'node:test'
 import {randomUUID} from 'node:crypto'
 import {Pool} from 'pg'
 import {createPostgresRuntime} from '@gugu/core/data'
-import {createTaskFilesystemRevoker} from '@gugu/core/scheduled-task-filesystem-revoke'
+import {createTaskFilesystemRevoker} from '@gugu/core/workspaces/task-filesystem-revoke'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL
 
 test('任务撤权限定owner及普通任务，幂等清授权并同事务审计，失败回滚数据库', {skip:!databaseUrl&&'需要隔离PostgreSQL'},async()=>{

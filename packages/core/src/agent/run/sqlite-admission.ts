@@ -1,3 +1,5 @@
+import { selectionSnapshotSchema } from '../sessions/selection-reference.js'
+import { agentChatReceiptKey, readAgentChatReceipt, writeAgentChatReceipt } from './chat-receipt.js'
 import { parseAgentCommand, parseAgentGoalArgument } from '../commands/menu.js'
 import { isAgentCommandHelpArgument } from '../commands/help.js'
 import { readAgentSessionContext, projectAgentSessionGoal } from '../sessions/list.js'
@@ -117,6 +119,7 @@ export async function registerSqliteAgentRun(tx: Transaction<Database>, identity
 export function createSqliteAgentAdmission(
   db: Kysely<Database>,
   options: {
+    skillDataRoot?: string
     /** 新的用户消息提交后通知宿主补读。 */
     onCommitted?: (identity: RunIdentity) => void
     /** 宿主在同一事务冻结非公开运行配置；禁止在这里执行网络请求。 */
@@ -157,6 +160,15 @@ export function createSqliteAgentAdmission(
             WHERE im.owner_id=${owner} AND im.session_id=${session} AND s.chat_type='group'`.execute(tx)
           if (!group.rows.length) throw new CoreError('invalid_request', '发言人资料仅适用于群会话')
         }
+        const key = clientId ? agentChatReceiptKey(ownerId, session, clientId, {
+          message, quotedText, attachments: [...new Set(input.attachments ?? [])], references: input.references ?? [],
+          sender: sender?.id ?? null,
+        }) : null
+        if (key) {
+          const receipt = await readAgentChatReceipt(tx, key)
+          if (receipt) return { identity: { ownerId, sessionId: String(session), runId: receipt.run_id },
+            userMessageId: receipt.message_id, replay: true }
+        }
         let passiveMessageId: number | undefined
         if (clientId != null) {
           const previous = (await sql<{ run_id: string | null; id: number; content: string; quoted_text: string | null; files: string | null; references_json: string | null; platform_user_id: string | null; platform_user_name: string | null }>`
@@ -192,7 +204,10 @@ export function createSqliteAgentAdmission(
         const sequence = passiveMessageId === undefined ? current.last_message_seq + 1 : current.last_message_seq
         const references = input.references ?? []
         if (references.length > 50) throw new CoreError('invalid_request', '引用数量超出限制')
-        const referencedText = await resolveDesktopChatReferences(tx, ownerId, references, message)
+        if (references.some(ref => ref?.selection !== undefined
+          && (!['file', 'canvas_note'].includes(ref.type) || !selectionSnapshotSchema.safeParse(ref.selection).success)))
+          throw new CoreError('invalid_request', '选区引用无效')
+        const referencedText = await resolveDesktopChatReferences(tx, ownerId, references, message, undefined, false, undefined, options.skillDataRoot)
         const contentJson = referencedText === message ? null : JSON.stringify([{ type: 'text', text: referencedText }])
         const { rows } = passiveMessageId === undefined ? await sql<{ id: number }>`INSERT INTO conversation_messages
           (session_id,conversation_seq,role,content,quoted_text,client_message_id,references_json,content_json,created_at,platform_user_id,platform_user_name,platform_bot_user_id,im_mention_facts,im_platform_sent_ms,im_event_received_ms)
@@ -213,6 +228,7 @@ export function createSqliteAgentAdmission(
           await sql`UPDATE conversation_sessions SET session_context=${JSON.stringify(context)}
             WHERE id=${session} AND user_id=${owner}`.execute(tx)
         }
+        if (key) await writeAgentChatReceipt(tx, key, { sessionId: session, userMessageId, runId: identity.runId })
         await options.bindRun?.(tx, identity, input, userMessageId)
         return { identity, userMessageId, goalMode: projectAgentSessionGoal(context).goalActive }
       })

@@ -13,8 +13,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { createServer, request, type Server } from 'node:http'
 import { LocalRuntime } from '@gugu/core/local'
-import { CORE_SCHEMA_VERSION, DESKTOP_CHANNELS, type DesktopAgentChatEvent, type DesktopAgentEventPage } from '@gugu/core/desktop'
+import { CORE_SCHEMA_VERSION, DESKTOP_CHANNELS, MAX_FRAME, type DesktopAgentChatEvent, type DesktopAgentEventPage } from '@gugu/core/desktop'
 import { serializeAgentKnowledgeEntry } from '@gugu/core/agent/knowledge/entry'
+import { createUserSkillBundle, listUserSkillBundles } from '@gugu/core/skills'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   CoreHost,
@@ -76,6 +77,77 @@ function requestPreviewAttachment(socketPath: string, secret: string, payload: B
 }
 
 describe('Electron 与独立 Node Core 的真实边界', () => {
+  it('Core 启动后以实际本地账号 UUID 迁移文件，并将账号交给桌面宿主', async () => {
+    const root = directory()
+    const filesRoot = join(root, 'managed')
+    mkdirSync(join(filesRoot, 'personal'), { recursive: true })
+    writeFileSync(join(filesRoot, 'personal', '合成.md'), '原个人文件')
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    const host = await launchCoreHost(process.execPath, entry, join(root, 'core.db'), undefined, undefined, filesRoot)
+    try {
+      expect(host.ownerId).toMatch(/^[0-9a-f-]{36}$/u)
+      expect(readFileSync(join(filesRoot, host.ownerId!, 'personal', '合成.md'), 'utf8')).toBe('原个人文件')
+      expect(lstatSync(join(filesRoot, host.ownerId!, '.agent', 'memories')).isDirectory()).toBe(true)
+    } finally { await host.close() }
+  })
+
+  it('桌面启动将旧技能迁入当前账号目录并关闭旧表管理入口', async () => {
+    const root = directory(), database = join(root, 'core.db'), filesRoot = join(root, 'managed')
+    const initial = await LocalRuntime.initialize(database)
+    const owner = initial.ownerId
+    await initial.close()
+    const db = new DatabaseSync(database)
+    try {
+      db.prepare(`INSERT INTO user_skills(owner_id,skill_id,name,description_short,description_long,category,body,related_tools,source,managed_by,enabled,content_digest,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(owner.replaceAll('-', ''), 'U7', '旧技能', '旧描述', null, 'personal', '原正文', '[]', 'user', 'user', 0, 'digest', '2026-01-01', '2026-01-01')
+      db.prepare(`INSERT INTO conversation_sessions(id,user_id,title,title_locked,summary,context_epoch,created_at,updated_at)
+        VALUES(1,?,'合成会话',0,'',0,'2026-01-01','2026-01-01')`).run(owner.replaceAll('-', ''))
+      db.prepare(`INSERT INTO conversation_messages(id,session_id,conversation_seq,role,content,references_json,created_at)
+        VALUES(1,1,1,'user','问题',?,'2026-01-01')`).run(JSON.stringify([{ type: 'skill', id: 'U7', label: '旧技能' }]))
+      db.prepare(`INSERT INTO conversation_pending_queues(user_id,queue_id,session_id,items,updated_at)
+        VALUES(?,'session-1',1,?,'2026-01-01')`).run(owner.replaceAll('-', ''), JSON.stringify([{ key: 1, text: '待发送', references: [{ type: 'skill', id: 'U7', label: '旧技能' }] }]))
+    } finally { db.close() }
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    const host = await launchCoreHost(process.execPath, entry, database, undefined, undefined, filesRoot)
+    try {
+      const skills = await listUserSkillBundles(filesRoot, owner)
+      expect(skills.skills).toMatchObject([{ id: 'u7', name: '旧技能', body: '原正文', enabled: false, storage_kind: 'file' }])
+      expect(readFileSync(join(filesRoot, owner, '.agent', 'skills', 'u7', 'SKILL.md'), 'utf8')).toContain('原正文')
+      await expect(host.request('skills.list', { offset: 0 })).rejects.toMatchObject({ code: 'invalid_request' })
+      await expect(host.request('skills.create', { fields: {} })).rejects.toMatchObject({ code: 'invalid_request' })
+    } finally { await host.close() }
+    const check = new DatabaseSync(database)
+    try {
+      expect(check.prepare("SELECT source FROM user_skills WHERE skill_id='U7'").get()).toMatchObject({ source: 'migrated' })
+      const message = check.prepare('SELECT references_json FROM conversation_messages WHERE id=1').get() as { references_json: string }
+      const queue = check.prepare("SELECT items FROM conversation_pending_queues WHERE queue_id='session-1'").get() as { items: string }
+      expect(JSON.parse(message.references_json)[0].id).toBe('u7')
+      expect(JSON.parse(queue.items)[0].references[0].id).toBe('u7')
+    }
+    finally { check.close() }
+  })
+
+  it('桌面迁移遇到同名目录冲突时保留文件和旧技能', async () => {
+    const root = directory(), database = join(root, 'core.db'), filesRoot = join(root, 'managed')
+    const initial = await LocalRuntime.initialize(database)
+    const owner = initial.ownerId
+    await initial.close()
+    const db = new DatabaseSync(database)
+    try {
+      db.prepare(`INSERT INTO user_skills(owner_id,skill_id,name,description_short,description_long,category,body,related_tools,source,managed_by,enabled,content_digest,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(owner.replaceAll('-', ''), 'U7', '旧技能', '旧描述', null, 'personal', '原正文', '[]', 'user', 'user', 1, 'digest', '2026-01-01', '2026-01-01')
+    } finally { db.close() }
+    const original = '---\nname: 已有技能\ndescription: 保留\n---\n已有正文'
+    mkdirSync(filesRoot, { recursive: true })
+    await createUserSkillBundle(filesRoot, owner, 'u7', original)
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    await expect(launchCoreHost(process.execPath, entry, database, undefined, 10_000, filesRoot)).rejects.toBeDefined()
+    expect(readFileSync(join(filesRoot, owner, '.agent', 'skills', 'u7', 'SKILL.md'), 'utf8')).toBe(original)
+    const check = new DatabaseSync(database)
+    try { expect(check.prepare("SELECT source,body FROM user_skills WHERE skill_id='U7'").get()).toMatchObject({ source: 'user', body: '原正文' }) }
+    finally { check.close() }
+  })
+
   it('聊天事件读取超时后保留同一个 Worker，并忽略迟到的结果', async () => {
     const root = directory()
     const worker = join(root, 'slow-worker.mjs')
@@ -113,6 +185,8 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     const report = vi.fn()
     const host = await CoreHost.launch(process.execPath, entry, join(root, 'core.db'),
       undefined, undefined, undefined, worker, undefined, report)
+    const stopped = vi.fn()
+    host.onStopped(stopped)
     try {
       await expect(host.request('agent.sessions.events', { id: 1, after: 0 })).rejects.toMatchObject({ code: 'closed' })
       await expect.poll(() => report.mock.calls).toEqual([
@@ -120,6 +194,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
           frames: expect.arrayContaining([expect.stringMatching(/^worker\.mjs:\d+:\d+$/)]) }],
       ])
       await expect(host.request('agent.sessions.events', { id: 1, after: 0 })).rejects.toMatchObject({ code: 'closed' })
+      expect(stopped).toHaveBeenCalledTimes(1)
     } finally { await host.close() }
   })
   it('聊天可接收文件夹引用，目录替换后旧引用失效', async () => {
@@ -197,6 +272,14 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       await expect(search(['资料'])).resolves.toMatchObject({ groups: expect.arrayContaining([
         expect.objectContaining({ type: 'folder', items: [expect.objectContaining({ title: '资料' })] }),
       ]) })
+      for (let index = 1; index <= 8; index++)
+        writeFileSync(join(personal, '资料', `扩展搜索样本${index}.md`), '合成正文')
+      await expect(search(['扩展搜索样本'])).resolves.toMatchObject({ total: 6, partial: true })
+      await expect(search(['扩展搜索样本'], 1)).resolves.toMatchObject({ total: 8, partial: false })
+      for (let index = 9; index <= 26; index++)
+        writeFileSync(join(personal, '资料', `扩展搜索样本${index}.md`), '合成正文')
+      await expect(search(['扩展搜索样本'], 3)).resolves.toMatchObject({ total: 24, partial: true })
+      await expect(search(['扩展搜索样本'], 4)).resolves.toMatchObject({ total: 26, partial: false })
     } finally { await host.close() }
   })
 
@@ -305,7 +388,10 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
   it.each(['新会话', '旧版序号未同步的会话'])('桌面 Agent 的模型地址错误保留错误码，修正后可发送首条消息（%s）', async (scenario) => {
     const database = join(directory(), 'core.db')
     const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
-    const provider = createServer((_request, response) => {
+    let releaseModel!: () => void
+    const modelGate = new Promise<void>(resolve => { releaseModel = resolve })
+    const provider = createServer(async (_request, response) => {
+      await modelGate
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       response.end('data: {"choices":[{"delta":{"content":"合成回复"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
     })
@@ -339,7 +425,10 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       await expect(start('无效地址')).rejects.toMatchObject({ code: 'invalid_request' })
       await expect(start('http://provider.example.test/v1')).rejects.toMatchObject({ code: 'invalid_request' })
       const { run_id: runId } = await start(`http://127.0.0.1:${address.port}/v1`)
+      await expect(host.request('core.devReloadIdle')).resolves.toBe(false)
+      releaseModel()
       await vi.waitFor(async () => {
+        expect(await host.request('core.devReloadIdle')).toBe(true)
         expect(await host.request('agent.sessions.events', { id, runId, after: 0 }))
           .toMatchObject({ status: 'completed' })
       }, { timeout: 5000 })
@@ -348,7 +437,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
         expect.objectContaining({ role: 'user', text: '合成查询' }),
         expect.objectContaining({ role: 'assistant', text: '合成回复' }),
       ])
-    } finally { await host.close() }
+    } finally { releaseModel(); await host.close() }
   })
 
   it('桌面问候用本地近七天记忆生成，并校验请求语言', async () => {
@@ -460,6 +549,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       writeFileSync(officePath, String.raw`{\rtf1\ansi ${officeText}}`)
       const officeReference = await dropped.create(officePath)
       const fileReferences = [droppedReference, officeReference]
+      const skillFiles = desktopFiles(join(dirname(database), ownerId))
       expect(droppedReference).toMatchObject({ type: 'file', label: '合成拖入.txt' })
       expect(JSON.stringify(droppedReference)).not.toContain(externalPath)
       await expect(dropped.open(droppedReference.id)).resolves.toBeNull()
@@ -467,6 +557,9 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
 
       host.setHostRequestHandler(async ({ method, params, signal }) => {
         hostRequests.push(method)
+        if (method === 'agent.files.acquireSkillLock') return skillFiles.acquireAgentSkillLock(params.operationId, signal)
+        if (method === 'agent.files.releaseSkillLock') return skillFiles.releaseAgentSkillLock(params.operationId)
+        if (method === 'agent.files.recordSkillHistory') return skillFiles.agentRecordSkillHistory(params)
         if (method === 'agent.tools.policy') return desktopAgentToolPolicy()
         if (method === 'agent.files.resolveWorkspaceReference') return null
         if (method === 'agent.files.resolveDroppedReference') return dropped.resolve(params.id)
@@ -521,14 +614,10 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
       expect(relatedTools.map(tool => tool.name)).not.toContain('create_skill')
       const clientName = '合成联系人'
       const savedClient = await host.request<{ id: number }>('clients.create', { name: clientName })
-      const savedSkill = await resources({
-        domain: 'skills', action: 'create', fields: {
-          name: '合成阅读技能', description_short: '读取合成文件', body: '使用知识读取工具。', related_tools: ['read_knowledge'],
-        },
-      }) as { id: string }
-      await expect(resources({ domain: 'skills', action: 'list', offset: 0 })).resolves.toMatchObject({
-        skills: [{ id: savedSkill.id, related_tools: ['read_knowledge'] }],
-      })
+      const savedSkill = { id: 'synthetic-reader' }
+      await createUserSkillBundle(dirname(database), ownerId, savedSkill.id,
+        '---\nname: 合成阅读技能\ndescription: 读取合成文件\nmetadata:\n  gugu:\n    related_tools: [read_knowledge]\n---\n使用知识读取工具。')
+      expect((await listUserSkillBundles(dirname(database), ownerId)).skills).toMatchObject([{ id: savedSkill.id, related_tools: ['read_knowledge'] }])
       server = createServer((request, response) => {
         let body = ''
         request.setEncoding('utf8')
@@ -1016,7 +1105,7 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
 
       const deleteTargets = [
         { scenario: 'skill-delete', tool: 'delete_skill', id: savedSkill.id, name: '合成阅读技能',
-          list: async () => (await resources({ domain: 'skills', action: 'list' }) as { skills: Array<{ id: number }> }).skills },
+          list: async () => (await listUserSkillBundles(dirname(database), ownerId)).skills },
         { scenario: 'client-delete', tool: 'delete_client', id: savedClient.id, name: clientName,
           list: () => host.request<Array<{ id: number }>>('clients.list') },
         { scenario: 'canvas-delete', tool: 'canvas_delete', id: canvas.id, name: '删除画布及其内容',
@@ -1387,6 +1476,27 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     }
   })
 
+  it('独立 Core 重启后可读取超过单帧大小的笔记列表', async () => {
+    const database = join(directory(), 'core.db')
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    let host = await launchCoreHost(process.execPath, entry, database)
+    const body = '合成笔记内容'.repeat(8000)
+    try {
+      expect(Buffer.byteLength(body)).toBeGreaterThan(128 * 1024)
+      await expect(host.request('mind.notes.create', { title: '超限笔记', contentMd: body.repeat(2) }))
+        .rejects.toMatchObject({ code: 'invalid_request' })
+      for (let index = 0; index < 2; index++) {
+        await host.request('mind.notes.create', { title: `合成笔记 ${index}`, contentMd: body })
+      }
+      await host.close()
+      host = await launchCoreHost(process.execPath, entry, database)
+      const notes = await host.request<{ contentMd: string }[]>('mind.notes.list')
+      expect(Buffer.byteLength(JSON.stringify(notes))).toBeGreaterThan(MAX_FRAME)
+      expect(notes).toHaveLength(2)
+      expect(notes.every(note => note.contentMd === body)).toBe(true)
+    } finally { await host.close() }
+  })
+
   it('桌面会话问答同事务写入 SQLite，重放后只有一组消息', async () => {
     const database = join(directory(), 'core.db')
     const runtime = await LocalRuntime.initialize(database, { agentRuntimeModule: desktopAgentRuntimeModule })
@@ -1459,7 +1569,32 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     } finally { await host.close() }
   })
 
-  it('联系人重命名经具名 IPC 写入正式 SQLite 并在重启后保留', async () => {
+  it('聊天顶栏可经桌面 IPC 选择工作区并切回个人文件', async () => {
+    const database = join(directory(), 'core.db')
+    const runtime = await LocalRuntime.initialize(database, { agentRuntimeModule: desktopAgentRuntimeModule })
+    await runtime.close()
+    const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
+    const host = await launchCoreHost(process.execPath, entry, database)
+    const folder = { id: `desktop:${randomUUID()}`, name: '合成工作区', available: true }
+    try {
+      host.setHostRequestHandler(async ({ method }) => {
+        expect(method).toBe('agent.files.workspaceList')
+        return [folder, { id: `desktop:${randomUUID()}`, name: '不可用目录', available: false }]
+      })
+      const { id } = await host.request<{ id: number }>('agent.sessions.create', { title: '合成会话' }, randomUUID())
+      const handler = agentSessionHandlers(host, {} as ReturnType<typeof createDesktopAgentModelService>)[DESKTOP_CHANNELS.agentSessions]!
+      const request = { action: 'workspace', id }
+      await expect(handler({ ...request, workspaceAction: 'list' })).resolves.toEqual({
+        workspaces: [{ id: folder.id, name: folder.name }],
+      })
+      await handler({ ...request, workspaceAction: 'bind', directoryId: folder.id })
+      await expect(host.request('agent.sessions.list')).resolves.toEqual([expect.objectContaining({ id, workspaceName: folder.name })])
+      await handler({ ...request, workspaceAction: 'unlink' })
+      await expect(host.request('agent.sessions.list')).resolves.toEqual([expect.objectContaining({ id, workspaceName: null })])
+    } finally { await host.close() }
+  })
+
+  it('联系人资料经具名 IPC 写入 SQLite 并在重启后保留', async () => {
     const root = directory(), database = join(root, 'core.db')
     const runtime = await LocalRuntime.initialize(database, { agentRuntimeModule: desktopAgentRuntimeModule })
     await runtime.close()
@@ -1467,12 +1602,14 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     let host = await launchCoreHost(process.execPath, entry, database)
     try {
       const handlers = workspaceHandlers(host, async () => null)
-      const client = await handlers['gugu:clients:create']!('旧联系人') as { id: number }
-      expect(await handlers['gugu:clients:rename']!(client.id, '新联系人')).toMatchObject({ id: client.id, name: '新联系人' })
+      const client = await handlers['gugu:clients:create']!({ name: '旧联系人', notes: '测试备注' }) as { id: number }
+      const update = { name: '新联系人', email: 'north@example.test', phone: '12345', address: '示例路 10 号' }
+      await expect(handlers[DESKTOP_CHANNELS.clientRelated]!(client.id)).resolves.toEqual([])
+      expect(await handlers['gugu:clients:rename']!(client.id, update)).toMatchObject({ id: client.id, ...update })
       await expect(handlers['gugu:clients:rename']!(client.id, '  ')).rejects.toMatchObject({ code: 'invalid_request' })
     } finally { await host.close() }
     host = await launchCoreHost(process.execPath, entry, database)
-    try { expect(await workspaceHandlers(host, async () => null)['gugu:clients:list']!()).toEqual(expect.arrayContaining([expect.objectContaining({ name: '新联系人' })])) }
+    try { expect(await workspaceHandlers(host, async () => null)['gugu:clients:list']!()).toEqual(expect.arrayContaining([expect.objectContaining({ name: '新联系人', email: 'north@example.test', phone: '12345', address: '示例路 10 号', notes: '测试备注' })])) }
     finally { await host.close() }
   })
   it('联系人经具名 IPC 删除后不再出现在 SQLite 列表中，且重启后仍已删除', async () => {
@@ -1734,7 +1871,11 @@ describe('Electron 与独立 Node Core 的真实边界', () => {
     const entry = resolve(import.meta.dirname, '../../../packages/core/dist/runtime/transport/stdio.js')
     let host = await launchCoreHost(process.execPath, entry, database)
     try {
-      expect(await workspaceHandlers(host, async () => null)['gugu:onboarding:state:get']!()).toMatchObject({ should_show: false, guide: { enabled: false } })
+      const onboarding = workspaceHandlers(host, async () => null)['gugu:onboarding:state:get']!
+      expect(await onboarding()).toMatchObject({ should_show: true, guide: { enabled: true, current_step: 'locale' } })
+      expect(await onboarding({ current_step: 'style', dismissed: true })).toMatchObject({ should_show: false })
+      expect(await onboarding()).toMatchObject({ guide: { current_step: 'style', dismissed: true } })
+      expect(await onboarding(undefined, true)).toMatchObject({ should_show: true, guide: { current_step: 'style' } })
     } finally { await host.close() }
     const databaseView = new DatabaseSync(database)
     try {

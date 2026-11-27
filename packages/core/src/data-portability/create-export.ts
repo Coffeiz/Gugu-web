@@ -2,7 +2,7 @@ import {CoreError,dataContext} from '../contracts/index.js'
 import {length} from '../shared/values.js'
 import {createPortabilityJobReader,type PortabilityJobQuery} from './read-jobs.js'
 import type {PortabilityJobTransaction} from './cancel-export.js'
-const categories=new Set(['account','preferences','projects','clients','calendar','mind','skills','feedback','workspaces','scheduled_tasks','conversations','drafts','connections','owner_memory','im_memory'])
+const categories=new Set(['account','preferences','projects','clients','calendar','mind','feedback','workspaces','scheduled_tasks','conversations','drafts','connections','owner_memory','im_memory'])
 
 /** 与现有Python消费者共享持久任务：用户行锁覆盖幂等检查和跨类型互斥。 */
 export function createDataExportCreator(transaction:PortabilityJobTransaction,query:PortabilityJobQuery,platform:{now():Date;uuid():string}){

@@ -1,5 +1,5 @@
 import { agentCommandHelp, isAgentCommandHelpArgument } from '../agent/commands/help.js'
-import { canonicalAgentCommandName, parseAgentCommand } from '../agent/commands/menu.js'
+import { canonicalAgentCommandName, isPersonalWorkspaceSelection, parseAgentCommand } from '../agent/commands/menu.js'
 import { length, strip } from '../shared/values.js'
 
 export type ImShortcutState = 'idle' | 'thinking' | 'searching' | 'generating' | 'waiting_confirm' | 'waiting_agent'
@@ -55,7 +55,7 @@ export function immediateImCommandReply(text: string, available: readonly string
   if (available.includes('workspace') && (
     name === 'workspace' && isAgentCommandHelpArgument(argument)
     || name === 'help' && canonicalAgentCommandName(argument) === 'workspace'
-  )) return '在私聊中使用 /workspace 查看当前绑定，/workspace list 列出编号，/workspace <ID> 绑定，/workspace show 查看绑定，/workspace unlink 解除绑定，/workspace delete <ID> 删除工作区登记。'
+  )) return '在私聊中使用 /workspace 查看当前绑定，/workspace list 列出编号，/workspace <ID> 绑定，/workspace show 查看绑定，/workspace personal 切回个人文件，/workspace delete <ID> 删除工作区登记。'
   if (name === 'help') return agentCommandHelp(
     argument ? canonicalAgentCommandName(argument === '?' || argument === '？' ? 'help' : argument) : '', available,
     { '/workspace': '查看、绑定或解除当前会话的工作区' })
@@ -94,6 +94,7 @@ export function normalizeImWorkspaceArgument(argument: string): string {
   const lower = value.toLowerCase()
   if (['', 'show', '查看', '当前'].includes(lower)) return 'show'
   if (['list', '列表'].includes(lower)) return 'list'
+  if (isPersonalWorkspaceSelection(value)) return 'unlink'
   if (['off', 'none', 'unbind', 'unlink', '解除绑定', '取消绑定'].includes(lower)) return 'unlink'
   return value.replace(/^(STATUS|GOD|REVOKE)(?=\s|$)/iu, name => name.toLowerCase())
 }

@@ -5,9 +5,8 @@ import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
 import { expect, it } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
-import { createGlobalSearchOperations } from '../../../src/search/global-search.js'
 import { createKyselySqliteGlobalSearchSources } from '../../../src/search/sqlite.js'
-import { parseGlobalSearchQuery } from '@gugu/search'
+import { createGlobalSearchOperations, parseGlobalSearchQuery } from '@gugu/search'
 
 it('正式 SQLite 搜索便签、画布便签和启用中的定时任务并隔离 owner', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gugu-global-search-sqlite-')), path = join(dir, 'core.db')
@@ -39,8 +38,13 @@ it('正式 SQLite 搜索便签、画布便签和启用中的定时任务并隔�
           ('platform-server',${owner},'platform','目标词平台服务','stdio','/workspace/server.js','secret-platform',0,${stamp},${stamp}),
           ('hidden-server',${owner},'user','不应匹配','http','https://hidden.invalid','secret-hidden',1,${stamp},${stamp})`.execute(runtime.db)
 
+      await sql`INSERT INTO clients(id,user_id,name,address,notes,created_at)
+        VALUES (1,${owner},'小北','示例路 10 号','',${stamp}),
+          (2,${other},'其他联系人','示例路 10 号','',${stamp})`.execute(runtime.db)
       const operations = createGlobalSearchOperations(createKyselySqliteGlobalSearchSources(runtime.db))
       expect(operations.availableTypes).toEqual(['project', 'event', 'client', 'mcp', 'scheduled_task', 'note', 'canvas_note'])
+      expect(await operations.search(ownerId, parseGlobalSearchQuery({ q: '示例路', types: ['client'] })))
+        .toMatchObject({ total: 1, groups: [{ type: 'client', items: [{ id: 1, title: '小北' }] }] })
       const note = await operations.search(ownerId, parseGlobalSearchQuery({ q: '目标词', types: ['note'] })) as {groups: Array<{items: Array<Record<string, unknown>>}>}
       expect(note.groups[0]?.items).toEqual([{ id: 1, title: '检索标题', subtitle: '正文含有目标词', version: 1 }])
       const canvas = await operations.search(ownerId, parseGlobalSearchQuery({ q: '目标词', types: ['canvas_note'] })) as {groups: Array<{items: Array<Record<string, unknown>>}>}

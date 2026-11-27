@@ -713,7 +713,7 @@ describe('共享重试、池与前缀协调契约', () => {
 })
 
 it('模型投影包装试点工具并保留历史原文、调用配对和原生媒体', () => {
-  const shell = { ok: false, stdout: '【原始输出】\n```\n另一行\n', stderr: '失败', exit_code: 2 }
+  const shell = { ok: false, stdout: '【原始输出】\n```\n另一行\n', stderr: '失败', exit_code: 2, scope: 'system', network_access: 'host' }
   const values = [
     { name: 'get_project', value: { id: 42, name: '合成项目', client: '小北', location: { kind: 'sandbox', value: '/project/2026/11/合成项目 #42' } } },
     { name: 'list_projects', value: [{ id: 42, name: '合成项目' }] },
@@ -742,9 +742,14 @@ it('模型投影包装试点工具并保留历史原文、调用配对和原生�
   expect(blocks[1]!.content).toContain('[工具结果]项目列表（list_projects） · 成功 · 1 项')
   expect(blocks[2]!.content).toContain('[命中数]0')
   expect(blocks[3]).toMatchObject({ is_error: true })
-  expect(blocks[3]!.content).toContain('[执行状态]失败')
+  expect(blocks[3]!.content).toMatch(/^\[工具结果\]执行终端操作（shell） · 失败 · 退出码 2/u)
+  expect(blocks[3]!.content).not.toMatch(/执行成功|执行范围|网络权限/u)
+  expect(formatToolResult('shell', JSON.stringify({ ok: true, stdout: '合成输出', scope: 'system', network_access: 'host' }), false))
+    .toBe('[工具结果]执行终端操作（shell） · 成功\n[标准输出]\n```\n合成输出\n```')
+  expect(formatToolResult('shell', JSON.stringify({ error: '命令不可用' }), true))
+    .toBe('[工具结果]执行终端操作（shell） · 失败 · 命令不可用')
   expect(blocks[3]!.content).toContain('````\n' + shell.stdout + '````')
-  expect(blocks[4]!.content).toContain('[执行状态]结果未确认')
+  expect(blocks[4]!.content).toContain('（shell） · 结果未确认')
   expect(blocks[5]!.content).toBe('{"untouched":true}')
   expect(blocks[6]!.content).toContain('[工具结果]新建项目（create_project） · 成功')
   expect(blocks[6]!.content).toContain('[待办数量]2')

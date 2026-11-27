@@ -1,5 +1,5 @@
 import { createGlobalSearchOperations } from '@gugu/search'
-import { createGlobalSearchTool } from '../../../../src/agent/tools/global-search.js'
+import { createGlobalSearchTool } from '../../../../src/agent/tools/global-search/index.js'
 import { createHash } from 'node:crypto'
 import { describe,expect,it } from 'vitest'
 import type { CanonicalMessage,ContextReferenceCodec,Json,MessageEntry,ToolResult,ToolResultCheckpointScope } from "../../../../src/agent/index.js"

@@ -38,6 +38,7 @@ export type RuntimeLog = (event: RuntimeEvent, details?: {
 }) => void
 
 export function createRuntimeLog(sinks: {
+  hostKind?: 'desktop'
   regular(line: string): void
   diagnostic(line: string): void
 }): RuntimeLog

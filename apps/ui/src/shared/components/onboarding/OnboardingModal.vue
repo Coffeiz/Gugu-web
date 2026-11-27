@@ -123,11 +123,11 @@
               </div>
 
               <div v-show="step === 'model'" class="content-options onboarding-model-pane">
-                <ProfileByokPane compact onboarding capability="llm" />
+                <slot name="model"><ProfileByokPane compact onboarding capability="llm" /></slot>
               </div>
 
               <div v-show="step === 'im'" class="content-options onboarding-im-options">
-                <OnboardingImSetup />
+                <slot name="im"><OnboardingImSetup /></slot>
               </div>
 
               <div v-show="step === 'complete'" class="complete-options content-options">
@@ -153,7 +153,7 @@
         </section>
       </main>
 
-      <footer class="onboarding-actions" :class="{ 'is-busy': saving }" :aria-busy="saving">
+      <footer class="onboarding-actions app-card-actions" :class="{ 'is-busy': saving }" :aria-busy="saving">
         <ActionButton class="onboarding-action" variant="secondary" @click="later">
           {{ t('onboardingUi.later') }}
         </ActionButton>
@@ -849,13 +849,13 @@ async function next() {
 .onboarding-actions {
   position: relative;
   z-index: 5;
-  flex: 0 0 62px;
+
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: var(--space-md);
-  padding: 0 var(--space-lg);
-  border-top: 1px solid var(--panel-divider);
+
+
   background: transparent;
 }
 
@@ -913,7 +913,6 @@ async function next() {
   .onboarding-actions {
     grid-template-columns: 92px minmax(0, 1fr) 192px;
     gap: var(--space-sm);
-    padding: 0 var(--space-md);
   }
 }
 </style>

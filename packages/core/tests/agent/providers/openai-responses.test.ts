@@ -438,7 +438,7 @@ describe('Responses真实请求与流终态', () => {
     expect(result.filter(event => event.type === 'retry').map(event => event.type === 'retry' ? event.attempt : null)).toEqual([1])
     expect(result.at(-1)).toMatchObject({ type: 'complete', text: '已恢复' })
   })
-  it('捕获的reasoning只在显式continuation时随完整后续历史回放，off配置清除include与私有项', async () => {
+  it('会话自动请求加密推理，兼容旧预设字段并回放私有项', async () => {
     const reasoning: JsonObject = { type: 'reasoning', id: 'rs-a', status: 'completed', summary: [], encrypted_content: 'synthetic-encrypted' }
     const config = { provider: 'openai', model: 'm', reasoning_persistence: 'continuation' }
     const first = transport(sse({ type: 'response.output_text.delta', delta: '查一下' }, { type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 100, output_tokens: 7, input_tokens_details: { cached_tokens: 60 } },
@@ -449,16 +449,21 @@ describe('Responses真实请求与流终态', () => {
     expect(done.continuation).toEqual({ state_kind: 'openai_responses_reasoning', reasoning_items: [reasoning] })
     expect(emitted.find(event => event.type === 'usage')).toMatchObject({ usage: { input: 40, cacheRead: 60, output: 7 } })
     const messages: CanonicalMessage[] = [{ role: 'user', content: '请查日历' }, { role: 'assistant', content: '查一下' }, { role: 'user', content: '结果呢' }]
-    for (const enabled of [true, false]) {
-      const nextConfig = { ...config, reasoning_persistence: enabled ? 'continuation' : 'off' }
+    for (const oldSetting of [undefined, 'off', 'continuation'] as const) {
+      const nextConfig = { ...config, reasoning_persistence: oldSetting }
       const projected = responsesDriver.project(messages, nextConfig, openaiPolicy, { digest, continuation: done.continuation })
       const next = transport(sse({ type: 'response.completed', response: { status: 'completed', output: [] } }), { raw: true })
       await events(responsesDriver.stream(invocation({ config: nextConfig, history: projected }), next.deps))
       const body = next.requests[0]!.body as JsonObject
-      expect((body.input as JsonObject[]).some(item => item.type === 'reasoning')).toBe(enabled)
-      expect(body.include).toEqual(enabled ? ['reasoning.encrypted_content'] : undefined)
+      expect((body.input as JsonObject[]).some(item => item.type === 'reasoning')).toBe(true)
+      expect(body.include).toEqual(['reasoning.encrypted_content'])
       expect(body.previous_response_id).toBeUndefined()
-      if (enabled) expect((body.input as JsonObject[])[1]).toEqual(reasoning)
+      expect((body.input as JsonObject[])[1]).toEqual(reasoning)
     }
+    const scheduled = transport(sse({ type: 'response.completed', response: { status: 'completed', output: [reasoning] } }), { raw: true })
+    const task = invocation({ config })
+    const taskEvents = await events(responsesDriver.stream({ ...task, scope: { ...task.scope, sessionId: 'scheduled-task:1' } }, scheduled.deps))
+    expect((scheduled.requests[0]!.body as JsonObject).include).toBeUndefined()
+    expect(taskEvents.find(event => event.type === 'complete')).not.toHaveProperty('continuation')
   })
 })

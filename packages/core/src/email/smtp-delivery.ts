@@ -17,7 +17,11 @@ export function createSmtpTestDelivery(env:NodeJS.ProcessEnv, publicOnly = false
    signal?.throwIfAborted()
    const pending = transport.sendMail({
     from: delivery.fromAddress ? { name: delivery.fromName, address: delivery.fromAddress } : '',
-    to: delivery.toAddress,
+    to: delivery.toName || delivery.additionalRecipients?.length
+      ? [delivery.toName ? { name: delivery.toName, address: delivery.toAddress } : delivery.toAddress, ...delivery.additionalRecipients ?? []]
+      : delivery.toAddress,
+    cc: delivery.cc,
+    bcc: delivery.bcc,
     subject: delivery.message.subject,
     text: delivery.message.plain,
     html: delivery.message.html,

@@ -1,5 +1,5 @@
 import type { DesktopResourceCommand } from '@gugu/core/desktop'
-import type { McpServerItem, SkillToolItem, UserSkillItem, UserSkillWrite } from '@/services/api'
+import type { ClawHubPreview, FileSkillPatch, McpServerItem, SkillToolItem, UserSkillItem, UserSkillWrite } from '@/services/api'
 import { callDesktopBridge, DesktopBridgeError } from '@desktop/bridge/bridge'
 
 function request<T>(command: DesktopResourceCommand): Promise<T> {
@@ -13,12 +13,22 @@ function request<T>(command: DesktopResourceCommand): Promise<T> {
 export const readDesktopCitationSite = (url: string) => request<{ name: string | null }>({ domain: 'citation', action: 'site-name', url })
 
 export const desktopSkillsApi = {
+  previewClawHub: (reference: string) => request<ClawHubPreview>({ domain: 'skills', action: 'clawhub-preview', reference }),
+  searchClawHub: (query: string) => request<{ skills: Array<{ slug: string; name: string; description: string; version: string | null; owner: string; reference: string; url: string }> }>({ domain: 'skills', action: 'clawhub-search', query }),
+  trendingClawHub: () => request<{ skills: Array<{ slug: string; name: string; description: string; version: string | null; owner: string; reference: string; url: string; downloads?: number | null }> }>({ domain: 'skills', action: 'clawhub-trending' }),
+  createFileSkill: (fields: UserSkillWrite) => request<{ id: string }>({ domain: 'skills', action: 'file-create', fields: { ...fields, description_long: fields.description_long ?? null } }),
+  installClawHub: (reference: string) => request<{ id: string }>({ domain: 'skills', action: 'clawhub-install', reference }),
+  updateFileSkill: (id: string, expectedDigest: string, patch: FileSkillPatch, source: 'user' | 'clawhub' = 'user') =>
+    request<{ id: string }>({ domain: 'skills', action: 'file-update', id, source, expectedDigest, patch }),
+  deleteFileSkill: (id: string, expectedDigest: string, source: 'user' | 'clawhub' = 'user') =>
+    request<{ id: string }>({ domain: 'skills', action: 'file-delete', id, source, expectedDigest }),
+  applyFileHistory: (mode: 'undo' | 'redo') => request<{ changed: boolean }>({ domain: 'skills', action: 'file-history', mode }),
   async list() {
     const skills: UserSkillItem[] = []
     let offset: number | null = 0
     while (offset !== null) {
       const page: { skills: UserSkillItem[]; nextOffset: number | null } =
-        await request({ domain: 'skills', action: 'list', offset })
+        await request({ domain: 'skills', action: 'file-list', offset })
       skills.push(...page.skills)
       offset = page.nextOffset
     }
@@ -35,9 +45,6 @@ export const desktopSkillsApi = {
     }
     return { tools }
   },
-  create: (fields: UserSkillWrite) => request({ domain: 'skills', action: 'create', fields: { ...fields } }),
-  update: (id: string, fields: Partial<UserSkillWrite>) => request({ domain: 'skills', action: 'update', id, fields: { ...fields } }),
-  delete: (id: string) => request({ domain: 'skills', action: 'delete', id }),
 }
 
 function testMcp(id: string) {

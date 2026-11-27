@@ -29,15 +29,11 @@ const sortLabel = computed(() => localizedOptions.value.find(option => option.ke
 
 const sortBtnRef   = ref<HTMLElement | null>(null)
 const sortMenuOpen = ref(false)
-const sortMenuPos  = ref<{ x: number; y: number }>({ x: 0, y: 0 })
 
 function openMenu(event: MouseEvent) {
   if (sortMenuOpen.value) { sortMenuOpen.value = false; return }
   if (!(event.currentTarget instanceof HTMLElement)) return
   sortBtnRef.value = event.currentTarget
-  const r = sortBtnRef.value.getBoundingClientRect()
-  // ContextMenu 的基础宽度为 160px；用按钮中心作为锚点，避免菜单左边缘跟按钮左边缘对齐造成视觉偏移。
-  sortMenuPos.value = { x: r.left + r.width / 2 - 80, y: r.bottom + 6 }
   sortMenuOpen.value = true
 }
 
@@ -70,7 +66,7 @@ defineExpose({ closeMenu })
       </svg>
     </ActionButton>
     <!-- 与右键菜单同源：Teleport 到 body，backdrop-filter 才能正确生效 -->
-    <ContextMenu :show="sortMenuOpen" :anchor="sortBtnRef" :x="sortMenuPos.x" :y="sortMenuPos.y" @close="closeMenu">
+    <ContextMenu :show="sortMenuOpen" :anchor="sortBtnRef" compact @close="closeMenu">
       <button
         v-for="opt in localizedOptions"
         :key="opt.key"

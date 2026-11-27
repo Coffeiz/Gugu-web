@@ -55,6 +55,7 @@ test('两端宿主与沙箱诊断遵循相同字段约束，关联详情只写�
       report('gateway.degraded', { code: 'synthetic-bot-secret' })
       const failure = new Error('synthetic-user-command')
       await expect(sandboxDiagnostics({ request: async () => { throw failure } }, report)).rejects.toBe(failure)
+      report('host.stopped')
     }
     const outputs = []
     for (const directory of [join(desktop, 'logs'), web]) {
@@ -62,10 +63,13 @@ test('两端宿主与沙箱诊断遵循相同字段约束，关联详情只写�
       const diagnostic = await readFile(join(directory, 'gugu-diag.log'), 'utf8')
       expect(regular + diagnostic).not.toMatch(/synthetic-user-command|synthetic-bot-secret/)
       const records = regular.trim().split('\n').map(line => JSON.parse(line))
+      const host = directory === web ? 'Web 后端' : '桌面 Core '
+      expect(records[0].message).toBe(`${host}已启动`)
+      expect(records[3].message).toBe(`${host}已停止`)
       expect(records[1].attributes).toEqual({ code: 'unknown' })
       expect(records[2]).not.toHaveProperty('frames')
       expect(JSON.parse(diagnostic)).toMatchObject({ event: 'sandbox.probe_failed', incident: records[2].incident })
-      outputs.push(records.map(({ event, level, attributes }) => ({ event, level, attributes })))
+      outputs.push(records.slice(1, 3).map(({ event, level, attributes }) => ({ event, level, attributes })))
     }
     expect(outputs[0]).toEqual(outputs[1])
   } finally {

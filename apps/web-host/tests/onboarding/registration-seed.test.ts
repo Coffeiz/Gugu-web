@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createRegistrationSeeder, type RegistrationSeedPlan, type RegistrationSeedPorts } from '@gugu/core/onboarding'
-import { createOnboardingSurpriseMp3Reader } from '../../src/modules/onboarding/assets.js'
 
 function fixture(overrides: Partial<RegistrationSeedPorts> = {}) {
   const applied: Array<{ ownerId: string; plan: RegistrationSeedPlan }> = []
   const ports: RegistrationSeedPorts = {
     async applySeed(ownerId, plan) { applied.push({ ownerId, plan }); return 'applied' },
-    async surpriseMp3() { return null },
     ...overrides,
   }
   return { applied, ports }
@@ -53,31 +51,6 @@ test('未知语言回退中文，随机边界值稳定选择首尾内容', async
   const last = fixture()
   await createRegistrationSeeder(last.ports, { random: () => 1 })('owner-synthetic', null)
   assert.equal(last.applied[0]!.plan.project.name, '初次见面')
-})
-
-test('素材存在时计划包含个人 MP3，不存在时只计划两份项目文件', async () => {
-  const withAsset = fixture({ async surpriseMp3() { return { name: 'synthetic-surprise', data: Buffer.from('mp3') } } })
-  await createRegistrationSeeder(withAsset.ports, { random: () => 0 })('owner-synthetic', 'ja-JP')
-  const plan = withAsset.applied[0]!.plan
-  assert.equal(plan.project.name, 'ここから始める')
-  assert.equal(plan.files.length, 3)
-  assert.deepEqual(plan.files[2] && [plan.files[2].space, plan.files[2].projectRef, plan.files[2].displayName, plan.files[2].ext, plan.files[2].mimeType],
-    ['personal', null, 'synthetic-surprise', 'mp3', 'audio/mpeg'])
-
-  const withoutAsset = fixture()
-  await createRegistrationSeeder(withoutAsset.ports, { random: () => 0 })('owner-synthetic')
-  assert.equal(withoutAsset.applied[0]!.plan.files.length, 2)
-})
-
-test('注册计划从 Node Host 打包资产读取实际 MP3', async () => {
-  const { applied, ports } = fixture({ surpriseMp3: createOnboardingSurpriseMp3Reader() })
-  await createRegistrationSeeder(ports)('owner-synthetic')
-  const audio = applied[0]!.plan.files.find(file => file.ext === 'mp3')
-  assert.ok(audio)
-  assert.equal(audio.space, 'personal')
-  assert.equal(audio.displayName, 'Gymnopedie No. 1')
-  assert.equal(audio.mimeType, 'audio/mpeg')
-  assert.equal(Buffer.from(audio.data.subarray(0, 3)).toString('ascii'), 'ID3')
 })
 
 test('原子端口失败不影响已提交的注册调用方，诊断回调失败也不外溢', async () => {

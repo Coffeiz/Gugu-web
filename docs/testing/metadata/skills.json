@@ -2,8 +2,8 @@
   "apps/web-host/tests/skills/user-list.test.ts": {
     "domain": "skills",
     "layer": "L2",
-    "owner": "packages/core/src/agent/skills/user-list.ts",
-    "productionEntry": "apps/web-host/src/modules/skills/user-list.ts",
+    "owner": "packages/core/src/agent/skills/bundle-store.ts",
+    "productionEntry": "apps/web-host/src/modules/skills/routes.ts",
     "keyBehavior": "认证后按 owner 读取 Skills 首屏记录，不触发工具发现",
     "ci": "node-webui"
   },

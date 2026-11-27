@@ -42,14 +42,14 @@ it('并行活动共享摘要，逐项按需加载脱敏回执并保留展开状�
   })
   app.use(i18n).provide(chatToolDetailsKey, readDetails).mount(host)
   try {
+    await vi.waitFor(() => expect(host.textContent).toContain(i18n.global.t('chatUi.toolActivityParallel', { count: 1 })), { timeout: 2000 })
     expect(host.textContent).toContain('检索甲')
-    expect(host.textContent).toContain(i18n.global.t('chatUi.toolActivityParallel', { count: 1 }))
     tools[0]!.toolStatus = 'success'
     await nextTick()
-    expect(host.textContent).toContain('检索乙')
+    await vi.waitFor(() => expect(host.textContent).toContain('检索乙'))
     tools[1]!.toolStatus = 'error'
     await nextTick()
-    expect(host.textContent).toContain(i18n.global.t('chatUi.toolActivityTotal', { count: 2 }))
+    await vi.waitFor(() => expect(host.textContent).toContain(i18n.global.t('chatUi.toolActivityTotal', { count: 2 })))
     expect(host.textContent).toContain(i18n.global.t('chatUi.toolActivityFailed', { count: 1 }))
     expect(host.querySelector('[title="' + i18n.global.t('chatUi.toolActivityDuration', { duration: '5.4s' }) + '"]')?.textContent?.trim()).toBe('5.4s')
     host.querySelector('button')!.click()
@@ -76,16 +76,24 @@ it('工具之间的短空档不闪状态，长空档显示处理中，确认和�
   app.use(i18n).mount(host)
   const preparing = i18n.global.t('chatUi.toolActivityPreparing')
   try {
+    const label = () => host.querySelector('.activity-label')?.textContent
+    expect(label()).toBe('')
+    await vi.advanceTimersByTimeAsync(32)
+    expect(Array.from(label() ?? '')).toHaveLength(1)
+
     tools[0]!.toolStatus = 'success'
     await nextTick()
-    await vi.advanceTimersByTimeAsync(299)
-    expect(host.textContent).toContain('检索甲')
-    expect(host.textContent).not.toContain(preparing)
+    await vi.advanceTimersByTimeAsync(50)
     tools.push(message(2, 'tool', { toolLabel: '检索乙', toolStatus: 'running' }))
     await nextTick()
-    await vi.advanceTimersByTimeAsync(1)
-    expect(host.textContent).toContain('检索乙')
-    expect(host.textContent).not.toContain(preparing)
+    expect(label()).not.toContain('检索乙')
+    const firstLabel = i18n.global.t('chatUi.toolActivityRunning', { tool: '检索甲' })
+    await vi.advanceTimersByTimeAsync(Array.from(firstLabel).length * 32 - 82)
+    expect(label()).toContain('检索甲')
+    expect(label()).not.toContain(preparing)
+    await vi.advanceTimersByTimeAsync(700)
+    expect(label()).toContain('检索乙')
+    expect(label()).not.toContain(preparing)
 
     tools[1]!.toolStatus = 'success'
     await nextTick()
@@ -135,32 +143,33 @@ it('工具组耗时采用首开始到末结束的时间跨度', () => {
 })
 
 
-it('历史 Shell 动作按当前语言显示，并将无匹配结果从失败中区分', () => {
+it('历史终端操作使用当前语言的默认名，并区分无匹配结果', () => {
   const tool = message(1, 'tool', { toolName: 'shell', toolStatus: 'error',
     shellActivity: { action: 'search', target: 'package.json', noMatches: true } })
   expect(toolHasNoMatches(tool)).toBe(true)
   expect(toolActivityLabel(tool, (key, values) => i18n.global.t(key, values ?? {}, { locale: 'en-US' }), key => i18n.global.te(key, 'en-US')))
-    .toBe('Search in package.json')
+    .toBe('Run terminal operation')
   expect(toolActivityLabel(message(2, 'tool', { toolName: 'view_image' }),
     key => i18n.global.t(key, {}, { locale: 'ja-JP' }), key => i18n.global.te(key, 'ja-JP')))
     .toBe('画像を表示')
 })
 
-it('Shell 运行状态使用当前调用协议和保留的动作摘要', () => {
-  const translated = i18n.global.t('toolNames.shell_git_diff')
-  expect(localizedToolStatusLabel({ name: 'call_tool', input: { tool_name: 'shell', arguments: { command: 'git diff' } } })).toBe(translated)
+it('终端运行状态使用描述，历史调用使用默认名', () => {
+  const translated = i18n.global.t('toolNames.shell')
+  expect(localizedToolStatusLabel({ name: 'call_tool', input: { tool_name: 'shell', arguments: { command: 'git diff', description: '查看代码差异' } } })).toBe('查看代码差异')
+  expect(localizedToolStatusLabel({ name: 'shell', shellDescription: '查看代码差异' })).toBe('查看代码差异')
   expect(localizedToolStatusLabel({ name: 'shell', shellActivity: { action: 'git_diff' } })).toBe(translated)
 })
 
-it('折叠的单条 Shell 工具在完成后仍显示具体动作', () => {
+it('折叠的单条终端工具在完成后仍显示操作说明', () => {
   const host = document.createElement('div')
-  const tool = message(1, 'tool', { toolName: 'shell', toolStatus: 'success', shellActivity: { action: 'git_diff' } })
+  const tool = message(1, 'tool', { toolName: 'shell', toolStatus: 'success', toolInput: { command: 'git diff', description: '查看代码差异' } })
   const app = createApp({ render: () => h(GuguChatToolActivity, {
     tools: [tool], expanded: false, expandedTools: new Set<string>(), sessionId: 10,
   }) })
   app.use(i18n).mount(host)
   try {
-    expect(host.textContent).toContain(i18n.global.t('toolNames.shell_git_diff'))
+    expect(host.textContent).toContain('查看代码差异')
   } finally {
     app.unmount()
   }
@@ -200,14 +209,14 @@ it.each([
   expect(formatToolDuration(elapsed)).toBe(expected)
 })
 
-it('未匹配专用动作的 Shell 历史摘要显示命令名', () => {
+it('终端历史摘要使用默认名', () => {
   expect(localizedToolStatusLabel({
     name: 'shell', shellActivity: { action: 'command', target: 'rsync' },
-  })).toBe(i18n.global.t('toolNames.shell_command_target', { target: 'rsync' }))
+  })).toBe(i18n.global.t('toolNames.shell'))
 })
 
-it('聊天标题用同一份命令摘要显示分类和条数', () => {
+it('多条命令缺少操作说明时使用默认名', () => {
   const tool = message(1, 'tool', { toolName: 'shell', toolInput: { command: 'date; whoami; pwd' } })
   const translate = (key: string, values?: Record<string, string>) => i18n.global.t(key, values ?? {}, { locale: 'en-US' })
-  expect(toolActivityLabel(tool, translate, key => i18n.global.te(key, 'en-US'))).toBe('View system information · 3 commands')
+  expect(toolActivityLabel(tool, translate, key => i18n.global.te(key, 'en-US'))).toBe('Run terminal operation')
 })

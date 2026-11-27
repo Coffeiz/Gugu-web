@@ -1,7 +1,8 @@
+import type { CanvasReferenceData } from '../contracts/desktop.js'
 import { MindCanvasItemMutationError } from './canvas-item-remove.js'
 import type { MindNoteReadResponse } from './note-create.js'
 export interface CanvasItemAddInput { nodeId: number; x: number; y: number; w: number | null; h: number | null; z: number; collapsed: boolean; dataJson: string }
-export interface CanvasItemResponse { id: number; canvasId: number; nodeId: number; x: number; y: number; w: number | null; h: number | null; z: number; collapsed: boolean; data: Record<string, unknown>; refData: { date: string; time: string | null; endTime: string | null; description: string | null } | null; node: MindNoteReadResponse; createdAt: string; updatedAt: string }
+export interface CanvasItemResponse { id: number; canvasId: number; nodeId: number; x: number; y: number; w: number | null; h: number | null; z: number; collapsed: boolean; data: Record<string, unknown>; refData: CanvasReferenceData | null; node: MindNoteReadResponse; createdAt: string; updatedAt: string }
 export interface CanvasItemAddRuntime {
   add(owner: string, canvasId: number, input: CanvasItemAddInput, context: string | null): Promise<{ item: CanvasItemResponse; created: boolean }>
   publishChanged(event: { ownerId: string; operation: 'create'; entityId: number; origin: string | null; mutationId: string | null; entity: CanvasItemResponse }): Promise<void>

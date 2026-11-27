@@ -40,6 +40,7 @@ export interface ChatGreetingAccess {
 }
 
 export interface ChatConversationAccess extends ChatSessionHistoryAccess {
+  workspace?: import('../chatTypes').ChatWorkspaceAccess
   run?: ChatRunAccess
   queue: ChatQueueAccess
   listSessions: () => Promise<ChatSession[]>
@@ -232,7 +233,7 @@ export function useChatConversation(options: {
     const isCurrent = () => version === sessionsFetchVersion && epoch === getAccountBoundaryEpoch()
     try {
       const result = await (options.sessionAccess?.listSessions ?? agentApi.listSessions)()
-      if (isCurrent()) sessions.value = result
+      if (isCurrent()) sessions.value = result.filter(session => !sessionsApi.isSessionHidden(session.id))
     } catch {
       if (isCurrent()) sessionsLoadFailed.value = true
     } finally {
@@ -419,12 +420,25 @@ export function useChatConversation(options: {
 
   // 用户上翻 → 停住；滚回接近底部 → 恢复跟随。messagesEl 是真实可滚动容器，scrollHeight
   // 由虚拟列表的占位高度撑出来，即使视口外的消息没挂 DOM，这个距离判断依然准确。
+  let lastScrollTop = 0
+  function stopFollowingBottom() {
+    stick.value = false
+    invalidateScrollRequests()
+    options.messageListRef.value?.cancelScroll()
+  }
+  function onMsgWheel(event: WheelEvent) {
+    if (!sessionSettling.value && event.deltaY < 0 && !event.ctrlKey) stopFollowingBottom()
+  }
+
   function onMsgScroll() {
     const el = messagesEl.value; if (!el) return
+    const movingUp = el.scrollTop < lastScrollTop - 1
+    lastScrollTop = el.scrollTop
     // 切换期间的布局纠偏不是用户上翻，也不能触发旧页预取。
     if (sessionSettling.value) return
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight
-    stick.value = dist < 40
+    if (movingUp && dist > 1) stopFollowingBottom()
+    else if (dist <= 1 || stick.value) stick.value = dist < 40
     // 跟随虚拟列表的实际范围预取：首个挂载行进入 overscan 区时开始取上一页，
     // 给网络和长消息布局留出缓冲，避免滚到最顶端才发请求。
     if ((options.messageListRef.value?.getVirtualRangeStart() ?? 0) <= 10) {
@@ -435,13 +449,14 @@ export function useChatConversation(options: {
   // 用户发送时强制即时跳到底（大窗用 smooth 会被随后出现的 thinking 气泡/内容打断，看着没到底）；
   // 再补一帧 rAF，兜住附件缩略图/气泡迟一拍布局导致的高度变化
   async function scrollBottom(force = false) {
+    if (sessionSettling.value) return
     const request = ++scrollRequest
     if (scrollRaf !== null) {
       cancelAnimationFrame(scrollRaf)
       scrollRaf = null
     }
     await nextTick()
-    if (request !== scrollRequest) return
+    if (request !== scrollRequest || sessionSettling.value) return
     const el = messagesEl.value; if (!el) return
     options.onSyncSmallH()   // 发送/加载后按内容真实高度更新窗口高（含刚加的用户气泡）
     if (force) {
@@ -460,36 +475,34 @@ export function useChatConversation(options: {
   // 先在隐藏状态恢复阅读锚点或底部，等测量完成再展示。
   async function restoreScrollPosition(anchor: SessionScrollAnchor | null, waitForLayout = true) {
     const generation = getViewGeneration()
+    invalidateScrollRequests()
+    const request = scrollRequest
+    options.messageListRef.value?.cancelScroll()
     await nextTick()
-    if (generation !== getViewGeneration()) return
+    if (generation !== getViewGeneration() || request !== scrollRequest) return
     const list = options.messageListRef.value
+    if (!list) return
     const anchorIndex = anchor ? messages.value.findIndex(message => message._syncKey === anchor.messageKey) : -1
-    if (anchor && anchorIndex >= 0) {
-      stick.value = false
-      options.onSyncSmallH()
-      list?.restoreScrollAnchor(anchorIndex, anchor.offset)
-    } else {
-      await scrollBottom(true)
-    }
-    if (generation !== getViewGeneration()) return
-    if (waitForLayout) await waitForStableScrollLayout(anchor, anchorIndex)
+    stick.value = anchorIndex < 0
+    options.onSyncSmallH()
+    if (anchor && anchorIndex >= 0) list.restoreScrollAnchor(anchorIndex, anchor.offset)
+    else list.scrollToBottom()
+    if (waitForLayout) await waitForStableScrollLayout(request, anchor, anchorIndex)
   }
 
-  async function alignNewWindowToBottom() {
-    // 会话正在加载时，由加载流程负责最后一次定位。
+  async function restoreWindowScrollPosition(anchor = sessionsApi.currentScrollPosition()) {
+    // 会话加载拥有定位权；窗口打开只恢复已经加载的视图。
     if (sessionSettling.value) return
     const generation = getViewGeneration()
     sessionSettling.value = true
     try {
-      await nextTick()
-      if (generation !== getViewGeneration()) return
-      await restoreScrollPosition(null)
+      await restoreScrollPosition(anchor)
     } finally {
       if (generation === getViewGeneration()) sessionSettling.value = false
     }
   }
 
-  async function waitForStableScrollLayout(anchor: SessionScrollAnchor | null = null, anchorIndex = -1) {
+  async function waitForStableScrollLayout(request = scrollRequest, anchor: SessionScrollAnchor | null = null, anchorIndex = -1) {
     const generation = getViewGeneration()
     const list = options.messageListRef.value
     let previous = ''
@@ -499,9 +512,10 @@ export function useChatConversation(options: {
     for (let i = 0; i < 180; i += 1) {
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       await nextTick()
-      if (generation !== getViewGeneration() || !sessionSettling.value) return
+      if (generation !== getViewGeneration() || request !== scrollRequest || !sessionSettling.value) return
       const el = messagesEl.value
-      if (!el || !el.clientHeight) return
+      if (!el) return
+      if (!el.clientHeight) continue
       const needsCorrection = anchor && anchorIndex >= 0
         ? list?.restoreScrollAnchor(anchorIndex, anchor.offset)
         : el.scrollHeight - el.scrollTop - el.clientHeight > 2
@@ -525,12 +539,16 @@ export function useChatConversation(options: {
 
   watch(messagesEl, (el, oldEl) => {
     oldEl?.removeEventListener('scroll', onMsgScroll)
+    oldEl?.removeEventListener('wheel', onMsgWheel)
     if (!el) return
+    lastScrollTop = el.scrollTop
     el.addEventListener('scroll', onMsgScroll, { passive: true })
+    el.addEventListener('wheel', onMsgWheel, { passive: true })
   })
 
   onUnmounted(() => {
     messagesEl.value?.removeEventListener('scroll', onMsgScroll)
+    messagesEl.value?.removeEventListener('wheel', onMsgWheel)
     flashRequest++
     clearFlash()
   })
@@ -574,7 +592,7 @@ export function useChatConversation(options: {
     abortCtrl, streaming, resumeStream, resetSessionTurn, clearPendingQueue,
     restorePendingQueue: restorePendingQueueForSession,
     drainPendingQueue,
-    clearStatus, setStatus, thinkingItem: _thinkingItem, contextCompactingItem: _contextCompactingItem,
+    clearStatus, setStatus, contextCompactingItem: _contextCompactingItem,
     scrollBottom,
     captureScrollAnchor: () => sessionSettling.value ? undefined : options.messageListRef.value?.captureScrollAnchor(),
     restoreScrollPosition,
@@ -584,6 +602,10 @@ export function useChatConversation(options: {
     onHistoryReset: () => historyPagination.reset(),
     onHistoryLoaded: page => historyPagination.reset(page),
     getHistoryPage: historyPagination.currentPage,
+    invalidateSessionList: () => {
+      sessionsFetchVersion++
+      sessionsLoading.value = false
+    },
   })
   const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled, loadSession, newSession, deleteSession, renameSession, refreshSessionMessages } = sessionsApi
 
@@ -807,7 +829,7 @@ export function useChatConversation(options: {
     waitForPendingQueueWrites,
     waitForSessionSettlement: (id: number) => waitForSessionSettlement(sessionId, sessionSettling, id),
     waitForStableScrollLayout,
-    scrollBottom, alignNewWindowToBottom, onMsgScroll,
+    scrollBottom, restoreWindowScrollPosition, saveCurrentScrollPosition: sessionsApi.saveCurrentScrollPosition, onMsgScroll,
     animateGreeting, _revealMessage, _flashChatMessage,
     clearStatus,
   }

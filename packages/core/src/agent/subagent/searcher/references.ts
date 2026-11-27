@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { createAgentShellTool } from '../../tools/shell.js'
+import { createAgentShellTool } from '../../tools/shell/index.js'
 import type { ToolResult } from '../../models.js'
 import type { ToolDefinition, ToolScope } from '../../tools/contracts.js'
 

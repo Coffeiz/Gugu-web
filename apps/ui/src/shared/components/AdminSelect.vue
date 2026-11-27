@@ -49,7 +49,7 @@ const triggerMinW = computed(() => {
 .asel-popup--model-list {
   display: flex;
   flex-direction: column;
-  row-gap: 1px;
+  row-gap: var(--option-gap);
   padding: var(--popup-surface-padding);
   border: 1px solid var(--popup-surface-border);
   border-radius: var(--popup-surface-radius);

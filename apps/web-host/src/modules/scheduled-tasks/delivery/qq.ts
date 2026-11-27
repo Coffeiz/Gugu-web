@@ -1,14 +1,15 @@
 import { proactiveImText } from '../../im/gateway/delivery/proactive.js'
 import type { Pool } from 'pg'
 import type { ProviderTransport } from '@gugu/core/providers'
+import { createQqClient, createQqProactiveSender } from '@gugu/gateway/qq'
 import { createQqBotApi, qqAttachmentLimit } from '@gugu/core/im/qq-bot-api'
 import { bindScheduledImRecipient, fixedDeliveryTarget, type PreparedScheduledImDelivery, type ScheduledTaskDeliveryPlan } from './targets.js'
-import { InvalidScheduledTaskDeliveryTarget } from '@gugu/core/scheduled-task-test-notify'
+import { InvalidScheduledTaskDeliveryTarget } from '@gugu/scheduler/tasks'
 import type { createWebScheduledAttachmentResources } from './files.js'
 
 const failed = '发送失败（请检查该平台连接）'
 const noTarget = '无可触达地址（先给该 bot 发条消息）'
-type Bot = { id: number; app_id: string; app_secret: string; owner_platform_user_id: string | null; sandbox: boolean }
+type Bot = { id: number; app_id: string; app_secret: string; owner_platform_user_id: string | null; sandbox: boolean; private_message_format?: string | null; group_message_format?: string | null }
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
@@ -40,7 +41,7 @@ export function createScheduledTaskQqDelivery(pool: Pick<Pool, 'query'>, options
   }
 
   async function readBot(ownerId: string, botId?: number): Promise<Bot | undefined> {
-    return (await pool.query<Bot>(`SELECT id,app_id,app_secret,owner_platform_user_id,sandbox FROM user_bots
+    return (await pool.query<Bot>(`SELECT id,app_id,app_secret,owner_platform_user_id,sandbox,private_message_format,group_message_format FROM user_bots
       WHERE user_id=$1 AND platform='qq' AND enabled=TRUE
       ${botId === undefined ? 'ORDER BY id LIMIT 1' : 'AND id=$2'}`,
     botId === undefined ? [ownerId] : [ownerId, botId])).rows[0]
@@ -91,9 +92,18 @@ export function createScheduledTaskQqDelivery(pool: Pick<Pool, 'query'>, options
         const current = await currentBot()
         if (!current) return failed
         const signal = AbortSignal.timeout(15_000)
-        const token = await api.token(current.app_id, await options.decrypt(current.app_secret), signal)
-        if (!token || !options.enabled()) return failed
-        return await api.sendText(target, proactiveImText(plan), token, signal) ? '已发送' : failed
+        const format = group ? current.group_message_format : current.private_message_format
+        if (format != null && format !== 'markdown' && format !== 'compat') return failed
+        const client = createQqClient({ appId: current.app_id, appSecret: await options.decrypt(current.app_secret),
+          sandbox: current.sandbox, transport: { request: options.transport.request.bind(options.transport) } })
+        const sendText = createQqProactiveSender({ botId: String(current.id), client, sanitizeText: value => value })
+        try {
+          const receipt = await sendText({ id: recipient, chatType: group ? 'group' : 'c2c', messageFormat: format ?? undefined },
+            proactiveImText(plan), signal, async () => (await currentBot())?.app_secret === current.app_secret)
+          return receipt.outcome === 'accepted' ? '已发送' : failed
+        } finally {
+          await client.close()
+        }
       } catch {
         return failed
       }

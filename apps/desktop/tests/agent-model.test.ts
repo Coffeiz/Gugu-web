@@ -1,3 +1,4 @@
+import { createUserSkillBundle } from '@gugu/core/skills'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -676,10 +677,9 @@ it('模型列表支持旧版迁移、并发新增、密钥隔离、默认切换�
       ok: true, message: '已在桌面预览窗口打开《合成预览.png》。', name: '合成预览', ext: 'png',
     })
 
-    const createdSkill = await runtime.request<{ id: string }>('skills.create', { fields: {
-      name: '合成用户技能', description_short: '合成技能摘要', body: '合成技能正文',
-    } })
-    skillId = createdSkill.id
+    skillId = 'synthetic-user-skill'
+    await createUserSkillBundle(directory, runtime.ownerId!, skillId,
+      '---\nname: 合成用户技能\ndescription: 合成技能摘要\n---\n合成技能正文')
     await send({ action: 'send', id: searchSession.id, text: '合成用户技能读取', operationId: randomUUID() })
     const loadedSkill = conversationResults.at(-1) as string | Array<{ text: string }>
     expect(JSON.parse(typeof loadedSkill === 'string' ? loadedSkill : loadedSkill[0]!.text)).toMatchObject({

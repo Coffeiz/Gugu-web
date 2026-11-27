@@ -29,3 +29,5 @@ Web Host 当前提供 `POST /api/v1/auth/login`、`GET /api/v1/auth/me` 和 `POS
 找回密码使用 `POST /api/v1/auth/forgot-password` 和 `POST /api/v1/auth/reset-password`。登录邮箱变更沿用 `/api/v1/auth/email-change/` 下的申请、重发、取消和验证接口。
 
 Desktop 的账号 IPC 方法由 [Desktop Contracts](../desktop-contracts/README.md) 定义，复用本包的远程账号 DTO。
+
+`@gugu/auth/postgres` 提供 `revokeUserSessions(pool, userId)`，原子递增会话安全版本，在提交后返回新版本。Web Host 提供连接和可信用户身份。

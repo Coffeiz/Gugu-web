@@ -1,6 +1,6 @@
 import type { ByokCommand, ByokSummary } from '@gugu/core/byok/contracts'
 import type { LocalCapabilityAccess } from '@/services/localPreferencesAccess'
-import { callDesktopBridge, desktopRemoteAccount, desktopRemoteByok } from '../bridge/bridge'
+import { desktopRemoteAccount, desktopRemoteByok } from '../bridge/bridge'
 
 export function createDesktopCapabilityAccess(): LocalCapabilityAccess {
   let selectedAccount: { origin: string; accountId: string } | undefined
@@ -9,16 +9,6 @@ export function createDesktopCapabilityAccess(): LocalCapabilityAccess {
     return selectedAccount
   }
   return {
-    async smtpSettings() {
-      const result = await callDesktopBridge(bridge => bridge.personalSmtp('get'))
-      return result && 'configured' in result ? result : null
-    },
-    saveSmtp: input => callDesktopBridge(bridge => bridge.personalSmtp('save', input)),
-    async testSmtp(input) {
-      const result = await callDesktopBridge(bridge => bridge.personalSmtp('test', input))
-      if (!result || !('ok' in result)) throw new Error('SMTP 测试结果无效')
-      return result
-    },
     async list() {
       const account = await desktopRemoteAccount.status()
       selectedAccount = account?.state === 'connected' ? { origin: account.origin, accountId: account.user.id } : undefined

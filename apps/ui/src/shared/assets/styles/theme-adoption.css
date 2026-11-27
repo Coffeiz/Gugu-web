@@ -143,10 +143,10 @@ html[data-theme][data-family] .cal-sidebar .sidebar-empty,
 html[data-theme][data-family] .cal-sidebar .sidebar-section-title { color: var(--content-secondary); }
 html[data-theme][data-family] .cal-sidebar .ev-del-btn {
   color: var(--status-warning);
-  background: var(--status-warning-bg);
+  background: color-mix(in srgb, var(--status-warning) 12%, var(--surface-card-solid));
   border-color: color-mix(in srgb,var(--status-warning) 30%,transparent);
 }
-html[data-theme][data-family] .cal-sidebar .ev-del-btn:hover { background: color-mix(in srgb,var(--status-warning) 20%,transparent); border-color: var(--status-warning); }
+html[data-theme][data-family] .cal-sidebar .ev-del-btn:hover { background: color-mix(in srgb, var(--status-warning) 20%, var(--surface-card-solid)); border-color: var(--status-warning); }
 
 html[data-theme][data-family] .cal-page .weekday-hdr,
 html[data-theme][data-family] .cal-page .month-body,

@@ -1,6 +1,6 @@
 const IMAGE_EXTS  = new Set(['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP'])
 const TEXT_EXTS   = new Set([
-  'TXT', 'MD', 'JSON', 'CSV', 'JS', 'TS', 'CSS', 'HTML', 'HTM', 'PY', 'YAML', 'XML', 'SH',
+  'TXT', 'MD', 'JSON', 'CSV', 'JS', 'MJS', 'CJS', 'JSX', 'TS', 'MTS', 'CTS', 'TSX', 'VUE', 'CSS', 'HTML', 'HTM', 'PY', 'YAML', 'YML', 'XML', 'SH',
   'LRC', 'SRT', 'ASS', 'SSA', 'VTT', 'SUB', 'SBV', 'SMI', 'TTML', 'DFXP', 'SCC',
   'CUE', 'M3U', 'M3U8', 'PLS',
 ])
@@ -9,7 +9,7 @@ const OFFICE_EXTS = new Set(['DOC', 'DOCX', 'XLS', 'XLSX', 'PPT', 'PPTX'])
 const AUDIO_EXTS  = new Set(['MP3', 'WAV', 'OGG', 'FLAC', 'M4A', 'AAC', 'OPUS'])
 const PREVIEWABLE = new Set(['PDF', ...IMAGE_EXTS, ...TEXT_EXTS, ...VIDEO_EXTS, ...OFFICE_EXTS, ...AUDIO_EXTS])
 const BINARY_EXTS = new Set([
-  '7Z', 'APK', 'BIN', 'BZ2', 'CLASS', 'DEB', 'DLL', 'DMG', 'DOC', 'DOCX', 'EXE', 'FLAC',
+  '7Z', 'APK', 'BIN', 'BLEND', 'BZ2', 'CLASS', 'DEB', 'DLL', 'DMG', 'DOC', 'DOCX', 'EXE', 'FLAC',
   'GIF', 'GZ', 'HEIC', 'ICO', 'ISO', 'JAR', 'JPEG', 'JPG', 'MKV', 'MP3', 'MP4', 'M4A', 'M4V',
   'MOV', 'OGG', 'PDF', 'PNG', 'PPT', 'PPTX', 'RAR', 'SO', 'TAR', 'WAV', 'WEBM', 'WEBP',
   'XLS', 'XLSX', 'XZ', 'ZIP',
@@ -17,7 +17,7 @@ const BINARY_EXTS = new Set([
 const TEXT_MIME_PREFIXES = ['text/']
 const TEXT_MIMES = new Set([
   'application/json', 'application/xml', 'application/javascript', 'application/typescript',
-  'application/sql', 'application/x-sh',
+  'application/sql', 'application/x-sh', 'application/yaml', 'application/x-yaml',
 ])
 
 export function isImageExt(ext?: string | null)  { return IMAGE_EXTS.has((ext ?? '').toUpperCase()) }
@@ -65,6 +65,9 @@ export function isPreviewable(ext?: string | null, mime?: string | null) {
 }
 
 /** 文件库与桌面展示工具共用打开方式，预览器不支持的类型交给系统。 */
-export function shouldOpenFileInSystem(preference: 'preview' | 'system' | undefined, ext?: string | null, mime?: string | null) {
+export function shouldOpenFileInSystem(preference: 'preview' | 'system' | undefined, ext?: string | null, mime?: string | null,
+  options?: { audioPlayerAvailable: boolean }) {
+  // 有迷你播放器的界面直接播放音乐；用户仍可从文件菜单显式使用系统应用。
+  if (options?.audioPlayerAvailable && isAudioExt(ext)) return false
   return preference === 'system' || !isFloatingPreviewable(ext, mime)
 }

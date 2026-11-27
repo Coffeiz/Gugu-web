@@ -97,7 +97,7 @@ export async function processQqMedia(
   options: Parameters<typeof downloadQqMedia>[3] & {
     authorize?: () => Promise<boolean>
     quote: (media: QqMediaRequirement, sourceId: string) => Promise<boolean>
-    file: (media: QqMediaRequirement, file: NonNullable<Awaited<ReturnType<typeof materializeQqMedia>>>, index: number) => Promise<void>
+    file: (media: QqMediaRequirement, file: NonNullable<Awaited<ReturnType<typeof materializeQqMedia>>> & { quoted: boolean }, index: number) => Promise<void>
   },
 ): Promise<boolean> {
   for (const [index, media] of items.entries()) {
@@ -115,8 +115,8 @@ export async function processQqMedia(
     const file = await materializeQqMedia(media.item, budget, signal, options)
     // 引用语音必须走同会话附件复用，保留原消息证明。
     if (!file) continue
-    if (!quoted) await options.file(media, file, index)
-    else if (imImageFormat(file.bytes)) await options.file(media, { ...file, voice: false }, index)
+    if (!quoted) await options.file(media, { ...file, quoted }, index)
+    else if (imImageFormat(file.bytes)) await options.file(media, { ...file, quoted, voice: false }, index)
   }
   signal.throwIfAborted()
   return true

@@ -42,7 +42,7 @@ const { t } = useI18n()
      让 scrollHeight 少几个像素，浏览器随即把 scrollTop clamp 到更小的值。 */
   border-radius: 14px; corner-shape: round; overflow: hidden; min-height: 133px;
   display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 8px;
+  align-items: center; justify-content: center; gap: var(--space-sm);
   font-size: 11px; font-weight: 600;
   transition: color 0.18s, background-color 0.18s, border-color 0.18s;
 }
@@ -54,12 +54,12 @@ const { t } = useI18n()
 
 .fub.list {
   display: grid; grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
-  column-gap: 8px; align-items: center; padding: 9px 14px;
+  column-gap: var(--space-sm); align-items: center; padding: var(--space-sm) var(--space-md);
   min-height: 42px; box-sizing: border-box;
   font-size: 12px; border-radius: var(--radius-xs);
   border: 1px dashed transparent; transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
-.fub.list .fub-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.fub.list .fub-name-cell { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
 .fub.list .app-icon { flex-shrink: 0; }
 .fub.list .fub-text { font-weight: 600; }
 </style>

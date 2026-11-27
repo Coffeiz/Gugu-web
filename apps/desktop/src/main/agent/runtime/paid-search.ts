@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { RunIdentity } from '#core-source/agent/models.js'
-import { createDeepResearchTool, createSimilarImageSearchTool } from '#core-source/agent/tools/search.js'
+import { createDeepResearchTool, createSimilarImageSearchTool } from '#core-source/agent/tools/search/index.js'
 import { desktopDeepResearchResult, MAX_DESKTOP_SEARCH_IMAGE_BYTES } from '#core-source/agent/search-contracts.js'
 import { openLocalFile } from '@gugu/fs/node'
 

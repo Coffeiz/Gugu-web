@@ -161,7 +161,9 @@ export function createPostgresTrustedIntentStore(keyForVersion: (version: number
     async loadApprovedOperation(client: PoolClient, expected: ConfirmationBinding, interactionId: string, receiptId: string) {
       const operation = await loadOperation(client, expected, interactionId)
       if (!operation || !receiptId) return null
-      const result = await client.query<{ expires_at: Date }>(`SELECT LEAST(p.expires_at, a.expires_at) AS expires_at FROM agent_interaction_resumes r
+      const result = await client.query<{ expires_at: Date; email_submission: unknown; email_editable: string | null }>(`SELECT LEAST(p.expires_at, a.expires_at) AS expires_at,
+        p.schema_json::jsonb->'resolved_result'->'email_submission' AS email_submission,
+        p.schema_json::jsonb->'context'->'email_compose'->>'enabled' AS email_editable FROM agent_interaction_resumes r
         JOIN agent_interaction_bindings b ON b.prompt_id=r.prompt_id AND b.user_id=r.user_id AND b.session_id=r.session_id AND b.run_id=r.run_id AND b.interaction_id=r.interaction_id
         JOIN interaction_prompts p ON p.id=r.prompt_id AND p.user_id=r.user_id AND p.session_id=r.session_id
         JOIN interaction_actions a ON a.prompt_id=p.id
@@ -177,10 +179,12 @@ export function createPostgresTrustedIntentStore(keyForVersion: (version: number
           AND a.context_json::jsonb->>'confirm_code'=p.schema_json::jsonb->'context'->>'confirm_code' LIMIT 1`,
       [expected.ownerId, expected.sessionId, expected.runId, interactionId, receiptId, expected.toolCallId, expected.toolName])
       if (result.rowCount !== 1) return null
+      if (result.rows[0]!.email_editable === 'true' && result.rows[0]!.email_submission == null) return null
       const intent = operation.intent
       const expiresAt = Math.min(intent.expiresAt, new Date(result.rows[0]!.expires_at).getTime())
       if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null
-      return { intent, receipt: { schemaVersion: 2 as const, intentId: intent.intentId, interactionId, receiptId,
+      return { intent, ...(result.rows[0]!.email_submission != null ? { emailSubmission: result.rows[0]!.email_submission } : {}),
+        receipt: { schemaVersion: 2 as const, intentId: intent.intentId, interactionId, receiptId,
         binding: intent.binding, purpose: intent.purpose, action: intent.action, status: 'approved' as const, expiresAt } }
     },
     async saveIntent(client: PoolClient, identity: RunIdentity, request: PendingInteraction, intent: TrustedPromptIntent, expiresAt: Date): Promise<void> {

@@ -9,7 +9,7 @@ import { normalizeProjectTimeline, toRenderItem } from '@/views/Calendar/domain/
 import type { CalendarMonthDay, CalendarRenderItem, CalendarWeekDay } from '@/views/Calendar/domain/calendarTypes'
 import { capWeekBars, dayLayout as calculateDayLayout, maxSlots, weekBars } from '@/views/Calendar/utils/calendarLayout'
 
-export const layout = { headerHeight: 32, cellTop: 31, bottomPadding: 8, barHeight: 20, hourHeight: 36 }
+export const layout = { headerHeight: 32, cellTop: 31, bottomPadding: 8, barHeight: 20, hourHeight: 48 }
 
 export function useDesktopCalendarLayout(
   events: ComputedRef<CalendarRenderItem[]>,

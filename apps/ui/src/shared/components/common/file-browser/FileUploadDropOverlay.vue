@@ -30,7 +30,7 @@ defineProps({ visible: Boolean })
   pointer-events: none;
 }
 .drop-zone-hint {
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-sm);
   padding: 40px 60px;
   background: color-mix(in srgb, var(--surface-floating) 90%, transparent);
   border: 2px dashed color-mix(in srgb, var(--action-primary) 45%, transparent); border-radius: 20px;

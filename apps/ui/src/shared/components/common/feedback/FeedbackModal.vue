@@ -32,7 +32,7 @@
 
             <div v-if="error" class="error-msg">{{ error }}</div>
 
-            <div class="feedback-actions">
+            <div class="feedback-actions app-card-actions">
               <ActionButton class="submit-btn" :disabled="submitting || !content.trim()" @click="submit">
                 {{ submitting ? t('feedback.submitting') : t('feedback.submit') }}
               </ActionButton>
@@ -117,7 +117,7 @@ async function submit() {
 </script>
 
 <style scoped>
-.feedback-modal { padding: 20px var(--space-xl) 24px; }
+.feedback-modal { --card-actions-inset: var(--space-xl); padding: 20px var(--card-actions-inset) 24px; }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
   min-height: var(--control-height-sm);
@@ -171,6 +171,7 @@ async function submit() {
   background: var(--status-danger-bg); border: 1px solid color-mix(in srgb,var(--status-danger) 22%,transparent);
 }
 
+.feedback-modal:has(.feedback-actions) { padding-block-end: 0; }
 .feedback-actions { display: flex; width: 100%; }
 .submit-btn { width: 100%; min-width: 0; flex: 1 1 auto; }
 .submit-btn:disabled { opacity: 0.4; cursor: not-allowed; }

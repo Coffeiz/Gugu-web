@@ -1,3 +1,4 @@
+import { noteColors } from './note-colors.js'
 import { createHash } from 'node:crypto'
 import { mindNotePlainText } from './note-create.js'
 import type { MindNoteReadResponse } from './note-create.js'
@@ -7,7 +8,6 @@ async function runBestEffort(operation: string, work: () => Promise<unknown>, re
   try { await work() } catch (error) { const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : undefined; try { report(operation, code) } catch { /* 诊断失败不影响已提交操作。 */ } }
 }
 
-const noteColors = new Set(['amber', 'coral', 'blue', 'teal'])
 
 export interface MindCanvasNoteCreateInput {
   title: string

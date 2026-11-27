@@ -17,6 +17,7 @@
 
   <audio
     ref="audioEl"
+    :crossorigin="audioStore.blobUrl?.startsWith('gugu-desktop://') ? 'anonymous' : undefined"
     :src="audioStore.blobUrl ?? undefined"
     @timeupdate="audioCurrent = audioEl?.currentTime ?? 0"
     @durationchange="onAudioDurationChange"
@@ -53,11 +54,12 @@
       v-show="open"
       :inert="!open"
       ref="windowRef"
+      @click.capture="onChatMailLink"
       :class="{ 'chat-window--standalone': standalone }"
       :tabindex="standalone ? -1 : undefined"
       :window-style="standalone ? { zIndex: chatZ } : windowStyle" :expanded="expanded" :resizing="resizing"
       :owner-z="chatZ"
-      :streaming="streaming"
+      :streaming="streaming" :can-stop-run="sessions.some(session => session.id === sessionId && session.isRunning)"
       :is-chat-dragging="isChatDragging" :drop-files-as-references="!!referenceDroppedFile"
       :automatic-mode-enabled="automaticModeEnabled"
       :automatic-mode-available="automaticModeButtonVisible"
@@ -65,6 +67,8 @@
       :on-toggle-automatic-mode="toggleAutomaticMode"
       :current-session-title="currentSessionTitle"
       :current-session-workspace-name="currentSessionWorkspaceName"
+      :workspace-access="workspaceAccess"
+      @workspace-change="updateSessionWorkspace"
       :current-session-goal-active="currentSessionGoalActive"
       :current-session-goal-status="currentSessionGoalStatus"
       :filesystem-authorized="sessionFilesystemAuthorized"
@@ -138,6 +142,8 @@
 </template>
 
 <script setup lang="ts">
+import { selectionDraftEvent, selectionMessageText, type SelectionDraft } from '../selection/selectionDraft'
+import { mailRecipientFromClick } from '@/api/mailLinks'
 import type { ChatHttpStreamAccess } from './chatHttpStream'
 import { respondToHttpInteraction, type ChatInteractionAccess } from './chatInteractionAccess'
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
@@ -158,7 +164,8 @@ import GuguChatSidebar from './GuguChatSidebar.vue'
 import GuguChatBindDialog from './GuguChatBindDialog.vue'
 import GuguChatWindow from './GuguChatWindow.vue'
 import FilesystemAuthorizationDialog from '@/components/common/filesystem/FilesystemAuthorizationDialog.vue'
-import type { ResolveChatCommand } from './chatCommands'
+import { PERSONAL_WORKSPACE_ID } from '@gugu/core/agent/commands/menu'
+import { resolveWorkspaceChatCommand, type ResolveChatCommand } from './chatCommands'
 import { CHAT_REF_ACCEPTS, CHAT_REF_FAB_SURFACE_ID, CUSTOM_REPLY_OPTION_ID, findPendingTextInteractionId, type ChatMessage, type ChatFile, type ChatReference, type QueuedMessagePayload, type ImPlatformKey } from './chatTypes'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
@@ -384,7 +391,13 @@ async function toggleOpen() {
 
 const chatHandoff = ref(false)
 
-type ChatHandoff = { session: number | null; text: string; references: ChatReference[]; expanded: boolean }
+type ChatHandoff = { scrollAnchor?: Parameters<typeof restoreWindowScrollPosition>[0]; session: number | null; text: string; references: ChatReference[]; expanded: boolean }
+
+function onChatMailLink(event: MouseEvent) {
+  if (mailRecipientFromClick(event)) queueMicrotask(() => {
+    if (event.defaultPrevented) closeChat()
+  })
+}
 
 async function openFromFab(handoff?: ChatHandoff) {
   if (open.value) return
@@ -403,12 +416,12 @@ async function openFromFab(handoff?: ChatHandoff) {
   if (handoff) expanded.value = handoff.expanded
   if (expanded.value) void fetchSessions()
   props.trackChatEvent?.('chat_open')
-  await alignNewWindowToBottom()
+  await restoreWindowScrollPosition(handoff?.session === sessionId.value ? handoff?.scrollAnchor : undefined)
 }
 
 function closeForHandoff(save: (state: ChatHandoff) => void) {
   if (!open.value) return
-  const state = { session: sessionId.value, text: inputText.value, references: [...inputReferences.value], expanded: expanded.value }
+  const state = { scrollAnchor: saveCurrentScrollPosition(), session: sessionId.value, text: inputText.value, references: [...inputReferences.value], expanded: expanded.value }
   save(state)
   chatHandoff.value = true
   closeChat()
@@ -447,7 +460,30 @@ function receiveFabReferences(references: readonly ChatReference[]) {
   }
 }
 
-defineExpose({ openFromFab, closeChat, closeForHandoff, receiveDroppedReference, receiveFabReferences, onReferenceClick })
+async function receiveSelectionDraft(selection: SelectionDraft) {
+  if (!open.value) await openFromFab()
+  if (inputReferences.value.length >= 50) {
+    showAppError(t('selectionUi.tooLong'))
+    return
+  }
+  const { reference, ...snapshot } = selection
+  const baseLabel = `${t('selectionUi.proposeEdit')} · ${reference.label}`
+  let label = baseLabel
+  let ordinal = 2
+  while (inputReferences.value.some(item => item.label === label)) label = `${baseLabel} (${ordinal++})`
+  await nextTick()
+  composerRef.value?.insertReferenceChip({ ...reference, label, selection: snapshot })
+  composerRef.value?.focusEnd()
+}
+
+function onSelectionDraft(event: Event) {
+  void receiveSelectionDraft((event as CustomEvent<SelectionDraft>).detail)
+}
+
+onMounted(() => window.addEventListener(selectionDraftEvent, onSelectionDraft))
+onUnmounted(() => window.removeEventListener(selectionDraftEvent, onSelectionDraft))
+
+defineExpose({ openFromFab, closeChat, closeForHandoff, receiveDroppedReference, receiveFabReferences, receiveSelectionDraft, onReferenceClick })
 const emit = defineEmits<{ visibility: [open: boolean]; entered: []; left: []; presentation: [expanded: boolean] }>()
 
 const resolveRuntimeReferences = useRuntimeReferenceResolver()
@@ -631,9 +667,26 @@ const {
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming, resumeStream,
   pendingQueue, removeQueued,
-  scrollBottom, alignNewWindowToBottom,
+  scrollBottom, restoreWindowScrollPosition, saveCurrentScrollPosition,
   animateGreeting,
 } = conversation
+
+const workspaceAccess = computed(() => props.sessionAccess ? props.sessionAccess.workspace : {
+  list: async () => (await workspacesApi.status()).items.filter(item => item.enabled),
+  select: (id: number, workspaceId: number | string) => {
+    if (workspaceId === PERSONAL_WORKSPACE_ID) return workspacesApi.unbind(id)
+    if (typeof workspaceId !== 'number') throw new Error('工作区标识无效')
+    return workspacesApi.bind(workspaceId, id)
+  },
+})
+function updateSessionWorkspace(id: number, name: string | null) {
+  const session = sessions.value.find(item => item.id === id)
+  if (session) session.workspaceName = name
+}
+
+watch(open, (value, wasOpen) => {
+  if (!value && wasOpen) saveCurrentScrollPosition()
+}, { flush: 'sync' })
 
 watch(streaming, active => {
   if (active && open.value && !expanded.value) enableCompactGrowth()
@@ -770,7 +823,9 @@ async function onInteractionSelect(message: ChatMessage, option: { id: string; l
 
     interaction.resolved = true
     interaction.selectedOptionIds = option.selectedOptionIds
-    interaction.customAnswer = option.customAnswer
+    interaction.customAnswer = interaction.emailCompose || interaction.questions?.length ? undefined : option.customAnswer
+    if (option.id === '__submit_questions__' && option.customAnswer)
+      interaction.questionAnswers ??= JSON.parse(option.customAnswer)
     interaction.selectedOptionId = option.id
     interaction.responseText = option.label
     if (resumesTool && !interaction.delegated && sessionId.value === currentSessionId)
@@ -862,11 +917,15 @@ async function onInteractionTextSubmit(message: ChatMessage, text: string) {
 
 let chatCommandRunning = false
 async function runChatCommand(): Promise<boolean> {
-  if (!props.resolveChatCommand || pendingAtt.value.length || inputReferences.value.length) return false
+  if (pendingAtt.value.length || inputReferences.value.length) return false
   const draft = inputText.value
   const ownerSession = sessionId.value
   const generation = getViewGeneration()
-  const execute = props.resolveChatCommand(draft.trim(), ownerSession)
+  const execute = props.resolveChatCommand?.(draft.trim(), ownerSession)
+    ?? (!props.sessionAccess && workspaceAccess.value
+      ? resolveWorkspaceChatCommand(draft.trim(), ownerSession, currentSessionWorkspaceName.value ?? t('filesUi.personalFiles'),
+        workspaceAccess.value, isGroupSession.value || streaming.value)
+      : undefined)
   if (!execute) return false
   if (chatCommandRunning || automaticModeSaving.value) return true
   chatCommandRunning = true
@@ -914,14 +973,14 @@ async function onChatSend() {
   }
 }
 
-async function onReferenceClick(reference: Pick<ChatReference, 'type' | 'id'>) {
+async function onReferenceClick(reference: Pick<ChatReference, 'type' | 'id' | 'selection'>) {
   if (reference.type === 'folder' && !String(reference.id).startsWith('path-')) {
     _chatTip(t('mindUi.referenceMissing'))
     return
   }
   try {
     if (await props.openPlatformReference?.(reference)) return
-    if (!await openMindRef(reference.type, reference.id) && reference.type === 'folder')
+    if (!await openMindRef(reference.type, reference.id, { preferPreview: !!reference.selection, revealUnsupportedFile: !!reference.selection }) && reference.type === 'folder')
       _chatTip(t('mindUi.referenceMissing'))
   } catch (error) {
     _chatTip(error instanceof Error ? error.message : t('mindUi.referenceMissing'))
@@ -929,7 +988,7 @@ async function onReferenceClick(reference: Pick<ChatReference, 'type' | 'id'>) {
 }
 
 async function openChatObject(type: string, id: number) {
-  if (type === 'project' || type === 'event') {
+  if (type === 'project' || type === 'event' || type === 'client') {
     await onReferenceClick({ type, id })
     return
   }
@@ -1008,7 +1067,7 @@ function openFileFromChat(f: ChatFile) {
 
 async function copyMsg(msg: ChatMessage) {
   // 复制消息源 Markdown，保留标题、列表、围栏代码块等语法；渲染后的纯文本会把这些结构压平。
-  const copied = await copyTextToClipboard(msg.text)
+  const copied = await copyTextToClipboard(selectionMessageText(msg.text, msg.references))
   if (!copied) {
     showAppError(t('chatUi.copyFailed'))
     return

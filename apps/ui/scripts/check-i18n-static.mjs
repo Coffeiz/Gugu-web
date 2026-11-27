@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * 检查生产 Vue 模板中的固定中文 UI 文案。
- * 注释、script/style、表达式和 Design/Dev 演示页不属于业务 UI 扫描范围。
+ * 检查生产 Vue 模板中的固定中文 UI 文案及绑定表达式。
+ * 注释、script/style 和 Design/Dev 演示页不属于模板扫描范围。
  */
 import { readFile } from 'node:fs/promises'
 import { readdir } from 'node:fs/promises'
 import { resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse } from 'vue/compiler-sfc'
 
 // URL.pathname 会把中文目录编码成 %E6...，在 devserver 等非 ASCII 路径下会导致扫描目录不存在。
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)), 'src')
@@ -20,40 +21,33 @@ async function findVueFiles(directory) {
 }
 const files = await findVueFiles(root)
 const excluded = /(?:^|[\\/])views[\\/](?:Design|DevHome\.vue$|DevOnboarding\.vue$)/
-const chinese = /[一-龥]/
+const chinese = /[\p{Script=Han}]/u
+const labels = new Set(['title', 'placeholder', 'aria-label', 'description', 'label', 'alt'])
 const violations = []
 
 for (const file of files) {
   if (excluded.test(file)) continue
-  const source = await readFile(file, 'utf8')
-  // 先移除 HTML 注释再提取模板，避免注释中的示例 template 标签提前截断真实模板。
-  const sourceWithoutComments = source.replace(/<!--[\s\S]*?-->/g, '')
-  const template = sourceWithoutComments.match(/<template(?:\s[^>]*)?>([\s\S]*)<\/template>/)?.[1] ?? ''
-  const clean = template
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\{\{[\s\S]*?\}\}/g, '')
-    .replace(/<script[\s\S]*?<\/script>/g, '')
-    .replace(/<style[\s\S]*?<\/style>/g, '')
-  const lines = []
-  let disabledDepth = 0
-  for (const line of clean.split('\n')) {
-    if (disabledDepth > 0) {
-      disabledDepth += (line.match(/<div\b/g) ?? []).length
-      disabledDepth -= (line.match(/<\/div>/g) ?? []).length
-      continue
-    }
-    if (/\bv-if=["']false["']/.test(line)) {
-      disabledDepth = (line.match(/<div\b/g) ?? []).length - (line.match(/<\/div>/g) ?? []).length
-      continue
-    }
-    lines.push(line)
+  const { descriptor, errors } = parse(await readFile(file, 'utf8'), { filename: file })
+  const location = relative(resolve(root, '..'), file)
+  for (const error of errors) {
+    violations.push(`${location}: ${typeof error === 'string' ? error : error.message}`)
   }
-  lines.forEach((line, index) => {
-    const text = line.replace(/<[^>]+>/g, '').trim()
-    if (text && chinese.test(text)) violations.push(`${relative(resolve(root, '..'), file)}:${index + 1}: ${text}`)
-    const attrs = line.match(/(?:title|placeholder|aria-label)="([^"]*[一-龥][^"]*)"/g) ?? []
-    attrs.filter(attr => !/[{}?`]/.test(attr)).forEach(attr => violations.push(`${relative(resolve(root, '..'), file)}:${index + 1}: ${attr}`))
-  })
+  const ast = descriptor.template?.ast
+  if (!ast) continue
+  const add = (value, loc) => {
+    if (value && chinese.test(value)) violations.push(`${location}:${loc.start.line}: ${value.trim()}`)
+  }
+  function visit(node) {
+    if (node.props?.some(prop => prop.type === 7 && prop.name === 'if' && prop.exp?.content === 'false')) return
+    if (node.type === 2) add(node.content, node.loc)
+    if (node.type === 5) add(node.content.content, node.loc)
+    for (const prop of node.props ?? []) {
+      if (prop.type === 6 && labels.has(prop.name)) add(prop.value?.content, prop.loc)
+      if (prop.type === 7) add(prop.exp?.content, prop.loc)
+    }
+    for (const child of node.children ?? []) visit(child)
+  }
+  visit(ast)
 }
 
 if (violations.length) {

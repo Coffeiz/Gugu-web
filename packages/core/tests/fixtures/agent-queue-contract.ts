@@ -13,6 +13,11 @@ export function agentQueueContract(name: string, open: () => Promise<{ db: Kysel
       await queue.replaceDraft(owner, 'import-extra', [{ key: 2, text: '附件', attachments: [{ name: '合成', ignored: '不得保存' }] }])
       expect((await queue.readQueue(owner, 'import-extra'))?.items).toEqual([{ key: 2, text: '附件', attachments: [{ name: '合成' }], references: [], queue_id: 'import-extra', session_id: null, claimed: false }])
       await queue.replaceDraft(owner, 'import-extra', [])
+      await queue.replaceDraft(owner, 'import-skill', [{ key: 3, text: '使用技能', references: [{ type: 'skill', id: 'skill-demo', label: '示例' }] }])
+      expect((await queue.readQueue(owner, 'import-skill'))?.items[0]?.references).toEqual([{ type: 'skill', id: 'skill-demo', label: '示例' }])
+      expect(() => queue.replaceDraft(owner, 'import-invalid', [{ key: 4, text: '无效', references: [{ type: 'skill', id: '../escape', label: '示例' }] }])).toThrow('队列项目无效')
+      await queue.replaceDraft(owner, 'import-skill', [])
+
       await queue.replaceDraft(owner, 'import-1', [{ key: 8, text: '草稿' }])
       const storageOwner = dialect === 'sqlite' ? owner.replaceAll('-', '') : owner
       const payload = JSON.stringify([{ key: 8, text: '草稿', _claim_token: 'draft-secret', _claim_until: 200 }])

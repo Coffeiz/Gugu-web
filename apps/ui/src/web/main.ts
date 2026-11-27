@@ -1,3 +1,4 @@
+import { installMailLinks, openMailComposer } from '@/api/mailLinks'
 import { pathFileAccessKey } from '@/services/pathFileAccess'
 import { pathFilesApi } from '@/services/api'
 import { scheduleAccessKey } from '@/services/scheduleAccess'
@@ -48,6 +49,7 @@ app.provide(mindAccessKey, webMindAccess)
 app.use(createPinia())
 app.use(i18n)
 app.use(router)
+installMailLinks(to => openMailComposer(router, to))
 app.use(ArcoVue)
 installEnterDirective(app)
 

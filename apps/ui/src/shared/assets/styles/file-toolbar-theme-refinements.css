@@ -10,10 +10,8 @@ html[data-theme][data-family] .file-browser-toolbar {
   --file-toolbar-font-size: var(--font-size-sm);
   --file-toolbar-font-weight: var(--font-weight-semibold);
 
-  /* v0.20.4 view toggle geometry: 28px items inside a 2px inset track, with a real moving pill. */
-  --file-view-toggle-item-size: 28px;
   --file-view-toggle-inset: 2px;
-  --file-view-toggle-gap: 2px;
+  --file-view-toggle-item-size: calc(var(--file-toolbar-control-height) - 2 * var(--file-view-toggle-inset));
   --file-view-toggle-track-radius: 8px;
   --file-view-toggle-pill-radius: 6px;
   --pill-bg: var(--segmented-pill-bg);
@@ -39,6 +37,11 @@ html[data-theme][data-family] .file-browser-toolbar .file-toolbar-icon-button {
   min-width: var(--file-toolbar-control-height);
   padding: 0;
 }
+html[data-theme][data-family] .file-browser-toolbar :is(.app-close-button, .select-popup-trigger) {
+  box-sizing: border-box;
+  height: var(--file-toolbar-control-height);
+  min-height: var(--file-toolbar-control-height);
+}
 html[data-theme][data-family] .file-browser-toolbar .app-action-button[aria-pressed='true'] {
   background: var(--selection-bg);
   border-color: var(--action-outline);
@@ -53,10 +56,10 @@ html[data-theme][data-family] .file-browser-toolbar :is(.nav-hist-btn, .pm-nav-h
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  min-width: 26px;
-  height: 26px;
-  min-height: 26px;
+  width: var(--file-toolbar-control-height);
+  min-width: var(--file-toolbar-control-height);
+  height: var(--file-toolbar-control-height);
+  min-height: var(--file-toolbar-control-height);
   padding: 0;
   flex-shrink: 0;
   border: 0;
@@ -100,9 +103,9 @@ html[data-theme][data-family] .file-browser-toolbar .sort-dir-icon {
 
 html[data-theme][data-family] .file-browser-toolbar .view-toggle {
   box-sizing: border-box;
-  height: calc(var(--file-view-toggle-item-size) + var(--file-view-toggle-inset) * 2);
+  height: var(--file-toolbar-control-height);
   padding: var(--file-view-toggle-inset);
-  gap: var(--file-view-toggle-gap);
+  gap: var(--space-xs);
   flex-shrink: 0;
   border-radius: var(--file-view-toggle-track-radius);
   background: var(--segmented-track-bg);
@@ -151,7 +154,7 @@ html[data-theme][data-family] .file-browser-toolbar .breadcrumb-nav {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 4px;
+  gap: var(--space-xs);
 }
 /* The shared breadcrumb layout hides overflow by default; the toolbar wrapper owns the
    actual horizontal viewport so narrow paths can scroll instead of being clipped. */

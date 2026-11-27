@@ -1,4 +1,4 @@
-import type { ShellActivity } from '../shell-activity.js'
+import { shellOperationDescription, type ShellActivity } from '../shell-activity.js'
 import { canonicalAgentToolName } from '../tools/configuration.js'
 
 /** Agent 工具气泡的稳定名称映射。工具事件只保存 toolName，显示文案随界面语言变化。 */
@@ -23,7 +23,7 @@ export const toolNames = {
     shell_commands: '运行 {first}、{second} 等 {count} 条命令', shell_count: '{label} · {count} 条命令',
     shell_command_target: '运行 {target} 命令',
     shell_build: '构建项目', shell_test: '运行测试', shell_no_matches: '未找到匹配', get_current_time: '获取当前时间',
-    open_item: '打开文件或文件夹', view_image: '查看图片', send_email: '发送邮件', manage_mcp_servers: '管理 MCP 服务',
+    open_item: '打开文件或文件夹', view_image: '查看图片', list_mail: '查询邮件', send_email: '发送邮件', manage_mcp_servers: '管理 MCP 服务',
     list_skills: '列出技能', update_skill: '更新技能', delete_skill: '删除技能', update_knowledge: '更新知识',
     undo_last_action: '撤销上次操作', stop_recurring: '停用周期任务', choose_no_reply: '跳过回复', set_color: '设置项目颜色',
     add_stage: '添加项目阶段', remove_stage: '移除项目阶段', rename_stage: '重命名项目阶段', set_stages: '设置项目阶段',
@@ -38,7 +38,7 @@ export const toolNames = {
     canvas_list: '列出思维画布', canvas_get: '读取思维画布', canvas_search: '搜索画布内容', canvas_focus_node: '定位画布卡片', canvas_search_placeable: '搜索可放置画布节点', canvas_create: '创建思维画布', canvas_delete: '删除思维画布', canvas_create_note: '创建画布便签', canvas_add_node: '放置画布节点', canvas_update_node: '调整画布节点', canvas_remove_node: '移除画布节点', canvas_update_note: '更新画布便签', canvas_connect: '连接画布节点', canvas_update_anchor: '调整画布连接点', canvas_disconnect: '断开画布连接', canvas_batch: '批量编排画布',
     note_search: '搜索笔记', note_get: '读取笔记', note_create: '记录笔记', note_update: '更新笔记', note_delete: '删除笔记', note_restore: '恢复笔记', note_undo: '撤销笔记记录',
     list_clients: '查询联系人', list_contacts: '查询联系人', create_client: '新建联系人', create_contact: '新建联系人', update_client: '更新联系人', update_contact: '更新联系人', delete_client: '删除联系人', delete_contact: '删除联系人', get_upcoming: '近期待办', get_dashboard_stats: '总览统计',
-    list_scheduled_tasks: '查看定时任务', create_scheduled_task: '新建定时任务', update_scheduled_task: '更新定时任务', delete_scheduled_task: '删除定时任务', list_trash: '查看回收站', restore_file: '还原文件', restore_folder: '还原文件夹', permanent_delete: '永久删除', shell: '执行 Shell 命令', web_download: '下载到文件库', http_get: '抓取网页', list_recent_attachments: '查最近暂存的附件',
+    list_scheduled_tasks: '查看定时任务', create_scheduled_task: '新建定时任务', update_scheduled_task: '更新定时任务', delete_scheduled_task: '删除定时任务', list_trash: '查看回收站', restore_file: '还原文件', restore_folder: '还原文件夹', permanent_delete: '永久删除', shell: '执行终端操作', web_download: '下载到文件库', http_get: '抓取网页', list_recent_attachments: '查最近暂存的附件',
   },
   'ja-JP': {
     agent_message: 'サブエージェントに連絡',
@@ -60,7 +60,7 @@ export const toolNames = {
     shell_commands: '{first}、{second} など {count} 件のコマンドを実行', shell_count: '{label} · {count} 件のコマンド',
     shell_command_target: '{target} コマンドを実行',
     shell_build: 'プロジェクトをビルド', shell_test: 'テストを実行', shell_no_matches: '一致する結果なし', get_current_time: '現在時刻を取得',
-    open_item: 'ファイルまたはフォルダーを開く', view_image: '画像を表示', send_email: 'メールを送信', manage_mcp_servers: 'MCP サービスを管理',
+    open_item: 'ファイルまたはフォルダーを開く', view_image: '画像を表示', list_mail: 'メールを検索', send_email: 'メールを送信', manage_mcp_servers: 'MCP サービスを管理',
     list_skills: 'スキル一覧', update_skill: 'スキルを更新', delete_skill: 'スキルを削除', update_knowledge: '知識を更新',
     undo_last_action: '最後の操作を取り消す', stop_recurring: '繰り返しタスクを停止', choose_no_reply: '返信をスキップ', set_color: 'プロジェクトの色を設定',
     add_stage: 'プロジェクトの段階を追加', remove_stage: 'プロジェクトの段階を削除', rename_stage: 'プロジェクトの段階名を変更', set_stages: 'プロジェクトの段階を設定',
@@ -75,7 +75,7 @@ export const toolNames = {
     canvas_list: '思考キャンバス一覧', canvas_get: '思考キャンバスを読む', canvas_search: 'キャンバス内容を検索', canvas_focus_node: 'キャンバスカードを表示', canvas_search_placeable: '配置可能なノードを検索', canvas_create: '思考キャンバスを作成', canvas_delete: '思考キャンバスを削除', canvas_create_note: 'キャンバスノートを作成', canvas_add_node: 'キャンバスにノードを配置', canvas_update_node: 'キャンバスノードを調整', canvas_remove_node: 'キャンバスノードを削除', canvas_update_note: 'キャンバスノートを編集', canvas_connect: 'キャンバスノードを接続', canvas_update_anchor: 'キャンバス接続点を調整', canvas_disconnect: 'キャンバス接続を解除', canvas_batch: 'キャンバスを一括編成',
     note_search: 'ノートを検索', note_get: 'ノートを読む', note_create: 'ノートを記録', note_update: 'ノートを更新', note_delete: 'ノートを削除', note_restore: 'ノートを復元', note_undo: 'ノートの記録を取り消す',
     list_clients: '連絡先を検索', list_contacts: '連絡先を検索', create_client: '連絡先を作成', create_contact: '連絡先を作成', update_client: '連絡先を更新', update_contact: '連絡先を更新', delete_client: '連絡先を削除', delete_contact: '連絡先を削除', get_upcoming: '近日の予定', get_dashboard_stats: '概要統計',
-    list_scheduled_tasks: '定期タスクを表示', create_scheduled_task: '定期タスクを作成', update_scheduled_task: '定期タスクを更新', delete_scheduled_task: '定期タスクを削除', list_trash: 'ごみ箱を表示', restore_file: 'ファイルを復元', restore_folder: 'フォルダーを復元', permanent_delete: '完全に削除', shell: 'Shell コマンドを実行', web_download: 'ファイル庫にダウンロード', http_get: 'ウェブから取得 / ページを読む', list_recent_attachments: '最近の一時添付を検索',
+    list_scheduled_tasks: '定期タスクを表示', create_scheduled_task: '定期タスクを作成', update_scheduled_task: '定期タスクを更新', delete_scheduled_task: '定期タスクを削除', list_trash: 'ごみ箱を表示', restore_file: 'ファイルを復元', restore_folder: 'フォルダーを復元', permanent_delete: '完全に削除', shell: 'ターミナル操作を実行', web_download: 'ファイル庫にダウンロード', http_get: 'ウェブから取得 / ページを読む', list_recent_attachments: '最近の一時添付を検索',
   },
   'en-US': {
     agent_message: 'Contact subagent',
@@ -97,7 +97,7 @@ export const toolNames = {
     shell_commands: 'Run {count} commands ({first}, {second})', shell_count: '{label} · {count} commands',
     shell_command_target: 'Run {target} command',
     shell_build: 'Build project', shell_test: 'Run tests', shell_no_matches: 'No matches found', get_current_time: 'Get current time',
-    open_item: 'Open file or folder', view_image: 'View image', send_email: 'Send email', manage_mcp_servers: 'Manage MCP servers',
+    open_item: 'Open file or folder', view_image: 'View image', list_mail: 'Find email', send_email: 'Send email', manage_mcp_servers: 'Manage MCP servers',
     list_skills: 'List skills', update_skill: 'Update skill', delete_skill: 'Delete skill', update_knowledge: 'Update knowledge',
     undo_last_action: 'Undo last action', stop_recurring: 'Stop recurring task', choose_no_reply: 'Skip reply', set_color: 'Set project color',
     add_stage: 'Add project stage', remove_stage: 'Remove project stage', rename_stage: 'Rename project stage', set_stages: 'Set project stages',
@@ -112,7 +112,7 @@ export const toolNames = {
     canvas_list: 'List canvases', canvas_get: 'Read canvas', canvas_search: 'Search canvas', canvas_focus_node: 'Locate canvas card', canvas_search_placeable: 'Search placeable nodes', canvas_create: 'Create canvas', canvas_delete: 'Delete canvas', canvas_create_note: 'Create canvas note', canvas_add_node: 'Place canvas node', canvas_update_node: 'Adjust canvas node', canvas_remove_node: 'Remove canvas node', canvas_update_note: 'Edit canvas note', canvas_connect: 'Connect canvas nodes', canvas_update_anchor: 'Adjust canvas anchor', canvas_disconnect: 'Disconnect canvas', canvas_batch: 'Arrange canvas in batch',
     note_search: 'Search notes', note_get: 'Read note', note_create: 'Record note', note_update: 'Update note', note_delete: 'Delete note', note_restore: 'Restore note', note_undo: 'Undo note creation',
     list_clients: 'Search contacts', list_contacts: 'Search contacts', create_client: 'Create contact', create_contact: 'Create contact', update_client: 'Update contact', update_contact: 'Update contact', delete_client: 'Delete contact', delete_contact: 'Delete contact', get_upcoming: 'Upcoming tasks', get_dashboard_stats: 'Dashboard stats',
-    list_scheduled_tasks: 'View scheduled tasks', create_scheduled_task: 'Create scheduled task', update_scheduled_task: 'Update scheduled task', delete_scheduled_task: 'Delete scheduled task', list_trash: 'View trash', restore_file: 'Restore file', restore_folder: 'Restore folder', permanent_delete: 'Delete permanently', shell: 'Run Shell command', web_download: 'Download to files', http_get: 'Fetch web data / read page', list_recent_attachments: 'Find recent uploads',
+    list_scheduled_tasks: 'View scheduled tasks', create_scheduled_task: 'Create scheduled task', update_scheduled_task: 'Update scheduled task', delete_scheduled_task: 'Delete scheduled task', list_trash: 'View trash', restore_file: 'Restore file', restore_folder: 'Restore folder', permanent_delete: 'Delete permanently', shell: 'Run terminal operation', web_download: 'Download to files', http_get: 'Fetch web data / read page', list_recent_attachments: 'Find recent uploads',
   },
 } as const
 
@@ -135,6 +135,17 @@ export function toolDisplayIdentity(name = '', input?: unknown) {
       return { name: displayName(target.trim()), input: value.arguments ?? input }
   }
   return { name: displayName(name), input }
+}
+
+export function resolveToolDisplayLabel(options: {
+  name?: string; input?: unknown; shellDescription?: unknown; override?: unknown; label?: string
+}, translate: (name: string) => string | undefined, fallback: string): string {
+  const { name, input } = toolDisplayIdentity(options.name?.trim(), options.input)
+  if (name === 'read_file') return fallback
+  if (name === 'shell')
+    return shellOperationDescription(input) ?? shellOperationDescription({ description: options.shellDescription }) ?? translate(name) ?? fallback
+  const override = typeof options.override === 'string' ? options.override.trim() : ''
+  return override || translate(name) || options.label?.trim() || name || fallback
 }
 
 export function formatShellActivityLabel(

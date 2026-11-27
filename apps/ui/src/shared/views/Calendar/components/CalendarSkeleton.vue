@@ -25,5 +25,5 @@ const { t } = useI18n()
   border-top: 1px solid var(--content-divider);
   border-left: 1px solid var(--content-divider);
 }
-.calendar-loading-cell { padding: 8px; border: solid var(--content-divider); border-width: 0 1px 1px 0; }
+.calendar-loading-cell { padding: var(--space-sm); border: solid var(--content-divider); border-width: 0 1px 1px 0; }
 </style>

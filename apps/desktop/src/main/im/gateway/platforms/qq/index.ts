@@ -369,7 +369,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
                   if (!budget.consume(quoted.data.byteLength)) throw new QqMediaIngressError('qq_media_size')
                   const metadata = describeQqMedia({ filename: quoted.name, content_type: quoted.mime }, quoted.data)
                   if (!metadata) return false
-                  await appendFile(media, { ...metadata, bytes: quoted.data })
+                  await appendFile(media, { ...metadata, bytes: quoted.data, quoted: true })
                   return true
                 } catch (error) {
                   if (!(error instanceof DesktopError && error.code === 'not_found')) throw error

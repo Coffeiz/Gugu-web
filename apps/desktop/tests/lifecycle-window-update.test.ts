@@ -3,7 +3,7 @@ import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import { applicationMenuChannels } from '@gugu/desktop-contracts'
 import { nativeEditingChannel, type EditingFocus } from '../src/keyboard-editing.js'
 import { DesktopLifecycle } from '../src/main/lifecycle.js'
-import { DesktopUpdater } from '../src/main/updater.js'
+import { DesktopUpdater } from '../src/main/updater/index.js'
 import {
   createMainWindowSizeStore,
   createProjectWindowBoundsStore,
@@ -116,6 +116,28 @@ describe('桌面生命周期、窗口与更新边界', () => {
     expect(host.close).toHaveBeenCalledTimes(2)
     await expect(lifecycle.start()).rejects.toMatchObject({ code: 'closed' })
   })
+  it('开发重载等待执行中的任务，且重新检查空闲探测期间入队的请求', async () => {
+    let releaseCheck!: (idle: boolean) => void
+    const host = {
+      request: vi.fn(async (method: string) => method === 'core.devReloadIdle'),
+      close: vi.fn(async () => undefined),
+    }
+    host.request.mockImplementationOnce(() => new Promise(resolve => { releaseCheck = resolve }))
+    host.request.mockImplementationOnce(async () => true)
+    host.request.mockImplementationOnce(async () => false)
+    const lifecycle = new DesktopLifecycle(async () => host as never)
+    await lifecycle.start()
+
+    const reload = lifecycle.whenIdle(() => lifecycle.pause())
+    await expect(lifecycle.request('agent.sessions.runModel')).resolves.toBe(true)
+    releaseCheck(true)
+
+    await vi.waitFor(() => expect(host.request).toHaveBeenCalledTimes(3))
+    expect(host.close).not.toHaveBeenCalled()
+    await reload
+    expect(host.close).toHaveBeenCalledOnce()
+  })
+
   it('关闭发生在启动期间仍回收晚到的 Host，不能重新进入运行态', async () => {
     let ready!: (value: { close(): Promise<void>; request(): Promise<unknown> }) => void
     const host = {

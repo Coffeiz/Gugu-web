@@ -5,7 +5,7 @@
     data-layout-role="card"
     :data-layout-key="`project:${project.id}`"
     :data-project-id="project.id"
-    :style="{ '--pr-project-color': project.color }"
+    :style="{ '--pr-project-color': extractProjectAccent(project.color) }"
     @pointerdown.stop="onPointerDown"
     @click.stop="emit('add')"
   >
@@ -15,6 +15,7 @@
 
 <script setup lang="ts">
 import { ref, type PropType } from 'vue'
+import { extractProjectAccent } from '@/utils/projectColors'
 import type { Project } from '@/types/project'
 import type { MoveAction } from '@/interaction/runtime'
 import {

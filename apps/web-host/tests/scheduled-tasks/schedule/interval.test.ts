@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { nextIntervalFire } from '../../../src/modules/scheduled-tasks/schedule/interval.js'
+import { nextIntervalFire } from '@gugu/scheduler'
 
 test('间隔任务从原始锚点计算并包含结束边界', () => {
   const input = { intervalMinutes: 5, startAt: 1000, endAt: 601000 }

@@ -21,7 +21,7 @@ export function createDesktopQqReferences(directory: string, encryption: Paramet
       const state = await store.read() ?? { references: {}, queued: {}, paired: {} }
       const time = now()
       for (const entries of [state.references, state.queued, state.paired])
-        for (const [key, item] of Object.entries(entries)) if (item.expires <= time) delete entries[key]
+        for (const key in entries) if (entries[key]!.expires <= time) delete entries[key]
       const value = operation(state, time)
       signal.throwIfAborted()
       if (mutate) await store.write(state)
@@ -38,7 +38,8 @@ export function createDesktopQqReferences(directory: string, encryption: Paramet
   }
   function cap(entries: Record<string, unknown>, limit: number) {
     const keys = Object.keys(entries)
-    for (const id of keys.slice(0, Math.max(0, keys.length - limit))) delete entries[id]
+    const overflow = keys.length - limit
+    for (let index = 0; index < overflow; index++) delete entries[keys[index]!]
   }
   return {
     remember(scope: ImConversationScope, index: string, entry: Entry, signal: AbortSignal) {

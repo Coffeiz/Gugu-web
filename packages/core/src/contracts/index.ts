@@ -82,15 +82,24 @@ export interface ProjectRecord {
   updated_at: string
   deleted_at: string | null
 }
+export interface ClientFields {
+  name: string
+  email?: string | null
+  phone?: string | null
+  address?: string | null
+  notes?: string
+}
 export interface ClientRecord {
   id: number
   user_id: string
   name: string
-  contact: string | null
   email: string | null
   phone: string | null
+  address?: string | null
   notes: string
   created_at: string
 }
+
+export type ClientSummary = Omit<ClientRecord, 'user_id' | 'created_at'>
 
 export { isMiniMaxAnthropicEndpointMigration } from '../byok/contracts.js'

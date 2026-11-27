@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createFileSkillSearchSource, createUserSkillBundle } from '@gugu/core/skills'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { after, before, describe, it } from 'node:test'
@@ -10,6 +14,7 @@ import { signedUserToken } from '../helpers/auth.js'
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const owner = randomUUID(), foreign = randomUUID(), secret = 'synthetic-shared-search-signing-key'
 const schema = `gugu_search_shared_${randomUUID().replaceAll('-', '')}`
+let skillRoot: string
 let admin: Pool, pool: Pool, app: ReturnType<typeof createApp>
 interface Item { id: number | string; title: string; subtitle?: string; message_id?: number; [key: string]: unknown }
 interface Result { query: string; queries: string[]; mode: string; total: number; groups: Array<{ type: string; label: string; items: Item[] }> }
@@ -24,7 +29,6 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
       CREATE TABLE projects(id integer PRIMARY KEY,user_id uuid,name text,contact_name text,status text,current_stage text,deleted_at timestamptz,updated_at timestamptz);
       CREATE TABLE calendar_events(id integer PRIMARY KEY,user_id uuid,title text,description text,contact_name text,deleted_at timestamptz,date text);
       CREATE TABLE clients(id integer PRIMARY KEY,user_id uuid,name text,contact text,email text,phone text,notes text,created_at timestamptz);
-      CREATE TABLE user_skills(id integer PRIMARY KEY,owner_id uuid,name text,skill_id text,description_short text,description_long text,body text,enabled boolean,updated_at timestamptz);
       CREATE TABLE user_mcp_servers(id text PRIMARY KEY,user_id uuid,scope text,name text,transport text,enabled boolean,endpoint text,credential_slots jsonb);
       CREATE TABLE scheduled_tasks(id integer PRIMARY KEY,user_id uuid,name text,enabled boolean,end_at timestamptz,updated_at timestamptz,schedule_kind text,cron text,interval_minutes integer);
       CREATE TABLE mind_nodes(id integer PRIMARY KEY,user_id uuid,title text,content_plain text,kind text,deleted_at timestamptz,captured_at timestamptz,updated_at timestamptz,version integer);
@@ -37,7 +41,6 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
       ["INSERT INTO projects VALUES (1,$1,'命中','小北','active','',NULL,'2026-01-01'),(2,$1,'命中扩展','小北','pending','',NULL,'2026-01-03'),(3,$2,'命中其他账号','小北','active','',NULL,'2026-01-01'),(4,$1,'命中已删','小北','active','','2026-01-01','2026-01-01')", [owner, foreign]],
       ["INSERT INTO calendar_events VALUES (1,$1,'命中日程','说明','小北',NULL,'2026-01-01'),(2,$2,'命中其他日程','说明','小北',NULL,'2026-01-01'),(3,$1,'命中删除日程','说明','小北','2026-01-01','2026-01-01')", [owner, foreign]],
       ["INSERT INTO clients VALUES (1,$1,'命中联系人','小北',NULL,NULL,'备注','2026-01-01'),(2,$2,'命中其他联系人',NULL,NULL,NULL,NULL,'2026-01-01')", [owner, foreign]],
-      ["INSERT INTO user_skills VALUES (1,$1,'命中技能','U1','元数据说明','长说明','机密正文仅内部',false,'2026-01-01'),(2,$2,'命中其他技能','U2','其他','其他','其他私密正文',true,'2026-01-01')", [owner, foreign]],
       ["INSERT INTO user_mcp_servers VALUES ('user-mcp',$1,'user','命中私有MCP','http',true,'https://endpoint-secret.example.invalid','[{\"secret\":\"凭据秘密\"}]'),('platform-mcp',$2,'platform','命中平台MCP','stdio',false,'platform-endpoint-secret','[]'),('foreign-mcp',$2,'user','命中其他私有MCP','http',true,'other-secret','[]')", [owner, foreign]],
       ["INSERT INTO scheduled_tasks VALUES (1,$1,'命中有效任务',true,'2999-01-01','2026-01-01','cron','0 9 * * *',NULL),(2,$1,'命中停用任务',false,NULL,'2026-01-01','cron','0 9 * * *',NULL),(3,$1,'命中过期任务',true,'2000-01-01','2026-01-01','cron','0 9 * * *',NULL),(4,$2,'命中其他任务',true,NULL,'2026-01-01','cron','0 9 * * *',NULL)", [owner, foreign]],
       ["INSERT INTO mind_nodes VALUES (1,$1,'命中便签','正文','note',NULL,'2026-01-01','2026-01-01',2),(2,$1,'命中画布便签','正文','canvas_note',NULL,'2026-01-01','2026-01-01',1),(3,$2,'命中其他便签','私密','note',NULL,'2026-01-01','2026-01-01',1),(4,$1,'命中已删便签','正文','note','2026-01-01','2026-01-01','2026-01-01',1),(5,$1,'命中越权画布','正文','canvas_note',NULL,'2026-01-01','2026-01-01',1)", [owner, foreign]],
@@ -48,13 +51,17 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
     ]
     for (const [sql, values] of inserts) await pool.query(sql, values)
     for (let i = 0; i < 8; i++) await pool.query('INSERT INTO conversation_messages VALUES ($1,5,$2,$3)', [100 + i, '窗口探针', `2026-02-01T00:00:0${i}Z`])
+    skillRoot = await mkdtemp(join(tmpdir(), 'gugu-search-skills-'))
+    await createUserSkillBundle(skillRoot, owner, 'demo', '---\nname: 命中技能\ndescription: 元数据说明\nmetadata:\n  gugu:\n    enabled: false\n---\n机密正文仅内部')
+    await createUserSkillBundle(skillRoot, foreign, 'demo', '---\nname: 命中其他账号技能\ndescription: 其他\n---\n其他私密正文')
     app = createApp({ appName: '共享搜索测试', isReady: async () => true,
       userAuth: { secret, async lookupUser(id) { return { id, username: 'synthetic', displayName: null, email: 'synthetic@example.test',
         avatarUrl: null, createdAt: null, timezone: null, emailSubscribed: false, imChannels: [], isActive: true, securityVersion: 1 } } },
-      globalSearch: createGlobalSearchOperations(createPostgresGlobalSearchSources(pool)),
+      globalSearch: createGlobalSearchOperations([...createPostgresGlobalSearchSources(pool), createFileSkillSearchSource(skillRoot)]),
     })
   })
   after(async () => {
+    if (skillRoot) await rm(skillRoot, { recursive: true, force: true })
     await app?.close(); await pool?.end()
     if (admin) {
       try {
@@ -89,7 +96,7 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
     assert.deepEqual(group('project').map(item => item.id), [1, 2])
     assert.deepEqual(group('scheduled_task').map(item => item.id), [1])
     assert.deepEqual(group('canvas_note').map(item => item.id), [2])
-    assert.deepEqual(group('skill')[0], { id: 'U1', title: '命中技能', subtitle: '元数据说明', enabled: false })
+    assert.deepEqual(group('skill')[0], { id: 'demo', title: '命中技能', subtitle: '元数据说明', enabled: false })
     assert.deepEqual(new Set(group('mcp').map(item => item.id)), new Set(['user-mcp', 'platform-mcp']))
     const text = JSON.stringify(result)
     for (const hidden of ['机密正文', 'endpoint-secret', '凭据秘密', '其他账号', '其他文件', '删除文件', '删除日程', '已删便签', '其他会话', '私有目录名', '私有父名']) assert.equal(text.includes(hidden), false, hidden)
@@ -144,7 +151,7 @@ describe('共享Core搜索与认证Host路由的真实隔离PostgreSQL', { skip:
     }
   })
   it('默认全来源遇到真实表缺失拒绝，不返回前面来源已生成的部分groups', async () => {
-    const operations = createGlobalSearchOperations(createPostgresGlobalSearchSources(pool))
+    const operations = createGlobalSearchOperations([...createPostgresGlobalSearchSources(pool), createFileSkillSearchSource(skillRoot)])
     let renamed = false
     try {
       await pool.query('ALTER TABLE clients RENAME TO clients_temporarily_unavailable')

@@ -10,6 +10,8 @@
     ".": "./dist/index.js",
     "./telegram": "./dist/platforms/telegram/index.js",
     "./media": "./dist/runtime/media/index.js",
+    "./media/audio": "./dist/runtime/media/audio.js",
+    "./media/image": "./dist/runtime/media/image.js",
     "./qq": "./dist/platforms/qq/index.js",
     "./feishu": "./dist/platforms/feishu/index.js",
     "./wechat": "./dist/platforms/wechat/index.js"
@@ -26,6 +28,8 @@
     "@gugu/search": "workspace:*",
     "@zpowertech/audio-player": "0.1.1",
     "@larksuiteoapi/node-sdk": "1.76.0",
+    "@napi-rs/canvas": "1.0.13",
+    "image-size": "2.0.4",
     "mime-types": "2.1.35",
     "ws": "8.22.0",
     "zod": "4.6.7"

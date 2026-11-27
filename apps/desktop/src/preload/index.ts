@@ -1,3 +1,4 @@
+import { desktopUpdateChannels, type DesktopUpdateBridge, type DesktopUpdateStatus } from '@gugu/desktop-contracts'
 import { chatFabChannels } from '../chat-fab-channels.js'
 import {
   applicationEditKeys, applicationMenuChannels,
@@ -75,6 +76,7 @@ type CanvasNoteBody = Parameters<DesktopBridge['createCanvasNote']>[1]
 
 const bridge: DesktopBridge = Object.freeze({
   remoteByok: (...args: Parameters<DesktopBridge['remoteByok']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteByok, ...args),
+  deviceInfo: () => ipcRenderer.invoke(DESKTOP_CHANNELS.deviceInfo),
   remoteAccount: () => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteAccount),
   remoteLogin: (input: Parameters<DesktopBridge['remoteLogin']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteLogin, input),
   remoteLogout: () => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteLogout),
@@ -83,7 +85,6 @@ const bridge: DesktopBridge = Object.freeze({
   wechatPairing: (command: Parameters<DesktopBridge['wechatPairing']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.wechatPairing, command),
   telegramGateway: (command: Parameters<DesktopBridge['telegramGateway']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.telegramGateway, command),
   terminal: (command: Parameters<DesktopBridge['terminal']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.terminal, command),
-  personalSmtp: (...args: Parameters<DesktopBridge['personalSmtp']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.personalSmtp, ...args),
   mail: (command: Parameters<DesktopBridge['mail']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.mail, command),
   createDroppedFileReference: (file: File, allowFolder?: boolean) => ipcRenderer.invoke(DESKTOP_CHANNELS.createDroppedFileReference, webUtils.getPathForFile(file), allowFolder),
   openDroppedFileReference: (id: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.openDroppedFileReference, id),
@@ -150,7 +151,9 @@ const bridge: DesktopBridge = Object.freeze({
   clearAgentAttachments: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clearAgentAttachments),
   appearance: () => ipcRenderer.invoke(DESKTOP_CHANNELS.appearance),
   updateAppearance: (patch: Partial<DesktopAppearancePreferences>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateAppearance, patch),
-  onboarding: () => ipcRenderer.invoke(DESKTOP_CHANNELS.onboarding),
+  onboarding: (patch?: Record<string, unknown>, reopen?: true) => patch === undefined && reopen === undefined
+    ? ipcRenderer.invoke(DESKTOP_CHANNELS.onboarding)
+    : ipcRenderer.invoke(DESKTOP_CHANNELS.onboarding, patch, reopen),
   projects: () => ipcRenderer.invoke(DESKTOP_CHANNELS.projects),
   createProject: (name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createProject, name),
   renameProject: (id: number, version: number, name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.renameProject, id, version, name),
@@ -162,10 +165,13 @@ const bridge: DesktopBridge = Object.freeze({
   purgeBoardProject: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.purgeBoardProject, id),
   restoreBoardProject: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.restoreBoardProject, id),
   clients: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clients),
-  createClient: (name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createClient, name),
-  renameClient: (id: number, name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.renameClient, id, name),
+  clientRelated: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.clientRelated, id),
+  createClient: (fields: Parameters<DesktopBridge['createClient']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.createClient, fields),
+  renameClient: (id: number, fields: Parameters<DesktopBridge['renameClient']>[1]) => ipcRenderer.invoke(DESKTOP_CHANNELS.renameClient, id, fields),
   deleteClient: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteClient, id),
-  search: (queries: Parameters<DesktopBridge['search']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.search, queries),
+  search: (queries: Parameters<DesktopBridge['search']>[0], expansion?: number) => expansion === undefined
+    ? ipcRenderer.invoke(DESKTOP_CHANNELS.search, queries)
+    : ipcRenderer.invoke(DESKTOP_CHANNELS.search, queries, expansion),
   calendar: () => ipcRenderer.invoke(DESKTOP_CHANNELS.calendar),
   createCalendarEvent: (...args: Parameters<DesktopBridge['createCalendarEvent']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCalendarEvent, ...args),
   updateCalendarEvent: (...args: Parameters<DesktopBridge['updateCalendarEvent']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCalendarEvent, ...args),
@@ -180,7 +186,7 @@ const bridge: DesktopBridge = Object.freeze({
   bringCanvasItemToFront: (canvasId: number, id: number, body: CanvasItemFrontBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.bringCanvasItemToFront, canvasId, id, body),
   createCanvasRelation: (body: CanvasRelationBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCanvasRelation, body),
   deleteCanvasRelation: (canvasId: number, id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteCanvasRelation, canvasId, id),
-  createRefNode: (refType: 'project' | 'file' | 'event', refId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.createRefNode, refType, refId),
+  createRefNode: (refType: 'project' | 'file' | 'event' | 'client', refId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.createRefNode, refType, refId),
   canvasNoteLocation: (nodeId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.canvasNoteLocation, nodeId),
   createCanvasNote: (canvasId: number, body: CanvasNoteBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCanvasNote, canvasId, body),
   updateCanvasNote: (id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCanvasNote, id, fields),
@@ -257,9 +263,9 @@ contextBridge.exposeInMainWorld('guguChatFabHost', {
     return () => ipcRenderer.removeListener(chatFabChannels.ballDetached, receive)
   },
   setChatVisible: (visible: boolean) => ipcRenderer.send(chatFabChannels.chatVisible, visible),
-  dropReferences: (references: unknown) => ipcRenderer.send(chatFabChannels.dropReferences, references),
-  onDroppedReferences(listener: (references: unknown) => void) {
-    const receive = (_event: unknown, references: unknown) => listener(references)
+  dropReferences: (references: unknown, selection?: unknown) => ipcRenderer.send(chatFabChannels.dropReferences, references, selection),
+  onDroppedReferences(listener: (references: unknown, selection?: unknown) => void) {
+    const receive = (_event: unknown, references: unknown, selection?: unknown) => listener(references, selection)
     ipcRenderer.on(chatFabChannels.droppedReferences, receive)
     return () => ipcRenderer.removeListener(chatFabChannels.droppedReferences, receive)
   },
@@ -285,3 +291,13 @@ contextBridge.exposeInMainWorld('guguChatFabHost', {
     return () => ipcRenderer.removeListener(chatFabChannels.openChat, receive)
   },
 })
+
+const desktopUpdate: DesktopUpdateBridge = {
+  command: command => ipcRenderer.invoke(desktopUpdateChannels.command, command),
+  onStatusChanged(listener) {
+    const receive = (_event: Electron.IpcRendererEvent, status: DesktopUpdateStatus) => listener(status)
+    ipcRenderer.on(desktopUpdateChannels.changed, receive)
+    return () => ipcRenderer.removeListener(desktopUpdateChannels.changed, receive)
+  },
+}
+contextBridge.exposeInMainWorld('guguDesktopUpdate', desktopUpdate)

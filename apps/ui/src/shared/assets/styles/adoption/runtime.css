@@ -54,20 +54,16 @@ html[data-theme='dark'][data-family] .note-card[data-runtime-proxy-content='true
   background: var(--note-surface) !important;
   border-color: var(--note-border) !important;
 }
-html[data-theme='dark'][data-family] .note-card.tint-amber[data-runtime-proxy-content='true'] { background: var(--note-paper-amber) !important; }
-html[data-theme='dark'][data-family] .note-card.tint-coral[data-runtime-proxy-content='true'] { background: var(--note-paper-coral) !important; }
-html[data-theme='dark'][data-family] .note-card.tint-blue[data-runtime-proxy-content='true'] { background: var(--note-paper-blue) !important; }
-html[data-theme='dark'][data-family] .note-card.tint-teal[data-runtime-proxy-content='true'] { background: var(--note-paper-teal) !important; }
+html[data-theme='dark'][data-family] .note-card.palette-tint[data-runtime-proxy-content='true'] {
+  background: var(--note-paper-palette) !important;
+}
 
-/* 活动卡本体静止态是低 alpha 玻璃（--surface-glass + --glass-blur）；代理若映射到
-   接近不透明的 --surface-card-solid，会在 grabbing/landing 全程与本体材质脱节，
-   直到 reveal 本体才突然恢复半透明。代理必须沿用本体真实静止材质，
-   抓取增强只保留 Runtime 提供的阴影。 */
-html[data-theme='dark'][data-family] .entity-sticker[data-runtime-proxy-content='true'] {
-  background: var(--surface-glass) !important;
-  border-color: var(--border-strong) !important;
-  backdrop-filter: var(--glass-blur) !important;
-  -webkit-backdrop-filter: var(--glass-blur) !important;
+/* 引用卡只在抓取阶段使用代理玻璃，落位交给本体材质。 */
+html[data-theme][data-family] .entity-sticker[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) {
+  background: var(--gugu-card-drag-bg) !important;
+  border-color: var(--runtime-drag-glass-border) !important;
+  backdrop-filter: var(--runtime-drag-glass-filter) !important;
+  -webkit-backdrop-filter: var(--runtime-drag-glass-filter) !important;
 }
 
 /* Shared file/folder cards only need the dark grabbing correction. As soon as Runtime changes the

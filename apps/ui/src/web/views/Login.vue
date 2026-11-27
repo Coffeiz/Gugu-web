@@ -28,7 +28,7 @@
         </button>
       </form>
 
-      <div class="card-footer">
+      <div v-if="!loginAdapter || registrationAvailable" class="card-footer">
         {{ t('auth.noAccount') }}
         <router-link to="/register">{{ t('auth.registerNow') }}</router-link>
       </div>
@@ -39,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, reactive } from 'vue'
+import { inject, onMounted, ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AuthBrand from '@/components/common/auth/AuthBrand.vue'
@@ -48,6 +48,8 @@ import AuthBackground from '@/components/common/auth/AuthBackground.vue'
 import { useI18n } from 'vue-i18n'
 import { fetchSiteConfig } from '@/services/api'
 
+const loginAdapter = inject<((username: string, password: string) => Promise<void>) | null>('gugu-login-adapter', null)
+const registrationAvailable = inject('gugu-registration-available', false)
 const router   = useRouter()
 const auth     = useAuthStore()
 const form     = reactive({ username: '', password: '' })
@@ -65,13 +67,14 @@ async function loadPasswordResetAvailability() {
   }
 }
 
-onMounted(() => { void loadPasswordResetAvailability() })
+onMounted(() => { if (!loginAdapter) void loadPasswordResetAvailability() })
 
 async function handleLogin() {
   if (!form.username || !form.password) { error.value = t('auth.fillCredentials'); return }
   loading.value = true; error.value = ''
   try {
-    await auth.login(form.username, form.password)
+    if (loginAdapter) await loginAdapter(form.username, form.password)
+    else await auth.login(form.username, form.password)
     router.push((router.currentRoute.value.query.redirect as string) ?? '/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('auth.operationFailed')

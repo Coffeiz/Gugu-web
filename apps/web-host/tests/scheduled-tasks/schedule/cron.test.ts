@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { matchesCronMinute } from '../../../src/modules/scheduled-tasks/schedule/cron.js'
+import { matchesCronMinute } from '@gugu/scheduler'
 
 test('cron 按上海时间同时匹配日期与星期，并验证字段', () => {
   const sunday = Date.parse('2026-11-14T16:30:00Z')

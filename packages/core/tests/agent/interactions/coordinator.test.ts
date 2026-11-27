@@ -282,7 +282,7 @@ describe('Harness 交互等待、消费与恢复', () => {
 })
 
 it('真实 ask_user 注册器进入等待并在恢复时消费回答',async()=>{
- const {createAskUserTool}=await import('../../../src/agent/tools/meta.js')
+ const {createAskUserTool}=await import('../../../src/agent/tools/meta/index.js')
  const {createToolRegistry}=await import('../../../src/agent/tools/registry.js')
  const call={id:'ask',name:'ask_user',input:{kind:'choice',title:'选择方案',body:'请选择',options:[{id:'one',label:'方案一'}]}}
  const f=fixture([[{type:'complete',text:'',calls:[call]}],[{type:'complete',text:'已收到',calls:[]}]])
@@ -297,7 +297,7 @@ it('真实 ask_user 注册器进入等待并在恢复时消费回答',async()=>{
 })
 
 it('ask_user 拒绝不支持的授权、表单及伪造选项，撤权和取消不创建交互',async()=>{
- const {createAskUserTool}=await import('../../../src/agent/tools/meta.js')
+ const {createAskUserTool}=await import('../../../src/agent/tools/meta/index.js')
  const {createToolRegistry}=await import('../../../src/agent/tools/registry.js')
  let allowed=true
  const registry=createToolRegistry({tools:[createAskUserTool()],authorize:async()=>allowed})
@@ -313,9 +313,9 @@ it('ask_user 拒绝不支持的授权、表单及伪造选项，撤权和取消�
 })
 
 it('IM 的 ask_user 声明只支持单选，执行时拒绝多选参数', async () => {
-  const { createAskUserTool } = await import('../../../src/agent/tools/meta.js')
+  const { createAskUserTool } = await import('../../../src/agent/tools/meta/index.js')
   const { createToolRegistry } = await import('../../../src/agent/tools/registry.js')
-  const tool = createAskUserTool({ singleChoiceOnly: true, authorization: async () => 'disabled' })
+  const tool = createAskUserTool({ singleChoiceOnly: true, allowQuestionBatch: false, authorization: async () => 'disabled' })
   const registry = createToolRegistry({ tools: [tool], authorize: async () => true })
   const [definition] = await registry.capabilities(identity)
   expect(definition?.schema).toMatchObject({ function: {
@@ -323,12 +323,31 @@ it('IM 的 ask_user 声明只支持单选，执行时拒绝多选参数', async 
     description: expect.stringContaining('只支持单选'),
   } })
   expect(JSON.stringify(definition?.schema)).not.toContain('selection_mode')
+  expect(JSON.stringify(definition?.schema)).not.toContain('"questions"')
   const call = { id: 'ask', name: 'ask_user', input: {
     kind: 'choice', title: '选择方案', body: '请选择', options: [{ id: 'one', label: '方案一' }],
   } }
   const scope = { identity, roundId: 'round', signal: new AbortController().signal, resolution: null,
     execute: async () => { throw new Error('不能执行') } }
   expect(await registry.tools.dispatch(call, scope)).toMatchObject({ kind: 'waiting' })
+  expect(await registry.tools.dispatch({ ...call, input: { ...call.input, questions: [{ id: 'a', title: '第一题' }, { id: 'b', title: '第二题' }] } }, scope))
+    .toMatchObject({ successful: false, value: { next_action: expect.stringContaining('逐题询问') } })
   expect(await registry.tools.dispatch({ ...call, input: { ...call.input, selection_mode: 'multiple' } }, scope))
     .toMatchObject({ successful: false, executed: false })
+})
+
+it('多题参数失败时指出根级字段，并提示可自行补齐整组标题', async () => {
+  const { createAskUserTool } = await import('../../../src/agent/tools/meta/index.js')
+  const { createToolRegistry } = await import('../../../src/agent/tools/registry.js')
+  const registry = createToolRegistry({ tools: [createAskUserTool()], authorize: async () => true })
+  const questions = [{ id: 'format', title: '格式' }, { id: 'length', title: '篇幅' }]
+  const run = (input: Record<string, unknown>) => registry.tools.dispatch({ id: 'batch', name: 'ask_user', input }, {
+    identity, roundId: 'round', signal: AbortSignal.timeout(2000), resolution: null,
+    execute: async () => { throw new Error('不执行 Shell') },
+  })
+  await expect(run({ kind: 'questions', title: '输出选项', questions, body: '说明' }))
+    .resolves.toMatchObject({ value: { issues: [{ path: 'body' }], schema_hints: expect.arrayContaining([expect.stringContaining('对应的 questions')]) } })
+  await expect(run({ kind: 'questions', questions }))
+    .resolves.toMatchObject({ value: { issues: [{ path: 'title', rule: 'required' }], next_action: expect.stringContaining('根据题目拟定') } })
+  await expect(run({ kind: 'questions', title: '输出选项', questions })).resolves.toMatchObject({ kind: 'waiting' })
 })

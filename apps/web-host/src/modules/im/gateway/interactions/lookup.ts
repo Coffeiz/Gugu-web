@@ -1,3 +1,5 @@
+import { parseImControlCommand } from '@gugu/core/im/shortcut'
+import { readQuestionBatch } from '@gugu/core/agent'
 import type { Pool, PoolClient } from 'pg'
 import type { RunIdentity } from '@gugu/core/agent'
 import { selectImTextChoice, type ImPreflightScope } from '@gugu/gateway'
@@ -5,7 +7,7 @@ import type { AgentInteractionRespondService } from '../../../agent/interactions
 import { projectInteractionPromptLocked } from '../../../agent/interactions/projection.js'
 import { imInteractionScopeSql as scopeSql, imInteractionScopeParameters as params, imOrdinaryInteractionReplayed } from '../../../agent/interactions/replay.js'
 import { withPostgresTransaction } from '../../../../adapters/database/postgres-transaction.js'
-import { createImTextChoiceConsumer, type ScopedImTextPrompt } from './preflight.js'
+import { createImTextChoiceConsumer, type ScopedImTextPrompt } from '@gugu/gateway'
 
 export interface ImInteractionTarget { readonly identity: RunIdentity; readonly promptId: number; readonly toolCallId: string }
 interface PromptRow {
@@ -18,6 +20,7 @@ export class ImInteractionLookupError extends Error {
 const columns = 'SELECT p.id,p.session_id,p.kind,p.schema_json,b.run_id,b.interaction_id,b.tool_call_id '
 // 仅来自可信准入收据的DB时刻；SQL比较保留微秒，不经JS Date降精度。
 const phaseBefore = (parameter: '$7' | '$9') => `AND (${parameter}::timestamptz IS NULL OR (p.created_at<=${parameter}::timestamptz
+  AND (NOT (p.schema_json::jsonb ? 'question_advanced_at') OR (p.schema_json::jsonb->>'question_advanced_at')::timestamptz<=${parameter}::timestamptz)
   AND (COALESCE(p.schema_json::jsonb->>'custom_input_active','false')<>'true' OR EXISTS (
     SELECT 1 FROM interaction_actions phase WHERE phase.prompt_id=p.id AND phase.option_id='__custom_reply__'
       AND phase.status='consumed' AND phase.consumed_at<=${parameter}::timestamptz))))`
@@ -38,6 +41,10 @@ function target(scope: ImPreflightScope, row: PromptRow): ImInteractionTarget {
 }
 function shape(scope: ImPreflightScope, row: PromptRow): ScopedImTextPrompt {
   const schema = record(row.schema_json), secretTarget = record(record(schema.context).secret_target)
+  const questions = readQuestionBatch(schema)
+  if (questions) return { scope, promptId: row.id, sessionId: row.session_id, kind: row.kind,
+    secret: false, allowTextInput: true, customInputActive: true, options: [],
+    questionIndex: Array.isArray(schema.question_progress) ? schema.question_progress.length : 0 }
   return { scope, promptId: row.id, sessionId: row.session_id, kind: row.kind,
     secret: Array.isArray(schema.secret_fields) && schema.secret_fields.length > 0 && secretTarget.kind === 'mcp_credentials',
     allowTextInput: schema.source === 'agent' && schema.allow_text_input === true, customInputActive: schema.custom_input_active === true,
@@ -75,7 +82,7 @@ export function createPostgresImTextChoiceConsumer(options: {
           ORDER BY s.updated_at DESC,CASE WHEN p.kind IN ('choice','confirm') THEN 0 ELSE 1 END,p.created_at DESC,p.id DESC FOR UPDATE OF p`, [...params(scope), cutoff(scope)])
         for (const row of candidates.rows) {
           const prompt = shape(scope, row)
-          if (prompt.secret) continue
+          if (prompt.secret || (prompt.questionIndex !== undefined && parseImControlCommand(text))) continue
           // schema完整顺序保持不变；仅给真实可用动作临时标记以进行纯规则匹配。
           const actions = await client.query<{ option_id: string }>("SELECT option_id FROM interaction_actions WHERE prompt_id=$1 AND status='pending' AND expires_at>clock_timestamp()", [row.id])
           const available = new Set(actions.rows.map(action => action.option_id))

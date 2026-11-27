@@ -9,16 +9,7 @@
     </div>
     <div class="pm-bot-group-row pm-interaction-preference-row">
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.showIntermediateReplies') }}</span><span class="pm-field-hint">{{ t('profileImUi.showIntermediateRepliesHint') }}</span></div>
-      <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="intermediateReplies" :aria-label="t('profileImUi.toggleIntermediateReplies')" @update:model-value="setIntermediateReplies" /><span class="pm-switch-label" :class="{ on: intermediateReplies }">{{ intermediateReplies ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
-    </div>
-    <div v-if="desktop && desktopImAdapter" class="pm-bot-group-row pm-interaction-preference-row">
-      <div class="pm-field-desc">
-        <span class="pm-field-name">{{ t('profileImUi.keepGatewayOnline') }}</span>
-        <span class="pm-field-hint">{{ t('profileImUi.keepGatewayOnlineHint') }}</span>
-      </div>
-      <ToggleSwitch size="sm" :model-value="localMessagePreferences.keepGatewayOnline !== false"
-        :disabled="!localPreferencesLoaded || gatewayPreferenceSaving" :aria-label="t('profileImUi.keepGatewayOnline')"
-        @update:model-value="setKeepGatewayOnline" />
+      <span class="pm-switch-wrap"><ToggleSwitch :model-value="intermediateReplies" :aria-label="t('profileImUi.toggleIntermediateReplies')" @update:model-value="setIntermediateReplies" /><span class="pm-switch-label" :class="{ on: intermediateReplies }">{{ intermediateReplies ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
     </div>
   </div>
   <div class="pm-sep"></div>
@@ -112,8 +103,8 @@
           @message-format="(scope, mode) => setMessageFormat(bot, scope, mode)"
           @private-streaming="updateBotSetting(bot.id, { private_streaming_enabled: $event }, t('profileImUi.connectionSettingsFailed'))"
           @group-owner-memory="updateBotSetting(bot.id, { group_owner_memory_enabled: $event }, t('profileImUi.groupOwnerMemorySettingsFailed'))"
-          @group-memory="updateBotSetting(bot.id, { group_memory_enabled: $event }, '群聊记忆设置失败')"
-          @member-memory="updateBotSetting(bot.id, { member_memory_enabled: $event }, '群聊记忆设置失败')"
+          @group-memory="updateBotSetting(bot.id, { group_memory_enabled: $event }, $t('pageUi.groupMemoryFailed'))"
+          @member-memory="updateBotSetting(bot.id, { member_memory_enabled: $event }, $t('pageUi.memberMemoryFailed'))"
           @toggle-tool="toggleQqTool(bot, $event)" />
         <GroupChatSettings v-if="['feishu', 'telegram'].includes(platform.key)"
           :show-group-toggle="true"
@@ -130,8 +121,8 @@
           @attention-mode="mode => setGroupAttentionMode(bot, mode)"
           @private-streaming="enabled => updateBotSetting(bot.id, { private_streaming_enabled: enabled }, t('profileImUi.connectionSettingsFailed'))"
           @group-owner-memory="value => updateBotSetting(bot.id, { group_owner_memory_enabled: value }, t('profileImUi.groupOwnerMemorySettingsFailed'))"
-          @group-memory="value => updateBotSetting(bot.id, { group_memory_enabled: value }, '群聊记忆设置失败')"
-          @member-memory="value => updateBotSetting(bot.id, { member_memory_enabled: value }, '群聊记忆设置失败')"
+          @group-memory="value => updateBotSetting(bot.id, { group_memory_enabled: value }, $t('pageUi.groupMemoryFailed'))"
+          @member-memory="value => updateBotSetting(bot.id, { member_memory_enabled: value }, $t('pageUi.memberMemoryFailed'))"
           @toggle-tool="key => toggleGroupTool(bot, groupToolOptions.find(option => option.key === key)!)" />
       </ImBotCard>
       </template>
@@ -265,9 +256,7 @@ const pendingSettingWrites = new Set<Promise<void>>()
 let settingsRevision = 0
 let botsLoadSeq = 0
 
-const localMessagePreferences = ref<{ imToolDisplayMode?: 'off' | 'all' | 'slow_only'; showIntermediateReplies?: boolean; keepGatewayOnline?: boolean }>({})
-const localPreferencesLoaded = ref(false)
-const gatewayPreferenceSaving = ref(false)
+const localMessagePreferences = ref<{ imToolDisplayMode?: 'off' | 'all' | 'slow_only'; showIntermediateReplies?: boolean }>({})
 const toolDisplayMode = computed(() => desktop ? localMessagePreferences.value.imToolDisplayMode ?? 'all' : preferences.imToolDisplayMode)
 const intermediateReplies = computed(() => desktop ? localMessagePreferences.value.showIntermediateReplies === true : preferences.showIntermediateReplies)
 let localPreferenceWrite = Promise.resolve()
@@ -280,12 +269,6 @@ function saveLocalMessagePreferences(patch: typeof localMessagePreferences.value
     catch (error) { connectErr.value = error instanceof Error ? error.message : t('profileImUi.connectionSettingsFailed') }
   })
   return localPreferenceWrite
-}
-
-async function setKeepGatewayOnline(value: boolean) {
-  gatewayPreferenceSaving.value = true
-  try { await saveLocalMessagePreferences({ keepGatewayOnline: value }) }
-  finally { gatewayPreferenceSaving.value = false }
 }
 
 function setIntermediateReplies(value: boolean) {
@@ -548,7 +531,6 @@ onMounted(() => {
   if (desktop) {
     localPreferenceWrite = props.desktopImAdapter?.appearance().then(value => {
       localMessagePreferences.value = value
-      localPreferencesLoaded.value = true
     }).catch(() => { connectErr.value = t('profileImUi.connectionSettingsFailed') }) ?? Promise.resolve()
     refreshDesktopPairingStatus()
     return
@@ -582,7 +564,7 @@ onBeforeUnmount(() => { cancelConnect(); if (bindingCountdown) clearInterval(bin
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
@@ -597,7 +579,7 @@ onBeforeUnmount(() => { cancelConnect(); if (bindingCountdown) clearInterval(bin
 /* 「选择群消息的处理方式」文字 + 「设置方法」按钮同行水平排：
    pm-field-desc 是 flex-direction:column（默认所有 desc 都这么排），
    这里要把 hint + button 绑成一行，所以单独再套一个 inline 容器。 */
-.pm-help-row { display: inline-flex; align-items: baseline; gap: 4px; }
+.pm-help-row { display: inline-flex; align-items: baseline; gap: var(--space-xs); }
 .pm-help-toggle {
   white-space: nowrap;
   /* 「设置方法」是行内小链接按钮：跟「选择群消息的处理方式」文字同行末尾
@@ -606,7 +588,7 @@ onBeforeUnmount(() => { cancelConnect(); if (bindingCountdown) clearInterval(bin
      无下虚线、无下沉反馈——4 个字在按钮内水平居中。 */
   background: none;
   border: none;
-  padding: 0 2px;
+  padding: 0 var(--space-xs);
   margin: 0;
   cursor: pointer;
   font-size: 12px;
@@ -628,8 +610,8 @@ onBeforeUnmount(() => { cancelConnect(); if (bindingCountdown) clearInterval(bin
 .pm-help-toggle:focus-visible { outline: 2px solid var(--action-outline); outline-offset: 2px; border-radius: 2px; }
 .pm-help-toggle:active { transform: none; opacity: 1; }
 :global(.popup-menu-host.pm-help-popup-host) { padding: 0; }
-.pm-help-pop { width: max-content; max-width: 300px; padding: 10px 12px; color: var(--popup-item-fg); }
-.pm-help-pop-title { font-size: 12px; font-weight: 700; color: var(--content-primary); margin-bottom: 6px; }
+.pm-help-pop { width: max-content; max-width: 300px; padding: var(--popup-content-inset); color: var(--popup-item-fg); }
+.pm-help-pop-title { font-size: 12px; font-weight: 700; color: var(--content-primary); margin-bottom: var(--space-xs); }
 .pm-help-pop-step { font-size: 12px; color: var(--content-secondary); line-height: 1.7; }
-.pm-help-pop-note { margin-top: 6px; font-size: 11px; color: var(--popup-item-fg-muted); border-top: 1px solid var(--popup-divider); padding-top: 6px; line-height: 1.6; }
+.pm-help-pop-note { margin-top: var(--space-xs); font-size: 11px; color: var(--popup-item-fg-muted); border-top: 1px solid var(--popup-divider); padding-top: var(--space-xs); line-height: 1.6; }
 </style>

@@ -11,7 +11,7 @@ import { createCoreAgentConversationSearchPort } from '../../../src/modules/agen
 import { createWebAgentRagToolPorts } from '../../../src/modules/agent/rag/tools.js'
 import { createWebAgentProductionToolRegistry } from '../../../src/modules/agent/rag/production.js'
 import { createConversationRagSource } from '../../../../../packages/core/src/agent/rag/conversation-index-source.js'
-import { createConversationSearchTool } from '../../../../../packages/core/src/agent/tools/conversations.js'
+import { createConversationSearchTool } from '../../../../../packages/core/src/agent/tools/conversations/index.js'
 import { createCanonicalSourceLoader, stableJson } from '@gugu/core/agent'
 import { createSqlRagRebuildWorker, enqueueAgentRagRebuild } from '@gugu/core/agent/rag'
 import { createOwnerAgentRagVectorResolver } from '../../../src/modules/agent/rag/vectors.js'

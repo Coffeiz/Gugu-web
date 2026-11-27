@@ -1,15 +1,17 @@
 <template>
   <section class="tool-activity">
     <GuguChatActivityLine button :aria-expanded="expanded" :label="displayedLabel"
-      :indicator="phase === 'running' ? 'running' : displayedLabel === label && phase === 'processing' ? 'dots' : 'arrow'"
+      :indicator="displayedPhase === 'running' ? 'running' : displayedPhase === 'processing' ? 'dots' : 'arrow'"
+      :typing="typing" :motion-key="displayedKey"
+      :typewritten="displayedPhase === 'running' || displayedPhase === 'queued'"
       @click="$emit('toggle')">
       <template #status>
-        <template v-if="phase === 'complete'">
+        <template v-if="displayedPhase === 'complete'">
           <span v-if="failed" class="activity-meta is-failed">{{ t('chatUi.toolActivityFailed', { count: failed }) }}</span>
           <span v-if="interrupted" class="activity-meta">{{ t('chatUi.toolActivityInterrupted', { count: interrupted }) }}</span>
         </template>
       </template>
-      <span v-if="phase === 'complete' && duration" class="activity-duration"
+      <span v-if="displayedPhase === 'complete' && duration" class="activity-duration"
         :title="durationLabel" :aria-label="durationLabel">
         {{ duration }}
       </span>
@@ -30,13 +32,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onScopeDispose, ref, watch } from 'vue'
+import { toolDisplayIdentity } from '@gugu/core/agent/sessions/tool-labels'
 import { useI18n } from 'vue-i18n'
 import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import GuguChatActivityLine from './GuguChatActivityLine.vue'
 import GuguChatToolBubble from './GuguChatToolBubble.vue'
 import type { ChatMessage } from './chatTypes'
-import { formatToolDuration, shellActivityForMessage, toolActivityLabel, toolGroupElapsedMs, toolHasNoMatches } from './toolActivity'
+import { formatToolDuration, toolActivityLabel, toolGroupElapsedMs, toolHasNoMatches } from './toolActivity'
 
 const props = defineProps<{
   tools: ChatMessage[]
@@ -76,22 +79,117 @@ const label = computed(() => {
   }
   if (phase.value === 'queued') return `${toolActivityLabel(queued.value!, t, te, props.subagentNames)} · ${t('chatUi.toolQueued')}`
   const onlyTool = props.tools.length === 1 ? props.tools[0] : undefined
-  if (onlyTool && shellActivityForMessage(onlyTool)) return toolActivityLabel(onlyTool, t, te, props.subagentNames)
+  if (onlyTool && toolDisplayIdentity(onlyTool.toolName, onlyTool.toolInput).name === 'shell') return toolActivityLabel(onlyTool, t, te, props.subagentNames)
   return t('chatUi.toolActivityTotal', { count: props.tools.length })
 })
 const duration = computed(() => formatToolDuration(props.elapsedMs ?? toolGroupElapsedMs(props.tools)))
 const durationLabel = computed(() => t(props.elapsedMs === undefined
   ? 'chatUi.toolActivityGroupDuration' : 'chatUi.toolActivityDuration', { duration: duration.value }))
-const displayedLabel = ref(phase.value === 'processing' ? '' : label.value)
-watch([label, phase], ([nextLabel, nextPhase], previous, onCleanup) => {
-  const show = () => { displayedLabel.value = nextLabel }
-  if (nextPhase === 'processing' && previous.length > 0) {
-    const timer = setTimeout(show, 300)
-    onCleanup(() => clearTimeout(timer))
+const primaryTool = computed(() => waiting.value ?? running.value[0] ?? queued.value)
+const activityKey = computed(() => `${phase.value}:${primaryTool.value?.id ?? ''}`)
+type Activity = { key: string; phase: typeof phase.value; label: string }
+
+const charInterval = 32
+const labelHold = 240
+const reducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')
+const displayedPhase = ref(phase.value)
+const displayedLabel = ref('')
+const displayedKey = ref('')
+const typing = ref(false)
+const queue: Activity[] = []
+let current: Activity | undefined
+let animation: ReturnType<typeof setTimeout> | undefined
+let processingDelay: ReturnType<typeof setTimeout> | undefined
+
+function show(activity: Activity) {
+  current = activity
+  displayedKey.value = activity.key
+  displayedPhase.value = activity.phase
+  displayedLabel.value = activity.label
+}
+
+function playNext() {
+  const activity = queue.shift()
+  if (!activity) return
+  show(activity)
+  if (activity.phase !== 'running' && activity.phase !== 'queued') {
+    playNext()
+    return
+  }
+
+  displayedLabel.value = ''
+  typeLabel(activity)
+}
+
+function typeLabel(activity: Activity) {
+  clearTimeout(animation)
+  typing.value = true
+  function typeNext() {
+    const target = Array.from(activity.label)
+    const displayed = Array.from(displayedLabel.value)
+    let prefix = 0
+    while (prefix < target.length && target[prefix] === displayed[prefix]) prefix++
+    displayedLabel.value = target.slice(0, prefix + 1).join('')
+    if (prefix + 1 < target.length) {
+      animation = setTimeout(typeNext, charInterval)
+      return
+    }
+    void nextTick(() => { typing.value = false })
+    animation = setTimeout(() => {
+      animation = undefined
+      playNext()
+    }, labelHold)
+  }
+  animation = setTimeout(typeNext, charInterval)
+}
+
+function enqueue(activity: Activity) {
+  if (reducedMotion && reducedMotion.matches) {
+    clearTimeout(animation)
+    animation = undefined
+    queue.length = 0
+    typing.value = false
+    show(activity)
+    return
+  }
+  const tail = queue.at(-1) ?? current
+  if (tail?.key === activity.key) {
+    tail.label = activity.label
+    if (tail === current && !typing.value && displayedLabel.value !== activity.label) {
+      if (activity.phase === 'running' || activity.phase === 'queued') typeLabel(tail)
+      else displayedLabel.value = activity.label
+    }
+    return
+  }
+  queue.push(activity)
+  if (animation === undefined) playNext()
+}
+
+watch([activityKey, label, () => primaryTool.value?._replayedTool], ([key, nextLabel]) => {
+  clearTimeout(processingDelay)
+  const activity: Activity = { key, phase: phase.value, label: nextLabel }
+  if (primaryTool.value?._replayedTool || activity.phase === 'complete') {
+    clearTimeout(animation)
+    animation = undefined
+    queue.length = 0
+    typing.value = false
+    show(activity)
+    return
+  }
+  // 短空档保持当前工具，避免「整理结果」闪现或进入播放队列。
+  const last = queue.at(-1)
+  if (last?.phase === 'processing' && activity.phase !== 'processing') queue.pop()
+  if (activity.phase === 'processing' && current?.phase !== 'processing') {
+    processingDelay = setTimeout(() => enqueue(activity), 300)
   } else {
-    show()
+    enqueue(activity)
   }
 }, { immediate: true })
+
+onScopeDispose(() => {
+  clearTimeout(animation)
+  clearTimeout(processingDelay)
+})
 </script>
 
 <style scoped>

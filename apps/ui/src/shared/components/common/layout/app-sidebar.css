@@ -1,0 +1,10 @@
+.sidebar { width:var(--sidebar-width); height:100vh; flex-shrink:0; background:rgba(255,255,255,.42); backdrop-filter:var(--popup-blur); -webkit-backdrop-filter:var(--popup-blur); border-right:1px solid rgba(255,255,255,.62); box-shadow:inset -1px 0 0 rgba(255,255,255,.65); display:flex; flex-direction:column; padding:16px 14px; position:relative; z-index:40; }
+.nav { flex:1; display:flex; flex-direction:column; gap:2px; overflow-y:auto; margin-right:-14px; padding-right:14px; scrollbar-gutter:auto; }
+.nav-section { display:flex; flex-direction:column; gap:2px; }
+.nav-divider { height:1px; background:var(--divider-line); mask-image:var(--sidebar-divider-mask); margin:6px 4px; flex-shrink:0; }
+.nav-label { font-size:10px; font-weight:600; color:#6e7289; text-transform:uppercase; letter-spacing:.08em; padding:0 10px; margin-bottom:4px; }
+.user-card { position:relative; display:flex; align-items:center; gap:8px; padding:8px; border-radius:var(--radius-sm); background:rgba(255,255,255,.44); border:1px solid rgba(255,255,255,.72); box-shadow:inset 0 1px 0 rgba(255,255,255,.95); cursor:pointer; transition:background .15s; margin-top:auto; }
+.user-card:hover { background:rgba(255,255,255,.38); }
+.avatar { --sidebar-avatar-bg:var(--action-primary); width:32px; height:32px; border-radius:50%; background:var(--sidebar-avatar-bg); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:var(--content-on-accent); flex-shrink:0; overflow:hidden; box-shadow:0 2px 6px color-mix(in srgb, var(--sidebar-avatar-bg) 20%, transparent); }
+.avatar--fallback { --sidebar-avatar-bg:var(--avatar-fallback-bg); }
+.user-info { flex:1; min-width:0; overflow:hidden; }.user-name { font-size:13px; font-weight:600; line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

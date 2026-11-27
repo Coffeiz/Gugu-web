@@ -1,28 +1,5 @@
-export { initializeDesktopScheduledTaskFilePaths } from './migrations/0027_desktop_scheduled_task_file_paths.js'
-export { initializeDesktopImportedMemory } from './migrations/0026_desktop_imported_memory.js'
-export { initializeDesktopAgentRunRetention } from './migrations/0025_desktop_agent_run_retention.js'
-export { initializeDesktopSubagentSessionInbox } from './migrations/0024_desktop_subagent_session_inbox.js'
-export { initializeDesktopSubagentAdmissions } from './migrations/0023_desktop_subagent_admissions.js'
-export { initializeDesktopSubagentExecutions } from './migrations/0022_desktop_subagent_executions.js'
-export { initializeDesktopSubagentContinuations } from './migrations/0021_desktop_subagent_continuations.js'
-export { initializeDesktopSubagentConversations } from './migrations/0020_desktop_subagent_conversations.js'
-export { initializeDesktopAgentInbox } from './migrations/0019_desktop_agent_inbox.js'
-export { initializeDesktopSubagentWaits } from './migrations/0018_desktop_subagent_waits.js'
-export { initializeDesktopSubagentLaunches } from './migrations/0017_desktop_subagent_launches.js'
-export { initializeDesktopSubagentSessions } from './migrations/0016_desktop_subagent_sessions.js'
-export { initializeDesktopSubagentDeliveries } from './migrations/0015_desktop_subagent_deliveries.js'
-export { initializeDesktopAgentCredentials } from './migrations/0012_desktop_agent_credentials.js'
-export { initializeDesktopImReflection } from './migrations/0013_desktop_im_reflection.js'
-export { initializeDesktopImAcceptedFacts } from './migrations/0014_desktop_im_accepted_facts.js'
-export { initializeDesktopImProjection } from './migrations/0011_desktop_im_projection.js'
-export { initializeDesktopAgentContinuations } from './migrations/0010_desktop_agent_continuations.js'
-export { initializeDesktopImInbox } from './migrations/0009_desktop_im_inbox.js'
-export { initializeDesktopAgentConfirmations } from './migrations/0007_desktop_agent_confirmations.js'
-export { initializeDesktopChatAttachments } from './migrations/0008_desktop_chat_attachments.js'
-export { initializeDesktopAgentInteractions } from './migrations/0006_desktop_agent_interactions.js'
-export { initializeDesktopAgentMemory } from './migrations/0005_desktop_agent_memory.js'
-export { initializeDesktopAgentRuns } from './migrations/0004_desktop_agent_runs.js'
-export { initializeDesktopScheduleMode } from './migrations/0003_desktop_schedule_mode.js'
+import { migrateSqliteLogical } from './logical-migrations.js'
+export { migrateSqliteLogical } from './logical-migrations.js'
 import {
   closeSync,
   existsSync,
@@ -38,8 +15,7 @@ import type SQLite from 'better-sqlite3'
 import { DatabaseError } from '../shared/error.js'
 import { configureSqlite, loadSqliteDriver } from './driver.js'
 import type { MigrationAction, MigrationStatus } from '../shared/command.js'
-import { initializeSchema } from './migrations/0001_initialize.js'
-export { initializeDesktopSkills } from './migrations/0002_desktop_skills.js'
+import { initializeSchema } from '../migrations/baseline/sqlite.js'
 import { validateSqliteBaseline } from './validate.js'
 
 async function createDatabase(path: string): Promise<boolean> {
@@ -60,6 +36,7 @@ async function createDatabase(path: string): Promise<boolean> {
     db.exec('BEGIN IMMEDIATE')
     initializeSchema(db)
     validateSqliteBaseline(db)
+    migrateSqliteLogical(db, 'apply')
     db.exec('COMMIT')
     db.pragma('wal_checkpoint(TRUNCATE)')
     db.close()
@@ -86,10 +63,10 @@ export async function migrateSqlite(path: string, action: MigrationAction): Prom
   if (action === 'apply' && await createDatabase(target)) return 'applied'
   if (!existsSync(target)) return 'pending'
   const Driver = await loadSqliteDriver()
-  const db = new Driver(target, { readonly: true, fileMustExist: true })
+  const db = new Driver(target, { readonly: action === 'check', fileMustExist: true })
   try {
     validateSqliteBaseline(db)
-    return action === 'check' ? 'applied' : 'unchanged'
+    return migrateSqliteLogical(db, action)
   } finally {
     db.close()
   }

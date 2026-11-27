@@ -2,12 +2,13 @@ import { userBotGroupToolFlags } from '@gugu/core/im/user-bots'
 import { createFeishuBotApi } from '@gugu/core/im/feishu-bot-api'
 import { createILinkClient } from '@gugu/gateway/wechat'
 import { createTelegramAdapter } from '@gugu/gateway/telegram'
-import { createQqBotApi } from '@gugu/core/im/qq-bot-api'
+import { createQqClient, createQqProactiveSender } from '@gugu/gateway/qq'
 import type { ProviderTransport } from '@gugu/core/providers'
-import { desktopScheduleImTarget, type DesktopScheduleImPlatform, type DesktopScheduleImTarget } from '../../../../../packages/core/src/scheduled-tasks/desktop-im.js'
+import { desktopScheduleImTarget, desktopSchedulePrivateBinding, type DesktopScheduleImPlatform, type DesktopScheduleImTarget } from '../../../../../packages/core/src/runtime/desktop-schedules/desktop-im.js'
 import { DesktopError } from '../core-host.js'
 
 type Bot = { appId: string; appSecret: string; enabled: boolean; userId: string | null;
+  privateMessageFormat?: 'compat' | 'markdown'; groupMessageFormat?: 'compat' | 'markdown';
   groupChatEnabled?: boolean; groupMemoryEnabled?: boolean; groupHistorySearchEnabled?: boolean }
 
 export function createDesktopScheduledIm(options: {
@@ -17,17 +18,19 @@ export function createDesktopScheduledIm(options: {
   wechat(): Promise<(Bot & { baseUrl: string; contextToken: string }) | null>
   transport(): ProviderTransport & { close(): Promise<void> }
 }) {
-  async function active(target: DesktopScheduleImTarget) {
+  async function active(target: DesktopScheduleImTarget): Promise<(Bot & { userId: string }) | null> {
     const bot = await options[target.platform]()
-    return bot?.enabled && bot.appId === target.botId && bot.userId === target.boundUserId
-      && (target.chatType === 'group' ? bot.groupChatEnabled : bot.userId === target.recipient) ? bot : null
+    if (!bot?.enabled || !bot.userId) return null
+    if (target.chatType === 'group'
+      && (!bot.groupChatEnabled || bot.appId !== target.botId || bot.userId !== target.boundUserId)) return null
+    return { ...bot, userId: bot.userId }
   }
 
   return {
     async privateTarget(platform: DesktopScheduleImPlatform) {
       const bot = await options[platform]()
       return bot?.enabled && bot.userId
-        ? desktopScheduleImTarget.parse({ platform, botId: bot.appId, boundUserId: bot.userId, chatType: 'c2c', recipient: bot.userId })
+        ? desktopSchedulePrivateBinding.parse({ platform, botId: bot.appId, boundUserId: bot.userId, chatType: 'c2c', recipient: bot.userId })
         : null
     },
     async authorize(input: unknown) {
@@ -41,29 +44,41 @@ export function createDesktopScheduledIm(options: {
       if (!bot) throw new DesktopError('conflict', '定时任务的 IM 投递授权已变化')
       const transport = options.transport()
       const group = target.chatType === 'group'
+      const recipient = group ? target.recipient : bot.userId
+      const stillBound = async () => {
+        const latest = await active(target)
+        return latest?.appId === bot.appId && latest.userId === bot.userId
+      }
       try {
         if (target.platform === 'qq') {
-          const api = createQqBotApi(transport)
-          const token = await api.token(bot.appId, bot.appSecret, signal)
-          if (!token || !await active(target)
-            || !await api.sendText({ recipient: target.recipient, group, sandbox: false }, text, token, signal))
-            throw new DesktopError('schedule_failed', 'QQ 定时任务投递失败')
+          const client = createQqClient({ ...bot, sandbox: false, transport: { request: transport.request.bind(transport) } })
+          const send = createQqProactiveSender({ botId: bot.appId, client, sanitizeText: value => value })
+          try {
+            const result = await send({
+              id: recipient, chatType: target.chatType,
+              messageFormat: group ? bot.groupMessageFormat : bot.privateMessageFormat,
+            }, text, signal, stillBound)
+            if (result.outcome !== 'accepted')
+              throw new DesktopError('schedule_failed', 'QQ 定时任务投递失败')
+          } finally {
+            await client.close()
+          }
         } else if (target.platform === 'telegram') {
           const { sender } = createTelegramAdapter({ token: bot.appSecret, transport })
-          const result = await sender.text({ chatId: target.recipient, chatType: target.chatType },
-            text, { signal, authorize: async () => Boolean(await active(target)) })
+          const result = await sender.text({ chatId: recipient, chatType: target.chatType },
+            text, { signal, authorize: async () => stillBound() })
           if (result.outcome !== 'accepted') throw new DesktopError('schedule_failed', 'Telegram 定时任务投递失败')
         } else if (target.platform === 'wechat') {
           const latest = await options.wechat()
-          if (!latest || latest.appId !== bot.appId || latest.userId !== target.recipient)
+          if (!latest || latest.appId !== bot.appId || latest.userId !== recipient)
             throw new DesktopError('conflict', '定时任务的微信投递授权已变化')
           const api = createILinkClient({ botToken: latest.appSecret, baseUrl: latest.baseUrl, transport })
-          await api.sendText(target.recipient, text, latest.contextToken, signal)
+          await api.sendText(recipient, text, latest.contextToken, signal)
         } else {
           const api = createFeishuBotApi(transport)
           const token = await api.tenantToken(bot.appId, bot.appSecret, signal)
-          if (!await active(target)) throw new DesktopError('conflict', '定时任务的飞书投递授权已变化')
-          await api.sendText(group ? 'chat_id' : 'open_id', target.recipient, text, token, signal)
+          if (!await stillBound()) throw new DesktopError('conflict', '定时任务的飞书投递授权已变化')
+          await api.sendText(group ? 'chat_id' : 'open_id', recipient, text, token, signal)
         }
       } finally {
         await transport.close()

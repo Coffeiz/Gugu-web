@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest'
-import {createImSendFileTool,type ImSendFilePort} from '../../../src/agent/tools/send-file.js'
+import {createImSendFileTool,type ImSendFilePort} from '../../../src/agent/tools/files/send-file.js'
 import {createToolRegistry} from '../../../src/agent/tools/registry.js'
 const identity={ownerId:'synthetic-owner',sessionId:'1',runId:'synthetic-run'}
 const signal=new AbortController().signal

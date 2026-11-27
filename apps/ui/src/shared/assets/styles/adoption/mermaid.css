@@ -90,7 +90,6 @@
   background: var(--surface-card-solid);
   box-shadow: var(--elevation-window);
 }
-.md-mermaid-dialog::backdrop { background: rgb(15 14 20 / 58%); backdrop-filter: blur(3px); }
 .md-mermaid-dialog-body {
   position: relative;
   display: grid;

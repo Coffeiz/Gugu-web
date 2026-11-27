@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import { useAudioStore, type AudioTrack } from '@/stores/audio'
+import { usePreviewStore } from '@/stores/preview'
 import { useChatAudio } from '@/components/common/gugu-chat/composables/useChatAudio'
 
 vi.mock('@/services/api', () => ({
@@ -50,6 +51,21 @@ describe('音频播放模式', () => {
       await nextTick()
       expect(storage.get('gugu_audio_playback_mode')).toBe(mode)
     }
+  })
+
+  it('从桌面文件库打开音频时启动播放器并加入同目录曲目', () => {
+    const preview = usePreviewStore()
+    const audio = useAudioStore()
+    const first = { ext: 'mp3', workspaceFile: { directoryId: 'personal', relativePath: '音乐/一.mp3' } }
+    const second = { ext: 'mp3', workspaceFile: { directoryId: 'personal', relativePath: '音乐/二.mp3' } }
+
+    preview.open(first, [first, second, { ext: 'txt', filePath: '/personal/说明.txt' }])
+
+    expect(audio.file).toEqual(first)
+    expect(audio.blobUrl).toBe('/path/音乐/一.mp3')
+    expect(audio.playlist).toEqual([first, second])
+    expect(preview.singleFile).toBeNull()
+    expect(preview.windows).toHaveLength(0)
   })
 
   it('曲目结束时无循环停止、单曲重播、列表顺序切到下一首', async () => {

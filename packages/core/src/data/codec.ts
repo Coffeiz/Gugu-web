@@ -50,8 +50,9 @@ export function projectRecord(row: Selectable<ProjectTable>): ProjectRecord {
   }
 }
 export function clientRecord(row: Selectable<ClientTable>): ClientRecord {
+  const { name, email, phone, address, notes } = row
   return {
-    ...row,
+    name, email, phone, address, notes,
     id: integer(row.id),
     user_id: uuid(String(row.user_id)),
     created_at: utc(row.created_at),

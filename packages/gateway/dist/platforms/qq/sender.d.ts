@@ -130,4 +130,6 @@ export declare function createQqSender(options: {
         snapshot: () => QqStreamSnapshot;
     };
 };
+/** 主动通知没有入站消息 ID，只使用普通消息的发送路径。 */
+export declare function createQqProactiveSender(options: Pick<Parameters<typeof createQqSender>[0], 'botId' | 'client' | 'sanitizeText'>): (target: Pick<QqTarget, "id" | "chatType" | "messageFormat">, text: string, signal: AbortSignal, authorize: () => Promise<boolean>) => Promise<QqReceipt>;
 export {};

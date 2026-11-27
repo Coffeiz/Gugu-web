@@ -15,14 +15,14 @@ import { createWebAgentShell } from '../../../src/modules/agent/tools/shell/sand
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '1', runId: 'run' }
 function fixture(includeTime = false, includeOverview = false, includeProjects = true, skills?: UseSkillPorts, scheduledTasks?: ScheduledTaskListPort, search?: GlobalSearchOperations, extra: Pick<AgentToolRegistryOptions, 'events' | 'calendarCreate' | 'calendarUpdate' | 'calendarDelete' | 'diskTrashTools' | 'httpGet'> = {}) {
-  const records: Array<{ id: number; userId: string; name: string; contact: null; email: null; phone: null; notes: string }> = []
+  const records: Array<{ id: number; userId: string; name: string; email: null; phone: null; notes: string }> = []
   let enabled = new Set(['list_contacts', 'create_contact', 'create_project'])
   let failed = false, readFailed = false
   const core = { async transaction(ctx: { ownerId: string }, work: (data: unknown) => Promise<unknown>) {
     return work({ clients: { async list() { if (readFailed) throw new Error('合成私有异常'); return records.filter(row => row.userId === ctx.ownerId) },
       async create(value: { name: string; notes: string }) {
         if (failed) throw new Error('合成私有异常')
-        const row = { id: records.length + 1, userId: ctx.ownerId, name: value.name, contact: null, email: null, phone: null, notes: value.notes }
+        const row = { id: records.length + 1, userId: ctx.ownerId, name: value.name, email: null, phone: null, notes: value.notes }
         records.push(row); return row
       } } })
   } } as unknown as SqlDataRuntime

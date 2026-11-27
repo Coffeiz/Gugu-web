@@ -59,8 +59,8 @@ export function displayQQFaces(text: string): string {
   )
 }
 
-export function localizedToolStatusLabel(event: { name?: string; label?: string; custom?: string; input?: unknown; shellActivity?: ChatMessage['shellActivity'] }): string {
+export function localizedToolStatusLabel(event: { name?: string; label?: string; custom?: string; input?: unknown; shellDescription?: string; shellActivity?: ChatMessage['shellActivity'] }): string {
   if (typeof event.custom === 'string' && event.custom.trim()) return event.custom.trim()
-  return toolActivityLabel({ toolName: event.name, toolLabel: event.label, toolInput: event.input, shellActivity: event.shellActivity },
+  return toolActivityLabel({ toolName: event.name, toolLabel: event.label, toolInput: event.input, shellDescription: event.shellDescription, shellActivity: event.shellActivity },
     (key, values) => values ? i18n.global.t(key, values) : i18n.global.t(key), key => i18n.global.te(key))
 }

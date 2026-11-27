@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
-import { createScheduledTaskTestNotifier } from '@gugu/core/scheduled-task-test-notify'
+import { createScheduledTaskTestNotifier } from '@gugu/scheduler/tasks'
 import { createApp } from '../../../src/app.js'
 import { createPostgresScheduledTaskResultDelivery, createPostgresScheduledTaskTestDelivery } from '../../../src/modules/scheduled-tasks/delivery/results.js'
 import { createPostgresScheduledTaskTestEmailDelivery } from '../../../src/modules/scheduled-tasks/delivery/email.js'
@@ -304,7 +304,7 @@ test('实际定时正文使用保存的飞书 Bot 和群，并如实报告附件
 test('QQ 旧群目标仍需 owner 与 Bot 授权，使用固定沙箱消息地址且只发送一次', async () => {
   const ownerId = randomUUID()
   const requests: ProviderHttpRequest[] = []
-  const bot = { id: 4, app_id: 'synthetic-app', app_secret: 'synthetic-envelope', sandbox: true, owner_platform_user_id: 'private-user' }
+  const bot = { id: 4, app_id: 'synthetic-app', app_secret: 'synthetic-envelope', sandbox: true, owner_platform_user_id: 'private-user', private_message_format: 'markdown', group_message_format: 'compat' }
   let accepted = true
   const pool = { async query(sql: string, params: unknown[]) {
     assert.equal(params[0], ownerId)
@@ -333,10 +333,10 @@ test('QQ 旧群目标仍需 owner 与 Bot 授权，使用固定沙箱消息地�
   assert.equal(requests.length, 0)
   assert.deepEqual((await run('group-owned')).result, { QQ: '已发送' })
   assert.deepEqual(requests.map(request => request.url), [
-    'https://api.bot.qq.com/app/getAppAccessToken', 'https://sandbox.api.sgroup.qq.com/v2/groups/group-owned/messages',
+    'https://bots.qq.com/app/getAppAccessToken', 'https://sandbox.api.sgroup.qq.com/v2/groups/group-owned/messages',
   ])
   assert.equal(requests[1]?.headers.Authorization, 'QQBot synthetic-token')
-  assert.deepEqual(requests[1]?.body, {
+  assert.deepEqual(JSON.parse(String(requests[1]?.body)), {
     msg_type: 0,
     msg_seq: 1,
     content: '⏰ 活动提醒（测试）\n\n这是一条测试提醒——「活动提醒」。如果你收到了这条消息，说明提醒渠道工作正常。',
@@ -345,6 +345,7 @@ test('QQ 旧群目标仍需 owner 与 Bot 授权，使用固定沙箱消息地�
   assert.deepEqual((await notify(ownerId, { channels: ['qq'] })).result, { QQ: '发送失败（请检查该平台连接）' })
   assert.equal(requests[3]?.url, 'https://sandbox.api.sgroup.qq.com/v2/users/private-user/messages')
   assert.equal(requests.length, 4)
+  assert.equal(JSON.parse(String(requests[3]?.body)).msg_type, 2)
 })
 
 test('微信试投递只向同 owner 的当前 Bot 私聊发送，使用最新 context_token 且不掩盖业务失败', async () => {
@@ -501,6 +502,7 @@ test('隔离 PostgreSQL 校验飞书、微信和 QQ 的收件人归属及 Bot �
     assert.equal(wechatRequests.length, 1)
 
     await pool.query('ALTER TABLE user_bots ADD COLUMN sandbox boolean NOT NULL DEFAULT FALSE')
+    await pool.query('ALTER TABLE user_bots ADD COLUMN private_message_format text, ADD COLUMN group_message_format text')
     await pool.query("INSERT INTO user_bots VALUES (8,$1,'qq',TRUE,'qq-synthetic',$3,'private-owner',FALSE), (9,$2,'qq',TRUE,'qq-other',$3,'private-other',FALSE)", [ownerId, other, envelope])
     await pool.query("INSERT INTO conversation_sessions VALUES (4,$1,'qq','group','qq-foreign','8'), (5,$2,'qq','group','qq-owned','8')", [other, ownerId])
     const qqRequests: ProviderHttpRequest[] = []
@@ -518,8 +520,8 @@ test('隔离 PostgreSQL 校验飞书、微信和 QQ 的收件人归属及 Bot �
     assert.equal(qqRequests.length, 0)
     const sendQq = await qq(qqPlan('qq-owned'))
     assert.equal(await sendQq(), '已发送')
-    assert.deepEqual(qqRequests[0]?.body, { appId: 'qq-synthetic', clientSecret: 'synthetic-bot-secret' })
-    assert.equal(qqRequests[1]?.url, 'https://api.bot.qq.com/v2/groups/qq-owned/messages')
+    assert.deepEqual(JSON.parse(String(qqRequests[0]?.body)), { appId: 'qq-synthetic', clientSecret: 'synthetic-bot-secret' })
+    assert.equal(qqRequests[1]?.url, 'https://api.sgroup.qq.com/v2/groups/qq-owned/messages')
     await pool.query('UPDATE user_bots SET sandbox=TRUE WHERE id=8')
     assert.equal(await sendQq(), '发送失败（请检查该平台连接）')
     assert.equal(qqRequests.length, 2)

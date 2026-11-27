@@ -1,3 +1,4 @@
+import { createPostgresPool } from '@gugu/database/postgres/pool'
 import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
@@ -114,7 +115,7 @@ test('隔离PG准入：真实唯一冲突、微秒cutoff、状态恢复和Bot停
   const { Pool } = await import('pg'), schema = `im_admission_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: pgUrl }); let pool: Pool | undefined
   try {
-    await admin.query(`CREATE SCHEMA "${schema}"`); pool = new Pool({ connectionString: pgUrl, options: `-c search_path=${schema}` })
+    await admin.query(`CREATE SCHEMA "${schema}"`); pool = createPostgresPool(Pool, { connectionString: pgUrl, options: `-c search_path=${schema}` })
     await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY,is_active boolean NOT NULL,account_status text);
       CREATE TABLE user_bots(id integer PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id),platform text NOT NULL,enabled boolean NOT NULL,group_chat_enabled boolean,feishu_group_chat_enabled boolean)`)
     await pool.query("INSERT INTO users VALUES($1,true,'active')", [owner]); await pool.query("INSERT INTO user_bots VALUES(93,$1,'wechat',true,true,NULL)", [owner])

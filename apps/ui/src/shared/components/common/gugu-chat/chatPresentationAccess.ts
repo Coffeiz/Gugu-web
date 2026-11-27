@@ -13,6 +13,8 @@ export const chatToolDetailsKey: InjectionKey<(
   sessionId: number, source: { kind: 'timeline'; messageId: number; index: number }
 ) => Promise<{ toolInput?: unknown; toolResult?: unknown }>> = Symbol('chatToolDetails')
 
+export const chatHideSuccessfulShellResultKey: InjectionKey<boolean> = Symbol('chatHideSuccessfulShellResult')
+
 export const chatSubagentSnapshotKey: InjectionKey<{
   read(sessionId: number, runId: string, childId: string): Promise<unknown>
   subscribe(listener: (sessionId?: number) => void): () => void

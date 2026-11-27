@@ -31,9 +31,9 @@ function submit() {
 .pm-telegram-connect {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 8px 0 4px;
-  padding: 12px;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0 var(--space-xs);
+  padding: var(--space-md);
   border: 1px solid var(--subpanel-border);
   border-radius: var(--radius-xs);
   background: var(--subpanel-bg);
@@ -43,7 +43,7 @@ function submit() {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .pm-telegram-token-controls input {

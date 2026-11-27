@@ -3,7 +3,7 @@ import { dataContext } from '../contracts/index.js'
 import { normalizeOnboardingState, type OnboardingStore } from './state.js'
 
 /** 单个 owner 的状态读写在同一数据库事务内完成。 */
-export function createKyselyOnboardingStore<DB>(db: Kysely<DB>, backend: 'postgres' | 'sqlite'): OnboardingStore {
+export function createKyselyOnboardingStore<DB>(db: Kysely<DB>, backend: 'postgres' | 'sqlite', options: { enableNewGuide?: boolean } = {}): OnboardingStore {
   const ownerKey = (ownerId: string) => {
     const id = dataContext(ownerId).ownerId
     return backend === 'sqlite' ? id.replaceAll('-', '') : id
@@ -11,7 +11,7 @@ export function createKyselyOnboardingStore<DB>(db: Kysely<DB>, backend: 'postgr
   async function execute(ownerId: string, patch?: Record<string, unknown>): Promise<Record<string, unknown>> {
     const owner = ownerKey(ownerId)
     return db.transaction().execute(async (tx) => {
-      const empty = JSON.stringify(normalizeOnboardingState({}))
+      const empty = JSON.stringify(normalizeOnboardingState(options.enableNewGuide ? { guide: { enabled: true } } : {}))
       if (backend === 'postgres') {
         await sql`INSERT INTO onboarding_state(user_id,state,created_at,updated_at)
           VALUES (${owner},${empty}::json,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT (user_id) DO NOTHING`.execute(tx)

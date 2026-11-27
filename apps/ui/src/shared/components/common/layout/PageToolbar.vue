@@ -9,7 +9,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-xs);
   box-sizing: border-box;
+  padding: var(--toolbar-inset);
   flex-shrink: 0;
   position: relative;
   overflow: hidden;

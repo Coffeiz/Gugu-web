@@ -10,7 +10,11 @@ import {
   PhPresentationChart, PhArchive, PhCode, PhFileText,
 } from '@phosphor-icons/vue'
 import {
-  RiFileExcel2Line, RiFilePdf2Line, RiFilePpt2Line, RiFileTextLine, RiFileWord2Line, RiGlobalLine,
+  RiAndroidLine, RiBlenderLine, RiCss3Line, RiDatabase2Line, RiFigmaLine,
+  RiFileExcel2Line, RiFilePdf2Line, RiFilePpt2Line, RiFileWord2Line, RiFlutterLine,
+  RiHtml5Line, RiJavaLine, RiJavascriptLine, RiKeynoteLine, RiMarkdownLine,
+  RiNumbersLine, RiPagesLine, RiPhpLine, RiReactjsLine, RiSvelteLine,
+  RiTerminalBoxLine, RiVuejsLine, RiWindowsLine,
 } from '@remixicon/vue'
 
 /** 将用户编辑的文件后缀标准化；空值表示保留无后缀文件的 FILE 哨兵。 */
@@ -36,7 +40,7 @@ export function fileExtCategory(ext: string | null | undefined): string {
   if (['xls','xlsx','csv','ods','numbers'].includes(e))                 return 'sheet'
   if (['ppt','pptx','key','odp'].includes(e))                           return 'slide'
   if (['zip','rar','7z','tar','gz','bz2','xz'].includes(e))             return 'archive'
-  if (['js','ts','jsx','tsx','vue','py','go','rs','java','cpp','c','cs','rb','swift','php','kt','dart','sh',
+  if (['js','mjs','cjs','ts','mts','cts','jsx','tsx','vue','py','go','rs','java','cpp','c','cs','rb','swift','php','kt','dart','sh',
        'html','css','scss','less','xml','json','yaml','yml','toml','md','mdx','graphql'].includes(e)) return 'code'
   return 'doc'
 }
@@ -57,15 +61,34 @@ export function fileIconColor(ext: string | null | undefined): string {
   return '#8888a8'
 }
 
-/** ext → 列表/大图标组件（Phosphor）。 */
+const extensionIcons = new Map([
+  ['vue', RiVuejsLine],
+  ['blend', RiBlenderLine],
+  ['html', RiHtml5Line], ['htm', RiHtml5Line],
+  ['css', RiCss3Line],
+  ['js', RiJavascriptLine], ['mjs', RiJavascriptLine], ['cjs', RiJavascriptLine],
+  ['php', RiPhpLine],
+  ['java', RiJavaLine], ['class', RiJavaLine], ['jar', RiJavaLine],
+  ['jsx', RiReactjsLine], ['tsx', RiReactjsLine],
+  ['svelte', RiSvelteLine],
+  ['dart', RiFlutterLine],
+  ['fig', RiFigmaLine],
+  ['md', RiMarkdownLine], ['markdown', RiMarkdownLine],
+  ['sql', RiDatabase2Line], ['sqlite', RiDatabase2Line], ['sqlite3', RiDatabase2Line],
+  ['sh', RiTerminalBoxLine], ['bash', RiTerminalBoxLine], ['zsh', RiTerminalBoxLine],
+  ['apk', RiAndroidLine], ['aab', RiAndroidLine],
+  ['exe', RiWindowsLine], ['msi', RiWindowsLine],
+  ['key', RiKeynoteLine], ['numbers', RiNumbersLine], ['pages', RiPagesLine],
+  ['pdf', RiFilePdf2Line],
+  ['doc', RiFileWord2Line], ['docx', RiFileWord2Line],
+  ['ppt', RiFilePpt2Line], ['pptx', RiFilePpt2Line],
+  ['xls', RiFileExcel2Line], ['xlsx', RiFileExcel2Line],
+])
+
+/** 按扩展名选专属图标，没有匹配时使用文件大类图标。 */
 export function fileListIcon(ext: string | null | undefined) {
-  const normalizedExt = (ext || '').toLowerCase()
-  if (normalizedExt === 'html' || normalizedExt === 'htm') return RiGlobalLine
-  if (normalizedExt === 'md') return RiFileTextLine
-  if (normalizedExt === 'pdf') return RiFilePdf2Line
-  if (['doc', 'docx'].includes(normalizedExt)) return RiFileWord2Line
-  if (['ppt', 'pptx'].includes(normalizedExt)) return RiFilePpt2Line
-  if (['xls', 'xlsx'].includes(normalizedExt)) return RiFileExcel2Line
+  const icon = extensionIcons.get((ext || '').toLowerCase())
+  if (icon) return icon
   const cat = fileExtCategory(ext)
   if (cat === 'image')   return PhImage
   if (cat === 'video')   return PhFilmStrip

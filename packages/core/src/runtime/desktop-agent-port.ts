@@ -7,7 +7,7 @@ import type { SqlDataRuntime } from '../data/runtime.js'
 import type { DesktopMemoryFiles } from '../agent/memory/desktop-files.js'
 import type { CoreError } from '../contracts/error.js'
 
-import type { ScheduledTaskExecutionPlan } from '../scheduled-tasks/run-now-read.js'
+import type { ScheduledTaskExecutionPlan } from '../tasks/run-now-read.js'
 
 /** 平台 Agent 装配口；Core Worker 只依赖行为契约，不导入 Desktop 实现。 */
 export interface DesktopAgentRuntimePort {
@@ -27,6 +27,7 @@ export interface DesktopAgentRuntimePort {
     reply: { token: string; selectedOptionIds?: string[]; customAnswer?: string } | { text: string } | { secrets: Record<string, string> | null } | null,
     config: ProviderConfig, embedding?: RagQueryEmbeddingSettings): Promise<unknown>
   notifyCancel(sessionId: number, runId: string): Promise<void>
+  hasExecutingTasks?(): boolean
   close(): Promise<void>
 }
 

@@ -50,3 +50,25 @@ describe('Agent 文本交互消费用例', () => {
     expect(expired.tx.commit).toHaveBeenCalledOnce()
   })
 })
+
+it('逐题保存回答，重复事件与过时题序不推进，最后只恢复运行一次', async () => {
+  const f = fixture({ source: 'agent', context: { tool_call_id: 'call-a', tool_name: 'ask_user' }, questions: [
+    { id: 'format', title: '输出格式', options: [{ id: 'md', label: 'Markdown' }] },
+    { id: 'length', title: '输出长度' },
+  ] })
+  const reply = (text: string, questionIndex: number, eventId: string) => consumeInteractionText(f.store as never, {
+    ownerId: 'owner-a', promptId: 7, text, questionIndex, eventId,
+  }, () => new Date('2026-11-17T11:00:00Z'))
+
+  await expect(reply('1', 0, 'first')).resolves.toMatchObject({ result: { status: 'question_next', text: expect.stringContaining('第 2 / 2 题') } })
+  await expect(reply('1', 1, 'first')).resolves.toMatchObject({ result: { status: 'question_replay' } })
+  await expect(reply('Markdown', 0, 'stale')).resolves.toMatchObject({ result: { status: 'question_next' } })
+  expect(f.prompt.status).toBe('active')
+  expect(f.tx.enqueueResume).not.toHaveBeenCalled()
+
+  await expect(reply('简短', 1, 'second')).resolves.toMatchObject({ result: { status: 'answered', answers: [
+    { question_id: 'format', option_ids: ['md'] }, { question_id: 'length', text: '简短' },
+  ] } })
+  expect(f.prompt.status).toBe('resolved')
+  expect(f.tx.enqueueResume).toHaveBeenCalledOnce()
+})

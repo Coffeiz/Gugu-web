@@ -49,27 +49,14 @@ export function setupInteractionRuntime(): void {
     landing: { duration: 300, easing: 'ease-out' as const },
     dismiss: { duration: 300, easing: 'ease-out' as const, scale: 0.72 },
   }
-  // 列表行抓起时收成紧凑卡片，不带着整行 6 列宽的表格布局跟手飞。gridTemplateColumns
-  // 跟 FilesListView.vue 里 .list-row 真实的列定义（2fr 90px 1.2fr 80px 72px 56px）
-  // 轨道数量、类型完全一致——这样抓起/落地时浏览器是在给同一套列定义做数值插值，不是
-  // 两套布局互相替换的瞬间跳变，字段落地时能精确回到本体行里真实的列位置。
-  // 每一列紧凑值和真实值必须是同一种单位类型（fr↔fr 或 px↔px），浏览器才能连续插值；
-  // 两边类型对不上的属性值是不可插值的，过渡到一半会直接瞬间跳变，不是连续变化（第 1、
-  // 3 列——名称、项目阶段——本体是 fr，紧凑态也必须用 fr，不能改成 px，踩过一次坑：
-  // 项目阶段改成固定 px 后单独跳变了一下，跟其它列的连续过渡对不上）。
-  // 类型/项目阶段/大小三列不照抄本体的 90px/1.2fr/80px（那是给"MD"这种短徽章、"0 KB"
-  // 这种短文本留了本体表格才需要的大量空白），收紧到接近内容实际宽度；日期/操作两列
-  // 收到 0。这个字符串跟 FilesListView.vue 的列定义是耦合的，那边的列宽/列数一旦改动，
-  // 这里要同步改。
-  // selector 只匹配 .file-list .list-row（文件库），网格视图的 FolderCard/FileCard 不带
-  // 这个 class，不受影响。项目编辑卡走 pm-file-item / pm-folder-item 独立类型。
-  // 100% 相对代理 scaleShell 的抓取基准宽度，因此 compact 只会收窄，不会在窄面板里
-  // 因固定 300px 反向撑宽到超过本体。
+  // 抓取代理收成紧凑行。工作区行由自身的列标记提供四列紧凑样式，
+  // 这样 Runtime 在落位时清掉紧凑覆盖后，前后轨道数量和类型一致。
+  // 只匹配文件库列表行，网格卡片与项目编辑卡使用各自的布局。
   const fileLibraryProxyLayout = {
     compact: {
       selector: '.file-list .list-row',
       width: 'min(300px, 100%)',
-      gridTemplateColumns: '1.3fr 36px 1fr 44px 0px 0px',
+      gridTemplateColumns: 'var(--file-list-compact-columns, 1.3fr 36px 1fr 44px 0px 0px)',
     },
   }
   // 项目编辑卡列表视图只有 5 列（1fr 80px 60px 70px 72px），紧凑布局收为

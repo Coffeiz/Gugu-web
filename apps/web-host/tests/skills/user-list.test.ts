@@ -29,6 +29,23 @@ test('Skills first-load returns owner skill rows without triggering tool discove
     },
     userSkillList: {
       async list(owner) { calls.push(['list', owner]); return [skillRow('笔记整理', 'private skill body')] },
+      async searchClawHub(query, signal) {
+        calls.push(['search', query, signal.aborted])
+        return [{ slug: 'demo', name: '示例', description: '简介', version: null,
+          owner: 'sample', reference: 'sample/demo', url: 'https://clawhub.ai/sample/skills/demo' }]
+      },
+      async installClawHub(owner, reference, context, signal) {
+        calls.push(['install', owner, reference, context, signal.aborted])
+        return { id: 'demo' }
+      },
+      async updateFileSkill(owner, slug, digest, patch, context) {
+        calls.push(['update-file', owner, slug, digest, patch, context])
+        return { id: slug, content_digest: digest }
+      },
+      async deleteFileSkill(owner, slug, digest, context) {
+        calls.push(['delete-file', owner, slug, digest, context])
+        return { id: slug }
+      },
     },
   })
   apps.push(app)
@@ -40,9 +57,41 @@ test('Skills first-load returns owner skill rows without triggering tool discove
   })
 
   assert.equal(unauthorized.statusCode, 401)
+  const deniedSearch = await app.inject({ url: '/api/v1/skills/clawhub/search?q=sample' })
+  const invalidSearch = await app.inject({
+    url: '/api/v1/skills/clawhub/search?q=%20',
+    headers: { authorization: `Bearer ${createUserToken(ownerId, 1, secret)}` },
+  })
+  assert.equal(deniedSearch.statusCode, 401)
+  assert.equal(invalidSearch.statusCode, 422)
+  const search = await app.inject({
+    url: '/api/v1/skills/clawhub/search?q=%20demo%20',
+    headers: { authorization: `Bearer ${createUserToken(ownerId, 1, secret)}` },
+  })
+  assert.equal(search.statusCode, 200)
+  assert.deepEqual(search.json().skills.map((item: { slug: string }) => item.slug), ['demo'])
+  const deniedInstall = await app.inject({ method: 'POST', url: '/api/v1/skills/clawhub/install', payload: { reference: 'sample/demo' } })
+  assert.equal(deniedInstall.statusCode, 401)
+  const install = await app.inject({ method: 'POST', url: '/api/v1/skills/clawhub/install',
+    headers: { authorization: `Bearer ${createUserToken(ownerId, 1, secret)}`, 'x-undo-context-id': 'editor' },
+    payload: { reference: 'sample/demo' } })
+  assert.equal(install.statusCode, 201)
+  assert.deepEqual(install.json(), { id: 'demo' })
+  const digest = 'a'.repeat(64)
+  const updated = await app.inject({ method: 'PATCH', url: '/api/v1/skills/files/demo',
+    headers: { authorization: `Bearer ${createUserToken(ownerId, 1, secret)}`, 'x-undo-context-id': 'editor' },
+    payload: { expectedDigest: digest, patch: { enabled: false } } })
+  assert.equal(updated.statusCode, 200)
+  assert.deepEqual(updated.json(), { id: 'demo', content_digest: digest })
+  const deleted = await app.inject({ method: 'POST', url: '/api/v1/skills/files/demo/delete',
+    headers: { authorization: `Bearer ${createUserToken(ownerId, 1, secret)}`, 'x-undo-context-id': 'editor' },
+    payload: { expectedDigest: digest } })
+  assert.equal(deleted.statusCode, 200)
+  assert.deepEqual(deleted.json(), { id: 'demo' })
   assert.equal(response.statusCode, 200)
   assert.deepEqual(response.json(), { skills: [skillRow('笔记整理', 'private skill body')], tools: [] })
-  assert.deepEqual(calls, [['list', ownerId]])
+  assert.deepEqual(calls, [['list', ownerId], ['search', 'demo', false], ['install', ownerId, 'sample/demo', 'editor', false],
+    ['update-file', ownerId, 'demo', digest, { enabled: false }, 'editor'], ['delete-file', ownerId, 'demo', digest, 'editor']])
 })
 
 test('Skill 工具目录默认列表与按需路由都使用认证 owner', async () => {

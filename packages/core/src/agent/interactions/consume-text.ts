@@ -1,3 +1,4 @@
+import { advanceQuestionBatch, questionBatchText, readQuestionBatch, type AskQuestionAnswer } from './question-batch.js'
 export interface InteractionTextPrompt {
   id: number
   ownerId: string
@@ -25,6 +26,7 @@ export interface InteractionTextOptions {
   promptId: number
   text: string
   eventId?: string
+  questionIndex?: number
 }
 
 export type InteractionTextErrorCode =
@@ -46,6 +48,12 @@ function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
+}
+
+export function canAcceptInteractionText(prompt: {
+  allowTextInput: boolean; customInputActive: boolean; options: readonly { id: unknown }[]
+}): boolean {
+  return prompt.allowTextInput && (prompt.customInputActive || !prompt.options.some(option => option.id !== '__custom_reply__'))
 }
 
 /** 按 Python consume_text 语义消费一次 ask_user 文本，并原子写入 Node Run 恢复队列。 */
@@ -72,12 +80,44 @@ export async function consumeInteractionText(
     if (schema.secret_fields && target.kind === 'mcp_credentials') {
       throw new InteractionTextError('secret_interaction_requires_private_route', '敏感信息交互必须通过专用入口处理')
     }
+    const questions = readQuestionBatch(schema)
+    if (questions && schema.source === 'agent' && context.tool_name === 'ask_user' && options.questionIndex !== undefined && options.eventId) {
+      const prior = Array.isArray(schema.question_progress) ? schema.question_progress as AskQuestionAnswer[] : []
+      const events = Array.isArray(schema.question_events) ? schema.question_events : []
+      const base = { prompt_id: prompt.id, session_id: prompt.sessionId, kind: prompt.kind, context, event_id: options.eventId }
+      if (events.includes(options.eventId)) return { ...base, result: { status: 'question_replay' } }
+      const question = questions[prior.length]
+      if (!question || prior.length !== options.questionIndex)
+        return { ...base, result: { status: 'question_next', text: questionBatchText(questions, prior.length) } }
+      const text = options.text.trim()
+      if (!text || Array.from(text).length > 2000) throw new InteractionTextError('text_invalid', '回答不能为空或过长')
+      const cancelled = text === '取消问答'
+      const number = /^[1-8１-８]$/u.test(text) ? Number(text.normalize('NFKC')) : 0
+      const chosen = question.options?.[number - 1] ?? question.options?.find(option => option.label === text || option.id === text)
+      const progress = advanceQuestionBatch(schema, questions,
+        { question_id: question.id, ...(chosen ? { option_ids: [chosen.id] } : { text }) }, options.eventId, timestamp)
+      if (!cancelled && !progress.complete) {
+        prompt.schema = progress.schema
+        await tx.commit()
+        return { ...base, result: { status: 'question_next', text: questionBatchText(questions, progress.answers.length) } }
+      }
+      const result = { kind: prompt.kind, status: cancelled ? 'cancelled' : 'answered', prompt_id: prompt.id, option_id: null, value: null,
+        text: cancelled ? '已取消问答' : '已提交全部答案', ...(cancelled ? {} : { answers: progress.answers }) }
+      prompt.status = 'resolved'
+      prompt.resolvedAt = timestamp
+      prompt.schema = { ...schema, resolved_result: result }
+      if (!tx.enqueueResume) throw new Error('交互恢复服务不可用')
+      await tx.enqueueResume(prompt, options.eventId)
+      await tx.commit()
+      return { ...base, result }
+    }
     if (schema.source !== 'agent' || schema.allow_text_input !== true) {
       throw new InteractionTextError('custom_reply_not_allowed', '该交互不接受文本回答')
     }
-    const optionsList = Array.isArray(schema.options) ? schema.options : []
-    const realOptions = optionsList.filter(item => record(item).id !== '__custom_reply__')
-    if (realOptions.length > 0 && schema.custom_input_active !== true) {
+    if (!canAcceptInteractionText({
+      allowTextInput: true, customInputActive: schema.custom_input_active === true,
+      options: Array.isArray(schema.options) ? schema.options.map(item => ({ id: record(item).id })) : [],
+    })) {
       throw new InteractionTextError('custom_reply_must_be_selected', '请先选择自定义回答')
     }
     const text = options.text.trim()

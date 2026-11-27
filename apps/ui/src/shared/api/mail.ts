@@ -1,8 +1,12 @@
 import { inject, type InjectionKey } from 'vue'
-import type { MailCommand } from '@gugu/core/mail/contracts'
+import type { MailAccountSummary, MailCommand, MailOAuthProvider } from '@gugu/email/contracts'
 
 export interface MailAccess {
-  readonly preview: boolean
+  oauth?: {
+    preview?: boolean
+    providers(): Promise<MailOAuthProvider[]>
+    connect(provider: MailOAuthProvider, email: string, accountId?: string): Promise<MailAccountSummary>
+  }
   request<T>(command: MailCommand): Promise<T>
 }
 

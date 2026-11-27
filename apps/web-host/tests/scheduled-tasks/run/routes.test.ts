@@ -1,8 +1,7 @@
-import type { ScheduledTaskExecutionCallback } from '@gugu/core/scheduled-task-runner'
+import { ScheduledTaskRunner, type ScheduledTaskExecutionCallback } from '@gugu/scheduler'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createScheduledTaskRunNow } from '@gugu/core/scheduled-task-run-now'
-import { ScheduledTaskRunner } from '@gugu/core/scheduled-task-runner'
+import { createScheduledTaskRunNow } from '@gugu/scheduler/tasks'
 import { createApp } from '../../../src/app.js'
 import { signedUserToken } from '../../helpers/auth.js'
 

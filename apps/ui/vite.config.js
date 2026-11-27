@@ -117,7 +117,7 @@ export default defineConfig({
   optimizeDeps: {
     include: [
       // 通过预构建 URL 加载共享契约，避免开发工作区中文路径生成失效的 /@fs/ URL。
-      '@gugu/core/contracts', '@gugu/core/desktop', '@gugu/core/agent/chat-sse', '@gugu/core/mail/contracts',
+      '@gugu/core/contracts', '@gugu/core/desktop', '@gugu/core/agent/chat-sse', '@gugu/email/contracts',
       '@gugu/core/preferences/text-upload', '@gugu/core/im/user-bots',
       '@gugu/core/agent/commands/help', '@gugu/core/agent/commands/menu', '@gugu/core/agent/tool-result-format',
       '@gugu/core/agent/config/voice-availability', '@gugu/core/agent/sessions/state-labels', '@gugu/core/agent/sessions/ui-labels',

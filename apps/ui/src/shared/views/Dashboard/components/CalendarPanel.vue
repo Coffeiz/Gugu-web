@@ -15,7 +15,7 @@
 
     <!-- 星期行 -->
     <div class="cal-grid" :style="{ gridTemplateRows: `auto repeat(${numWeeks}, 1fr)` }">
-      <span class="weekday" v-for="w in weekdays" :key="w" :class="{ weekend: w === '六' || w === '日' }">{{ w }}</span>
+      <span class="weekday" v-for="(w, index) in weekdays" :key="w" :class="{ weekend: index >= 5 }">{{ w }}</span>
       <div
         v-for="d in calDays" :key="d.key"
         class="cal-day"
@@ -116,12 +116,15 @@ import { showAppError } from '@/composables/core/useAppToast'
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
 const router = useRouter()
-const { t } = useI18n()
+const { t, tm } = useI18n()
 
 const today    = new Date()
 const year     = ref(today.getFullYear())
 const month    = ref(today.getMonth())
-const weekdays = ['一', '二', '三', '四', '五', '六', '日']
+const weekdays = computed(() => {
+  const labels = tm('sharedUi.weekdays') as string[]
+  return [...labels.slice(1), ...labels.slice(0, 1)]
+})
 
 const { fetchYear, getHolidayType } = useHolidays()
 

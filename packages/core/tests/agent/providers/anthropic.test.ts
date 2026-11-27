@@ -710,3 +710,29 @@ describe('Anthropic能力、历史与私有续接', () => {
     expect(anthropicUsage({ input_tokens: 10, cache_read_input_tokens: 20, cache_creation_input_tokens: 3 })).toEqual({ input: 10, cacheRead: 20, cacheWrite: 3, output: 0, contextInput: 33 })
   })
 })
+
+it('跨 Run 复用完整的旧缓存前缀，并拒绝正文已经变化的旧尾部锚点', () => {
+  const config = { provider: 'minimax', model: 'MiniMax-M3' }
+  const { dependencies: { digest } } = fixture([])
+  const history: JsonObject[] = [
+    { role: 'user', content: [{ type: 'text', text: '合成检索上下文' }] },
+    { role: 'user', content: [{ type: 'text', text: '合成旧问题' }] },
+    { role: 'assistant', content: [{ type: 'thinking', thinking: '合成推理', signature: 'synthetic-signature' },
+      { type: 'tool_use', id: 'old-call', name: 'lookup', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old-call', content: '合成旧结果' }] },
+  ]
+  const first = prepareAnthropicCache(history.slice(0, 2), minimaxPolicy, config, digest, 2)
+  const previous = prepareAnthropicCache(history, minimaxPolicy, config, digest, history.length, first.anchor)
+  const next = [...history, { role: 'assistant', content: [{ type: 'text', text: '合成回复' }] },
+    { role: 'user', content: [{ type: 'text', text: '合成新问题' }] }]
+  const carried = prepareAnthropicCache(next, minimaxPolicy, config, digest, next.length, previous.anchor, undefined, true)
+  expect(carried.messages.slice(0, history.length)).toEqual(previous.messages)
+  expect((carried.messages.at(-1)?.content as JsonObject[])[0]).toHaveProperty('cache_control')
+  const nextRound = prepareAnthropicCache([...next, { role: 'assistant', content: [{ type: 'text', text: '合成下一轮' }] }],
+    minimaxPolicy, config, digest, next.length + 1, carried.anchor)
+  expect(nextRound.messages.slice(0, history.length)).toEqual(previous.messages)
+  const changed = next.map((message, index) => index === 2
+    ? { ...message, content: (message.content as JsonObject[]).slice(1) } : message)
+  const rejected = prepareAnthropicCache(changed, minimaxPolicy, config, digest, changed.length, previous.anchor, undefined, true)
+  expect((rejected.messages[3]?.content as JsonObject[])[0]).not.toHaveProperty('cache_control')
+})

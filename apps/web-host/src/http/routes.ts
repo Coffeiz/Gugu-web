@@ -20,7 +20,7 @@ import { registerAttentionDefaultsRoute } from '../modules/im/settings.js'
 import { registerEmbeddingRebuildStatusRoute } from '../modules/agent/memory/rebuild.js'
 import { registerEmbeddingRebuildRoute } from '../modules/agent/memory/rebuild.js'
 import { registerUserBotUnbindRoute } from '../modules/im/connect/unbind.js'
-import { registerUserSkillDeleteRoute, registerUserSkillListRoute, registerUserSkillWriteRoutes } from '../modules/skills/routes.js'
+import { registerUserSkillListRoute } from '../modules/skills/routes.js'
 import { registerOnboardingResetGuideRoute, registerOnboardingRoutes, registerOnboardingReseedRoute } from '../modules/onboarding/routes.js'
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { requestContext } from '@gugu/core'
@@ -262,23 +262,9 @@ export function registerUserRoutes(app: FastifyInstance, options: WebUiOptions) 
   if (options.desktopAgentSimilarImageSearch)
     registerDesktopAgentSimilarImageRoute(app, auth, options.desktopAgentSimilarImageSearch)
   registerMailRoutes(app, auth)
-  if (options.userSkillDelete) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => {
-      registerUserSkillDeleteRoute(routes, { ...options.userSkillDelete!,
-        requireUser: async (request) => { void userFromRequest(request) },
-        ownerIdFromRequest: (request) => userFromRequest(request).requestContext.data.ownerId })
-    })
-  }
   if (options.userSkillList) {
     registerProtectedDomain(app, auth, (routes, userFromRequest) => registerUserSkillListRoute(routes, {
       ...options.userSkillList!,
-      requireUser: async request => { void userFromRequest(request) },
-      ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
-    }))
-  }
-  if (options.userSkillWrite) {
-    registerProtectedDomain(app, auth, (routes, userFromRequest) => registerUserSkillWriteRoutes(routes, {
-      ...options.userSkillWrite!,
       requireUser: async request => { void userFromRequest(request) },
       ownerIdFromRequest: request => userFromRequest(request).requestContext.data.ownerId,
     }))

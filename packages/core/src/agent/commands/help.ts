@@ -10,7 +10,7 @@ const details: Readonly<Record<string, string>> = {
   new: '清空当前会话的消息、摘要、快照和已加载能力，开始一段新的对话。保留当前会话的工作区绑定、用户设置和权限配置。\n/new　开始新对话\n别名：无',
   memory: '查看咕咕保存的个人长期记忆。\n/memory　查看已保存记忆\n别名：/mem',
   forget: '删除与指定内容匹配的个人记忆。\n/forget <内容>　删除匹配的记忆\n示例：/forget I like coffee\n别名：无',
-  workspace: '管理当前会话的工作区绑定和文件系统授权，也可以删除工作区声明。\n/workspace show　查看当前绑定\n/workspace status　查看沙箱权限状态\n/workspace god　申请完整用户沙箱权限\n/workspace revoke　撤销完整用户沙箱权限\n/workspace list　列出可绑定工作区\n/workspace <ID>　绑定指定工作区\n/workspace unlink　解除当前会话绑定\n/workspace delete <ID>　删除工作区（随后确认/取消）\n/workspace delete <ID> confirm　确认删除工作区\n解除只取消当前会话绑定；删除会解除所有会话绑定，但不会删除项目或文件。',
+  workspace: '管理当前会话的工作区绑定和文件系统授权，也可以删除工作区声明。\n/workspace show　查看当前绑定\n/workspace status　查看沙箱权限状态\n/workspace god　申请完整用户沙箱权限\n/workspace revoke　撤销完整用户沙箱权限\n/workspace list　列出可绑定工作区\n/workspace <ID>　绑定指定工作区\n/workspace personal　切回个人文件\n/workspace delete <ID>　删除工作区（随后确认/取消）\n/workspace delete <ID> confirm　确认删除工作区\n解除只取消当前会话绑定；删除会解除所有会话绑定，但不会删除项目或文件。',
   auto: '查看或切换当前用户的自动模式。无参数只查看状态；管理员未开放时不能开启。\n/auto status　查看状态\n/auto on　开启自动模式\n/auto off　关闭自动模式\n自动模式只跳过普通操作确认；权限授权和强制确认仍需你确认。',
   help: '查看全部斜杠命令。\n/help　查看全部命令\n/<command> help　查看指定命令的详细说明',
 }

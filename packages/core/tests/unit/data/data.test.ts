@@ -30,28 +30,18 @@ afterEach(() => {
 })
 
 describe('共享 SQL 数据契约', () => {
-  it('桌面旧任务的不可解析文件编号迁成空路径列表并删除编号列', async () => {
+  it('桌面拒绝旧文件编号列并保留文件结构', async () => {
     const path = file()
     await initializeSqlite(path)
-    const initial = await openSqliteRuntime(path)
-    const owner = initial.ownerId.replaceAll('-', '')
-    await initial.runtime.close()
-
     const legacy = new SQLite(path)
     legacy.exec('ALTER TABLE scheduled_tasks RENAME COLUMN email_attachment_file_paths TO email_attachment_file_ids')
-    legacy.prepare(`INSERT INTO scheduled_tasks(user_id,name,payload,cron,channels,enabled,email_attachment_file_ids,created_at,updated_at)
-      VALUES (?,'旧附件任务','{}','0 * * * *','desktop',1,'[17]','2026-11-24 00:00:00','2026-11-24 00:00:00')`).run(owner)
     legacy.close()
-
-    const migrated = await openSqliteRuntime(path)
-    await migrated.runtime.close()
-    const current = new SQLite(path)
+    await expect(openSqliteRuntime(path)).rejects.toMatchObject({ code: 'storage_error' })
+    const reopened = new SQLite(path)
     try {
-      const columns = current.pragma('table_info(scheduled_tasks)') as { name: string }[]
-      expect(columns.some(column => column.name === 'email_attachment_file_ids')).toBe(false)
-      expect(columns.some(column => column.name === 'email_attachment_file_paths')).toBe(true)
-      expect(current.prepare('SELECT email_attachment_file_paths FROM scheduled_tasks WHERE name=?').pluck().get('旧附件任务')).toBe('[]')
-    } finally { current.close() }
+      const columns = reopened.pragma('table_info(scheduled_tasks)') as { name: string }[]
+      expect(columns.some(column => column.name === 'email_attachment_file_ids')).toBe(true)
+    } finally { reopened.close() }
   })
 
   it('编号基线可读写正式 RAG 索引表', async () => {
@@ -322,6 +312,18 @@ describe('共享 SQL 数据契约', () => {
     expect(db.prepare('SELECT canonical_batch_id FROM conversation_messages ORDER BY id').pluck().all()).toEqual([null,null,null])
     db.exec('DROP INDEX ix_conversation_messages_run_id'); db.close()
     await expect(openSqliteRuntime(path)).rejects.toMatchObject({ code: 'storage_error' })
+  })
+
+  it('旧迁移版本在检查与应用时均被拒绝且保留原版本', async () => {
+    const path = file()
+    await initializeSqlite(path)
+    const db = new SQLite(path)
+    try {
+      db.prepare("UPDATE core_runtime_meta SET value='0001_initialize' WHERE key='migration_revision'").run()
+      await expect(migrateSqlite(path, 'check')).rejects.toMatchObject({ code: 'schema_upgrade_required' })
+      await expect(migrateSqlite(path, 'apply')).rejects.toMatchObject({ code: 'schema_upgrade_required' })
+      expect(db.prepare("SELECT value FROM core_runtime_meta WHERE key='migration_revision'").pluck().get()).toBe('0001_initialize')
+    } finally { db.close() }
   })
 
   it('编号基线只读检查、并发创建、重复应用并拒绝无台账格式', async () => {

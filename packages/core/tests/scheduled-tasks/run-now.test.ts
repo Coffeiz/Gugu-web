@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ScheduledTaskRunner } from '../../src/scheduled-tasks/runner.js'
-import type { OnceTaskRepository, ScheduledTaskExecutionCallback, ScheduledTaskLease } from '../../src/scheduled-tasks/runner.js'
-import { createScheduledTaskAgentAttempt, createScheduledTaskExecution, createScheduledTaskRunNow,
-  scheduledTaskProviderSelection, scheduledTaskSupportsFileDelivery } from '../../src/scheduled-tasks/run-now.js'
+import { ScheduledTaskRunner, type OnceTaskRepository, type ScheduledTaskExecutionCallback, type ScheduledTaskLease } from '@gugu/scheduler'
+import { createScheduledTaskRunNow } from '@gugu/scheduler/tasks'
+import { createScheduledTaskAgentAttempt, createScheduledTaskExecution,
+  scheduledTaskProviderSelection, scheduledTaskSupportsFileDelivery } from '../../src/agent/scenes/task/index.js'
 import { fixture, identity, toolCall, usage } from '../agent/run/fixtures.js'
 import type { ProviderEvent } from '../../src/agent/models.js'
 import { ExecutionError } from '../../src/agent/executor/contracts.js'

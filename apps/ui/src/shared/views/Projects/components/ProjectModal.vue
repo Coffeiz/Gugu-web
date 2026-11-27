@@ -1,13 +1,15 @@
 <template>
   <ProjectModalShell
     :show="!!project" :inline="nativeWindow" :floating="desktop"
-    :root-class="{ modal: true, 'stages-expanded': stagesExpanded, 'info-expanded': infoExpanded, 'pm-switching': pmSwitching, 'project-modal-native': nativeWindow }"
+    :width="projectFilesEnabled ? undefined : '480px'"
+    :height="projectFilesEnabled ? undefined : '660px'"
+    :root-class="{ modal: true, 'stages-expanded': stagesExpanded, 'info-expanded': infoExpanded, 'pm-switching': pmSwitching, 'project-modal-native': nativeWindow, 'project-modal-no-files': !projectFilesEnabled }"
     @close="onModalClose"
   >
         <!-- 悬浮操作按钮：文件多选模式下让位给 .pm-selection-bar（同在右下角，多选栏内容多时会重叠，
              且两边都有删除按钮离太近容易误触），多选栏自己有取消/删除，先隐藏这组项目级按钮 -->
         <div v-if="!fileSelectionActive" class="float-actions">
-          <button class="save-float-btn" @click="closeProjectModal" :title="`${t('common.actions.save')}并${t('common.actions.close')}`">
+          <button class="save-float-btn" @click="closeProjectModal" :title="$t('pageUi.saveClose')">
             <Icon name="status.success" :size="14" />
           </button>
           <button class="archive-float-btn" @click="handleArchive" :title="t('projects.archived')">
@@ -46,9 +48,9 @@
               v-model:client="localClient"
               v-model:start-date="localStartDate"
               v-model:deadline="localDeadline"
-              :color="projectColorSelection(localColor)"
+              :color="localColor"
               :info-expanded="infoExpanded"
-              :color-presets="colorPresets"
+              :compact="!projectFilesEnabled"
               @set-color="setColor"
             />
 
@@ -66,7 +68,7 @@
           </div><!-- /left-content -->
         </div>
 
-        <ProjectDiskFiles v-if="project" :key="project.id"
+        <ProjectDiskFiles v-if="project && projectFilesEnabled" :key="project.id"
           :project-id="project.id" :project-directory-key="desktop ? JSON.stringify([project.name, project.startDate]) : undefined"
           :native-window="nativeWindow" :desktop="desktop"
           :stages-expanded="stagesExpanded"
@@ -82,7 +84,6 @@ import { ref, computed, watch, toRef, nextTick, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/stores/projects'
 import { usePreferencesStore } from '@/stores/preferences'
-import { projectColorSelection, SELECTABLE_PROJECT_COLORS } from '@/utils/projectColors'
 import type { Project } from '@/types/project'
 import ProjectModalShell from '@/views/Projects/components/ProjectModalShell.vue'
 import ProjectInfoPanel from '@/views/Projects/components/ProjectInfoPanel.vue'
@@ -107,7 +108,9 @@ function onModalClose() { closeProjectModal() }
 
 const projectStore = useProjectStore()
 const prefsStore       = usePreferencesStore()
-const desktop = useProjectAccess().storesProjectsLocally
+const projectAccess = useProjectAccess()
+const desktop = projectAccess.storesProjectsLocally
+const projectFilesEnabled = projectAccess.projectFilesEnabled !== false
 const fileSelectionActive = ref(false)
 watch(() => props.project?.id, () => { fileSelectionActive.value = false })
 
@@ -195,7 +198,6 @@ const headerProgress = computed(() => {
   )
 })
 
-const colorPresets = [...SELECTABLE_PROJECT_COLORS]
 
 function setStage(key: string) {
   const transition = projectStages.transitionStage(key)
@@ -214,6 +216,7 @@ function setStage(key: string) {
   overflow: hidden;
 }
 .modal button { outline: none; }
+.modal.project-modal-no-files .modal-left { width: 100%; flex: 1; }
 .modal.project-modal-native .modal-left { width: var(--desktop-project-sidebar-width); }
 
 /* ── 左栏 ── */

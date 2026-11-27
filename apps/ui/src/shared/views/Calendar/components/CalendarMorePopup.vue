@@ -43,12 +43,17 @@ defineExpose({ contains: (target: Node) => !!popup.value?.contains(target) })
 </script>
 
 <style>
-.overflow-popup { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
-.overflow-popup-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); line-height: 1; padding-bottom: 2px; margin-bottom: -2px; }
-.overflow-list { display: flex; flex-direction: column; gap: 4px; }
-.overflow-item { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 99px; border: 1px solid transparent; font-size: 10px; font-weight: 500; white-space: nowrap; overflow: hidden; }
+.overflow-popup {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.overflow-popup-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); line-height: 1.35; }
+.overflow-list { display: flex; flex-direction: column; gap: var(--option-gap); }
+.overflow-item { display: flex; align-items: center; gap: var(--space-xs); height: 22px; padding: 0 var(--space-sm); border-radius: 99px; border: 1px solid transparent; font-size: 10px; font-weight: 500; white-space: nowrap; overflow: hidden; }
 .overflow-item:not(.overflow-clickable) { pointer-events: none; }
-.overflow-tag { font-size: 8px; font-weight: 700; letter-spacing: 0.04em; background: rgba(255,255,255,0.5); border-radius: 3px; padding: 0 3px; line-height: 11px; flex-shrink: 0; margin-right: 2px; }
+.overflow-tag { font-size: 8px; font-weight: 700; letter-spacing: 0.04em; background: rgba(255,255,255,0.5); border-radius: 3px; padding: 0 var(--space-xs); line-height: 11px; flex-shrink: 0; }
 .overflow-tag-ev { background: rgba(210,175,40,0.35); color: #7a5c00; }
 .overflow-name { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 </style>

@@ -38,7 +38,7 @@ const activeIndex = computed(() => Math.max(0, props.tabs.findIndex(tab => tab.k
 
 <style scoped>
 .segment-tabs {
-  gap: 4px;
+  gap: var(--option-gap);
   padding: 4px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);

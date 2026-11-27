@@ -527,10 +527,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .files-toolbar {
   display: flex; align-items: center; justify-content: space-between;
   height: 52px; box-sizing: border-box;
-  padding: 0 16px; flex-shrink: 0; gap: 12px;
+  padding: 0 var(--space-lg); flex-shrink: 0; gap: var(--space-xs);
   position: relative; z-index: 20;
 }
-.toolbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.toolbar-right { display: flex; align-items: center; gap: var(--space-xs); flex-shrink: 0; }
 
 .bc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
@@ -541,7 +541,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 .files-main {
   --scrollbar-overlay-right-offset: -8px;
-  height: 100%; padding: 16px; overflow-y: auto; overflow-x: hidden;
+  height: 100%; padding: var(--page-content-inset); overflow-y: auto; overflow-x: hidden;
   box-sizing: border-box;
 }
 

@@ -6,9 +6,7 @@
           <h2>{{ t(mode === 'compress' ? 'filesUi.archiveCompressTitle' : 'filesUi.archiveExtractTitle') }}</h2>
           <p>{{ t(mode === 'compress' ? 'filesUi.archiveCompressHint' : 'filesUi.archiveExtractHint') }}</p>
         </div>
-        <button class="archive-close" type="button" :aria-label="t('common.actions.close')" @click="emit('close')">
-          <Icon name="action.close" :size="14" />
-        </button>
+        <CloseButton @click="emit('close')" />
       </header>
 
       <div class="archive-dialog-body">
@@ -27,7 +25,7 @@
         <p v-if="success && mode === 'compress'" class="archive-message is-success" role="status">{{ success }}</p>
       </div>
 
-      <footer class="archive-dialog-footer">
+      <footer class="archive-dialog-footer app-card-actions">
         <ActionButton variant="secondary" :disabled="busy" @click="emit('close')">
           {{ success ? t('common.actions.close') : t('common.actions.cancel') }}
         </ActionButton>
@@ -43,9 +41,9 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
-import Icon from '@/components/common/icons/Icon.vue'
 
 const props = withDefaults(defineProps<{
   show: boolean
@@ -83,12 +81,6 @@ function submit() {
 .archive-dialog-heading { min-width: 0; }
 .archive-dialog-heading h2 { margin: 0; color: var(--content-primary); font-size: 15px; font-weight: 700; }
 .archive-dialog-heading p { margin: 6px 0 0; color: var(--content-secondary); font-size: 12px; line-height: 1.5; }
-.archive-close {
-  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 28px;
-  width: 28px; height: 28px; border: 1px solid var(--control-border); border-radius: 8px;
-  background: var(--control-bg); color: var(--content-secondary); cursor: pointer;
-}
-.archive-close:hover { background: var(--control-bg-hover); color: var(--content-primary); }
 .archive-dialog-body { display: grid; gap: 16px; padding: 20px 22px; }
 .archive-field { display: grid; gap: 7px; color: var(--content-secondary); font-size: 12px; }
 .archive-field input { width: 100%; min-width: 0; box-sizing: border-box; height: 36px; }
@@ -96,8 +88,8 @@ function submit() {
 .archive-message.is-error { color: var(--danger-fg); background: var(--danger-bg); }
 .archive-message.is-success { color: var(--status-success); background: var(--status-success-bg); }
 .archive-dialog-footer {
-  display: flex; justify-content: flex-end; gap: 8px; padding: 14px 22px 18px;
-  border-top: 1px solid var(--panel-divider);
+  display: flex; justify-content: flex-end; gap: 8px;
+
 }
 .archive-spinner {
   width: 12px; height: 12px; border: 1.5px solid currentColor; border-right-color: transparent;

@@ -126,8 +126,11 @@ export type DesktopCoreHostRequest = {
 }
 type DesktopCoreHostRequestHandler = (request: DesktopCoreHostRequest) => Promise<unknown>
 export class CoreHost {
+  ownerId?: string
+  private imInboxListeners = new Set<(platform: string, connectionId: string) => void>()
   private agentRunListeners = new Set<(sessionId: number, runId: string | undefined, interactionChanged?: true) => void>()
   private hostControllers = new Map<number, AbortController>()
+  private stopListeners = new Set<() => void>()
   private hostRequestHandler?: DesktopCoreHostRequestHandler
   private waiting?: Waiting
   private buffered = Buffer.alloc(0)
@@ -154,6 +157,7 @@ export class CoreHost {
     child.once('exit', () => {
       this.stopped = true
       this.fail()
+      this.notifyStopped()
     })
   }
   static async launch(
@@ -200,7 +204,7 @@ export class CoreHost {
       )
         throw new DesktopError(
           'schema_upgrade_required',
-          '本地数据库与当前版本不兼容，请使用新数据库文件',
+          '本地数据库与当前版本不兼容，请使用匹配的桌面版本，或备份后执行数据库升级',
         )
       if (
         ready.v !== 2 ||
@@ -213,6 +217,7 @@ export class CoreHost {
             ready.nodeAbi !== manifest.nodeAbi))
       )
         throw new DesktopError('startup_failed', 'Core 数据库或运行时无法通过启动校验')
+      if (typeof ready.ownerId === 'string' && /^[0-9a-f-]{36}$/u.test(ready.ownerId)) host.ownerId = ready.ownerId
       host.agentChunksAvailable = ready.capabilities.includes('agent_response_chunks_v1')
       host.undoAvailable = ready.capabilities.includes('undo_mind_v1')
       host.calendarAvailable = ready.capabilities.includes('calendar_v1')
@@ -256,6 +261,7 @@ export class CoreHost {
           && typeof message.reason === 'string' && ['out_of_memory', 'uncaught_exception', 'unexpected_exit', 'watchdog_timeout'].includes(message.reason)) {
           this.report?.('host.core_worker_exit', { code: message.reason, exitCode: message.exitCode,
             frames: Array.isArray(message.frames) ? message.frames : [] })
+          this.notifyStopped()
           continue
         }
         if (message.v === 2 && message.event === 'agent_run_changed'
@@ -319,6 +325,19 @@ export class CoreHost {
       }
     })
   }
+  private notifyStopped(): void {
+    for (const listener of this.stopListeners) { try { listener() } catch { /* 停机清理不能阻断其他监听器。 */ } }
+    this.stopListeners.clear()
+  }
+  onStopped(listener: () => void): () => void {
+    if (this.stopped) { listener(); return () => {} }
+    this.stopListeners.add(listener)
+    return () => { this.stopListeners.delete(listener) }
+  }
+  onImInboxChanged(listener: (platform: string, connectionId: string) => void): () => void {
+    this.imInboxListeners.add(listener)
+    return () => { this.imInboxListeners.delete(listener) }
+  }
   onAgentRunChanged(listener: (sessionId: number, runId: string | undefined, interactionChanged?: true) => void): () => void {
     this.agentRunListeners.add(listener)
     return () => { this.agentRunListeners.delete(listener) }
@@ -336,7 +355,9 @@ export class CoreHost {
       const result = await this.hostRequestHandler({ id, method, params, signal: controller.signal })
       response = { v: 2, event: 'host_response', requestId: id, result }
     } catch (error) {
-      const code = error instanceof DesktopError && ['invalid_request', 'not_found', 'conflict', 'storage_error', 'closed', 'cancelled', 'busy'].includes(error.code)
+      const code = method === 'agent.schedules.model' && error instanceof DesktopError && error.code === 'model_unavailable'
+        ? 'invalid_request'
+        : error instanceof DesktopError && ['invalid_request', 'not_found', 'conflict', 'storage_error', 'closed', 'cancelled', 'busy'].includes(error.code)
         ? error.code : 'storage_error'
       const message = error instanceof DesktopError && code !== 'storage_error'
         ? error.message : '桌面 Agent 宿主能力执行失败'
@@ -383,11 +404,10 @@ export class CoreHost {
       ['owner_id', 'user_id', 'ownerId'].some((key) => key in params)
     )
       return Promise.reject(new DesktopError('invalid_request', '桌面请求无效'))
-    const requestLimit = ['preferences.desktop.update', 'preferences.agent'].includes(method) ? MAX_FRAME : MAX_FRAME / 2
     let snapshot: Record<string, unknown>
     try {
       const encoded = JSON.stringify(params)
-      if (Buffer.byteLength(encoded) > requestLimit - 256) throw new Error()
+      if (Buffer.byteLength(encoded) > MAX_FRAME - 256) throw new Error()
       snapshot = JSON.parse(encoded)
     } catch {
       return Promise.reject(
@@ -412,7 +432,7 @@ export class CoreHost {
             ...(acceptChunks ? { accept_chunks: true } : {}),
             ...(operationId ? { operation_id: operationId } : {}),
           }) + '\n'
-        if (Buffer.byteLength(request) > requestLimit)
+        if (Buffer.byteLength(request) > MAX_FRAME)
           throw new DesktopError('invalid_request', '桌面请求超出长度限制')
         let response: Record<string, unknown>
         try {
@@ -458,7 +478,7 @@ export class CoreHost {
               ? '会话已有运行中的任务，请等待当前回复' : '本地数据队列已满，请稍后重试',
             cancelled: '操作已取消',
             result_too_large: '返回结果超出桌面协议限制',
-            schema_upgrade_required: '本地数据库与当前版本不兼容，请使用新数据库文件',
+            schema_upgrade_required: '本地数据库与当前版本不兼容，请使用匹配的桌面版本，或备份后执行数据库升级',
             database_in_use: '数据库正由其他运行时使用，请先关闭其他实例',
             storage_error: '本地数据操作失败，请刷新数据确认状态',
             closed: '本地数据进程已停止，请重新启动应用后查看已保存的回复',
@@ -472,6 +492,12 @@ export class CoreHost {
             '本地数据操作结果未确认，请查询操作收据或读取已保存数据，勿重复提交',
             operationId,
           )
+        }
+        if ((method === 'im.inbox.admit' || method === 'im.inbox.resumePendingAsk') && response.result === true
+          && typeof snapshot.platform === 'string' && typeof snapshot.connectionId === 'string') {
+          for (const listener of this.imInboxListeners) {
+            try { listener(snapshot.platform, snapshot.connectionId) } catch { /* 已提交的收件不受监听回调影响。 */ }
+          }
         }
         return response.result as T
       })

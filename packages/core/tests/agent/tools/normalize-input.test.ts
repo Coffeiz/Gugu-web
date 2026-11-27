@@ -17,8 +17,8 @@ describe('公开工具schema驱动的有限输入兼容', () => {
     expect(normalizeToolInput(definition(), { start_date: '2026-02-30' }, context)).toEqual({ start_date: '2026-02-30' })
     expect(normalizeToolInput(definition(), { start_date: '2026/2/1' }, context)).toEqual({ start_date: '2026-02-01' })
   })
-  it.each(['create_project', 'update_project', 'create_client', 'update_client'])('只在专属名称缺失时迁移%s的name', name => {
-    const target = name.endsWith('project') ? 'project_name' : 'client_name'
+  it.each(['create_project', 'update_project'])('只在专属名称缺失时迁移%s的name', name => {
+    const target = 'project_name'
     expect(normalizeToolInput(definition(name), { name: 123 })).toEqual({ [target]: '123' })
     expect(normalizeToolInput(definition(name), { name: '旧字段', [target]: '' })).toEqual({ name: '旧字段', [target]: '' })
     expect(normalizeToolInput(definition(name), { name: '旧字段', [target]: null })).toEqual({ name: '旧字段', [target]: null })
@@ -68,13 +68,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { dataContext } from '../../../src/contracts/index.js'
-import { createClientTools } from '../../../src/agent/tools/clients.js'
-import { createListProjectsTool } from '../../../src/agent/tools/projects.js'
+import { createClientTools } from '../../../src/agent/tools/clients/index.js'
+import { createListProjectsTool } from '../../../src/agent/tools/projects/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { ToolScope } from '../../../src/agent/tools/contracts.js'
 
 describe('输入兼容经过真实 registry 与临时 SQLite', () => {
-  it('旧名称、数字联系人、文本ID及归档false归一后真实读写；重复批量ID不执行', async () => {
+  it('旧名称、数字电话、文本ID及归档false归一后真实读写；重复批量ID不执行', async () => {
     const root = await mkdtemp(join(tmpdir(), 'gugu-normalize-input-'))
     const path = join(root, 'core.db')
     await initializeSqlite(path)
@@ -84,15 +84,15 @@ describe('输入兼容经过真实 registry 与临时 SQLite', () => {
       const scope: ToolScope = { identity: { ownerId, sessionId: '1', runId: 'run' }, roundId: 'round', resolution: null,
         signal: new AbortController().signal, execute: async () => { throw new Error('不可执行命令') } }
       const dispatch = (name: string, input: unknown) => registry.tools.dispatch({ id: 'call', name, input }, scope)
-      const made = await dispatch('create_client', { name: '旧字段联系人', contact: 12345 })
+      const made = await dispatch('create_client', { client_name: '旧字段联系人', phone: 12345 })
       expect(made).toMatchObject({ successful: true, value: { success: true, name: '旧字段联系人',
-        input_adaptations: ['create_client.name:renamed_to_client_name', 'contact:number_to_string'] } })
+        input_adaptations: ['phone:number_to_string'] } })
       const rows = await runtime.transaction(dataContext(ownerId), data => data.clients.list())
       expect(rows).toHaveLength(1)
-      expect(rows[0]!.contact).toBe('12345')
+      expect(rows[0]!.phone).toBe('12345')
       expect(await dispatch('update_client', { client_id: `#${rows[0]!.id}`, name: '更新后联系人', phone: 67890 }))
         .toMatchObject({ successful: true, value: { success: true, name: '更新后联系人', input_adaptations: [
-          'update_client.name:renamed_to_client_name', 'client_id:string_to_integer', 'phone:number_to_string',
+          'contact_id:string_to_integer', 'phone:number_to_string',
         ] } })
       const duplicate = await dispatch('update_client', { client_ids: [String(rows[0]!.id), rows[0]!.id], client_id: String(rows[0]!.id), name: '不应写入' })
       expect(duplicate).toMatchObject({ successful: false, executed: false })
@@ -115,7 +115,7 @@ describe('输入兼容经过真实 registry 与临时 SQLite', () => {
 })
 
 import { vi } from 'vitest'
-import { createProjectTool } from '../../../src/agent/tools/projects.js'
+import { createProjectTool } from '../../../src/agent/tools/projects/index.js'
 
 function containerDefinition(items: Record<string, any> = { type: 'object', properties: { label: { type: 'string' } } }): PreparedToolDefinition {
   return { name: 'test', schema: { type: 'function', function: { parameters: { type: 'object', properties: {
@@ -303,8 +303,8 @@ describe('Unicode Nd整数兼容经过真实registry与SQLite', () => {
         signal: new AbortController().signal, execute: async () => { throw new Error('不得执行进程') } }
       const made = await registry.tools.dispatch({ id: 'create-unicode', name: 'create_client', input: { client_name: 'Unicode联系人', notes: '初始备注' } }, scope)
       expect(made).toMatchObject({ successful: true, mutated: true })
-      if (made.kind !== 'completed' || made.value === null || typeof made.value !== 'object' || !('client_id' in made.value)) throw new Error('创建联系人未返回ID')
-      const id = Number(made.value.client_id)
+      if (made.kind !== 'completed' || made.value === null || typeof made.value !== 'object' || !('contact_id' in made.value)) throw new Error('创建联系人未返回ID')
+      const id = Number(made.value.contact_id)
       expect(Number.isSafeInteger(id)).toBe(true)
       expect(String(id).length).toBeGreaterThan(1)
       const fullwidth = decimalDigits(id, 0xff10), arabic = decimalDigits(id, 0x0660), bold = decimalDigits(id, 0x1d7ce)
@@ -315,7 +315,7 @@ describe('Unicode Nd整数兼容经过真实registry与SQLite', () => {
       const update = (client_id: string, notes: string, owner = ownerId) => registry.tools.dispatch({ id: 'update-unicode', name: 'update_client', input: { client_id, notes } }, { ...scope, identity: { ...scope.identity, ownerId: owner } })
       for (const [index, client_id] of variants.entries()) {
         const note = `已更新${index}`
-        expect(await update(client_id, note)).toMatchObject({ successful: true, mutated: true, value: { success: true, client_id: id } })
+        expect(await update(client_id, note)).toMatchObject({ successful: true, mutated: true, value: { success: true, contact_id: id } })
         expect(await readNotes()).toBe(note)
       }
       const saved = await readNotes()

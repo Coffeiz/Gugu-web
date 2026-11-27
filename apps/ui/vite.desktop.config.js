@@ -5,13 +5,16 @@ import { desktopCorePreview } from '../desktop/scripts/vite-core-preview.mjs'
 
 // 本地共享模块随源码更新，避免浏览器继续加载旧的预构建导出。
 const desktopSourceEntries = {
+  '@gugu/desktop-contracts/file-preview': 'desktop-contracts/src/file-preview.ts',
+  '@gugu/core/agent/sessions/tool-labels': 'core/src/agent/sessions/tool-labels.ts',
   '@gugu/core/contracts': 'core/src/contracts/index.ts',
   '@gugu/core/desktop': 'core/src/contracts/desktop.ts',
   '@gugu/core/agent/shell-activity': 'core/src/agent/shell-activity.ts',
+  '@gugu/core/agent/tool-result-format': 'core/src/agent/providers/tool-result-format.ts',
   '@gugu/core/agent/chat-sse': 'core/src/agent/chat-sse.ts',
   '@gugu/core/agent/commands/menu': 'core/src/agent/commands/menu.ts',
   '@gugu/core/im/user-bots': 'core/src/im/user-bots.ts',
-  '@gugu/core/mail/contracts': 'core/src/mail/contracts.ts',
+  '@gugu/email/contracts': 'email/src/contracts.ts',
   '@gugu/core/preferences/text-upload': 'core/src/preferences/text-upload.ts',
   '@gugu/database/version': 'database/src/version.ts',
 }
@@ -40,6 +43,17 @@ export default defineConfig(({ command }) => ({
   },
   plugins: [
     ...(base.plugins ?? []),
+    {
+      name: 'desktop-design-preview',
+      apply: 'serve',
+      configureServer(server) {
+        server.middlewares.use((req, _res, next) => {
+          if ((req.method === 'GET' || req.method === 'HEAD') && /^\/design\/?(?:\?|$)/.test(req.url ?? ''))
+            req.url = req.url.replace(/^\/design\/?/, '/desktop.html')
+          next()
+        })
+      },
+    },
     desktopCorePreview(resolve(__dirname, '../desktop')),
     {
       name: 'desktop-vite-preview-csp',

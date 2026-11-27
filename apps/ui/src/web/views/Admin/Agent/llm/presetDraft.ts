@@ -23,7 +23,6 @@ export interface LlmPresetDraft extends Partial<LlmPresetRecord> {
   max_tokens: number
   context_tokens: number
   thinking: string
-  reasoning_persistence: 'off' | 'continuation'
   web_search_enabled: boolean
   image: boolean
   video: boolean
@@ -42,7 +41,6 @@ export function newLlmPresetDraft(defaults: { base_url: string; model: string })
     context_tokens: DEFAULT_LLM_CONTEXT_TOKENS,
     thinking: '',
     reasoning_effort: '',
-    reasoning_persistence: 'off',
     web_search_enabled: false,
     image: false,
     image_detail: 'auto',
@@ -64,7 +62,6 @@ export function editLlmPresetDraft(preset: LlmPresetRecord): LlmPresetDraft {
     api_key: '',
     max_tokens: preset.max_tokens ?? DEFAULT_LLM_OUTPUT_TOKENS,
     context_tokens: preset.context_tokens ?? DEFAULT_LLM_CONTEXT_TOKENS,
-    reasoning_persistence: preset.reasoning_persistence === 'continuation' ? 'continuation' : 'off',
     web_search_enabled: Boolean(preset.web_search_enabled),
     image_detail: preset.image_detail || 'auto',
     ollama_mode: preset.ollama_mode || 'local',

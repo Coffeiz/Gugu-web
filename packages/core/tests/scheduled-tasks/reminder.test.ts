@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { createScheduledTaskExecution } from '../../src/scheduled-tasks/execute.js'
+import { createScheduledTaskExecution } from '../../src/agent/scenes/task/execute.js'
 
 it.each([true, false])('提醒原样投递，立即执行=%s，无需模型端口', async isTrial => {
   const deliver = vi.fn(async () => ({ QQ: '已发送' }))

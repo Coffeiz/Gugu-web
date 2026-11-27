@@ -26,22 +26,28 @@ function parseVectorFile(raw: string, namespace: string, kind: 'memory'|'knowled
 export async function readRagDocumentVectors(documents:readonly RagDocument[],version:string,read:RagVectorSource,signal?:AbortSignal,cacheNamespace?:string):Promise<Record<string,number[]>> {
  if (!version || !documents.length) return {}
  signal?.throwIfAborted()
- const raw=await Promise.all((['memory','knowledge','pattern'] as const).map(kind=>read(kind,signal)))
- signal?.throwIfAborted()
- const kinds=['memory','knowledge','pattern'] as const
- const maps=raw.map((value,index)=>value===null?{}:cacheNamespace?parseVectorFile(value,cacheNamespace,kinds[index]!,version):parseUncachedVectorFile(value))
- const result:Record<string,number[]>={}
- for(const document of documents){
-  // memory 索引的持久 parent ID 会加 scope 命名空间，避免 owner 内不同 IM
-  // scope 覆盖同一 SQL 索引行；1.7.7 向量文件仍按原始 parent ID 存储。
+ // 持久索引的 parent ID 含 scope 命名空间，旧向量文件仍按原始 parent ID 存储。
+ const requests=documents.map(document=>{
   const parent=String(document.metadata?.memory_parent_id??document.parent_id??document.id),chunk=Number(document.chunk_index||0)
   const pattern=(document.metadata?.memory_source_id??document.source_id)==='pattern'
+  const kind=document.source_type==='knowledge'?'knowledge':pattern?'pattern':'memory'
   const key=pattern?String(document.metadata?.vector_key||''):`rag:${parent}:${String(document.document_version||'')}:${chunk}`
-  const map=maps[document.source_type==='knowledge'?1:pattern?2:0]!
+  return {id:String(document.id||`memory:${parent}:${chunk}`),kind,key} as const
+ })
+ const kinds=[...new Set(requests.filter(request=>request.key).map(request=>request.kind))]
+ const maps=new Map(await Promise.all(kinds.map(async kind=>{
+  const raw=await read(kind,signal)
+  return [kind,raw===null?{}:cacheNamespace?parseVectorFile(raw,cacheNamespace,kind,version):parseUncachedVectorFile(raw)] as const
+ })))
+ signal?.throwIfAborted()
+ const result:Record<string,number[]>={}
+ for(const {id,kind,key} of requests){
+  const map=maps.get(kind)
+  if(!map||!key)continue
   const item=map[key]
   if(!item || typeof item!=='object' || Array.isArray(item)) continue
   const entry=item as {t?:unknown;v?:unknown}
-  if(entry.t===version && Array.isArray(entry.v) && entry.v.every(part=>typeof part==='number' && Number.isFinite(part))) result[String(document.id||`memory:${parent}:${chunk}`)]=[...entry.v]
+  if(entry.t===version && Array.isArray(entry.v) && entry.v.every(part=>typeof part==='number' && Number.isFinite(part))) result[id]=[...entry.v]
  }
  return result
 }

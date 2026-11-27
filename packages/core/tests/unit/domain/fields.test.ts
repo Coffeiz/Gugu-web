@@ -8,12 +8,11 @@ import {
 
 describe('Python 字段契约的边界回归', () => {
   it.each([
-    [{ name: '小北', contact: null, email: null, phone: null, notes: '' }, true],
+    [{ name: '小北', email: null, phone: null, notes: '' }, true],
     [{ email: null, phone: '' }, false],
     [
       {
         name: '😀'.repeat(200),
-        contact: '合'.repeat(200),
         email: 'a'.repeat(300),
         phone: '1'.repeat(50),
       },
@@ -29,7 +28,7 @@ describe('Python 字段契约的边界回归', () => {
     { name: '😀'.repeat(201) },
     { name: '小北', notes: null },
     { name: '小北', phone: 123 },
-    { name: '小北', contact: 'x'.repeat(201) },
+    { name: '小北', contact: '历史称呼' },
     { name: '小北', email: 'x'.repeat(301) },
     { name: '小北', phone: '1'.repeat(51) },
     { name: '小北', owner_id: '不可覆盖' },

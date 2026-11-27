@@ -1,6 +1,8 @@
 /**
  * 旧 API 兼容入口。新调用方按领域从 `@/api/*` 导入。
  */
+import type { CanvasReferenceData } from '@gugu/core/desktop'
+import type { ClientFields, ClientSummary } from '@gugu/core'
 import type { components } from '@/types/api'
 import { BASE_URL, CLIENT_ID, UNDO_CONTEXT_ID, del, get, getCookieValue, getCsrfHeaders, patch, post, put, request, upload, uploadWithProgress } from '@/api/client'
 import type { RequestMeta } from '@/api/client'
@@ -327,11 +329,13 @@ export interface UserSkillItem {
   related_tools: string[]
   body: string
   source: string
+  storage_source: 'user' | 'clawhub'
   managed_by: 'user' | 'assistant'
   enabled: boolean
   content_digest: string
   created_at: string | null
   updated_at: string | null
+  storage_kind?: 'file'
 }
 
 export interface UserSkillWrite {
@@ -351,12 +355,34 @@ export interface SkillToolItem {
   enabled: boolean
 }
 
+export interface ClawHubPreview {
+  body: string
+  details?: {
+    version?: string; updatedAt?: number | null; license?: string | null
+    downloads?: number; installs?: number; stars?: number
+  }
+}
+export interface ClawHubSkill {
+  slug: string; name: string; description: string; version: string | null
+  owner: string; reference: string; url: string; downloads?: number | null
+}
+export interface FileSkillPatch {
+  name?: string; description?: string; body?: string; enabled?: boolean
+  descriptionLong?: string | null; category?: string; relatedTools?: string[]
+}
+
 export const userSkillsApi = {
+  previewClawHub: (reference: string) => get<ClawHubPreview>(`/skills/clawhub/preview?${new URLSearchParams({ reference })}`),
+  searchClawHub: (query: string) => get<{ skills: ClawHubSkill[] }>(`/skills/clawhub/search?${new URLSearchParams({ q: query })}`),
+  trendingClawHub: () => get<{ skills: ClawHubSkill[] }>('/skills/clawhub/trending'),
+  createFileSkill: (data: UserSkillWrite) => post<{ id: string }>('/skills/files', data),
+  installClawHub: (reference: string) => post<{ id: string }>('/skills/clawhub/install', { reference }),
+  updateFileSkill: (id: string, expectedDigest: string, patchData: FileSkillPatch, source: 'user' | 'clawhub' = 'user') =>
+    patch<{ id: string }>(`/skills/files/${encodeURIComponent(id)}`, { source, expectedDigest, patch: patchData }),
+  deleteFileSkill: (id: string, expectedDigest: string, source: 'user' | 'clawhub' = 'user') =>
+    post<{ id: string }>(`/skills/files/${encodeURIComponent(id)}/delete`, { source, expectedDigest }),
   list: () => get<{ skills: UserSkillItem[] }>('/skills?include_tools=false'),
   tools: () => get<{ tools: SkillToolItem[] }>('/skills/tools'),
-  create: (data: UserSkillWrite) => post<UserSkillItem>('/skills', data),
-  update: (skillId: string, data: Partial<UserSkillWrite>) => patch<UserSkillItem>(`/skills/${encodeURIComponent(skillId)}`, data),
-  delete: (skillId: string) => del(`/skills/${encodeURIComponent(skillId)}`),
 }
 
 // ── Mind（思维面板 · 记录）─────────────────────────────────────────────────────
@@ -373,7 +399,7 @@ export interface MindNote {
   createdAt: string
   updatedAt: string
   deletedAt?: string | null
-  refType?: 'project' | 'file' | 'event' | null
+  refType?: 'project' | 'file' | 'event' | 'client' | null
   refId?: number | null
   /** 引用对象创建时缓存的极简快照，被引用对象删除后仍能显示这些字段；只在创建那一刻
    *  拍照，之后原对象改这些字段不会回填。字段按 refType 各不相同：
@@ -400,7 +426,7 @@ export interface MindNoteUpdate {
 }
 /** `[[` 补全候选：type+id 是写进正文的稳定锚点，label 只作展示 */
 export interface MindRefSuggestItem {
-  type: 'project' | 'file' | 'folder' | 'event' | 'canvas_note' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
+  type: 'project' | 'client' | 'file' | 'folder' | 'event' | 'canvas_note' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
   // mcp 引用的 id 是 UUID 字符串（user_mcp_servers 主键），其余是 int 自增
   id: number | string
   label: string
@@ -428,8 +454,8 @@ export interface MindCanvasItem {
   z: number
   collapsed: boolean
   data: Record<string, unknown>
-  /** 引用对象的首屏展示快照；当前活动卡包含日期、时间和描述。 */
-  refData?: { date?: string; time?: string | null; endTime?: string | null; description?: string | null } | null
+  /** 引用对象的首屏展示快照；活动卡和联系人卡提供各自的展示资料。 */
+  refData?: CanvasReferenceData | null
   node: MindNote
   createdAt: string
   updatedAt: string
@@ -458,9 +484,9 @@ export interface MindCanvasNoteCreate {
 
 // ── Clients ────────────────────────────────────────────────────────────────────
 export const clientsApi = {
-  list:   ()                            => get<Schemas['ClientResponse'][]>('/clients'),
-  create: (data: Schemas['ClientCreate']) => post<Schemas['ClientResponse']>('/clients', data),
-  delete: (id: number)                  => del(`/clients/${id}`),
+  list: () => get<ClientSummary[]>('/clients'),
+  create: (data: ClientFields) => post<ClientSummary>('/clients', data),
+  delete: (id: number) => del(`/clients/${id}`),
 }
 
 export const preferencesApi = {
@@ -477,7 +503,7 @@ export const preferencesApi = {
 }
 
 export const workspacesApi = {
-  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; automaticModeGlobalEnabled: boolean; userAutomaticModeEnabled: boolean; filesystemAuthorizationEnabled: boolean; workspaceSupported: boolean; storageBackend: 'local' | 'oss'; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: unknown[] }>('/workspaces'),
+  status: () => get<{ globalEnabled: boolean; sandboxEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; automaticModeGlobalEnabled: boolean; userAutomaticModeEnabled: boolean; filesystemAuthorizationEnabled: boolean; workspaceSupported: boolean; storageBackend: 'local' | 'oss'; terminalMode: 'auto' | 'pty_disabled' | 'entry_disabled'; terminalEntryEnabled: boolean; ptyEnabled: boolean; items: { id: number; name: string; enabled: boolean }[] }>('/workspaces'),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),
   current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),

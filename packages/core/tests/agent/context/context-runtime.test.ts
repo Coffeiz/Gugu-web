@@ -63,15 +63,16 @@ describe('Canonical上下文与Run运行时组合', () => {
     ports.observation = { record }
     const load = ports.load
     const tail: CanonicalMessage[] = [{ role: 'user', content: '合成召回证据' }]
+    const rag = { tail, diagnostics: { stage_ms: { query_embedding_ms: 34, unexpected: '合成诊断正文' } } }
     ports.load = async (...args) => {
       const loaded = await load(...args)
       if (isEarlyExit(loaded)) return loaded
       return { ...loaded, input: { ...loaded.input, userTimezone: 'Asia/Shanghai',
         history: loaded.input.history.map(row => ({ ...row, createdAt: '2026-01-01T00:00:00Z' })),
-        ...(prepared ? { preparedRag: { tail } } : {}),
+        ...(prepared ? { preparedRag: rag } : {}),
       } }
     }
-    const buildRag = vi.fn(async () => { await delay(35); return { tail } })
+    const buildRag = vi.fn(async () => { await delay(35); return rag })
     ports.preparation = { ...ports.preparation, buildRag, formatMessageTime: formatAgentHistoryMessageTime }
     const state = await context.prepare(identity, signal())
     expect(buildRag).toHaveBeenCalledTimes(prepared ? 0 : 1)
@@ -83,6 +84,7 @@ describe('Canonical上下文与Run运行时组合', () => {
       stages_ms: { rag: expect.any(Number), restore_history: expect.any(Number),
         history_time_format: expect.any(Number), assemble_messages: expect.any(Number) },
     })
+    expect(event.output.assembly.rag_stages_ms).toEqual({ query_embedding_ms: 34 })
     if (!prepared) expect(event.output.assembly.stages_ms.rag).toBeGreaterThanOrEqual(25)
     expect(event.output.assembly.stages_ms.restore_history).toBeGreaterThanOrEqual(event.output.assembly.stages_ms.history_time_format)
   })

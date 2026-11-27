@@ -865,7 +865,7 @@ canvas_search_placeable复用Mind共享createAgentPlaceableSearch，不以全局
 
 canvas_create校验标题/项目，复用createMindCanvasCreation和真实SQL适配器；共享创建适配器新增借用外层事务能力，原独立事务方式仍由双库合同保护。画布、Undo和调用收据同事务提交；发布事件仅在外层提交后执行，失败不回滚已提交数据。调用键包含owner/session/run/round/call，重建、重放、并发同调用只执行一次，改参冲突；提交应答丢失只查收据，没有证明保持unknown。创建与Undo失败均回滚，不泄漏原始异常。标题采用Python strip保留BOM，不把默认Web未命名行为带入工具。通知是明确best-effort，提交成功但应答丢失时可能不发通知；生产可靠通知/outbox仍需Host生命周期验收，不声称事件必达。
 
-list_skills使用共享createSkillMetadataReader，内置定义来自createBuiltinSkillDefinitions读取Markdown head的真实结果；用户查询只选当前owner、source=user的元数据，包含停用项，managed_by空值沿旧默认user，按Python casefold和码点顺序排序。不会读取body或content_digest，也不会用注册器可加载catalog冒充完整管理目录。此工具不授予related_tools权限，不代表用户Skill创建/更新/删除迁移或技能HTTP GET已经完成。
+当前 `list_skills` 使用内置 Markdown head 元数据与 owner 文件目录；用户技能仅从 `.agent/skills/<slug>/SKILL.md` 发现，包含停用项但不返回正文。它不授予 `related_tools` 权限。以下历史验收记录描述的是文件迁移前的 SQL 目录实现，不代表当前运行路径。
 
 Host新增三个独立可选能力：canvasPlaceableSearch、canvasCreation、skillMetadata，分别承载可信owner查询、持久创建/恢复/提交后事件和完整元数据读取；缺少能力不开放工具。发现与执行均继续使用现有authorize；按canvas和skill_management领域组配置开关。没有修改main/app、Run/Provider或生产装配，也未联系其他开发会话。
 

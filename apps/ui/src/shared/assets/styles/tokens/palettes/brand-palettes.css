@@ -8,14 +8,14 @@
   --theme-sidebar-active-bg: var(--theme-card-solid);
   --theme-sidebar-active-fg: #634a48;
   --theme-brand-logo-color: #715653;
-  --theme-divider: linear-gradient(90deg, transparent, rgba(42, 35, 49, .085) 20%, rgba(42, 35, 49, .085) 80%, transparent);
+  --theme-divider: rgba(42, 35, 49, .085);
   --theme-divider-color: rgba(42, 35, 49, .085);
   --theme-success: #5e8877;
   --theme-warning: #917451;
   --theme-danger: #a65d60;
   --theme-info: #647d8a;
-  --theme-brand-gradient: linear-gradient(135deg, #715653, #9f7d78);
-  --theme-fab-gradient: linear-gradient(135deg, #634a48, #856761);
+  --theme-brand-gradient: #715653;
+  --theme-fab-gradient: #634a48;
   --theme-scrollbar-thumb: rgba(113, 86, 83, .24);
   --theme-scrollbar-thumb-hover: rgba(113, 86, 83, .33);
 }
@@ -27,15 +27,15 @@
   --theme-focus: rgba(190, 157, 152, .38);
   --theme-sidebar-active-fg: #d5bfba;
   --theme-brand-logo-color: #ba9992;
-  --theme-divider: linear-gradient(90deg, transparent, rgba(255, 255, 255, .075) 20%, rgba(255, 255, 255, .075) 80%, transparent);
+  --theme-divider: rgba(255, 255, 255, .075);
   --theme-divider-color: rgba(255, 255, 255, .075);
   --theme-success: #92b9a7;
   --theme-warning: #c5a77f;
   --theme-danger: #d59494;
   --theme-info: #a1b9c5;
-  --theme-brand-gradient: linear-gradient(135deg, #624a48, #795956);
-  --theme-fab-gradient: linear-gradient(135deg, #533e3c, #6a4d49);
-  --theme-gugu-chat-send-bg: linear-gradient(135deg, #624944, #765850);
+  --theme-brand-gradient: #624a48;
+  --theme-fab-gradient: #533e3c;
+  --theme-gugu-chat-send-bg: #624944;
   --theme-scrollbar-thumb: rgba(190, 157, 152, .28);
   --theme-scrollbar-thumb-hover: rgba(190, 157, 152, .38);
 }
@@ -49,14 +49,14 @@
   --theme-sidebar-active-bg: var(--theme-card-solid);
   --theme-sidebar-active-fg: #484d56;
   --theme-brand-logo-color: #565b64;
-  --theme-divider: linear-gradient(90deg, transparent, rgba(61, 65, 72, .09) 20%, rgba(61, 65, 72, .09) 80%, transparent);
+  --theme-divider: rgba(61, 65, 72, .09);
   --theme-divider-color: rgba(61, 65, 72, .09);
   --theme-success: #71877c;
   --theme-warning: #9a8465;
   --theme-danger: #a16d70;
   --theme-info: #6f8794;
-  --theme-brand-gradient: linear-gradient(135deg, #565b64, #858a91);
-  --theme-fab-gradient: linear-gradient(135deg, #474c55, #686e77);
+  --theme-brand-gradient: #565b64;
+  --theme-fab-gradient: #474c55;
   --theme-scrollbar-thumb: rgba(86, 91, 100, .25);
   --theme-scrollbar-thumb-hover: rgba(86, 91, 100, .36);
 }
@@ -68,15 +68,15 @@
   --theme-focus: rgba(192, 195, 201, .4);
   --theme-sidebar-active-fg: #e1e3e7;
   --theme-brand-logo-color: #bfc3ca;
-  --theme-divider: linear-gradient(90deg, transparent, rgba(255, 255, 255, .1) 20%, rgba(255, 255, 255, .1) 80%, transparent);
+  --theme-divider: rgba(255, 255, 255, .1);
   --theme-divider-color: rgba(255, 255, 255, .1);
   --theme-success: #a3b9ad;
   --theme-warning: #c8b48f;
   --theme-danger: #d4a0a2;
   --theme-info: #a3bfca;
-  --theme-brand-gradient: linear-gradient(135deg, #4a4f57, #62676f);
-  --theme-fab-gradient: linear-gradient(135deg, #3e434b, #575c64);
-  --theme-gugu-chat-send-bg: linear-gradient(135deg, #4a4f57, #62676f);
+  --theme-brand-gradient: #4a4f57;
+  --theme-fab-gradient: #3e434b;
+  --theme-gugu-chat-send-bg: #4a4f57;
   --theme-scrollbar-thumb: rgba(192, 195, 201, .3);
   --theme-scrollbar-thumb-hover: rgba(192, 195, 201, .42);
 }
@@ -90,14 +90,14 @@
   --theme-sidebar-active-bg: var(--theme-card-solid);
   --theme-sidebar-active-fg: #925d63;
   --theme-brand-logo-color: #a66e73;
-  --theme-divider: linear-gradient(90deg, transparent, rgba(115, 67, 72, .09) 20%, rgba(115, 67, 72, .09) 80%, transparent);
+  --theme-divider: rgba(115, 67, 72, .09);
   --theme-divider-color: rgba(115, 67, 72, .09);
   --theme-success: #778a7d;
   --theme-warning: #9a8465;
   --theme-danger: #a66e73;
   --theme-info: #718995;
-  --theme-brand-gradient: linear-gradient(135deg, #a66e73, #c08b8d);
-  --theme-fab-gradient: linear-gradient(135deg, #925d63, #b27b80);
+  --theme-brand-gradient: #a66e73;
+  --theme-fab-gradient: #925d63;
   --theme-scrollbar-thumb: rgba(166, 110, 115, .27);
   --theme-scrollbar-thumb-hover: rgba(166, 110, 115, .38);
 }
@@ -109,15 +109,15 @@
   --theme-focus: rgba(208, 161, 164, .42);
   --theme-sidebar-active-fg: #edc9cb;
   --theme-brand-logo-color: #cea0a4;
-  --theme-divider: linear-gradient(90deg, transparent, rgba(255, 255, 255, .1) 20%, rgba(255, 255, 255, .1) 80%, transparent);
+  --theme-divider: rgba(255, 255, 255, .1);
   --theme-divider-color: rgba(255, 255, 255, .1);
   --theme-success: #a8bcae;
   --theme-warning: #c9b48f;
   --theme-danger: #d8a3a6;
   --theme-info: #a5c0c9;
-  --theme-brand-gradient: linear-gradient(135deg, #74484e, #8b555b);
-  --theme-fab-gradient: linear-gradient(135deg, #673e44, #815057);
-  --theme-gugu-chat-send-bg: linear-gradient(135deg, #74484e, #8b555b);
+  --theme-brand-gradient: #74484e;
+  --theme-fab-gradient: #673e44;
+  --theme-gugu-chat-send-bg: #74484e;
   --theme-scrollbar-thumb: rgba(208, 161, 164, .3);
   --theme-scrollbar-thumb-hover: rgba(208, 161, 164, .42);
 }
@@ -131,14 +131,14 @@
   --theme-sidebar-active-bg: var(--theme-card-solid);
   --theme-sidebar-active-fg: #566b88;
   --theme-brand-logo-color: #65789a;
-  --theme-divider: linear-gradient(90deg, transparent, rgba(66, 87, 107, .09) 20%, rgba(66, 87, 107, .09) 80%, transparent);
+  --theme-divider: rgba(66, 87, 107, .09);
   --theme-divider-color: rgba(66, 87, 107, .09);
   --theme-success: #718a7f;
   --theme-warning: #988563;
   --theme-danger: #a77578;
   --theme-info: #65789a;
-  --theme-brand-gradient: linear-gradient(135deg, #65789a, #8996b3);
-  --theme-fab-gradient: linear-gradient(135deg, #566b88, #7485a2);
+  --theme-brand-gradient: #65789a;
+  --theme-fab-gradient: #566b88;
   --theme-scrollbar-thumb: rgba(101, 120, 154, .27);
   --theme-scrollbar-thumb-hover: rgba(101, 120, 154, .38);
 }
@@ -150,15 +150,15 @@
   --theme-focus: rgba(154, 174, 205, .42);
   --theme-sidebar-active-fg: #cbd5e7;
   --theme-brand-logo-color: #9aaecd;
-  --theme-divider: linear-gradient(90deg, transparent, rgba(255, 255, 255, .1) 20%, rgba(255, 255, 255, .1) 80%, transparent);
+  --theme-divider: rgba(255, 255, 255, .1);
   --theme-divider-color: rgba(255, 255, 255, .1);
   --theme-success: #a4c1b1;
   --theme-warning: #cbb790;
   --theme-danger: #d8a3a6;
   --theme-info: #9aaed2;
-  --theme-brand-gradient: linear-gradient(135deg, #4b536e, #626d8b);
-  --theme-fab-gradient: linear-gradient(135deg, #3f475f, #55617f);
-  --theme-gugu-chat-send-bg: linear-gradient(135deg, #4b536e, #626d8b);
+  --theme-brand-gradient: #4b536e;
+  --theme-fab-gradient: #3f475f;
+  --theme-gugu-chat-send-bg: #4b536e;
   --theme-scrollbar-thumb: rgba(154, 174, 205, .3);
   --theme-scrollbar-thumb-hover: rgba(154, 174, 205, .42);
 }
@@ -172,14 +172,14 @@
   --theme-sidebar-active-bg: var(--theme-card-solid);
   --theme-sidebar-active-fg: #5e766a;
   --theme-brand-logo-color: #718a7e;
-  --theme-divider: linear-gradient(90deg, transparent, rgba(63, 91, 78, .09) 20%, rgba(63, 91, 78, .09) 80%, transparent);
+  --theme-divider: rgba(63, 91, 78, .09);
   --theme-divider-color: rgba(63, 91, 78, .09);
   --theme-success: #718a7e;
   --theme-warning: #978363;
   --theme-danger: #a77578;
   --theme-info: #6d8990;
-  --theme-brand-gradient: linear-gradient(135deg, #718a7e, #9db4a6);
-  --theme-fab-gradient: linear-gradient(135deg, #5e766a, #829b8d);
+  --theme-brand-gradient: #718a7e;
+  --theme-fab-gradient: #5e766a;
   --theme-scrollbar-thumb: rgba(113, 138, 126, .27);
   --theme-scrollbar-thumb-hover: rgba(113, 138, 126, .38);
 }
@@ -191,15 +191,15 @@
   --theme-focus: rgba(169, 194, 181, .42);
   --theme-sidebar-active-fg: #d1e5d9;
   --theme-brand-logo-color: #a7c0b3;
-  --theme-divider: linear-gradient(90deg, transparent, rgba(255, 255, 255, .1) 20%, rgba(255, 255, 255, .1) 80%, transparent);
+  --theme-divider: rgba(255, 255, 255, .1);
   --theme-divider-color: rgba(255, 255, 255, .1);
   --theme-success: #a4c3b1;
   --theme-warning: #cbb790;
   --theme-danger: #d8a3a6;
   --theme-info: #a0c6c8;
-  --theme-brand-gradient: linear-gradient(135deg, #455f53, #5b7669);
-  --theme-fab-gradient: linear-gradient(135deg, #3a5147, #536d60);
-  --theme-gugu-chat-send-bg: linear-gradient(135deg, #455f53, #5b7669);
+  --theme-brand-gradient: #455f53;
+  --theme-fab-gradient: #3a5147;
+  --theme-gugu-chat-send-bg: #455f53;
   --theme-scrollbar-thumb: rgba(169, 194, 181, .3);
   --theme-scrollbar-thumb-hover: rgba(169, 194, 181, .42);
 }

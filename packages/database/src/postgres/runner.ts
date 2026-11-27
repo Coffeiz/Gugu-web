@@ -1,3 +1,4 @@
+import { connectionFailed } from './transaction.js'
 import { createHash } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { MigrationAction, MigrationStatus } from '../shared/command.js'
@@ -15,6 +16,7 @@ export class PostgresMigrationError extends Error {
 interface PostgresMigrationDefinition {
   readonly revision: string
   readonly sql: string
+  readonly statements?: readonly { sql: string; parameters: readonly unknown[] }[]
   readonly tables: readonly string[]
   readonly indexes?: readonly string[]
   readonly prerequisites?: readonly string[]
@@ -29,6 +31,7 @@ interface PostgresMigrationDefinition {
   readonly downstreamRemovedBy?: string
   readonly downstreamStages?: readonly {
     readonly revision: string
+    readonly addedFields?: readonly string[]
     readonly removedTables?: readonly string[]
     readonly removedFields?: readonly string[]
     readonly removedIndexes?: readonly string[]
@@ -50,6 +53,7 @@ async function definitions(
     ? downstreamApplied
     : Boolean(migration.downstreamRemovedBy && appliedRevisions.includes(migration.downstreamRemovedBy))
   const activeStages = migration.downstreamStages?.filter(stage => appliedRevisions.includes(stage.revision)) ?? []
+  const addedFields = activeStages.flatMap(stage => stage.addedFields ?? [])
   const removedTables = [...(legacyApplied ? migration.downstreamRemovedTables ?? [] : []), ...activeStages.flatMap(stage => stage.removedTables ?? [])]
   const removedFields = [...(legacyApplied ? migration.downstreamRemovedFields ?? [] : []), ...activeStages.flatMap(stage => stage.removedFields ?? [])]
   const removedIndexes = [...(legacyApplied ? migration.downstreamRemovedIndexes ?? [] : []), ...activeStages.flatMap(stage => stage.removedIndexes ?? [])]
@@ -71,6 +75,7 @@ async function definitions(
        AND (m.relname=ANY($1::text[]) OR m.relname||'.'||a.attname=ANY($5::text[]))
        AND NOT (m.relname||'.'||a.attname=ANY($6::text[]))
        AND NOT ($8::boolean AND m.relname||'.'||a.attname=ANY($10::text[]))
+       AND NOT ($14::boolean AND m.relname||'.'||a.attname=ANY($15::text[]))
     UNION ALL
     SELECT 'constraint',m.relname||'.'||c.conname,
       jsonb_build_array(pg_get_constraintdef(c.oid),c.convalidated)::text
@@ -100,6 +105,7 @@ async function definitions(
     downstreamIsApplied, removedTables, removedFields,
     changedFunctions, removedIndexes,
     JSON.stringify(migration.downstreamFieldDefaults ?? {}),
+    downstreamIsApplied, addedFields,
   ])
   return hash(JSON.stringify(rows))
 }
@@ -158,6 +164,7 @@ async function transaction<T>(
 ): Promise<T> {
   let client: PoolClient
   try { client = await pool.connect() } catch (cause) { throw new PostgresMigrationError('unavailable', undefined, cause) }
+  let discard = false
   try {
     await client.query(action === 'check' ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'BEGIN')
     const scope = await client.query<{ schema: string | null }>('SELECT current_schema() AS schema')
@@ -171,11 +178,14 @@ async function transaction<T>(
     await client.query('COMMIT')
     return result
   } catch (cause) {
-    await client.query('ROLLBACK').catch(() => undefined)
+    discard = connectionFailed(cause)
+    if (!discard) {
+      try { await client.query('ROLLBACK') } catch { discard = true }
+    }
     if (cause instanceof PostgresMigrationError) throw cause
     throw new PostgresMigrationError('unavailable', undefined, cause)
   } finally {
-    client.release()
+    client.release(discard)
   }
 }
 
@@ -194,6 +204,8 @@ export function definePostgresMigration(migration: PostgresMigrationDefinition) 
         await client.query("SELECT set_config('search_path',format('%I, pg_temp',current_schema()),true)")
         await client.query(sql)
         await client.query("SELECT set_config('search_path',$1,true)", [scope!.path])
+      } else if (migration.statements) {
+        for (const statement of migration.statements) await client.query(statement.sql, [...statement.parameters])
       } else {
         await client.query(sql)
       }

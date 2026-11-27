@@ -43,15 +43,9 @@ export const SEARCH_SOURCES: readonly SearchSource[] = [
   },
   {
     type: 'client', label: '联系人', table: 'clients c', alias: 'c', owner: 'c.user_id',
-    searchable: ['c.name', 'c.contact', 'c.email', 'c.phone', 'c.notes'], title: 'c.name',
+    searchable: ['c.name', 'c.email', 'c.phone', 'c.address', 'c.notes'], title: 'c.name',
     orderBy: 'c.created_at DESC',
-    map: (row) => ({ id: row.id, title: row.name, subtitle: [row.contact, row.email, row.phone].filter(Boolean).join(' · ') }),
-  },
-  {
-    type: 'skill', label: '技能', table: 'user_skills s', alias: 's', owner: 's.owner_id',
-    searchable: ['s.name', 's.skill_id', 's.description_short', 's.description_long'], title: 's.name',
-    orderBy: 's.updated_at DESC',
-    map: (row) => ({ id: row.skill_id, title: row.name, subtitle: row.description_short, enabled: Boolean(row.enabled) }),
+    map: (row) => ({ id: row.id, title: row.name, subtitle: [row.email, row.phone].filter(Boolean).join(' · ') }),
   },
   {
     type: 'mcp', label: 'MCP', table: 'user_mcp_servers m', alias: 'm', owner: 'TRUE',

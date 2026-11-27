@@ -185,14 +185,13 @@ watch(() => props.showNewFolder, value => {
 </script>
 
 <style scoped>
-/* 共享工具栏只负责内部布局。外框高度属于宿主：文件库保持 v0.20.4 的 52px，
-   项目编辑卡在自己的 toolbar host 中声明同样的高度。control paint/尺寸继续由
-   file-toolbar-theme-refinements.css 唯一负责。 */
 .file-browser-toolbar.glass-card { --gb-tint: var(--glass-card-background); }
 .file-browser-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs);
+  padding: var(--toolbar-inset);
+  box-sizing: border-box;
   flex-shrink: 0;
   position: relative;
   isolation: isolate;
@@ -204,7 +203,7 @@ watch(() => props.showNewFolder, value => {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xs);
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -227,6 +226,6 @@ watch(() => props.showNewFolder, value => {
 .new-folder-inline {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-xs);
 }
 </style>

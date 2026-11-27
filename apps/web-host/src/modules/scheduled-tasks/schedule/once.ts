@@ -1,4 +1,4 @@
-import type { ScheduledTaskRunner, OnceTaskRepository, ScheduledTaskRecord } from '@gugu/core/scheduled-task-runner'
+import type { ScheduledTaskRunner, OnceTaskRepository, ScheduledTaskRecord } from '@gugu/scheduler'
 import type { Pool } from 'pg'
 import { enqueueScheduledTaskRagRebuild } from '../store.js'
 

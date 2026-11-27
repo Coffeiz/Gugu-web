@@ -7,7 +7,7 @@ export interface AgentChatEvent {
 }
 
 export interface AgentChatEventBus {
-  open(identity: RunIdentity, afterSequence?: number, signal?: AbortSignal): Promise<AsyncIterable<RunEvent>>
+  open(identity: RunIdentity, afterSequence?: number, signal?: AbortSignal, onCaughtUp?: () => void): Promise<AsyncIterable<RunEvent>>
   notify(identity: RunIdentity): Promise<void>
 }
 
@@ -64,8 +64,8 @@ export function createAgentChatService<C, I>(ports: AgentChatServicePorts<C, I>)
       try { await ports.events.notify(identity) } catch { /* 持久状态仍可读取。 */ }
     }
   }
-  async function project(identity: RunIdentity, signal?: AbortSignal): Promise<AsyncIterable<AgentChatEvent>> {
-    const subscription = await ports.events.open(identity, 0, signal)
+  async function project(identity: RunIdentity, signal?: AbortSignal, replaying = false): Promise<AsyncIterable<AgentChatEvent>> {
+    const subscription = await ports.events.open(identity, 0, signal, () => { replaying = false })
     return (async function* () {
       let waiting = false
       let finalized = false
@@ -73,7 +73,8 @@ export function createAgentChatService<C, I>(ports: AgentChatServicePorts<C, I>)
         if (event.type === 'interaction_required') waiting = true
         if (event.type === 'interaction_resolved') waiting = false
         if (event.type === 'final') finalized = true
-        yield* await ports.project(event)
+        for (const item of await ports.project(event))
+          yield replaying && item.type === 'display_event' ? { ...item, replayed: true } : item
       }
       if (waiting && !finalized) yield { type: 'done', waiting_for_interaction: true }
     })()
@@ -83,7 +84,7 @@ export function createAgentChatService<C, I>(ports: AgentChatServicePorts<C, I>)
       const { identity, userMessageId, replay, goalMode } = await ports.prepare(owner, input, origin)
       assertIdentity(identity, owner)
       if (!Number.isSafeInteger(userMessageId) || userMessageId < 1) throw new Error('用户消息身份无效')
-      const subscription = await project(identity, signal)
+      const subscription = await project(identity, signal, replay === true)
       if (ports.dispatch) {
         try { await ports.dispatch.notify() } catch { ports.dispatch.diagnose() }
         void ports.dispatch.kick(owner, identity.sessionId).catch(() => { ports.dispatch?.diagnose() })
@@ -102,7 +103,7 @@ export function createAgentChatService<C, I>(ports: AgentChatServicePorts<C, I>)
       if (runId !== undefined && active.identity?.runId !== runId) return null
       if (!active.identity) return (async function* () { yield { type: 'done', idle: true } })()
       assertIdentity(active.identity, owner, sessionId)
-      return project(active.identity, signal)
+      return project(active.identity, signal, true)
     },
     /** 持久交互已在 Host 事务中提交后，按 owner/session 唤醒同一 dispatch 生命周期。 */
     async wake(owner: string, sessionId: number): Promise<boolean> {

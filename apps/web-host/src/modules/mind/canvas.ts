@@ -1,3 +1,4 @@
+import type { CanvasReferenceData } from '@gugu/core/desktop'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { parsePythonInteger, writeRequestMetadata } from '../../http/request.js'
 import type { MindNoteReadResponse } from './notes.js'
@@ -24,7 +25,7 @@ export interface MindCanvasItemResponse {
   z: number
   collapsed: boolean
   data: Record<string, unknown>
-  refData: { date: string; time: string | null; endTime: string | null; description: string | null } | null
+  refData: CanvasReferenceData | null
   node: MindNoteReadResponse
   createdAt: string
   updatedAt: string

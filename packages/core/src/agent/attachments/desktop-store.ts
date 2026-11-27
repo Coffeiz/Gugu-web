@@ -6,7 +6,7 @@ import { assertChatAttachmentCapacity, CHAT_ATTACHMENT_STAGING_BYTES, classifyCh
 import type { DesktopAgentAttachment } from '../../contracts/desktop.js'
 
 export interface DesktopChatAttachmentInput {
-  attachId: string; name: string; ext: string; mime: string | null; size: number; voice: boolean; transcript?: string; duration?: number
+  attachId: string; name: string; ext: string; mime: string | null; size: number; voice: boolean; transcript?: string; duration?: number; quoted?: boolean
 }
 export interface DesktopChatAttachmentStorage {
   storageKey: string
@@ -36,7 +36,8 @@ export async function stageDesktopChatAttachment(tx: Kysely<Database>, ownerId: 
   const owner = ownerKey(ownerId)
   const kind = input.voice ? 'voice' : classifyChatAttachment(input.ext)
   const transcript = input.transcript?.trim()
-  const extra = transcript || reservation ? JSON.stringify({ transcript, im: reservation }) : null
+  const quoted = input.quoted === true ? true : undefined
+  const extra = transcript || reservation || quoted ? JSON.stringify({ transcript, im: reservation, quoted }) : null
   const storageKey = `agent-attachments/${input.attachId}`
   const { rows: usedRows } = await sql<{ used: number }>`SELECT coalesce(sum(size),0) AS used FROM chat_attachments
     WHERE user_id=${owner} AND state IN ('draft','attached')`.execute(tx)
@@ -98,9 +99,10 @@ export async function claimDesktopChatAttachments(
   const unique = [...new Set(attachIds)]
   if (unique.length > 32 || unique.some(id => !/^[0-9a-f]{32}$/.test(id))) throw new CoreError('invalid_request', '附件列表无效')
   if (!unique.length) return []
-  const { rows } = await sql<{ attach_id: string; name: string; ext: string; mime: string | null; kind: string; size: number; duration: number | null; img_width: number | null; img_height: number | null; transcript: string | null }>`
+  const { rows } = await sql<{ attach_id: string; name: string; ext: string; mime: string | null; kind: string; size: number; duration: number | null; img_width: number | null; img_height: number | null; transcript: string | null; quoted: number | null }>`
     SELECT attach_id,name,ext,mime,kind,size,duration,img_width,img_height,
-      CASE WHEN kind='voice' AND json_valid(extra) THEN json_extract(extra,'$.transcript') END AS transcript
+      CASE WHEN kind='voice' AND json_valid(extra) THEN json_extract(extra,'$.transcript') END AS transcript,
+      json_extract(extra,'$.quoted') AS quoted
     FROM chat_attachments
     WHERE user_id=${owner} AND state='draft' AND attach_id IN (${sql.join(unique)})
       AND (json_extract(extra,'$.im') IS NULL OR (
@@ -120,6 +122,7 @@ export async function claimDesktopChatAttachments(
     const row = rows.find(item => item.attach_id === id)!
     return { attach_id: row.attach_id, name: row.name, ext: row.ext, mime: row.mime, size_bytes: row.size,
       kind: row.kind, duration: row.duration, img_width: row.img_width, img_height: row.img_height, upload: true,
+      ...(row.quoted === 1 ? { quoted: true } : {}),
       ...(typeof row.transcript === 'string' && row.transcript.trim() ? { transcript: row.transcript } : {}) }
   })
 }

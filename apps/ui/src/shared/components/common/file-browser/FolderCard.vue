@@ -104,15 +104,15 @@ defineProps({
   mask-image: var(--file-card-media-mask);
   -webkit-mask-image: var(--file-card-media-mask);
 }
-.fd-label { padding: 0 13px 13px; min-width: 0; }
+.fd-label { padding: 0 var(--space-md) var(--space-md); min-width: 0; }
 .fd-name {
   font-size: 11.5px; font-weight: 600; color: var(--content-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
+  line-height: 1.35; padding-bottom: var(--space-xs); margin-bottom: calc(-1 * var(--space-xs));
 }
 /* 输入框宽度限制在名称栏内，卡片根节点负责最终裁切。 */
 .fd-name:has(.rename-sizer) { overflow: visible; text-overflow: clip; }
-.fd-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; line-height: 1.15; color: var(--content-secondary); opacity: 0.55; margin-top: 2px; }
+.fd-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; line-height: 1.15; color: var(--content-secondary); opacity: 0.55; margin-top: var(--space-xs); }
 .sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
 /* leave 只走 opacity（同 FileCard.vue 的注释）：离场冻结 paint，避免选中填充
    先变色再淡完导致结尾闪烁。 */

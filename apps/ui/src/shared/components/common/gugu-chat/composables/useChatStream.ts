@@ -194,13 +194,44 @@ export function useChatStream(options: {
   let _sessionTurn = 0                      // 当前 session 已发消息轮次（埋点用），切会话由 useChatSessions 调 resetSessionTurn 重置
   function resetSessionTurn() { _sessionTurn = 0 }
 
+  const detachedCancellation = new Set<number>()
+
+  async function cancelWithoutStream(id: number) {
+    if (detachedCancellation.has(id)) return
+    detachedCancellation.add(id)
+    const generation = options.getViewGeneration()
+    const ownsView = () => sessionId.value === id && options.getViewGeneration() === generation && !abortCtrl.value
+    try {
+      if (options.runAccess) {
+        const state = await options.runAccess.readState(id)
+        if (!ownsView()) return
+        if (state.runId && (state.status === 'running' || state.status === 'preparing')) {
+          await options.runAccess.cancel(id, state.runId)
+        }
+      } else {
+        const state = await agentApi.getSessionState(String(id))
+        if (!ownsView()) return
+        if (state.active) await (options.cancelSession ?? (sid => agentApi.cancelSession(String(sid))))(id)
+      }
+      await options.fetchSessions()
+    } catch {
+      if (ownsView()) options.setStatus({ kind: 'text', label: i18n.global.t('chatUi.cancelFailed') })
+    } finally {
+      detachedCancellation.delete(id)
+    }
+  }
+
   function stopStreaming() {
     // 停止=取消当前 run；排队中的消息保留，当前流收尾后由 finally 里的
     // drainPendingQueue 立即接续第一条（用户预期：停的是「正在说的这句」，
     // 排队的照样发，而不是一起被丢掉）。终止收口前后端会短暂仍报 active，
     // 排水的 claim 重试负责等它结束。
     const controller = abortCtrl.value
-    if (!controller || controller.signal.aborted || runTerminalControllers.has(controller)) return
+    if (!controller) {
+      if (sessionId.value != null) void cancelWithoutStream(sessionId.value)
+      return
+    }
+    if (controller.signal.aborted || runTerminalControllers.has(controller)) return
     const id = sessionIdForRun(controller)
     if (id == null || (options.runAccess && !runIds.has(controller))) {
       // 保留 SSE，等会话和本次运行身份确认后再取消。
@@ -653,10 +684,10 @@ export function useChatStream(options: {
             currentRoundId = item.roundId
             if (item.kind === 'tool') {
               usedTools.add(item.toolName)
-              options.setStatus(item.toolStatus === 'running' || item.toolStatus === 'queued'
+              if (evt.replayed !== true) options.setStatus(item.toolStatus === 'running' || item.toolStatus === 'queued'
                 ? { kind: 'text', label: localizedToolStatusLabel({
                     name: item.toolName, label: item.toolLabel, custom: item.toolLabelOverride, input: item.toolInput,
-                    shellActivity: item.shellActivity,
+                    shellActivity: item.shellActivity, shellDescription: item.shellDescription,
                   }) }
                 : options.thinkingItem())
             } else {
@@ -664,6 +695,8 @@ export function useChatStream(options: {
               options.clearStatus()
             }
             const delta = mapSessionMessageDelta({ timelineEvents: [item] }, mkid, role => ({ role }))
+            if (evt.replayed === true && delta[0]?.role === 'tool') delta[0]._replayedTool = true
+            else if (delta[0]?.role === 'tool') delta[0]._replayedTool = false
             const reply = delta.find(message => message.role === 'ai')
             if (reply?.text) reply.streaming = true
             messages.value = mergeSessionMessageDelta(messages.value, delta)
@@ -1254,8 +1287,8 @@ export function useChatStream(options: {
       if (ownsCurrentView() && /^\/goal(?:\s|$)/i.test(text)) {
         await options.fetchSessions()
       }
-      // 解除 workspace 绑定会更新会话元数据；同步会话列表，让标题栏立即移除工作区名称。
-      if (ownsCurrentView() && /^\/workspace\s+(?:unlink|off|none|unbind)\s*$/i.test(text)) {
+      // 工作区命令可能修改绑定；同步标题栏的会话工作区。
+      if (ownsCurrentView() && /^\/workspace(?:\s|$)/i.test(text)) {
         await options.fetchSessions()
       }
       if (/^(?:\/|／)auto(?:\s|$)/i.test(text)) {

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./postgres": "./dist/postgres.js",
     ".": "./dist/index.js"
   },
   "files": [
@@ -12,6 +13,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@gugu/database": "workspace:*"
   },
   "devDependencies": {
     "typescript": "6.0.3"

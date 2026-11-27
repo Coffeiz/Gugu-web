@@ -3,7 +3,7 @@
   <Teleport to="body" :disabled="!props.teleportTo">
     <!-- 遮罩：固定低带（OVERLAY_Z），在一切浮动窗口之下——blur 只糊页面，糊不到预览器/聊天窗 -->
     <Transition name="bm-ov" appear>
-      <div v-if="show && !floating" class="bm-overlay" :style="{ zIndex: overlayZ }" @click="$emit('close')" />
+      <div v-if="show && !floating" class="bm-overlay modal-backdrop" :style="{ zIndex: overlayZ }" @click="$emit('close')" />
     </Transition>
     <!-- 卡片：进窗口带，点击置顶（与预览窗/聊天窗自由叠放）。
          :duration 定时收尾——进场根节点自身没有任何过渡属性（见下方过渡注释），
@@ -99,9 +99,6 @@ onBeforeUnmount(() => unregEsc?.())
 /* ── 遮罩（独立节点，固定低带）── */
 .bm-overlay {
   position: fixed; inset: 0;
-  background: rgba(20, 22, 30, 0.3);
-  backdrop-filter: blur(var(--modal-overlay-blur-radius, 6px)) var(--desktop-backdrop-alpha, );
-  -webkit-backdrop-filter: blur(var(--modal-overlay-blur-radius, 6px)) var(--desktop-backdrop-alpha, );
 }
 
 /* ── 居中容器：不拦截指针（下面的窗口照点），只有卡片本体可交互 ── */

@@ -2,7 +2,7 @@ import { proactiveImText } from '../../im/gateway/delivery/proactive.js'
 import type { Pool } from 'pg'
 import { telegramDocumentLimit } from '@gugu/gateway/telegram'
 import { bindScheduledImRecipient, fixedDeliveryTarget, type PreparedScheduledImDelivery, type ScheduledTaskDeliveryPlan } from './targets.js'
-import { InvalidScheduledTaskDeliveryTarget } from '@gugu/core/scheduled-task-test-notify'
+import { InvalidScheduledTaskDeliveryTarget } from '@gugu/scheduler/tasks'
 import type { createWebScheduledAttachmentResources } from './files.js'
 
 const failed = '发送失败（请检查该平台连接）'

@@ -1,3 +1,4 @@
+import { noteColorValue, type NoteColorKey } from './note-colors.js'
 import type { Transaction } from 'kysely'
 import type { Database } from '../data/schema.js'
 import type { Backend } from '../data/repositories.js'
@@ -11,7 +12,7 @@ import { createSqlMindCanvasNoteRuntime } from './canvas-note-sql.js'
 import { MindCanvasItemMutationError } from './canvas-item-remove.js'
 import type { CanvasEditPublication } from './canvas-edits.js'
 
-export interface CanvasNewNote {title?:string;content?:string;color?:'amber'|'coral'|'blue'|'teal';position?:CanvasPosition;width?:number;height?:number}
+export interface CanvasNewNote {title?:string;content?:string;color?:NoteColorKey;position?:CanvasPosition;width?:number;height?:number}
 export interface CanvasReferencePlacement {node_id?:number;ref_type?:'project'|'file'|'event';ref_id?:number|string;position?:CanvasPosition}
 export type CanvasPlacementIntent =
  | {action:'create_note';canvas_id:number;entries:CanvasNewNote[];batched:boolean}
@@ -46,7 +47,7 @@ async function createNotes(ctx:Context,intent:Extract<CanvasPlacementIntent,{act
   for(const entry of intent.entries){
     rejectLegacySize(entry)
     const [x,y]=await position(ctx,entry.position)
-    const item=await runtime.create(ctx.canonical,ctx.canvasId,{title:strip(entry.title||'新便签')||'新便签',contentMd:entry.content||'',color:entry.color??'amber',x,y,w:entry.width??null,h:entry.height??null,z:0},ctx.context)
+    const item=await runtime.create(ctx.canonical,ctx.canvasId,{title:strip(entry.title||'新便签')||'新便签',contentMd:entry.content||'',color:noteColorValue(entry.color??'amber'),x,y,w:entry.width??null,h:entry.height??null,z:0},ctx.context)
     results.push({canvas_id:ctx.canvasId,node:await placedSummary(ctx,item.id),created:true})
     publications.push({ownerId:ctx.canonical,operation:'create',entityId:item.id,origin:null,mutationId:null,entityKind:'canvas_item',entity:item})
   }

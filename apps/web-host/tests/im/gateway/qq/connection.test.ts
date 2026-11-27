@@ -23,7 +23,7 @@ function socket() {
   };
   return { value, sent, closes: () => closes, push(packet: unknown) { queue.push(packet); wake(); } };
 }
-function fixture() {
+function fixture(tokenTimeout = false) {
   let now = 0;
   const waits: { at: number; resolve(): void }[] = [];
   const clock: GatewayClock = { now: () => now, sleep(ms, signal) {
@@ -41,7 +41,10 @@ function fixture() {
   let handler: ((signal: AbortSignal) => Promise<void>) | undefined;
   const connection = createQqConnection({
     clock,
-    async getAccessToken() { return 'synthetic-qq-token'; },
+    async getAccessToken() {
+      if (tokenTimeout) { tokenTimeout = false; throw new DOMException('合成超时', 'TimeoutError'); }
+      return 'synthetic-qq-token';
+    },
     async getGateway(token) { assert.equal(token, 'synthetic-qq-token'); return 'wss://gateway.example.invalid/'; },
     async openSocket(url) {
       opens++; assert.equal(url, 'wss://gateway.example.invalid/');
@@ -117,6 +120,15 @@ test('停止中止业务回调并等待排空，不再分发后续事件', async
   f.sockets[0]!.push({ op: 0, t: 'INTERACTION_CREATE', d: { id: 'first' } });
   f.sockets[0]!.push({ op: 0, t: 'GROUP_AT_MESSAGE_CREATE', d: { id: 'second' } }); await flush();
   await f.connection.stop(); assert.equal(cancelled, true); assert.equal(f.events.length, 1); assert.equal(f.sockets[0]!.closes(), 1);
+});
+
+test('首次获取 QQ token 超时后按退避重试并建立连接', async () => {
+  const f = fixture(true);
+  try {
+    await flush(); assert.equal(f.opens(), 0); assert.deepEqual(f.reports, ['connection-failed']);
+    await f.advance(999); assert.equal(f.opens(), 0);
+    await f.advance(1); assert.equal(f.opens(), 1);
+  } finally { await f.connection.stop(); }
 });
 
 test('停止取消尚未完成的Socket握手，凭据异常不进入公开closed错误', async () => {

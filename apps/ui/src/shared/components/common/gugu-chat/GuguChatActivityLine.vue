@@ -5,9 +5,12 @@
       <span v-if="indicator === 'dots'" class="activity-dots"><i v-for="dot in 3" :key="dot" /></span>
       <template v-else-if="indicator === 'arrow'">↳</template>
     </span>
-    <span class="activity-text" role="status">
-      <Transition :css="false" :appear="indicator !== 'arrow'" @enter="fadeLabel">
-        <span :key="label" class="activity-label">{{ label }}</span>
+    <span class="activity-text" role="status" :aria-live="typing ? 'off' : undefined">
+      <span v-if="typewritten" :key="motionKey" class="activity-label">
+        <span v-for="(character, index) in characters" :key="index + ':' + character" v-fade-glyph>{{ character }}</span>
+      </span>
+      <Transition v-else :css="false" :appear="indicator !== 'arrow' || motionKey !== undefined" @enter="fadeLabel">
+        <span :key="motionKey ?? label" class="activity-label">{{ label }}</span>
       </Transition>
       <slot name="status" />
     </span>
@@ -16,13 +19,24 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { animateStreamFade } from '@/components/common/content/markdownStreamMotion'
 
-defineProps<{
+const props = defineProps<{
   button?: boolean
+  typing?: boolean
+  typewritten?: boolean
+  motionKey?: string
   label: string
   indicator: 'dots' | 'running' | 'arrow'
 }>()
+
+const characters = computed(() => Array.from(props.label))
+const vFadeGlyph = {
+  mounted(element: HTMLElement) {
+    if (props.typing && element.textContent?.trim()) fadeLabel(element)
+  },
+}
 
 function fadeLabel(element: Element) {
   if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) animateStreamFade(element)
@@ -38,6 +52,7 @@ function fadeLabel(element: Element) {
   text-align: start;
 }
 .activity-summary {
+  inline-size: fit-content; max-inline-size: 100%;
   cursor: pointer; border-radius: var(--radius-sm);
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard);
 }
@@ -50,7 +65,7 @@ function fadeLabel(element: Element) {
   animation: activity-pulse 1100ms var(--motion-ease-standard) infinite;
 }
 .activity-text { min-width: 0; overflow-wrap: anywhere; }
-.activity-summary .activity-text { flex: 1; display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 7px; }
+.activity-summary .activity-text { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 7px; }
 .activity-summary .activity-label { min-width: 0; font-weight: 500; color: var(--content-primary); }
 .activity-label { display: inline-block; }
 .activity-dots { display: inline-flex; align-items: center; gap: 1.5px; }

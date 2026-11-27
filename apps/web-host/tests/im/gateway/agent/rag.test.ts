@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { buildRunRagContext, prepareContext, stableJson, type ContextSourceSelection, type PersistedHistoryRow, type PreparationPorts } from '@gugu/core/agent'
 import { type ImActor } from '@gugu/core/im/access'
 import { imContextPolicy } from '@gugu/core/agent/scenes/im'
@@ -18,7 +19,7 @@ async function fixture(work: (f: {
   pool: import('pg').Pool; root: string; owner: string; actor: ImActor; lease: AgentDispatchLease
   readScope: ReturnType<typeof createSqlMemoryScopeStateReader>
   write(scope: 'group' | 'member' | 'owner', text: string, id?: string): Promise<void>
-  build(actor?: ImActor, lease?: AgentDispatchLease, enabled?: () => boolean | Promise<boolean>): Promise<ReturnType<typeof createPostgresImRagContextBuilder>>
+  build(actor?: ImActor, lease?: AgentDispatchLease, enabled?: () => boolean | Promise<boolean>, cold?: boolean): Promise<ReturnType<typeof createPostgresImRagContextBuilder>>
   input(patch?: Record<string, unknown>): { ownerId: string; sessionId: string; query: string; history: PersistedHistoryRow[]; beforeMessageId: string; snapshotText: string }
 }) => Promise<void>) {
   const { Pool } = await import('pg'), { Kysely, PostgresDialect } = await import('kysely')
@@ -66,11 +67,20 @@ async function fixture(work: (f: {
         const key = scope === 'owner' ? `${owner}/.agent/memories/memory.md` : `${owner}/.agent/memories/im/qq/97/${scope === 'group' ? 'groups' : 'platform-users'}/${encodeURIComponent(id ?? (scope === 'group' ? 'room' : 'room:member-a'))}/memory.md`
         const file = join(root, key); await mkdir(dirname(file), { recursive: true }); await writeFile(file, text)
       },
-      async build(who = actor, run = lease, enabled = () => true) {
+      async build(who = actor, run = lease, enabled = () => true, cold = false) {
         const bot = await access.readBot(who); assert.ok(bot)
-        return createPostgresImRagContextBuilder({ core: { db, backend: 'postgres' }, pool, storageRoot: root, lease: run, actor: who, bot,
+        const recall = createPostgresImRagContextBuilder({ core: { db, backend: 'postgres' }, pool, storageRoot: root, lease: run, actor: who, bot,
           selection: { contextPolicy: imContextPolicy(who, bot, true), contextScopeKey: run.input.accessVersion, modelIdentity: 'synthetic-model' } as Pick<ContextSourceSelection, 'contextPolicy' | 'contextScopeKey' | 'modelIdentity'>,
           access, enabled })
+        if (cold) return recall
+        return async (input, signal) => {
+          const deadline = Date.now() + 3_000
+          for (;;) {
+            const result = await recall(input, signal)
+            if (result.reason !== 'index_warming' || Date.now() >= deadline) return result
+            await delay(10, undefined, { signal })
+          }
+        }
       },
       input(patch = {}) { return { ownerId: owner, sessionId: '1', query: '部署', history: [], beforeMessageId: '99', snapshotText: '', ...patch } },
     })
@@ -79,6 +89,8 @@ async function fixture(work: (f: {
 
 test('真实PG/FS自动RAG只召回当前群与当前成员，group关闭时member不隐含group且不回落owner', { skip: !url && '需任务隔离PG及真实索引', timeout: 30000 }, async () => fixture(async f => {
   await f.write('group', '部署本群公开记忆'); await f.write('member', '部署成员自己的私有资料'); await f.write('member', '部署旁人文件私密', 'room:member-b'); await f.write('owner', '部署owner私人记忆')
+  const cold = await f.build(undefined, undefined, undefined, true)
+  assert.equal((await cold(f.input())).reason, 'index_warming')
   const build = await f.build(), result = await build(f.input())
   assert.equal(result.injected, true)
   const text = JSON.stringify(result)

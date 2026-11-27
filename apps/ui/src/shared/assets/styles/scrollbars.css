@@ -94,6 +94,11 @@ html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--
   user-select: none;
 }
 
+/* 无局部宿主时，视口滑块留在普通页面绘制层，不能覆盖有独立层级的窗口。 */
+html[data-theme][data-family] body > [data-overlay-scrollbar-thumb] {
+  z-index: auto;
+}
+
 /* 浮层宿主内的滑块共享宿主层级，并随宿主的 transform/淡出动画同步移动。 */
 html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--owner {
   position: absolute;
@@ -121,11 +126,6 @@ html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--
 
 html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--column {
   --scrollbar-overlay-right-offset: var(--scrollbar-column-right-offset);
-}
-
-html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--modal {
-  position: absolute;
-  z-index: var(--scrollbar-overlay-modal-z-index);
 }
 
 /* 设计令牌预览保留真实 CSS 滑块，避免文档页无法展示滚动条样式。 */

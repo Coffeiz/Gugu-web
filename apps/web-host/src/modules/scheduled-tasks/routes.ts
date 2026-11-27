@@ -2,12 +2,11 @@ import type { FastifyInstance } from 'fastify'
 import type { UserFromRequest } from '../../app.js'
 import { parsePythonInteger, writeRequestMetadata } from '../../http/request.js'
 import { scheduleStatus, taskScheduleKind } from './schedule/status.js'
-import { ScheduledTaskNotFound, type createScheduledTaskDeleter } from '@gugu/core/scheduled-task-delete'
+import { ScheduledTaskNotFound, ScheduledTaskRunNowError, InvalidScheduledTaskDeliveryTarget,
+  type createScheduledTaskDeleter, type createScheduledTaskTestNotifier } from '@gugu/scheduler/tasks'
 import { z } from 'zod'
-import { normalizeSchedule, ScheduleValidationError } from '@gugu/core/scheduled-task-schedule'
+import { normalizeSchedule, ScheduleValidationError } from '@gugu/scheduler'
 import type { createPostgresTaskWrites } from './store.js'
-import { ScheduledTaskRunNowError } from '@gugu/core/scheduled-task-run-now'
-import { type createScheduledTaskTestNotifier, InvalidScheduledTaskDeliveryTarget } from '@gugu/core/scheduled-task-test-notify'
 
 type TaskRow = Record<string, any> & { schedule_kind: unknown; end_at: Date | string | null; enabled: boolean }
 
@@ -138,7 +137,7 @@ function sendError(error: unknown, reply: import('fastify').FastifyReply) {
   throw error
 }
 
-export type ScheduledTaskRunNow = ReturnType<typeof import('@gugu/core/scheduled-task-run-now').createScheduledTaskRunNow>
+export type ScheduledTaskRunNow = ReturnType<typeof import('@gugu/scheduler/tasks').createScheduledTaskRunNow>
 
 export function registerScheduledTaskRunNow(app: FastifyInstance, userFromRequest: UserFromRequest, runNow: ScheduledTaskRunNow): void {
   app.post<{ Params: { taskId: string } }>('/api/v1/scheduled-tasks/:taskId/run', async (request, reply) => {

@@ -6,7 +6,7 @@ import type { ConfirmationIntent, ConfirmationTargetSnapshot } from '@gugu/core/
 import { readActiveSessionFilesystemGrant } from '../sandbox/authorization.js'
 
 export type TrustedPromptIntent = {
-  kind: 'confirmation'; summary: string; action: string; targets: Readonly<Record<string, readonly ConfirmationTargetId[]>>; context?: ConfirmationContext; ttlMinutes: number
+  kind: 'confirmation'; summary: string; action: string; targets: Readonly<Record<string, readonly ConfirmationTargetId[]>>; context?: ConfirmationContext; emailCompose?: Readonly<Record<string, unknown>>; ttlMinutes: number
   /** 可供事务确认协议恢复的可信意图和领域目标；不来自模型输入。 */
   operation?: { intent: ConfirmationIntent; snapshot: ConfirmationTargetSnapshot }
 } | { kind: 'credential'; serverId: string; action: string; configurationVersion?: string }
@@ -37,9 +37,9 @@ export function createTrustedPromptDescriptions(ports: TrustedPromptPorts) {
       const targetIdentity = targetConfirmationIdentity(intent.action, targets, context)
       const code = await ports.createConfirmation(identity.ownerId, intent.summary, targetIdentity, intent.ttlMinutes)
       if (!code) throw new Error('确认服务暂不可用')
-      return { kind: 'confirm', title: '请确认操作', body: intent.summary, options: [
+      return { kind: 'confirm', title: intent.emailCompose ? '编辑邮件' : '请确认操作', body: intent.summary, options: [
         { id: 'confirm', label: '确认', actionType: 'confirm' }, { id: 'cancel', label: '取消', actionType: 'cancel' },
-      ], context: { confirm_code: code }, expiresMinutes: intent.ttlMinutes }
+      ], context: { confirm_code: code, ...(intent.action === 'send_email' && intent.emailCompose ? { email_compose: intent.emailCompose } : {}) }, expiresMinutes: intent.ttlMinutes }
     },
     async credential(client: PoolClient, identity: RunIdentity, request: PendingInteraction): Promise<AgentPromptSpec> {
       const intent = await ports.loadIntent(client, identity, request)

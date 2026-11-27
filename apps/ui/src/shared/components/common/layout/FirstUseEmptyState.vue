@@ -2,7 +2,7 @@
   <div class="first-use-empty" role="status">
     <span class="first-use-empty__icon" aria-hidden="true"><slot name="icon" /></span>
     <strong class="first-use-empty__title">{{ title }}</strong>
-    <span class="first-use-empty__description">{{ description }}</span>
+    <span v-if="description" class="first-use-empty__description">{{ description }}</span>
     <slot />
   </div>
 </template>
@@ -10,7 +10,7 @@
 <script setup lang="ts">
 defineProps({
   title: { type: String, required: true },
-  description: { type: String, required: true },
+  description: { type: String, default: '' },
 })
 </script>
 
@@ -18,6 +18,8 @@ defineProps({
 .first-use-empty {
   box-sizing: border-box;
   display: flex;
+  flex: 1 0 auto;
+  min-inline-size: 0;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -47,5 +49,12 @@ defineProps({
   color: var(--text-secondary);
   font-size: 12.5px;
   line-height: 1.6;
+}
+</style>
+
+<style>
+.empty-state-viewport {
+  display: flex;
+  flex-direction: column;
 }
 </style>

@@ -7,7 +7,6 @@
 
     <section class="status-grid">
       <article class="status-card"><span class="status-icon">⌂</span><div><p class="card-label">{{ t('devOnboarding.project') }}</p><strong>{{ state?.seed?.seeded ? t('devOnboarding.projectKept') : t('devOnboarding.notSeeded') }}</strong><small>{{ t('devOnboarding.projectId') }}：{{ state?.seed?.project_id ?? '—' }}</small></div></article>
-      <article class="status-card"><span class="status-icon">♫</span><div><p class="card-label">{{ t('devOnboarding.mp3') }}</p><strong>{{ t('devOnboarding.projectKept') }}</strong><small>{{ t('devOnboarding.reseedHint') }}</small></div></article>
       <article class="status-card muted"><span class="status-icon">◌</span><div><p class="card-label">{{ t('devOnboarding.bubble') }}</p><strong>{{ t('devOnboarding.bubbleRemoved') }}</strong><small>{{ t('devOnboarding.description') }}</small></div></article>
     </section>
 

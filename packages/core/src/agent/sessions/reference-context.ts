@@ -1,10 +1,10 @@
-export type AgentReferenceType = 'project' | 'file' | 'folder' | 'event' | 'canvas_note' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
+export type AgentReferenceType = 'project' | 'client' | 'file' | 'folder' | 'event' | 'canvas_note' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
 
 export type AgentObjectRef = { kind: AgentReferenceType; id: string | number }
 export type ResolvedObjectPath = { kind: 'sandbox' | 'host_absolute'; value: string }
 
 const labels: Record<AgentReferenceType, string> = {
-  project: '项目', file: '文件', folder: '文件夹', event: '日程', canvas_note: '画布便签',
+  project: '项目', client: '联系人', file: '文件', folder: '文件夹', event: '日程', canvas_note: '画布便签',
   conversation: '对话', skill: '技能', mcp: 'MCP 服务', scheduled_task: '定时任务',
 }
 

@@ -1,3 +1,4 @@
+import { questionStepOptionId } from './question-batch.js'
 import type { PendingInteraction } from '../models.js'
 import type { AgentPromptSpec } from './prompt-description.js'
 import { normalizeSecretFields } from './secrets.js'
@@ -29,9 +30,14 @@ export function prepareAgentInteractionPrompt(spec: AgentPromptSpec, request: Pe
   const secret = request.kind === 'credential'
   const allowText = request.kind === 'question' && Boolean(spec.allowTextInput)
   const options = [...spec.options, ...(allowText ? [{ id: '__custom_reply__', label: '自定义回复', actionType: 'custom_reply' }] : [])]
+  if (spec.serialQuestions) for (const [step, question] of (spec.questions ?? []).entries()) {
+    for (const [index, option] of (question.options ?? []).entries())
+      options.push({ id: questionStepOptionId(step, index), label: option.label, actionType: 'question_step' })
+  }
   const context = { ...spec.context, tool_call_id: request.toolCall.id, tool_name: request.toolCall.name }
   const schema = {
     options: options.map(option => ({ id: option.id, label: option.label, action_type: option.actionType })),
+    ...(spec.questions ? { questions: spec.questions } : {}),
     ...(spec.selectionMode === 'multiple' ? { selection_mode: spec.selectionMode } : {}),
     secret_fields: secretFields, allow_text_input: allowText, source: 'agent', custom_input_active: false, context,
   }

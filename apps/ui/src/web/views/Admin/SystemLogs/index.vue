@@ -183,7 +183,7 @@ onMounted(load)
 .page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
 
 .toolbar {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: var(--space-xs);
   padding: 18px 36px 0; flex-shrink: 0;
 }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); margin-left: 4px; }

@@ -1,5 +1,5 @@
 /** 笔记 Markdown 的行内引用，兼容数字 ID 和桌面文件路径 ID。 */
-export const MIND_REF_RE = /\[\[([a-z_]+):(\d+|(?:path|drop)-[A-Za-z0-9_-]+)\|([^\]]*)\]\]/
+export const MIND_REF_RE = /\[\[([a-z_]+):(\d+|(?:path|drop)-[A-Za-z0-9_-]+|(?<=\[\[skill:)[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)\|([^\]]*)\]\]/
 
 export function mindReferenceLabels(markdown: string): string {
   return markdown.replace(new RegExp(MIND_REF_RE.source, 'g'), '$3')

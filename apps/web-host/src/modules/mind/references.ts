@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { createMindReferenceSuggester, MindReferenceMessage, MindReferenceSuggestionItem } from '@gugu/core/mind'
 import { parsePythonInteger } from '../../http/request.js'
 import type { Pool } from 'pg'
+import { listUserSkillBundles } from '@gugu/core/skills'
 
 export type MindReferenceSuggestOperations = ReturnType<typeof createMindReferenceSuggester> & { suggestWithDiskFiles?: ReturnType<typeof createMindReferenceSuggester>['suggest'] }
 
@@ -36,8 +37,8 @@ function rowItem(type: string, row: Row, label: unknown, subtitle?: unknown, id:
   }
 }
 
-async function recent(pool: Pool, ownerId: string, limit: number): Promise<MindReferenceSuggestionItem[]> {
-  const [projects, events, canvasNotes, skills, mcpServers, tasks] = await Promise.all([
+async function recent(pool: Pool, ownerId: string, limit: number, dataRoot?: string): Promise<MindReferenceSuggestionItem[]> {
+  const [projects, events, canvasNotes, mcpServers, tasks, fileSkills] = await Promise.all([
     pool.query<Row>('SELECT id, name, contact_name AS client FROM projects WHERE user_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT $2', [ownerId, limit]),
     pool.query<Row>('SELECT id, title, date FROM calendar_events WHERE user_id=$1 AND deleted_at IS NULL ORDER BY date DESC LIMIT $2', [ownerId, limit]),
     pool.query<Row>(
@@ -49,7 +50,6 @@ async function recent(pool: Pool, ownerId: string, limit: number): Promise<MindR
        ORDER BY n.updated_at DESC, n.id DESC LIMIT $2`,
       [ownerId, limit],
     ),
-    pool.query<Row>('SELECT id, name, skill_id FROM user_skills WHERE owner_id=$1 ORDER BY updated_at DESC LIMIT $2', [ownerId, limit]),
     pool.query<Row>(
       `SELECT id, name, transport FROM user_mcp_servers
        WHERE user_id=$1 OR scope='platform' ORDER BY name LIMIT $2`, [ownerId, limit],
@@ -59,20 +59,21 @@ async function recent(pool: Pool, ownerId: string, limit: number): Promise<MindR
        WHERE user_id=$1 AND enabled IS TRUE AND (end_at IS NULL OR end_at > now())
        ORDER BY updated_at DESC LIMIT $2`, [ownerId, limit],
     ),
+    dataRoot ? listUserSkillBundles(dataRoot, ownerId) : Promise.resolve({ skills: [] }),
   ])
   return [
     ...projects.rows.map(row => rowItem('project', row, row.name, row.client)),
     ...events.rows.map(row => rowItem('event', row, row.title, row.date)),
     ...canvasNotes.rows.map(row => rowItem('canvas_note', row, row.title || '无标题画布便签', `画布 ${row.canvas_id}`)),
-    ...skills.rows.map(row => rowItem('skill', row, row.name, row.skill_id)),
+    ...fileSkills.skills.slice(0, limit).map(skill => rowItem('skill', {}, skill.name, skill.description_short, skill.id)),
     ...mcpServers.rows.map(row => rowItem('mcp', row, row.name, row.transport, String(row.id))),
     ...tasks.rows.map(row => rowItem('scheduled_task', row, row.name, row.cron)),
   ]
 }
 
-export function createPostgresMindReferenceSuggestionPorts(pool: Pool) {
+export function createPostgresMindReferenceSuggestionPorts(pool: Pool, dataRoot?: string) {
   return {
-    recent: (ownerId: string, limit: number) => recent(pool, ownerId, limit),
+    recent: (ownerId: string, limit: number) => recent(pool, ownerId, limit, dataRoot),
     async matchingMessages(ownerId: string, query: string, limit: number) {
       const result = await pool.query<Row>(
         `SELECT m.id, m.content, s.title AS session_title FROM conversation_messages m

@@ -1,8 +1,8 @@
 export const scheduleUi = {
   'zh-CN': {
     cardActive: '已启用', cardPaused: '已停用', cardRunTime: '执行时间',
-    taskMode: '任务模式', reminderMode: '提醒模式', instructionMode: '指令模式', emptyMode: '暂无任务',
-    reminderExample: '例如：记得提交工时', instructionBody: '任务指令', reminderRequired: '请输入提醒内容',
+    executionModeLabel: '执行方式', reminderMode: '提醒模式', taskMode: '任务模式', emptyMode: '暂无任务',
+    reminderExample: '例如：记得提交工时', taskDescription: '任务描述', taskExample: '例如：整理本周项目进度并发给我', reminderRequired: '请输入提醒内容',
     intervalPlaceholder: '例如 15',
     onceInPast: '单次任务的执行时间必须晚于当前时间',
     qqGroupUnavailable: '原群（当前不可验证）：{chatId}',
@@ -13,8 +13,8 @@ export const scheduleUi = {
   },
   'ja-JP': {
     cardActive: '有効', cardPaused: '無効', cardRunTime: '実行時刻',
-    taskMode: 'タスクモード', reminderMode: 'リマインダーモード', instructionMode: '指示モード', emptyMode: 'タスクはありません',
-    reminderExample: '例：勤怠を提出する', instructionBody: 'タスクの指示', reminderRequired: 'リマインダーの内容を入力してください',
+    executionModeLabel: '実行方式', reminderMode: 'リマインダーモード', taskMode: 'タスクモード', emptyMode: 'タスクはありません',
+    reminderExample: '例：勤怠を提出する', taskDescription: 'タスクの説明', taskExample: '例：今週のプロジェクト進捗をまとめて送る', reminderRequired: 'リマインダーの内容を入力してください',
     intervalPlaceholder: '例: 15',
     onceInPast: '一回限りのタスクは現在より後の日時を指定してください',
     qqGroupUnavailable: '元のグループ（現在確認できません）：{chatId}',
@@ -25,8 +25,8 @@ export const scheduleUi = {
   },
   'en-US': {
     cardActive: 'Enabled', cardPaused: 'Disabled', cardRunTime: 'Runs at',
-    taskMode: 'Task mode', reminderMode: 'Reminder mode', instructionMode: 'Instruction mode', emptyMode: 'No tasks',
-    reminderExample: 'e.g. Submit your timesheet', instructionBody: 'Task instructions', reminderRequired: 'Enter a reminder message',
+    executionModeLabel: 'Execution mode', reminderMode: 'Reminder mode', taskMode: 'Task mode', emptyMode: 'No tasks',
+    reminderExample: 'e.g. Submit your timesheet', taskDescription: 'Task description', taskExample: 'e.g. Summarize this week’s project progress and send it to me', reminderRequired: 'Enter a reminder message',
     intervalPlaceholder: 'e.g. 15',
     onceInPast: 'A one-time task must be scheduled in the future',
     qqGroupUnavailable: 'Original group (currently unavailable): {chatId}',

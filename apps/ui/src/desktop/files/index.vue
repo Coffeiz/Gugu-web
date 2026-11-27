@@ -18,7 +18,6 @@ import { useUiStore } from '@/stores/ui'
 import { useProjectStore } from '@/stores/projects'
 import type { DesktopFileDirectory, DesktopProjectDetails } from '@gugu/core/desktop'
 import FileLibraryLocations from '@/views/Files/components/FileLibraryLocations.vue'
-import WorkspaceCreateDialog from '@/views/Files/components/WorkspaceCreateDialog.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import { useFolderNavigation } from '@/composables/files/useFolderNavigation'
 import { hasShortcutOverlay } from '@/interaction/keyboardShortcuts'
@@ -171,7 +170,6 @@ watch(() => uiStore.pendingFileTarget, target => {
   }
 }, { immediate: true })
 
-const showWorkspaceCreate = ref(false)
 const canManageWorkspace = (entry: FolderCardMeta) => native && entry.id.startsWith('desktop:')
 const renameWorkspace = (id: string, name: string) => rename(id as DesktopFileDirectory, name)
 const unbindWorkspace = (id: string) => remove(id as DesktopFileDirectory)
@@ -183,7 +181,6 @@ async function addWorkspace() {
   }
   const id = await pick()
   if (typeof id !== 'string') return
-  showWorkspaceCreate.value = false
   const name = options.value.find(option => option.value === id)?.label
   if (name) openLocation({ id, displayName: name, type: 'workspace', count: null })
 }
@@ -254,14 +251,15 @@ async function createFolder() {
     </template>
 
     <template #toolbar-extra>
-      <ActionButton v-if="!current" variant="primary" fit :disabled="busy" @click="showWorkspaceCreate = true">
+      <ActionButton v-if="!current" variant="primary" fit :disabled="busy" @click="addWorkspace">
         <Icon name="admin.stack" :size="13" />{{ t('filesUi.addDesktopWorkspace') }}
       </ActionButton>
     </template>
     <template #trailing>
       <DesktopRevealButton v-if="target" :directory-id="target.directoryId" :path="target.relativePath" />
     </template>
-    <div ref="main" class="desktop-file-panel glass-card scroll-surface" @mousedown="selection.onContainerMouseDown"
+    <div ref="main" class="desktop-file-panel glass-card scroll-surface" :class="{ 'is-list': viewMode === 'list' }"
+      @mousedown="selection.onContainerMouseDown"
       @dragover.prevent @drop.prevent="dropFiles">
       <div v-if="selectionRect" class="desktop-file-selection" :style="{
         left: selectionRect.left + 'px', top: selectionRect.top + 'px',
@@ -290,8 +288,6 @@ async function createFolder() {
     <FileSelectionToolbar v-if="fileCount + folderCount > 0" path-actions
       :file-count="fileCount" :folder-count="folderCount" @cut="selection.cutSelected()" @copy="selection.copySelected"
       @download="selection.downloadSelected" @delete="selection.trashSelected" @cancel="selection.clearSelection" />
-    <WorkspaceCreateDialog local :show="showWorkspaceCreate" :busy="busy"
-      @close="showWorkspaceCreate = false" @submit="addWorkspace" />
   </FileBrowserPanel>
 </template>
 
@@ -309,8 +305,24 @@ async function createFolder() {
   min-height: 0;
   box-sizing: border-box;
   overflow: auto;
-  padding: var(--space-lg);
+  padding: var(--page-content-inset);
   position: relative;
+}
+.desktop-file-panel.is-list {
+  padding-block-start: 0;
+  --file-list-header-inset: var(--page-content-inset);
+}
+.desktop-file-panel.is-list :deep(.file-browser-list > .list-head) {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 5;
+  box-sizing: border-box;
+  align-items: center;
+  min-height: 52px;
+  margin-inline: calc(-1 * var(--file-list-header-inset));
+  padding: var(--space-sm) calc(var(--space-md) + var(--file-list-header-inset));
+  border-bottom: 1px solid var(--content-divider);
+  background: var(--glass-card-background);
 }
 .desktop-file-selection { position: absolute; pointer-events: none; z-index: 4; border: 1px solid var(--action-outline); background: var(--action-soft); }
 </style>

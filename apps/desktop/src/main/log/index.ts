@@ -14,7 +14,7 @@ export function desktopLogSinks(userData: string) {
 }
 
 export function createDesktopRuntimeLog(userData: string) {
-  return createRuntimeLog(desktopLogSinks(userData))
+  return createRuntimeLog({ ...desktopLogSinks(userData), hostKind: 'desktop' })
 }
 
 /** 本地 Agent Run 由主进程管理落盘，renderer 与 Core RPC 的标准输出不参与写文件。 */

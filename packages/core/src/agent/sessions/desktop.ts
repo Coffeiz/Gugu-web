@@ -1,3 +1,4 @@
+import { projectAgentHistoryPage } from './history-page.js'
 import { desktopDisplayMessage } from './data.js'
 import { sql, type Kysely, type Transaction } from 'kysely'
 import { CoreError, dataContext } from '../../contracts/index.js'
@@ -116,6 +117,7 @@ function sessionWorkspaceDirectories(value: unknown): DesktopSessionWorkspaceDir
       || typeof row.name !== 'string' || !row.name.trim() || row.name.length > 100 || ids.has(row.id))
       throw new CoreError('storage_error', '桌面工作区目录记录无效')
     ids.add(row.id)
+    if (row.available === false) return []
     return [{ id: row.id, name: row.name, ...(typeof row.commandNumber === 'number' && Number.isSafeInteger(row.commandNumber) && row.commandNumber > 0 ? { commandNumber: row.commandNumber } : {}) }]
   })
 }
@@ -139,7 +141,7 @@ export async function manageDesktopSessionWorkspace(db: Kysely<Database>, owner:
         AND COALESCE(s.chat_type,'c2c')='c2c'`.execute(db)
     if (!scoped.rows.length) throw new CoreError('not_found', '会话不存在')
   }
-  const directories = sessionWorkspaceDirectories(await readDirectories?.() ?? [])
+  const directories = action === 'unlink' ? [] : sessionWorkspaceDirectories(await readDirectories?.() ?? [])
   if (action === 'list') return { workspaces: directories }
   const selector = typeof directoryId === 'string' ? directoryId.trim() : ''
   const matches = action === 'bind' ? directories.filter(item => String(item.commandNumber ?? '') === selector || item.id === selector || item.name === selector
@@ -150,7 +152,7 @@ export async function manageDesktopSessionWorkspace(db: Kysely<Database>, owner:
   const read = async (connection: Kysely<Database>) => (await sql<{
     session_context: string | null; active_run_id: string | null; chat_type: string | null
   }>`SELECT s.session_context,s.active_run_id,s.chat_type FROM conversation_sessions s
-      WHERE s.user_id=${user} AND s.id=${id} AND (${Boolean(im)} OR s.source IS NULL OR s.source='web')`.execute(connection)).rows[0]
+      WHERE s.user_id=${user} AND s.id=${id} ${im ? sql`` : sql`AND (s.source IS NULL OR s.source='web')`}`.execute(connection)).rows[0]
   if (action === 'show') {
     const row = await read(db)
     if (!row) throw new CoreError('not_found', '会话不存在')
@@ -303,9 +305,8 @@ export async function readDesktopAgentHistoryPage(
     if (existing) existing.push(projected)
     else promptsByRun.set(runId, [projected])
   }
-  const messages: DesktopAgentMessage[] = []
+  const messages: { message: DesktopAgentMessage; sequence: number | null }[] = []
   let remainingBytes = MAX_AGENT_RESPONSE - 512
-  let oldestId: number | null = null
   for (const row of page) {
     if (row.id === null) continue
     const timeline = row.timeline === null ? [] : projectAgentTimelineEvents([{
@@ -338,9 +339,9 @@ export async function readDesktopAgentHistoryPage(
       if (!messages.length) throw new CoreError('storage_error', '历史消息超出桌面响应限制')
       break
     }
-    messages.push(message)
-    oldestId = row.seq
+    messages.push({ message, sequence: row.seq })
   }
+  const history = projectAgentHistoryPage(messages, 'desc', entry => entry.sequence)
   return {
     ...(before === undefined ? { active: Boolean(result.rows[0]!.active), executionState: result.rows[0]!.execution_state,
       session: { ...projectAgentSessionGoal(readAgentSessionContext(result.rows[0]!.session_context, 'sqlite')),
@@ -348,8 +349,8 @@ export async function readDesktopAgentHistoryPage(
           ? (readAgentSessionContext(result.rows[0]!.session_context, 'sqlite').workspace_binding as Record<string, unknown>).workspace_name as string : null,
         ...(result.rows[0]!.chat_type ? { chatType: result.rows[0]!.chat_type } : {}),
         ...(result.rows[0]!.owner_platform_user_id ? { ownerPlatformUserId: result.rows[0]!.owner_platform_user_id } : {}) } } : {}),
-    messages: messages.reverse(),
-    pagination: { oldestId, hasMore: oldestId !== null && result.rows.length > messages.length },
+    messages: history.messages.map(entry => entry.message),
+    pagination: { oldestId: history.oldestId, hasMore: history.oldestId !== null && result.rows.length > messages.length },
   }
 }
 
@@ -367,10 +368,17 @@ export async function appendDesktopAgentTurn(tx: Transaction<Database>, owner: s
     GROUP BY s.id`.execute(tx)
   if (!rows[0]) throw new CoreError('not_found', '会话不存在')
   const seq = Number(rows[0].seq)
-  const inserted = await sql<{ id: number }>`INSERT INTO conversation_messages(session_id,conversation_seq,role,content,created_at,client_message_id)
-    VALUES(${id},${seq+1},'user',${text},${at},${clientId ?? null}),(${id},${seq+2},'assistant',${reply},${at},NULL) RETURNING id`.execute(tx)
+  const inserted = await sql<{ id: number; role: DesktopAgentMessage['role'] }>`INSERT INTO conversation_messages(session_id,conversation_seq,role,content,created_at,client_message_id)
+    VALUES(${id},${seq+1},'user',${text},${at},${clientId ?? null}),(${id},${seq+2},'assistant',${reply},${at},NULL) RETURNING id,role`.execute(tx)
   await sql`UPDATE conversation_sessions SET updated_at=${at},last_message_seq=${seq+2} WHERE id=${id} AND user_id=${user}`.execute(tx)
-  return { saved: true, ...(clientId ? { userMessageId: inserted.rows[0]!.id } : {}) }
+  const userMessageId = inserted.rows.find(row => row.role === 'user')!.id
+  const assistantMessageId = inserted.rows.find(row => row.role === 'assistant')!.id
+  const createdAt = utc(at).replace(' ', 'T')
+  const messages: DesktopAgentMessage[] = [
+    { id: userMessageId, role: 'user', text, createdAt, ...(clientId ? { clientMessageId: clientId } : {}) },
+    { id: assistantMessageId, role: 'assistant', text: reply, createdAt },
+  ]
+  return { saved: true, ...(clientId ? { userMessageId } : {}), messages }
 }
 
 export async function renameDesktopAgentSession(tx: Transaction<Database>, owner: string, id: number, value: unknown): Promise<DesktopAgentSession> {

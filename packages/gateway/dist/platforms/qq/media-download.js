@@ -122,9 +122,9 @@ export async function processQqMedia(items, budget, signal, options) {
         if (!file)
             continue;
         if (!quoted)
-            await options.file(media, file, index);
+            await options.file(media, { ...file, quoted }, index);
         else if (imImageFormat(file.bytes))
-            await options.file(media, { ...file, voice: false }, index);
+            await options.file(media, { ...file, quoted, voice: false }, index);
     }
     signal.throwIfAborted();
     return true;

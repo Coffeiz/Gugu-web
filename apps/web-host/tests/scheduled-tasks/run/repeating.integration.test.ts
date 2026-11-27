@@ -4,7 +4,8 @@ import { test } from 'node:test'
 import { Pool } from 'pg'
 import { createScheduledTaskRedisLease } from '../../../src/modules/scheduled-tasks/run/lease.js'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
-import { createKyselyRepeatingTaskRepository, createKyselyScheduledFireReceipts, dispatchRepeatingFire } from '@gugu/core/scheduled-task-run-now'
+import { dispatchRepeatingFire } from '@gugu/scheduler'
+import { createKyselyRepeatingTaskRepository, createKyselyScheduledFireReceipts } from '@gugu/core/tasks/schedule-storage'
 import { createRedisScheduledTaskCommands } from '../../../src/adapters/cache/redis-events.js'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL

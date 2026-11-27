@@ -79,7 +79,7 @@ async function loadDesktopChannels() {
 }
 const { tasks, loaded, loading, busy, load, save, toggle, runNow, remove } = useScheduledTasks()
 const taskGroups = computed(() => [
-  { mode: 'instruction', label: 'scheduleUi.instructionMode', tasks: tasks.value.filter(task => task.execution_mode !== 'reminder') },
+  { mode: 'instruction', label: 'scheduleUi.taskMode', tasks: tasks.value.filter(task => task.execution_mode !== 'reminder') },
   { mode: 'reminder', label: 'scheduleUi.reminderMode', tasks: tasks.value.filter(task => task.execution_mode === 'reminder') },
 ])
 const workspaces = ref<Array<{ id: number; name: string }>>([])
@@ -204,9 +204,9 @@ async function confirmAuthorization() {
 
 <style scoped>
 .sched-page { height: 100%; display: flex; flex-direction: column; font-family: var(--font-sans); }
-.task-group + .task-group { margin-top:20px; padding-top:16px; border-top:1px solid var(--content-divider); }
-.task-group-title { margin:0 0 12px; color:var(--text-primary); font-size:14px; font-weight:600; }
-.task-group-empty { margin:0; padding:14px; border:1px dashed var(--content-outline); border-radius:var(--radius-sm); color:var(--text-secondary); font-size:12px; text-align:center; }
+.task-group + .task-group { margin-top:var(--space-xl); padding-top:var(--space-lg); border-top:1px solid var(--content-divider); }
+.task-group-title { margin:0 0 var(--space-md); color:var(--text-primary); font-size:14px; font-weight:600; }
+.task-group-empty { margin:0; padding:var(--space-lg); border:1px dashed var(--content-outline); border-radius:var(--radius-sm); color:var(--text-secondary); font-size:12px; text-align:center; }
 .task-grid {
   align-content: start;
   align-items: stretch;

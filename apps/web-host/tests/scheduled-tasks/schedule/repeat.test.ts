@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createRepeatingTimer, nextRepeatingFire } from '../../../src/modules/scheduled-tasks/schedule/repeat.js'
+import { createScheduledTaskTimer, nextRepeatingFire } from '@gugu/scheduler'
 type RepeatingSchedule = Parameters<typeof nextRepeatingFire>[0]
 
 const timerLimit = 2 ** 31 - 1
@@ -36,7 +36,7 @@ test('远期任务分段等待，长延时不会提前投递或丢失触发', as
   const time = clock()
   const startAt = 2 * timerLimit + 10_000
   const fires: number[] = []
-  const worker = createRepeatingTimer({
+  const worker = createScheduledTaskTimer({
     ...time, reconcileMs: timerLimit, list: async () => [fixture(startAt)],
     async dispatch(fire) { fires.push(fire.fireAt) }, onError(error) { assert.fail(String(error)) },
   })
@@ -59,7 +59,7 @@ test('停启期间旧的协调结果不能覆盖当前任务或留下额外定�
   let calls = 0
   let resolveOld!: (rows: RepeatingSchedule[]) => void
   const old = new Promise<RepeatingSchedule[]>(resolve => { resolveOld = resolve })
-  const worker = createRepeatingTimer({
+  const worker = createScheduledTaskTimer({
     ...time, list: () => ++calls === 1 ? old : Promise.resolve([fixture(2000, 'new')]),
     async dispatch(fire) { fires.push(fire.taskId) }, onError(error) { assert.fail(String(error)) },
   })
@@ -81,7 +81,7 @@ test('任务改期后，已经排队的旧回调不能再投递或重置新计�
   const time = clock()
   const fires: number[] = []
   let schedule = fixture(5000)
-  const worker = createRepeatingTimer({
+  const worker = createScheduledTaskTimer({
     ...time, reconcileMs: 1000, list: async () => [schedule],
     async dispatch(fire) { fires.push(fire.fireAt) }, onError(error) { assert.fail(String(error)) },
   })
@@ -101,7 +101,7 @@ test('任务改期后，已经排队的旧回调不能再投递或重置新计�
 test('一次性调度只触发一次，超过 Python 误点窗口时跳过', async () => {
   const time = clock()
   const calls: string[] = []
-  const worker = createRepeatingTimer({
+  const worker = createScheduledTaskTimer({
     ...time, reconcileMs: 10000,
     list: async () => [{ id: 'on-time', kind: 'once' as const, startAt: 3000 },
       { id: 'missed', kind: 'once' as const, startAt: 1000 }],
@@ -125,7 +125,7 @@ test('提交后的主动刷新发现下一次轮询前到期的任务，旧扫�
   const fired: string[] = []
   let tasks: Array<{ id: string; kind: 'once'; startAt: number }> = []
   let scans = 0
-  const worker = createRepeatingTimer({
+  const worker = createScheduledTaskTimer({
     ...time, reconcileMs: 30_000, async list() { scans++; return tasks },
     async dispatch(fire) { fired.push(fire.taskId) },
     onError(error) { assert.fail(String(error)) },
@@ -150,7 +150,7 @@ test('关闭等待在途投递并取消后续触发', async () => {
   let release!: () => void
   const hold = new Promise<void>(resolve => { release = resolve })
   const fired: string[] = []
-  const worker = createRepeatingTimer({
+  const worker = createScheduledTaskTimer({
     ...time, list: async () => [fixture(1000, 'first'), fixture(2000, 'second')],
     async dispatch(fire) { fired.push(fire.taskId); await hold },
     onError(error) { assert.fail(String(error)) },

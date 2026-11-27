@@ -1,3 +1,4 @@
+import { desktopPlatform } from './platform/index.js'
 import { randomBytes as cliRandomBytes } from 'node:crypto'
 import { publishCliConnection, registerMacCli } from './cli-install.js'
 import { startDesktopCli, type DesktopCliCommand } from './desktop-cli.js'
@@ -40,6 +41,8 @@ import { desktopAgentAttachmentHandlers, readDesktopAgentAttachment, removeDeskt
 import { createDesktopAgentModelService, createDesktopAgentModelStore } from './agent/model.js'
 import { desktopAgentToolPolicy } from './agent/tool-policy.js'
 import { resourceHandlers } from './mcp/ipc.js'
+import { createDesktopClawHubInstaller, createDesktopFileSkillCreator } from './mcp/clawhub-install.js'
+import { listUserSkillBundles } from '@gugu/core/skills'
 import { bindDesktopScheduledIm } from './schedules/im.js'
 import { scheduleHandlers } from './schedules/ipc.js'
 import { deliverLocalReminder, startLocalReminders } from './schedules/reminders.js'
@@ -65,9 +68,7 @@ import {
   screen,
   session,
   shell,
-  systemPreferences,
 } from 'electron'
-import { autoUpdater } from 'electron-updater'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { lstat, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
@@ -82,7 +83,6 @@ import {
 import { workspaceHandlers } from './workspace/ipc.js'
 import { MAX_DESKTOP_SEARCH_IMAGE_BYTES } from '@gugu/core/agent/search-contracts'
 import { createDesktopPaidSearchHost, isDesktopPaidSearchMethod } from './agent/paid-search-host.js'
-import { createDesktopPersonalSmtp } from './mail/personal-smtp.js'
 import { createDesktopMailService } from './mail/index.js'
 import { createDesktopMailAttachmentResolver } from './mail/attachments.js'
 import { registerDesktopIpc } from './ipc/register.js'
@@ -90,6 +90,7 @@ import { createRemoteSessionStore } from './auth/store.js'
 
 
 import { createRemoteAccountHandlers } from './auth/session.js'
+import { getDesktopDeviceId } from './auth/device-id.js'
 import { DesktopLifecycle } from './lifecycle.js'
 import {
   createMainWindowSizeStore,
@@ -99,7 +100,9 @@ import {
   uiResourcePath,
   DESKTOP_UI_URL,
 } from './windows.js'
-import { DesktopUpdater } from './updater.js'
+import { desktopUpdateChannels, type DesktopUpdateStatus } from '@gugu/desktop-contracts'
+import { DesktopUpdater } from './updater/index.js'
+import { createElectronUpdateBackend } from './updater/electron.js'
 import { sandboxDiagnostics } from '../sandbox/diagnostics.js'
 
 app.setName('咕咕桌面验证')
@@ -152,18 +155,25 @@ else {
   let openMainWindow = () => {}
   let gatewayPower: ReturnType<typeof createGatewayPowerPolicy> | undefined
   let stopReminders: (() => void) | undefined
-  app.on('before-quit', (event) => {
-    if (quitting || !lifecycle) return
-    event.preventDefault()
-    if (closing) return
+  let shutdown: Promise<void> | undefined
+  function closeDesktop() {
+    if (shutdown) return shutdown
     closing = true
     gatewayPower?.close()
     if (tray && !tray.isDestroyed()) tray.destroy()
     stopReminders?.()
-    const stopIm = Promise.allSettled([telegram?.stop(), wechat?.stop(), feishu?.stop(), qq?.stop()]).then(results => {
+    shutdown = Promise.allSettled([telegram?.stop(), wechat?.stop(), feishu?.stop(), qq?.stop()]).then(async results => {
       for (const result of results) if (result.status === 'rejected') report('host.stop_failed', { error: result.reason })
+      await lifecycle?.close()
+      report('host.stopped')
     })
-    void stopIm.then(() => lifecycle?.close()).then(() => report('host.stopped'), error => report('host.stop_failed', { error })).finally(() => {
+    return shutdown
+  }
+  app.on('before-quit', (event) => {
+    if (quitting || !lifecycle) return
+    event.preventDefault()
+    if (closing) return
+    void closeDesktop().catch(error => report('host.stop_failed', { error })).finally(() => {
       quitting = true
       app.quit()
     })
@@ -181,7 +191,7 @@ else {
         )
           throw new DesktopError('invalid_request', '桌面开发界面必须来自本机 Vite 服务')
       }
-      if (!smoke && !['win32', 'darwin'].includes(process.platform))
+      if (!smoke && !desktopPlatform().supported)
         throw new DesktopError(
           'unsupported',
           '桌面验证版仅面向 macOS 与 Windows；Linux 请使用多用户服务端',
@@ -200,15 +210,24 @@ else {
         : await verifyArtifact(join(resource, 'core-sidecar'))
       mkdirSync(dataDirectory, { recursive: true })
       const filesRoot = join(smoke ? dataDirectory : app.getPath('documents'), 'Gugu-data')
-      lifecycle = new DesktopLifecycle(() =>
-        CoreHost.launch(
+      let filesOwner: string | undefined
+      let releaseSkillLocks = () => {}
+      lifecycle = new DesktopLifecycle(async () => {
+        const core = await CoreHost.launch(
           runtime.node,
           runtime.entry,
           join(dataDirectory, 'core.db'),
           runtime.manifest,
           undefined, filesRoot, runtime.workerEntry, runtime.agentRuntimeModule, report,
-        ),
-      )
+        )
+        if (!core.ownerId || filesOwner && filesOwner !== core.ownerId) {
+          await core.close()
+          throw new DesktopError('startup_failed', '桌面文件目录账号与 Core 不一致')
+        }
+        filesOwner = core.ownerId
+        core.onStopped(() => releaseSkillLocks())
+        return core
+      })
       await lifecycle.start()
       const host = lifecycle
       const systemProxy = session.fromPartition('gugu-system-proxy')
@@ -225,11 +244,12 @@ else {
       const remoteFetch: typeof fetch = (input, init) => useSystemProxy
         ? systemProxy.fetch(input instanceof URL ? input.href : input, init)
         : directDesktopFetch(input, init)
+      const getDeviceId = () => getDesktopDeviceId(dataDirectory)
       const remoteSessionStore = createRemoteSessionStore(dataDirectory, safeStorage)
       const paidSearch = createDesktopPaidSearchHost(remoteSessionStore, remoteFetch, id =>
         readDesktopAgentAttachment(host, dataDirectory, id, MAX_DESKTOP_SEARCH_IMAGE_BYTES))
       const agentModel = createDesktopAgentModelService(createDesktopAgentModelStore(dataDirectory, safeStorage), resolveModelProxy)
-      const admitIm = createDesktopImInbox(host, safeStorage, dataDirectory)
+      const admitIm = createDesktopImInbox(host, safeStorage, dataDirectory, agentModel)
       const pendingImAsks = createDesktopImPendingAskStore(dataDirectory, safeStorage)
       const imAttachments = createDesktopImAttachmentSender(dataDirectory, safeStorage, error =>
         report('gateway.qq_upload_failed', { uploadStage: error.stage, httpStatus: error.statusCode, upstreamCode: error.errorCode }),
@@ -248,8 +268,8 @@ else {
         authorize: () => Promise<boolean>) => {
         imTranscriber ??= (async () => {
           const resolveMedia = createRequire(devNode ? join(app.getAppPath(), 'package.json') : resolve(runtime.entry, '../../../../package.json'))
-          const url = pathToFileURL(resolveMedia.resolve('@gugu/gateway/media')).href
-          const { createImAudioProcessor } = await import(url) as typeof import('@gugu/gateway/media')
+          const url = pathToFileURL(resolveMedia.resolve('@gugu/gateway/media/audio')).href
+          const { createImAudioProcessor } = await import(url) as typeof import('@gugu/gateway/media/audio')
           return createDesktopImVoiceTranscriber(dataDirectory, safeStorage, createImAudioProcessor({ nodePath: runtime.node }),
             resolveModelProxy, code => report('gateway.degraded', { code }))
         })().catch(error => { imTranscriber = undefined; throw error })
@@ -291,7 +311,7 @@ else {
       const readLifecycleProject = (id: number) => host.request<DesktopProjectDetails>('projects.board.get', { id, includeDeleted: true })
       const droppedReferences = createDroppedFileReferences(dataDirectory, path => shell.openPath(path))
       const fileDialogs = createNativeFileDialogs(() => mainWindow)
-      const files = desktopFiles(filesRoot, {
+      const files = desktopFiles(join(filesRoot, filesOwner!), {
         async save(name) {
           const result = await fileDialogs.save({ defaultPath: name })
           return result.canceled ? undefined : result.filePath
@@ -304,7 +324,7 @@ else {
         },
         trash: path => shell.trashItem(path),
         async thumbnail(bytes, name) {
-          const systemThumbnail = process.platform === 'darwin' || process.platform === 'win32'
+          const systemThumbnail = desktopPlatform().supported
           // JPEG 的方向可能由 EXIF 指定；系统缩略图会在转成 PNG 前应用它。
           if (!systemThumbnail || /\.png$/i.test(name)) {
             const image = nativeImage.createFromBuffer(bytes)
@@ -326,14 +346,19 @@ else {
             await rm(directory, { recursive: true, force: true })
           }
         },
-      }, join(dataDirectory, 'file-workspaces.json'), dataDirectory, readProject)
-      const personalSmtp = createDesktopPersonalSmtp(dataDirectory, safeStorage, async () => {
-        const session = await remoteSessionStore.read()
-        return session ? (await createRemoteAuthClient(remoteFetch).restore(session).catch(() => null))?.email ?? '' : ''
-      })
+      }, join(dataDirectory, 'file-workspaces.json'), [dataDirectory, filesRoot], readProject)
+      releaseSkillLocks = files.releaseAllAgentSkillLocks
       const desktopMail = createDesktopMailService(dataDirectory, safeStorage, undefined,
         createDesktopMailAttachmentResolver(async id => id.startsWith('drop-')
-          ? droppedReferences.resolve(id) : files.resolveWorkspaceReference(id)), personalSmtp)
+          ? droppedReferences.resolve(id) : files.resolveWorkspaceReference(id)), url => shell.openExternal(url), resolveModelProxy,
+        (bytes, mime, width, height) => {
+          const image = nativeImage.createFromBuffer(bytes)
+          if (image.isEmpty()) return undefined
+          const scaled = Math.max(width, height) > 960
+            ? image.resize(width >= height ? { width: 960 } : { height: 960 }) : image
+          const result = mime === 'image/jpeg' ? scaled.toJPEG(82) : scaled.toPNG()
+          return result.length < bytes.length ? result : bytes
+        })
       let previewWindows: ReturnType<typeof registerPreviewWindows> | undefined
       const agentAttachments = desktopAgentAttachmentHandlers(host, dataDirectory,
         createDesktopRecordingTranscriber(dataDirectory, safeStorage, resolveModelProxy))
@@ -342,6 +367,7 @@ else {
       host.setHostRequestHandler(async ({ method, params, signal }) => {
         if (method === 'agent.email.accounts' && Object.keys(params).length === 0)
           return desktopMail.listAccounts()
+        if (method === 'agent.email.list') return desktopMail.listForAgent(params, signal)
         if (method === 'agent.email.attachments')
           return desktopMail.inspectAgentAttachments(params, signal)
         if (method === 'agent.email.send') {
@@ -391,6 +417,9 @@ else {
           || Object.keys(params).length === 1 && typeof params.folderPath === 'string'))
           return files.agentDownloadTarget(params.folderPath)
         if (method === 'agent.files.commitDownload') return files.agentCommitDownload(dataDirectory, params, signal)
+        if (method === 'agent.files.recordSkillHistory') return files.agentRecordSkillHistory(params)
+        if (method === 'agent.files.acquireSkillLock') return files.acquireAgentSkillLock(params.operationId, signal ?? AbortSignal.timeout(30_000))
+        if (method === 'agent.files.releaseSkillLock') return files.releaseAgentSkillLock(params.operationId)
         if (method === 'agent.files.saveAttachment')
           return files.agentSaveAttachment(params, signal ?? AbortSignal.timeout(30_000))
         if (method === 'agent.files.workspaceInstructions' && Object.keys(params).length === 1
@@ -615,9 +644,11 @@ else {
       let mainWindow: BrowserWindow | undefined
       let mainWindowLoad: Promise<void> | undefined
       const chatFab = registerChatFabWindow({
+        dataDirectory,
         uiUrl: trustedUiUrl,
         preload: join(app.getAppPath(), 'dist/preload/chat-fab.cjs'),
         panelPreload: preload,
+        trustsSelectionSource: event => previewWindows?.trustsSelection(event) === true,
         createDroppedReference: path => droppedReferences.create(path, undefined, true),
         mainWindow: () => mainWindow,
         enabled: () => !smoke && !closing && !quitting && !process.env.WAYLAND_DISPLAY,
@@ -650,8 +681,7 @@ else {
           void shell.openExternal(url).catch(() => { console.warn('无法打开外部链接') })
         }, {
           uiUrl: trustedUiUrl,
-          isGranted: () => process.platform !== 'darwin' || systemPreferences.getMediaAccessStatus('microphone') === 'granted',
-          request: async () => process.platform !== 'darwin' || await systemPreferences.askForMediaAccess('microphone'),
+          ...desktopPlatform().microphone,
         })
         try {
           mainWindowLoad = window.loadURL(devUiUrl ?? uiUrl)
@@ -665,7 +695,7 @@ else {
       }
       openMainWindow = () => {
         if (closing || quitting) return
-        if (process.platform === 'darwin') app.show()
+        desktopPlatform().showApp?.(app)
         if (!mainWindow) {
           void createWindow().catch(error => report('host.start_failed', { error }))
           return
@@ -688,7 +718,45 @@ else {
       }
       let pendingArchive: { id: string; path: string; digest: string } | undefined
       let handlingArchive = false
+      const updater = new DesktopUpdater(
+        app.isPackaged && existsSync(join(resource, 'app-update.yml'))
+          ? createElectronUpdateBackend(() => useSystemProxy)
+          : null,
+        async () => {
+          await closeDesktop()
+          quitting = true
+        },
+        () => {
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(desktopUpdateChannels.changed, updateStatus())
+        },
+      )
+      const updateStatus = (): DesktopUpdateStatus => ({ currentVersion: app.getVersion(), ...updater.status() })
+      if (updater.status().state !== 'disabled')
+        setTimeout(() => { if (!closing) void updater.check().catch(() => {}) }, 5000).unref()
+      let installDialogOpen = false
+      async function confirmUpdateInstall() {
+        if (installDialogOpen || updater.status().state !== 'downloaded') return
+        installDialogOpen = true
+        try {
+          const install = await dialog.showMessageBox({
+            message: '更新已下载并校验。安装会关闭本地工作台，并可能中断正在执行的任务。',
+            buttons: ['稍后', '安装并重启'],
+            defaultId: 0,
+            cancelId: 0,
+          })
+          if (install.response === 1) await updater.install(true)
+        } finally {
+          installDialogOpen = false
+        }
+      }
       const handlers: import('./ipc/types.js').IpcHandlers = {
+        [desktopUpdateChannels.command]: async command => {
+          if (command === 'check') await updater.check()
+          else if (command === 'download') await updater.download()
+          else if (command === 'install') await confirmUpdateInstall()
+          else if (command !== 'status') throw new DesktopError('invalid_request', '更新操作无效')
+          return updateStatus()
+        },
         ...desktopLogHandlers(dataDirectory),
         [DESKTOP_CHANNELS.createDroppedFileReference]: (path: unknown, allowFolder: unknown) => {
           if (typeof path !== 'string') throw new DesktopError('invalid_request', '文件路径无效')
@@ -713,7 +781,23 @@ else {
           gatewayPower?.update()
           return updated
         },
-        ...resourceHandlers(host, resolveModelProxy),
+        ...resourceHandlers(host, resolveModelProxy, createDesktopClawHubInstaller({
+          dataRoot: filesRoot, ownerId: filesOwner!, resolveProxy: resolveModelProxy,
+          commit: files.installSkillPackage,
+        }), () => listUserSkillBundles(filesRoot, filesOwner!), files.updateSkillDocument, files.deleteSkillPackage,
+        mode => files.handlers[DESKTOP_CHANNELS.files]!({ action: mode === 'undo' ? 'undo-trash' : 'redo-trash', directoryId: 'skill-packages' }) as Promise<{ changed: boolean }>,
+        createDesktopFileSkillCreator({ dataRoot: filesRoot, ownerId: filesOwner!, commit: files.installSkillPackage,
+          async tools() {
+            const names = new Set<string>()
+            let offset: number | null = 0
+            while (offset !== null) {
+              const page: { tools: { name: string }[]; nextOffset: number | null } = await host.request('skills.tools', { offset })
+              for (const tool of page.tools) names.add(tool.name)
+              offset = page.nextOffset
+            }
+            return names
+          },
+        })),
         ...agentSessionHandlers(host, agentModel, undefined, resolveEmbedding,
           attachIds => removeDesktopAgentAttachmentFiles(dataDirectory, attachIds), workspaceCommands),
         ...agentAttachments,
@@ -773,15 +857,20 @@ else {
           }
           return null
         },
-        [DESKTOP_CHANNELS.personalSmtp]: personalSmtp.command,
         ...desktopTerminalHandlers(host, files.personalRoot),
-        ...scheduleHandlers(host, deliverLocalReminder),
-        ...createRemoteAccountHandlers(remoteSessionStore, createRemoteAuthClient(remoteFetch), createRemoteByokClient(bindRemoteSession(remoteFetch))),
+        ...scheduleHandlers(host, deliverLocalReminder, true),
+        [DESKTOP_CHANNELS.deviceInfo]: async () => ({ deviceId: await getDeviceId(), platform: process.platform }),
+        ...createRemoteAccountHandlers(remoteSessionStore, createRemoteAuthClient(remoteFetch), createRemoteByokClient(bindRemoteSession(remoteFetch)), getDeviceId),
       }
       if (devUiUrl && previewSocket && previewSecret) {
-        const previewAgent = await startDesktopPreviewAgent(previewSocket, previewSecret, handlers, () => app.quit(),
+        const previewAgent = await startDesktopPreviewAgent(previewSocket, previewSecret, handlers,
+          (ready, signal) => host.whenIdle(() => {
+            if (closing || suspended) throw new DesktopError('closed', '桌面应用正在暂停或退出')
+            ready()
+            app.quit()
+          }, signal),
           listener => host.onAgentRunChanged(listener),
-          devNode ? async () => {
+          devNode ? signal => host.whenIdle(async () => {
             if (closing) throw new DesktopError('closed', '桌面应用正在退出')
             stopReminders?.()
             try {
@@ -793,7 +882,7 @@ else {
               report('host.start_failed', { error })
               throw error
             }
-          } : undefined, { ...files, content: fileContent }, (method, params, signal) => {
+          }, signal) : undefined, { ...files, content: fileContent }, (method, params, signal) => {
             if (method === 'agent.schedules.im.groupCatalog')
               return host.request('schedules.groupCatalog', { platform: params.platform })
             return scheduledIm(method, params, signal)
@@ -901,34 +990,13 @@ else {
           })
           if (automatic) {
             connectionFile = await publishCliConnection(cli, dataDirectory, token)
-            if (process.platform === 'darwin')
+            if (desktopPlatform().mac)
               await registerMacCli(app.getPath('home'), process.resourcesPath, connectionFile)
           }
         } catch {
           report('host.start_failed', { error: new Error('桌面 CLI 入口启动失败') })
         }
       }
-      autoUpdater.autoDownload = false
-      autoUpdater.autoInstallOnAppQuit = false
-      autoUpdater.allowDowngrade = false
-      autoUpdater.logger = null
-      const updater = new DesktopUpdater(
-        app.isPackaged && existsSync(join(resource, 'app-update.yml'))
-          ? {
-              check: async () => {
-                await autoUpdater.netSession.setProxy({ mode: useSystemProxy ? 'system' : 'direct' })
-                const result = await autoUpdater.checkForUpdates()
-                return result?.isUpdateAvailable ? result.updateInfo.version : null
-              },
-              download: async () => {
-                await autoUpdater.netSession.setProxy({ mode: useSystemProxy ? 'system' : 'direct' })
-                await autoUpdater.downloadUpdate()
-              },
-              install: () => autoUpdater.quitAndInstall(false, true),
-            }
-          : null,
-        () => host.close(),
-      )
       async function checkForUpdates() {
         try {
           if (updater.status().state !== 'downloaded') {
@@ -948,13 +1016,7 @@ else {
             if (download.response !== 1) return
             await updater.download()
           }
-          const install = await dialog.showMessageBox({
-            message: '更新已下载并校验。安装将关闭本地工作台，是否继续？',
-            buttons: ['稍后', '安装并重启'],
-            defaultId: 0,
-            cancelId: 0,
-          })
-          if (install.response === 1) await updater.install(true)
+          await confirmUpdateInstall()
         } catch {
           await dialog.showMessageBox({
             type: 'error',
@@ -963,7 +1025,7 @@ else {
         }
       }
       Menu.setApplicationMenu(Menu.buildFromTemplate(buildApplicationMenu({
-        mac: process.platform === 'darwin',
+        mac: desktopPlatform().mac,
         canUpdate: updater.status().state !== 'disabled',
         checkForUpdates,
         sendCommand: runMenuCommand,
@@ -1005,22 +1067,14 @@ else {
         if (chatFab.hasVisibleDetachedWindow()) return
         openMainWindow()
       })
-      if (process.platform === 'darwin' || process.platform === 'win32') {
-        const assets = join(app.getAppPath(), 'assets')
-        const icon = nativeImage.createFromPath(join(assets, 'icon.png'))
-        const trayIcon = process.platform === 'darwin'
-          ? nativeImage.createFromPath(join(assets, 'trayTemplate.png'))
-          : icon.resize({ width: 16 })
-        if (process.platform === 'darwin') {
-          trayIcon.setTemplateImage(true)
-          if (!app.isPackaged) app.dock?.setIcon(nativeImage.createFromPath(join(assets, 'icon-macos.png')))
-        }
-        tray = new Tray(trayIcon)
+      const { tray: trayPlatform, mac } = desktopPlatform()
+      if (trayPlatform) {
+        tray = new Tray(trayPlatform.icon(app, join(app.getAppPath(), 'assets')))
         tray.setToolTip('咕咕')
         tray.setContextMenu(Menu.buildFromTemplate(buildStatusMenu(
-          process.platform === 'darwin', openMainWindow, () => runMenuCommand('new-note'),
+          mac, openMainWindow, () => runMenuCommand('new-note'),
         )))
-        if (process.platform === 'win32') tray.on('click', openMainWindow)
+        if (trayPlatform.openOnClick) tray.on('click', openMainWindow)
       }
       if (mainWindow) await mainWindowLoad
       else await createWindow()

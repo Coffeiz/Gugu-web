@@ -1,5 +1,21 @@
 import { strip } from '../../shared/values.js'
 
+export const PERSONAL_WORKSPACE_ID = 'personal'
+export const PERSONAL_WORKSPACE_NAME = '个人文件'
+
+export function isPersonalWorkspaceSelection(value: string) {
+  return [PERSONAL_WORKSPACE_ID, PERSONAL_WORKSPACE_NAME].includes(value.trim().replace(/^bind\s+/iu, '').toLowerCase())
+}
+
+export function workspaceOptionsReply(rows: readonly { id?: string | number; commandNumber?: number; name: string }[]) {
+  const lines = rows.map(row => {
+    const id = row.commandNumber ?? row.id
+    return `- ${id === undefined ? '' : `${id}. `}${row.name}`
+  })
+  return ['可选工作区：', `- ${PERSONAL_WORKSPACE_ID}. ${PERSONAL_WORKSPACE_NAME}`, ...lines, '',
+    '使用 /workspace bind <编号> 绑定，或 /workspace personal 切回个人文件。'].join('\n')
+}
+
 /** 聊天菜单是规范命令的静态目录；认证和命令执行权限由调用方负责。 */
 export function agentCommandMenu() {
   return [
@@ -51,7 +67,7 @@ export function parseDesktopWorkspaceCommand(argument: string): { action: 'list'
   const value = argument.trim()
   if (!value || value === 'list' || value === '列表') return { action: 'list' }
   if (value === 'show' || value === '查看' || value === '当前') return { action: 'show' }
-  if (value === 'unlink' || value === '解除绑定' || value === '取消绑定') return { action: 'unlink' }
+  if (isPersonalWorkspaceSelection(value) || ['off', 'none', 'unbind', 'unlink', '解除绑定', '取消绑定'].includes(value.toLowerCase())) return { action: 'unlink' }
   const explicit = /^bind\s+(.+)$/iu.exec(value)?.[1]?.trim()
   const directoryId = explicit || value
   return explicit || /^(?:desktop:[a-f0-9-]{36}|[a-f0-9]{8}|[1-9][0-9]*)$/iu.test(directoryId)
@@ -61,12 +77,12 @@ export function parseDesktopWorkspaceCommand(argument: string): { action: 'list'
 export function desktopWorkspaceReply(action: 'list' | 'show' | 'bind' | 'unlink', result: unknown): string {
   const value = result && typeof result === 'object' && !Array.isArray(result) ? result as Record<string, unknown> : {}
   if (action === 'list') {
-    const workspaces = Array.isArray(value.workspaces) ? value.workspaces as Array<Record<string, unknown>> : []
-    return workspaces.length ? `可绑定的工作区：\n${workspaces.map(row => `- ${typeof row.commandNumber === 'number' ? `${row.commandNumber}. ` : ''}${String(row.name)}`).join('\n')}\n\n使用 \`/workspace bind <序号或名称>\` 绑定。` : '当前没有可绑定的工作区。'
+    const workspaces = Array.isArray(value.workspaces) ? value.workspaces as Array<{ id?: string; commandNumber?: number; name: string }> : []
+    return workspaceOptionsReply(workspaces)
   }
-  if (action === 'unlink') return '已解除当前会话的工作区绑定。'
+  if (action === 'unlink') return '已将当前会话切回个人文件。'
   const workspace = value.workspace && typeof value.workspace === 'object' ? value.workspace as Record<string, unknown> : null
-  if (!workspace) return action === 'show' ? '当前会话未绑定工作区。' : '工作区绑定失败。'
+  if (!workspace) return action === 'show' ? '当前会话的工作区：个人文件。' : '工作区绑定失败。'
   return action === 'show' ? `当前会话绑定的工作区：${String(workspace.workspace_name)}`
     : `已将当前会话绑定到工作区「${String(workspace.workspace_name)}」。`
 }

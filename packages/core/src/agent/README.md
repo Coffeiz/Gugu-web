@@ -59,3 +59,5 @@ Runtime 所有权明确归 Core：`createAgentRuntime`、`createAgentDispatchRun
 生产目录不放设计草案、SQL 审查材料或合同测试。相关说明与未安装的 SQL 草案放在 `docs/refactor/agent/`，正式交互 schema 放在 `interactions/`，合同测试放在 `tests/agent/interactions/` 并纳入显式 suites 清单。会话 SQL 草案测试只验证隔离临时库，不证明升级器已完成。
 
 公开导出按领域提供：会话能力为 `@gugu/core/agent-sessions`，配置为 `@gugu/core/agent/config`；Run 编码、历史图片后端、消息处理和指令菜单由各自显式子路径提供。会话入口不转发这些其他领域实现。数据库事务借用统一使用 `@gugu/core/data` 的 `withBorrowedPostgresQuery`，不保留 Agent 专属转发或别名。
+
+Web 通过 `@gugu/core/agent/chat-admission` 在原 PostgreSQL 事务连接上读写聊天准入回执，Desktop 在同一份 Core 仓储上使用 SQLite 事务。回执以 owner、请求会话范围和客户端消息 ID 定位，校验输入指纹后返回原消息与 Run。Web 的空会话范围支持新建会话请求重放。回执与消息、附件、Run 登记及所需调度状态一起提交。会话历史通过 `@gugu/core/agent-sessions` 共用正序分页投影，两端沿用各自协议游标。

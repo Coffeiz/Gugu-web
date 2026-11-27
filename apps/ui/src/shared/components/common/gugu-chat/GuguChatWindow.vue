@@ -40,7 +40,10 @@
           </span>
         </template>
         <span v-else class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : t('chatUi.gugu') }}</span>
-        <span v-if="currentSessionWorkspaceName" class="chat-workspace-name" :class="{ 'is-compact': !expanded }">
+        <GuguChatWorkspace v-if="sessionId && currentSessionWorkspaceName && workspaceAccess && !previewOnly && !isGroupSession"
+          :key="sessionId" :session-id="sessionId" :name="currentSessionWorkspaceName"
+          :access="workspaceAccess" :disabled="streaming || sessionSettling" @change="(id, name) => emit('workspace-change', id, name)" />
+        <span v-else-if="currentSessionWorkspaceName && !isGroupSession" class="chat-workspace-name" :class="{ 'is-compact': !expanded }">
           · {{ currentSessionWorkspaceName }}
         </span>
         <button
@@ -67,9 +70,7 @@
           <button v-if="expanded" class="exp-icon-btn" @click="onExitExpanded" :title="t('chat.collapse')" :aria-label="t('chat.collapse')">
             <Icon name="action.collapse" :size="14" />
           </button>
-          <button class="popup-close-btn" @click="onClose" :title="t('common.actions.close')" :aria-label="t('common.actions.close')">
-            <Icon name="action.close" :size="13" />
-          </button>
+          <CloseButton :compact="!expanded" @click="onClose" />
         </div>
       </div>
 
@@ -105,24 +106,26 @@
       <slot name="conversation-status" />
 
       <!-- 输入框 -->
-      <GuguChatComposer
-        ref="composerRef"
-        v-model="inputTextModel"
-        :owner-z="props.ownerZ"
-        :preview-only="previewOnly" :text-only="textOnly"
-        :references="props.references" @update:references="emit('update:references', $event)"
-        :pending-att="pendingAtt" :att-uploading="attUploading" :standalone-references="dropFilesAsReferences"
-        :recording="recording" :record-secs="recordSecs" :voice-input-available="voiceInputAvailable"
-        :expanded="expanded" :streaming="streaming" :vw="vw"
-        :automatic-mode-enabled="automaticModeEnabled"
-        :automatic-mode-available="automaticModeAvailable"
-        :automatic-mode-saving="automaticModeSaving"
-        :on-toggle-automatic-mode="onToggleAutomaticMode"
-        :on-remove-att="onRemoveAtt"
-        :on-start-record="onStartRecord" :on-cancel-record="onCancelRecord" :on-stop-record="onStopRecord"
-        :on-file-picked="onFilePicked" :on-paste="onPaste"
-        :on-send="onSend" :on-stop-streaming="onStopStreaming" :on-reference-click="onReferenceClick"
-      />
+      <slot name="composer">
+        <GuguChatComposer
+          ref="composerRef"
+          v-model="inputTextModel"
+          :owner-z="props.ownerZ"
+          :preview-only="previewOnly" :text-only="textOnly"
+          :references="props.references" @update:references="emit('update:references', $event)"
+          :pending-att="pendingAtt" :att-uploading="attUploading" :standalone-references="dropFilesAsReferences"
+          :recording="recording" :record-secs="recordSecs" :voice-input-available="voiceInputAvailable"
+          :expanded="expanded" :streaming="streaming" :can-stop-run="canStopRun" :vw="vw"
+          :automatic-mode-enabled="automaticModeEnabled"
+          :automatic-mode-available="automaticModeAvailable"
+          :automatic-mode-saving="automaticModeSaving"
+          :on-toggle-automatic-mode="onToggleAutomaticMode"
+          :on-remove-att="onRemoveAtt"
+          :on-start-record="onStartRecord" :on-cancel-record="onCancelRecord" :on-stop-record="onStopRecord"
+          :on-file-picked="onFilePicked" :on-paste="onPaste"
+          :on-send="onSend" :on-stop-streaming="onStopStreaming" :on-reference-click="onReferenceClick"
+        />
+      </slot>
     </div>
   </div>
 </template>
@@ -132,6 +135,7 @@ import GuguChatDropOverlay from './GuguChatDropOverlay.vue'
 import type { ChatHistoryState } from './composables/useChatHistoryPagination'
 import { ref, computed, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 /**
  * 聊天窗口外壳：窗口 DOM、标题栏、展开/收起按钮、消息列表与输入框的挂载点。
@@ -146,6 +150,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import GuguChatSubagentStatus from './GuguChatSubagentStatus.vue'
 import GuguChatMessageList from './GuguChatMessageList.vue'
 import GuguChatComposer from './GuguChatComposer.vue'
+import GuguChatWorkspace from './GuguChatWorkspace.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatMessage, ChatFile, ChatReference, InteractionAnswerMode } from './chatTypes'
 import { CHAT_REF_ACCEPTS, CHAT_REF_SURFACE_ID } from './chatTypes'
@@ -161,6 +166,7 @@ const props = defineProps<{
   expanded: boolean
   resizing: boolean
   streaming: boolean
+  canStopRun?: boolean
   automaticModeEnabled: boolean
   automaticModeAvailable: boolean
   automaticModeSaving: boolean
@@ -169,6 +175,7 @@ const props = defineProps<{
   dropFilesAsReferences?: boolean
   currentSessionTitle: string
   currentSessionWorkspaceName: string | null
+  workspaceAccess?: import('./chatTypes').ChatWorkspaceAccess
   currentSessionGoalActive: boolean
   currentSessionGoalStatus: 'active' | 'paused' | null
   filesystemAuthorized: boolean
@@ -234,6 +241,7 @@ const props = defineProps<{
 const { t } = useI18n()
 
 const emit = defineEmits<{
+  'workspace-change': [id: number, name: string | null]
   'update:inputText': [value: string]
   'update:references': [value: ChatReference[]]
   removeQueued: [queueId: string, key: number]
@@ -444,7 +452,7 @@ defineExpose({
 .popup-status.is-resting { color: var(--color-warning); cursor: default; }
 .popup-status.is-resting .status-dot { background: var(--color-warning); animation: restPulse 1.8s ease-in-out infinite; }
 @keyframes restPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-.btn-group { display: flex; align-items: center; gap: 2px; margin-inline-start: auto; }
+.btn-group { display: flex; align-items: center; gap: var(--option-gap); margin-inline-start: auto; }
 .popup-status + .btn-group { margin-inline-start: 0; }
 
 .popup-icon-btn {
@@ -455,14 +463,7 @@ defineExpose({
 }
 
 .popup-icon-btn svg { display: block; }
-.popup-close-btn {
-  width: 26px; height: 26px; border-radius: 7px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.12s, color 0.12s;
-}
-.popup-close-btn svg { display: block; }
-:is(.filesystem-auth-button, .popup-icon-btn, .popup-close-btn, .exp-icon-btn):hover:not(:disabled) {
+:is(.filesystem-auth-button, .popup-icon-btn, .exp-icon-btn):hover:not(:disabled) {
   background: var(--action-soft);
   color: var(--control-fg-strong);
 }
@@ -574,7 +575,7 @@ defineExpose({
 }
 :deep(.chat-object-cards) {
   display: grid; align-items: stretch; gap: var(--space-sm);
-  inline-size: 100%; max-inline-size: 420px; min-width: 0; margin-block: var(--space-sm);
+  inline-size: 100%; max-inline-size: var(--chat-single-card-width); min-width: 0; margin-block: var(--space-sm);
 }
 :deep(.chat-folder-card-count) {
   color: var(--content-secondary); font-size: var(--font-size-xs);
@@ -894,6 +895,10 @@ defineExpose({
 :deep(.msg:is(.ai, .member) .msg-bubble:has(:is(table, pre, img, .chat-object-cards, .chat-smart-view, .chat-smart-stream, .md-mermaid))) {
   inline-size: var(--chat-assistant-bubble-max-width);
 }
+:deep(.msg:is(.ai, .member) .msg-bubble:has(> .md-table-host:only-child > .md-view > .chat-object-cards:not(.is-multiple):only-child)),
+:deep(.msg.ai .msg-bubble:has(> .chat-assistant-block:only-child > .md-table-host > .md-view > .chat-object-cards:not(.is-multiple):only-child)) {
+  max-inline-size: min(var(--chat-assistant-bubble-max-width), calc(var(--chat-single-card-width) + 2 * var(--chat-markdown-padding-inline) + 2px));
+}
 :deep(.msg:is(.ai, .member) .msg-bubble),
 :deep(.md-view .chat-smart-view) {
   background: var(--gugu-chat-assistant-bg); border: 1px solid var(--gugu-chat-assistant-border);
@@ -1075,7 +1080,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   overflow: auto; overscroll-behavior-y: contain;
 }
 :deep(.chat-smart-panel-body:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: -2px; }
-:deep(.chat-smart-toolbar) { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+:deep(.chat-smart-toolbar) { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); min-width: 0; }
 :deep(.chat-smart-toolbar[data-smart-orientation="vertical"]) { flex-direction: column; align-items: flex-start; }
 :deep(.chat-smart-toolbar > .chat-smart-button:not([data-smart-button-variant="icon"])) { flex: 0 1 auto; }
 :deep(.chat-smart-timeline ol),
@@ -1374,13 +1379,29 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 :deep(.msg-quoted-file:hover) { background: var(--gugu-chat-quoted-chip-bg-hover); }
-:deep(.msg-face-image-wrap) {
-  max-width: 150px; margin-top: 5px; cursor: pointer; line-height: 0;
+:deep(.msg-image-attachment) {
+  align-self: flex-start;
+  display: block;
+  inline-size: fit-content;
+  max-inline-size: min(320px, 100%);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--content-secondary);
+  cursor: pointer;
+  overflow: hidden;
 }
-:deep(.msg-face-image) {
-  display: block; width: 128px; height: 128px; max-width: 100%; object-fit: contain;
-  border-radius: 12px;
+:deep(.msg.user .msg-image-attachment) { align-self: flex-end; }
+:deep(.msg-image-attachment:focus-visible) { outline: 2px solid var(--border-focus); }
+:deep(.msg-image-attachment img) {
+  display: block;
+  max-inline-size: 100%;
+  max-block-size: 260px;
+  object-fit: contain;
 }
+:deep(.msg-image-attachment img:not([src])) { inline-size: min(128px, 100%); block-size: 72px; visibility: hidden; }
+:deep(.msg-image-attachment--sticker img) { max-inline-size: min(128px, 100%); max-block-size: 128px; }
 /* 咕咕发来的文件卡片 */
 :deep(.msg-files) { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }
 
@@ -1398,7 +1419,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   line-height: var(--line-height-body); white-space: pre-wrap; overflow-wrap: anywhere;
 }
 :deep(.msg-link-buttons .interaction-actions) {
-  display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%;
+  display: flex; flex-wrap: wrap; gap: var(--space-xs); min-width: 0; max-width: 100%;
   margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider);
 }
 :deep(.msg-link-buttons .interaction-option) {
@@ -1409,7 +1430,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.msg-link-buttons .interaction-option .app-action-button-content) {
   display: block; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere;
 }
-/* 聊天附件沿用对象卡片样式，预先留出图片区域。 */
+/* 非图片附件保留对象卡片样式。 */
 :deep(.msg-files:has(.chat-attachment-card)) { inline-size: min(320px, 88%); }
 :deep(.chat-attachment-card) { inline-size: 100%; }
 :deep(.chat-attachment-card > button.chat-object-card) {
@@ -1418,16 +1439,6 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.chat-attachment-card > button.chat-file-card-download) {
   box-sizing: border-box; cursor: pointer;
 }
-:deep(.chat-attachment-preview) {
-  position: relative; display: grid; place-items: center; inline-size: 100%;
-  aspect-ratio: 4 / 3; overflow: hidden; border-radius: var(--radius-sm);
-  color: var(--content-tertiary); background: var(--surface-soft);
-}
-:deep(.chat-attachment-preview img.is-loaded[src]) {
-  position: absolute; inset: 0; inline-size: 100%; block-size: 100%;
-  object-fit: contain; background: var(--surface-soft);
-}
-:deep(.chat-attachment-preview img:not(.is-loaded)) { position: absolute; inset: 0; width: 100%; height: 100%; visibility: hidden; }
 /* 语音条保留独立的迷你播放布局。 */
 :deep(.msg-voice) {
   display: inline-flex; align-items: center; gap: 9px; padding: 8px 13px; cursor: pointer;
@@ -1469,7 +1480,11 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 /* ── Markdown ── */
 /* md 排版由通用组件 MarkdownView 提供；这里只保留聊天气泡的内边距（渲染于
    GuguChatMessageRow.vue，同样需要 :deep()） */
-:deep(.md-body) { padding: 10px 13px; }
+:deep(.md-body) {
+  --chat-single-card-width: 420px;
+  --chat-markdown-padding-inline: 13px;
+  padding: 10px var(--chat-markdown-padding-inline);
+}
 
 /* .mini-player 与 .mp-开头的样式已随 GuguChatMiniPlayer.vue 迁移 */
 </style>

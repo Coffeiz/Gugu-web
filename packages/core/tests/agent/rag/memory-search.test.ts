@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createMemorySearch } from '../../../src/agent/rag/memory-search.js'
-import { createMemorySearchTool } from '../../../src/agent/tools/memory.js'
+import { createMemorySearchTool } from '../../../src/agent/tools/memory/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { prepareMemory, type MemoryRagStorageReader } from '../../../src/agent/rag/memory-loader.js'
 import { configureRagJieba } from '../../../src/agent/rag/tokenizer.js'

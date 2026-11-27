@@ -1,4 +1,5 @@
 export const DESKTOP_CALENDAR_UNDO_CONTEXT = 'desktop-calendar'
+import type { ClientFields, ClientSummary } from './index.js'
 import type { DisplayItem } from '../agent/models.js'
 import type { ByokCommand, ByokResult, ByokTarget, DesktopAuxiliaryModelCommand, DesktopAuxiliaryModelResult } from '../byok/contracts.js'
 import type { ImGroupAttentionMode, ImGroupReplyMode } from '../im/group-settings.js'
@@ -9,9 +10,9 @@ export const DESKTOP_ARCHIVE_TIMEOUT_MS = 120_000
 export const DESKTOP_ARCHIVE_METHODS: readonly string[] = [
   'preferences.exportBusinessArchive', 'preferences.preflightBusinessArchive', 'preferences.applyBusinessArchive',
 ]
-export const MAX_FRAME = 65_536
+export const MAX_FRAME = 256 * 1024
 export const MAX_AGENT_RESPONSE = 4 * 1024 * 1024
-export const CHUNKED_AGENT_METHODS = ['agent.sessions.events', 'agent.sessions.history', 'agent.sessions.messages', 'agent.sessions.toolDetails', 'agent.sessions.queue', 'im.inbox.projection', 'im.chart.render'] as const
+export const CHUNKED_AGENT_METHODS = ['mind.notes.list', 'agent.sessions.events', 'agent.sessions.history', 'agent.sessions.messages', 'agent.sessions.toolDetails', 'agent.sessions.queue', 'im.inbox.projection', 'im.chart.render'] as const
 export const DESKTOP_METHODS = [
   'core.info',
   'im.inbox.admit',
@@ -30,6 +31,7 @@ export const DESKTOP_METHODS = [
   'im.qq.sequence',
   'im.chart.render',
   'agent.sessions.list',
+  'core.devReloadIdle',
   'agent.sessions.workspace',
   'agent.sessions.setWorkspace',
   'agent.sessions.clearWorkspaceBindings',
@@ -99,6 +101,7 @@ export const DESKTOP_METHODS = [
   'projects.board.restore',
   'projects.board.purge',
   'clients.list',
+  'clients.related',
   'clients.create',
   'clients.update',
   'clients.delete',
@@ -189,6 +192,7 @@ export const DESKTOP_MUTATIONS: readonly string[] = [
 ]
 export const DESKTOP_CHANNELS = {
   remoteByok: 'gugu:remote-byok',
+  deviceInfo: 'gugu:device:info',
   remoteAccount: 'gugu:remote-account:status',
   remoteLogin: 'gugu:remote-account:login',
   remoteLogout: 'gugu:remote-account:logout',
@@ -203,6 +207,7 @@ export const DESKTOP_CHANNELS = {
   restoreBoardProject: 'gugu:projects:board:restore',
   purgeBoardProject: 'gugu:projects:board:purge',
   clients: 'gugu:clients:list',
+  clientRelated: 'gugu:clients:related',
   createClient: 'gugu:clients:create',
   renameClient: 'gugu:clients:rename',
   deleteClient: 'gugu:clients:delete',
@@ -214,7 +219,6 @@ export const DESKTOP_CHANNELS = {
   nativeFileDragSource: 'gugu:files:drag-source',
   createDroppedFileReference: 'gugu:files:dropped-reference',
   openDroppedFileReference: 'gugu:files:open-dropped-reference',
-  personalSmtp: 'gugu:preferences:personal-smtp',
   mail: 'gugu:mail:request',
   resources: 'gugu:resources:request',
   agentSessions: 'gugu:agent:sessions',
@@ -297,10 +301,8 @@ export interface DesktopProjectPage {
   items: DesktopProjectDetails[]
   nextOffset: number | null
 }
-export interface DesktopClient {
-  id: number
-  name: string
-}
+export type DesktopClientFields = ClientFields
+export type DesktopClient = ClientSummary
 export interface DesktopCalendarEvent {
   id: number
   title: string
@@ -328,6 +330,9 @@ export interface DesktopNote {
 export interface DesktopCanvasItemNode extends DesktopNote {
   kind: string
 }
+export type CanvasContactRef = Pick<ClientSummary, 'name' | 'email' | 'phone' | 'address' | 'notes'>
+export type CanvasReferenceData = { date?: string; time?: string | null; endTime?: string | null; description?: string | null } | CanvasContactRef
+
 export interface DesktopCanvasItem {
   id: number
   canvasId: number
@@ -339,7 +344,7 @@ export interface DesktopCanvasItem {
   z: number
   collapsed: boolean
   data: Record<string, unknown>
-  refData: { date: string; time: string | null; endTime: string | null; description: string | null } | null
+  refData: CanvasReferenceData | null
   node: DesktopCanvasItemNode
   createdAt: string
   updatedAt: string
@@ -393,7 +398,7 @@ export interface DesktopAgentAttachmentDownload {
   mime: string
   data: Uint8Array
 }
-export interface DesktopAgentChatReference { type: string; id: number | string; label: string }
+export interface DesktopAgentChatReference { type: string; id: number | string; label: string; selection?: import('../agent/sessions/selection-reference.js').SelectionSnapshot }
 export type DesktopAgentAttachmentCommand =
   | { action: 'upload'; name: string; mime: string | null; voice: boolean; data: Uint8Array }
   | { action: 'deleteDraft'; attachId: string }
@@ -458,7 +463,6 @@ export interface DesktopAgentModelOptions {
   contextTokens?: number
   maxTokens?: number
   thinkingMode?: string
-  reasoningPersistence?: 'off' | 'continuation'
   webSearchEnabled?: boolean
   image?: boolean
   audio?: boolean
@@ -546,7 +550,7 @@ export interface DesktopSearchResult {
   total: number
   partial?: boolean
   groups: Array<{
-    type: 'project' | 'event' | 'note' | 'canvas_note' | 'file' | 'folder' | 'mcp' | 'scheduled_task'
+    type: 'project' | 'client' | 'event' | 'note' | 'canvas_note' | 'file' | 'folder' | 'mcp' | 'scheduled_task'
     label: string
     items: Array<{
       id: number | string
@@ -560,7 +564,7 @@ export interface DesktopSearchResult {
 }
 
 export interface DesktopBridge {
-  search(queries: string[]): Promise<DesktopReply<DesktopSearchResult>>
+  search(queries: string[], expansion?: number): Promise<DesktopReply<DesktopSearchResult>>
   readLogs(kind: DesktopLogKind): Promise<DesktopReply<{ lines: string[]; truncated: boolean }>>
   qqPairing(command: DesktopQrPairingCommand | { action: 'bindingCode' | 'unbind' } | { action: 'setPrivateMessageFormat' | 'setGroupMessageFormat'; format: 'compat' | 'markdown' }): Promise<DesktopReply<DesktopQrPairingResult | { code: string; expires_in: number }>>
   feishuPairing(command: DesktopQrPairingCommand): Promise<DesktopReply<DesktopQrPairingResult>>
@@ -581,8 +585,7 @@ export interface DesktopBridge {
   ): Promise<DesktopReply<{ retained: number }>>
   files(command: DesktopFileCommand): Promise<DesktopReply<unknown>>
   startFileDrag?(directoryId: DesktopFileDirectory, path: string, preview?: string): Promise<DesktopReply<null>>
-  personalSmtp(action: 'get' | 'save' | 'test', input?: Record<string, unknown>): Promise<DesktopReply<import('../preferences/smtp.js').SmtpSettings & { configured: true } | { ok: boolean; message: string } | null>>
-  mail(command: import('../mail/contracts.js').MailCommand): Promise<DesktopReply<unknown>>
+  mail(command: import('@gugu/email/contracts').MailCommand | import('@gugu/email/contracts').MailOAuthCommand): Promise<DesktopReply<unknown>>
   resources(command: DesktopResourceCommand): Promise<DesktopReply<unknown>>
   scheduleTask(command: DesktopScheduleCommand): Promise<DesktopReply<DesktopScheduleResult>>
   onScheduleChanged(callback: () => void): () => void
@@ -598,7 +601,7 @@ export interface DesktopBridge {
   clearAgentAttachments(): Promise<DesktopReply<{ deleted: number }>>
   appearance(): Promise<DesktopReply<DesktopAppearancePreferences>>
   updateAppearance(patch: Partial<DesktopAppearancePreferences>): Promise<DesktopReply<DesktopAppearancePreferences>>
-  onboarding(): Promise<DesktopReply<DesktopOnboardingState>>
+  onboarding(patch?: Record<string, unknown>, reopen?: true): Promise<DesktopReply<DesktopOnboardingState>>
   projects(): Promise<DesktopReply<DesktopProject[]>>
   createProject(name: string): Promise<DesktopReply<DesktopProject>>
   renameProject(id: number, version: number, name: string): Promise<DesktopReply<DesktopProject>>
@@ -610,8 +613,9 @@ export interface DesktopBridge {
   purgeBoardProject(id: number): Promise<DesktopReply<null>>
   restoreBoardProject(id: number): Promise<DesktopReply<DesktopProjectDetails>>
   clients(): Promise<DesktopReply<DesktopClient[]>>
-  createClient(name: string): Promise<DesktopReply<DesktopClient>>
-  renameClient(id: number, name: string): Promise<DesktopReply<DesktopClient>>
+  clientRelated(id: number): Promise<DesktopReply<import('../clients/related.js').ClientRelatedItem[]>>
+  createClient(fields: string | DesktopClientFields): Promise<DesktopReply<DesktopClient>>
+  renameClient(id: number, fields: string | DesktopClientFields): Promise<DesktopReply<DesktopClient>>
   deleteClient(id: number): Promise<DesktopReply<null>>
   calendar(): Promise<DesktopReply<DesktopCalendarEvent[]>>
   createCalendarEvent(title: string, date: string, details?: { time?: string | null; endTime?: string | null; description?: string | null }): Promise<DesktopReply<DesktopCalendarEvent>>
@@ -627,7 +631,7 @@ export interface DesktopBridge {
   bringCanvasItemToFront(canvasId: number, id: number, body: { x: number; y: number }): Promise<DesktopReply<DesktopCanvasItem>>
   createCanvasRelation(body: { canvasId: number; srcNodeId: number; dstNodeId: number; allowParallel?: boolean }): Promise<DesktopReply<unknown>>
   deleteCanvasRelation(canvasId: number, id: number): Promise<DesktopReply<null>>
-  createRefNode(refType: 'project' | 'file' | 'event', refId: number): Promise<DesktopReply<DesktopNote>>
+  createRefNode(refType: 'project' | 'file' | 'event' | 'client', refId: number): Promise<DesktopReply<DesktopNote>>
   canvasNoteLocation(nodeId: number): Promise<DesktopReply<{ canvasId: number } | null>>
   createCanvasNote(canvasId: number, body: { title?: string; contentMd?: string; color?: string | null; x?: number; y?: number; w?: number | null; h?: number | null; z?: number }): Promise<DesktopReply<DesktopCanvasItem>>
   updateCanvasNote(id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }): Promise<DesktopReply<DesktopNote>>
@@ -643,7 +647,7 @@ export interface DesktopBridge {
   undoRedo(contextId: string, undoId: string, operationId: string): Promise<DesktopReply<unknown>>
   sandboxStatus(): Promise<DesktopReply<SandboxStatus>>
 }
-export type DesktopScheduledTask = ReturnType<typeof import('../scheduled-tasks/task-list.js').projectScheduledTaskForWeb>
+export type DesktopScheduledTask = ReturnType<typeof import('../tasks/task-list.js').projectScheduledTaskForWeb>
 export type DesktopScheduleCommand =
   | { action: 'channels' }
   | { action: 'targets'; platform: string }
@@ -690,6 +694,7 @@ export interface DesktopOnboardingState {
   should_show: boolean
   guide: {
     enabled: boolean
+    version: number
     current_step: string
     completed_steps: string[]
     dismissed: boolean
@@ -701,12 +706,20 @@ export interface DesktopOnboardingState {
 
 export type DesktopResourceCommand =
   | { domain: 'citation'; action: 'site-name'; url: string }
-  | { domain: 'skills'; action: 'list' | 'tools'; offset?: number }
+  | { domain: 'skills'; action: 'tools'; offset?: number }
+  | { domain: 'skills'; action: 'clawhub-search'; query: string }
+  | { domain: 'skills'; action: 'clawhub-trending' }
+  | { domain: 'skills'; action: 'clawhub-preview' | 'clawhub-install'; reference: string }
+  | { domain: 'skills'; action: 'file-create'; fields: { name: string; description_short: string; description_long: string | null; category: string; body: string; related_tools: string[]; enabled?: boolean } }
+  | { domain: 'skills'; action: 'file-list'; offset?: number }
+  | { domain: 'skills'; action: 'file-update'; id: string; source: 'user' | 'clawhub'; expectedDigest: string; patch: { name?: string; description?: string; body?: string; enabled?: boolean; descriptionLong?: string | null; category?: string; relatedTools?: string[] } }
+  | { domain: 'skills'; action: 'file-delete'; id: string; source: 'user' | 'clawhub'; expectedDigest: string }
+  | { domain: 'skills'; action: 'file-history'; mode: 'undo' | 'redo' }
   | { domain: 'mcp'; action: 'list' }
   | { domain: 'mcp'; action: 'config' | 'test'; id: string }
-  | { domain: 'skills' | 'mcp'; action: 'create'; fields: Record<string, unknown> }
-  | { domain: 'skills' | 'mcp'; action: 'update'; id: string; fields: Record<string, unknown> }
-  | { domain: 'skills' | 'mcp'; action: 'delete'; id: string }
+  | { domain: 'mcp'; action: 'create'; fields: Record<string, unknown> }
+  | { domain: 'mcp'; action: 'update'; id: string; fields: Record<string, unknown> }
+  | { domain: 'mcp'; action: 'delete'; id: string }
 
 export type DesktopFileDirectory = 'personal' | `desktop:${string}` | `project:${number}`
 export type DesktopFileWorkspace = { id: DesktopFileDirectory; name: string }
@@ -719,9 +732,11 @@ export type DesktopFileCommand =
       | { action: 'reference'; path: string; kind?: 'file' | 'folder'; identity?: string }
       | { action: 'copy' | 'move'; path: string; destination: string }
       | { action: 'upload'; path: string; data: Uint8Array; overwrite: boolean; identity?: string }
+      | { action: 'replace-selection'; path: string; identity: string; revision: string; expected: string; replacement: string }
       | { action: 'download' | 'open'; path: string; identity?: string }
       | { action: 'search'; query: string }
     ))
+  | { action: 'resolve-library-link'; url: string }
   | { action: 'workspace-list' | 'workspace-add' }
   | { action: 'project-workspaces'; projectId: number }
   | { action: 'project-workspace-binding'; projectId: number; directoryId: DesktopFileDirectory; bound: boolean }

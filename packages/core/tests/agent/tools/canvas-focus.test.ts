@@ -1,5 +1,5 @@
 import { expect,it,vi } from 'vitest'
-import { createCanvasFocusTools } from '../../../src/agent/tools/canvas.js'
+import { createCanvasFocusTools } from '../../../src/agent/tools/canvas/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 it('定位工具只传可信身份和已校验目标，不接受身份扩展，失败及取消不伪造链接',async()=>{
  const getAgentCanvasFocus=vi.fn().mockResolvedValue({canvas_id:3,item_id:7,node_id:19,title:'合成',focus_link:'gugu://focus-canvas/3/19'})

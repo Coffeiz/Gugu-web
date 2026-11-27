@@ -4,7 +4,7 @@ import type { Block,CanonicalRunContext,CanonicalMessage,CompactionResult,Curren
 import { AgentRunError,isEarlyExit } from '../models.js'
 import { collapseConsumedImage,createToolResultCheckpoint,hasInitialInlineImage,restorePreparedContext,savePreparedContext } from './history/attachment-refs.js'
 import { appendCanonicalEvents,blocks,canonicalizeMessage,canonicalToolRound,copy,mediaTypes,MessageArea,portableSnapshot,redactToolRequestHeaders,refreshCanonicalToolSchemas } from './history/canonical-history.js'
-import { resolveCallTool } from '../tools/call-adapter.js'
+import { resolveCallTool } from '../tools/meta/call-adapter.js'
 import { hasOnlyLegacyTimeContext,isInternalUserMessage,lastUserIndex,protectedMessageIds,restoreHistoryForRequest,userTextFromMessage,validateHistoryRows,wrapMessageTime } from './history/ordering.js'
 import type { CanonicalContextPorts,ContextPort,ContextServices,PreparationPorts } from '../ports.js'
 import { enforceProviderOverflow,shouldCompact } from './budget.js'
@@ -127,6 +127,7 @@ export async function buildRunRagContext(input: PrepareContextInput, ports: Prep
 type AssemblyTiming = {
   stages_ms: { rag: number; restore_history: number; history_time_format: number; assemble_messages: number }
   rag_source: 'prepared' | 'lookup' | 'skipped'
+  rag_stages_ms?: Record<string, number>
   history_rows: number
   history_time_calls: number
 }
@@ -211,7 +212,13 @@ export async function prepareContext(input: PrepareContextInput, ports: Preparat
   }
   if (observeAssembly) {
     const ms = (duration: number) => Math.round(duration * 100) / 100
+    const stages = (rag.diagnostics as { stage_ms?: unknown } | undefined)?.stage_ms
+    const ragStages = stages && typeof stages === 'object' && !Array.isArray(stages)
+      ? Object.fromEntries(Object.entries(stages).filter(([key, value]) =>
+        /^[a-z_]+_ms$/u.test(key) && typeof value === 'number' && Number.isFinite(value)))
+      : undefined
     observeAssembly({
+      ...(ragStages ? { rag_stages_ms: ragStages } : {}),
       stages_ms: {
         rag: ms(historyStarted - ragStarted),
         restore_history: ms(messageAssemblyStarted - historyStarted),
@@ -516,7 +523,10 @@ export function createCanonicalContextPort(ports: CanonicalContextPorts): Contex
         const anchor = metadata.anchor
         const keys = ['provider', 'api_format', 'model', 'strategy', 'baseline_digest'] as const
         if (Object.keys(metadata).some((name) => !['modelIdentity', 'anchor'].includes(name))
-          || Object.keys(anchor).some((name) => !keys.includes(name as typeof keys[number]))
+          || Object.entries(anchor).some(([name, value]) =>
+            !keys.includes(name as typeof keys[number])
+            && (!['scope_digest', 'baseline_prefix_digest', 'latest_prefix_digest', 'carried_prefix_digest'].includes(name)
+              || typeof value !== 'string' || !/^[0-9a-f]{64}$/u.test(value)))
           || keys.some((name) => typeof anchor[name] !== 'string' || !anchor[name] || String(anchor[name]).length > 512))
           throw new Error('Provider缓存锚点仅允许稳定指纹元数据')
         providerCacheAnchor = {

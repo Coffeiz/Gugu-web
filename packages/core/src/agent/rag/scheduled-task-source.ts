@@ -1,5 +1,5 @@
 import { dataContext } from '../../contracts/index.js'
-import type { createKyselyScheduledTaskRagReader } from '../../scheduled-tasks/task-list.js'
+import type { createKyselyScheduledTaskRagReader } from '../../tasks/task-list.js'
 import { buildSourceDocuments } from './index-builder.js'
 import type { RagRebuildSource } from './rebuild-worker.js'
 

@@ -28,6 +28,7 @@ function requestLocalFile<T>(request: Parameters<typeof requestDesktopFile>[0]) 
 }
 
 export const desktopPathFileAccess: PathFileAccess = {
+  resolveLibraryLink: url => requestLocalFile({ action: 'resolve-library-link', url }),
   watchDirectoryUrl: file => isLocalFile(file) ? contentUrl(file) + '&watch=1' : pathFilesApi.watchDirectoryUrl(file),
   async fileRevision(file, signal) {
     if (!isLocalFile(file)) return pathFilesApi.fileRevision(file, signal)

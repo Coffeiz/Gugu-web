@@ -4,7 +4,7 @@ import { CoreError, dataContext } from '../contracts/index.js'
 import { prepareClientFields } from '../clients/clients.js'
 import { databaseTime, nowUtc, uuid } from '../data/codec.js'
 import type { Database } from '../data/schema.js'
-import { DEFAULT_PROJECT_COLOR, projectColorKey, projectColorValue } from '../projects/colors.js'
+import { DEFAULT_PROJECT_COLOR, PROJECT_COLOR_PRESETS, projectColorKey, projectColorValue } from '../projects/colors.js'
 import { prepareProjectCreate } from '../projects/domain.js'
 import { safeName } from '../projects/file-paths.js'
 import { SqlProjectRepository } from '../projects/repository.js'
@@ -77,7 +77,8 @@ export async function importDesktopBusinessArchive(db: Kysely<Database>, ownerId
           if (typeof fields.name === 'string') fields.name = safeName(fields.name)
           if (typeof fields.color === 'string') {
             const key = projectColorKey(fields.color) ?? projectColorKey(projectColorValue(fields.color))
-            fields.color = projectColorValue(key) ?? DEFAULT_PROJECT_COLOR
+            fields.color = ['sunset', 'linear-gradient(135deg,#be8b8f,#c8aa72)'].includes(fields.color)
+              ? PROJECT_COLOR_PRESETS[0] : projectColorValue(key) ?? DEFAULT_PROJECT_COLOR
           }
           const project = {
             ...prepareProjectCreate(fields), created_at: created,
@@ -88,11 +89,15 @@ export async function importDesktopBusinessArchive(db: Kysely<Database>, ownerId
           targetId = (await projects.create(project)).id
         } else if (record.type === 'client') {
           if (record.deleted_at) throw new CoreError('invalid_request', '联系人归档包含已删除记录')
-          const fields = prepareClientFields(record.fields, true)
+          // 旧归档的称呼仅用于完整恢复历史数据。
+          const { contact, ...input } = record.fields
+          if (contact != null && (typeof contact !== 'string' || Array.from(contact).length > 200))
+            throw new CoreError('invalid_request', '归档中的历史联系人称呼无效')
+          const fields = prepareClientFields(input, true)
           await tx.insertInto('clients').values({
               user_id: owner, name: String(fields.name), notes: String(fields.notes ?? ''),
-              contact: fields.contact as string | null ?? null, email: fields.email as string | null ?? null,
-              phone: fields.phone as string | null ?? null, created_at: created,
+              contact: contact ?? null, email: fields.email as string | null ?? null,
+              phone: fields.phone as string | null ?? null, address: fields.address as string | null ?? null, created_at: created,
           }).execute()
         } else {
           targetId = await restoreDesktopRelatedRecord(tx, owner, record, created, lookup)

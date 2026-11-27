@@ -31,6 +31,7 @@ export function createAgentContextSources(options: Omit<AgentContextAssemblyOpti
   const preference = createAgentPreferenceContextSources(options.pool, options.files, options.redis, options.serverTimezone)
   const overview = createAgentOverviewSources(options.pool, options.memoryStorageRoot, () => new Date(options.now()))
   return {
+    skillDataRoot: options.memoryStorageRoot,
     now: options.now, currentRevision: preference.currentRevision,
     data: { ...overview, loadTimezone: preference.loadTimezone, loadStylePreferences: preference.loadStylePreferences,
       ...options.external, loadMemory: createAgentMemoryContextLoader(options.memoryStorageRoot, options.now, options.memoryVectorSearch) },
@@ -44,5 +45,5 @@ export function createAgentContextAssembly(options: AgentContextAssemblyOptions)
   return createWebAgentSourceLoader(options.pool, {
     ...createAgentContextSources(options), digest: options.digest, nextId: options.nextId,
     select: options.select, currentTurn: options.currentTurn,
-  })
+  }, undefined, options.memoryStorageRoot)
 }

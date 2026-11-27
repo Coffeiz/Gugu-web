@@ -1,3 +1,5 @@
+import { selectionDraftEvent, type SelectionDraft } from '@/components/common/selection/selectionDraft'
+import { installMailLinks, openMailComposer, openMailDraftKey } from '@/api/mailLinks'
 import { installOverlayScrollbars } from '@/utils/overlayScrollbars'
 import { pathFileAccessKey } from '@/services/pathFileAccess'
 import { desktopPathFileAccess } from '@desktop/files/pathFileAccess'
@@ -17,7 +19,7 @@ import { localPtyAccessKey } from '@/views/Terminals/localPtyAccess'
 import { createDesktopPtyTransport } from './terminals/ptyTransport'
 import { mailAccessKey } from '@/api/mail'
 import { desktopMailAccess } from './mail/access'
-import { createApp } from 'vue'
+import { createApp, h } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import ArcoVue from '@arco-design/web-vue'
@@ -48,6 +50,18 @@ const projectId = Number(query.get('projectWindow'))
 const nativeProject = projectWindowBridge && Number.isSafeInteger(projectId) && projectId > 0
 
 export async function mountDesktop() {
+  if (import.meta.env.DEV && /^\/design\/?$/.test(location.pathname)) {
+    const [{ default: DesignPage }, { default: ConfirmDialog }, { default: AppToast }] = await Promise.all([
+      import('@/views/Design/index.vue'),
+      import('@/components/common/overlays/ConfirmDialog.vue'),
+      import('@/components/common/feedback/AppToast.vue'),
+    ])
+    const app = createApp({ render: () => [h(DesignPage), h(ConfirmDialog, { teleportTo: 'body' }), h(AppToast)] })
+    installEnterDirective(app)
+    app.use(createPinia()).use(i18n).use(ArcoVue).mount('#app')
+    installOverlayScrollbars()
+    return
+  }
   if (nativeChatPanel) document.documentElement.dataset.desktopChatPanel = 'true'
   const app = nativeChatPanel
     ? createApp((await import('./shell/components/DesktopGuguChat.vue')).default, { standalone: true })
@@ -74,6 +88,9 @@ export async function mountDesktop() {
   app.provide(mindAccessKey, desktopMindAccess)
   app.provide(searchAccessKey, desktopSearchAccess)
   app.provide(mailAccessKey, desktopMailAccess)
+  if (nativeChatPanel) app.provide(openMailDraftKey, draft => {
+    void chatFabHost.openMainReference('mail-draft', JSON.stringify(draft))
+  })
   app.provide(localPreferencesAccessKey, desktopPreferencesAccess)
   if ('guguDesktop' in window) app.provide(localPtyAccessKey, createDesktopPtyTransport)
   app.provide(openPlatformPreviewKey, openPlatformPreview)
@@ -90,7 +107,15 @@ export async function mountDesktop() {
     api: desktopMcpApi, httpOnly: true, configureWithChat: false, refreshMissingStatuses: false,
   })
   installEnterDirective(app)
-  app.use(pinia).use(i18n).use(ArcoVue).use(createDesktopRouter()).mount('#app')
+  if (chatFabHost && !nativeChatPanel) window.addEventListener(selectionDraftEvent, event => {
+    event.stopImmediatePropagation()
+    const { reference, ...selection } = (event as CustomEvent<SelectionDraft>).detail
+    chatFabHost.dropReferences([reference], selection)
+  }, true)
+  const router = createDesktopRouter()
+  app.use(pinia).use(i18n).use(ArcoVue).use(router).mount('#app')
+  if (nativeChatPanel) installMailLinks(to => chatFabHost.openMainReference('mail', to))
+  else if (!nativePreview && !nativeProject) installMailLinks(to => openMailComposer(router, to))
   installOverlayScrollbars()
 }
 
@@ -101,7 +126,7 @@ function createDesktopRouter() {
       // 普通页面由桌面壳层渲染；笔记和画布在路由提交前解析异步组件。
       { path: '/', name: 'home', components: {} },
       ...(import.meta.env.DEV ? [{ path: '/dev', name: 'dev-workbench', components: {} }] : []),
-      ...['projects', 'calendar', 'schedules', 'files', 'terminals', 'skills', 'mcp', 'mail', 'contacts', 'team', 'notifications']
+      ...['projects', 'calendar', 'schedules', 'files', 'terminals', 'skills', 'mcp', 'mail', 'contacts', 'team']
         .map(section => ({ path: `/${section}`, name: section, components: {} })),
       { path: '/notes', name: 'notes', component: () => import('@/views/Mind/NotesThreePaneView.vue') },
       { path: '/canvases', name: 'canvases', component: () => import('@/views/Mind/CanvasView.vue') },

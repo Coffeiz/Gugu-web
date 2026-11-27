@@ -2,7 +2,7 @@
 :root[data-family='mono'][data-theme='light'] {
   color-scheme: light;
   --theme-chat-main-bg: #f3f3f3;
-  --theme-page: linear-gradient(180deg,#f3f3f3,#e8e8e8);
+  --theme-page: #eeeeee;
   --theme-sidebar: #f2f2f2; --theme-base: #f3f3f3; --theme-glass: #f5f5f5; --theme-glass-hover: #ffffff; --theme-card-solid: #fafafa;
   --theme-soft: rgba(62,54,72,.040); --theme-soft-hover: rgba(62,54,72,.065); --theme-raised: #ffffff; --theme-floating: #fcfcfc; --theme-scrim: rgba(31,27,36,.22); --theme-column: rgba(255,255,255,.16);
   --theme-content-primary: #29262e; --theme-content-secondary: #6f6975; --theme-content-tertiary: #99929f; --theme-content-disabled: #b9b3bd; --theme-content-inverse: #fff;

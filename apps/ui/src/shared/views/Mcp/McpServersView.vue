@@ -326,9 +326,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .mcp-page { min-height:0; height:100%; display:flex; flex-direction:column; }
-.mcp-list :deep(.skill-card) { margin:0 0 12px; }
-.error-banner { padding:10px 12px; border-radius:var(--radius-xs); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:12px; }
-.error-banner button { margin-left:10px; border:0; background:transparent; color:inherit; cursor:pointer; }
-.mcp-footer { display:flex; align-items:center; gap:14px; flex-shrink:0; border-top:1px solid var(--content-divider); padding:14px 8px 22px; }
+.mcp-list :deep(.skill-card) { margin:0 0 var(--space-xs); }
+.error-banner { padding:var(--space-sm) var(--space-md); border-radius:var(--radius-xs); color:var(--danger-fg); background:var(--danger-bg); font-size:12px; margin-bottom:var(--space-md); }
+.error-banner button { margin-left:var(--space-sm); border:0; background:transparent; color:inherit; cursor:pointer; }
+.mcp-footer { display:flex; align-items:center; gap:var(--space-lg); flex-shrink:0; border-top:1px solid var(--content-divider); padding:var(--space-md); }
 .mcp-muted { color:var(--content-secondary); font-size:12px; }
 </style>

@@ -194,7 +194,7 @@ async function handleLogout() {
   border-right: 1px solid var(--sidebar-border);
   box-shadow: inset -1px 0 0 var(--sidebar-highlight);
   overflow: hidden;
-  padding: 24px 14px;
+  padding: var(--space-xl) var(--space-md);
   gap: 0;
 }
 
@@ -206,19 +206,19 @@ async function handleLogout() {
 
 /* ── 导航 ── */
 .sidebar-nav {
-  flex: 1; padding: 14px 0; overflow-y: auto;
+  flex: 1; padding: var(--space-md) 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 2px;
-  margin-right: -14px; padding-right: 14px;   /* 延伸到侧边栏右边缘，滚动条贴边 */
+  margin-inline-end: calc(-1 * var(--space-md)); padding-inline-end: var(--space-md);   /* 延伸到侧边栏右边缘，滚动条贴边 */
   /* 滚动条由全局浮层契约统一管理，不为它预留布局空间。 */
 }
-.nav-sub { padding-left: 28px; font-size: 12px; color: var(--content-muted); }
+.nav-sub { padding-inline-start: calc(var(--space-xl) + var(--space-xs)); font-size: 12px; color: var(--content-muted); }
 /* 出现滚动条时，flex column 会把 1px 高的分割线（及其它子项）压缩至 0 使其消失——
    固定不收缩，让溢出交给滚动而非挤压内容。 */
 .sidebar-nav > * { flex-shrink: 0; }
 .nav-group-label {
   font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
   color: var(--content-muted); text-transform: uppercase;
-  padding: 0 10px; margin-bottom: 4px;
+  padding: 0 10px; margin-bottom: var(--space-xs);
 }
 .nav-item {
   display: flex; align-items: center; gap: 9px;
@@ -240,11 +240,11 @@ async function handleLogout() {
 }
 
 /* ── 底部 ── */
-.sidebar-footer { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.sidebar-footer { display: flex; flex-direction: column; gap: var(--space-sm); padding-top: var(--space-xs); }
 /* 用户卡片 — 对齐前端 user-card 风格，暗色版 */
 .user-card {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: var(--space-sm);
+  padding: var(--space-sm); border-radius: var(--radius-sm);
   background: var(--surface-glass);
   border: 1px solid var(--border-strong);
   box-shadow: inset 0 1px 0 var(--border-subtle);

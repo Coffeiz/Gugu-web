@@ -8,9 +8,7 @@ import { dataContext } from '../../../src/contracts/index.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
 import { createKyselySqliteGlobalSearchSources } from '../../../src/search/sqlite.js'
-import { createGlobalSearchOperations } from '../../../src/search/global-search.js'
-import { parseGlobalSearchQuery } from '@gugu/search'
-import { casefoldSearchText } from '@gugu/search'
+import { casefoldSearchText, createGlobalSearchOperations, parseGlobalSearchQuery } from '@gugu/search'
 import { strip } from '../../../src/shared/values.js'
 
 interface Result { queries: readonly string[]; total: number; mode: string; groups: Array<{ type: string; items: Array<Record<string, unknown>> }> }
@@ -40,8 +38,8 @@ beforeEach(async () => {
   ids = { exact: rows[0]!.id, prefix: rows[1]!.id, contains: rows[2]!.id, multi: rows[3]!.id, deleted: rows[4]!.id, foreign: foreign.id }
   await sql`UPDATE projects SET deleted_at='2026-11-15 00:00:00' WHERE id=${ids.deleted}`.execute(core.db)
   await core.transaction(dataContext(owner), async data => {
-    await data.clients.create({ name: 'alpha联系人', notes: '', contact: null, email: null, phone: null })
-    await data.clients.create({ name: '其他名称', notes: 'alpha beta', contact: null, email: null, phone: null })
+    await data.clients.create({ name: 'alpha联系人', notes: '', email: null, phone: null })
+    await data.clients.create({ name: '其他名称', notes: 'alpha beta', email: null, phone: null })
   })
   await core.transaction(dataContext(other), data => data.clients.create({ name: 'alpha他人联系人', notes: '' }))
   for (const [id, user, title, date, deleted] of [[1, owner, 'alpha活动', '2026-11-14', null], [2, owner, 'alpha活动', '2026-11-16', null], [3, other, 'alpha他人活动', '2026-11-17', null], [4, owner, 'alpha已删除活动', '2026-11-18', '2026-11-15 00:00:00']] as const)

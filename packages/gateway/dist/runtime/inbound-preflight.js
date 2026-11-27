@@ -1,8 +1,6 @@
 import { parseImControlCommand } from '@gugu/core/im/shortcut';
 import { handleQqBinding } from '../platforms/qq/binding.js';
 import { handleTelegramBinding } from '../platforms/telegram/binding.js';
-import { casefoldSearchText } from '@gugu/search';
-import { asciiDecimalDigits, isDecimalDigits } from '@gugu/core/shared/unicode-decimal';
 export class ImPreflightError extends Error {
     constructor() { super('IM 入站控制消息暂时无法处理'); this.name = 'ImPreflightError'; }
 }
@@ -22,21 +20,6 @@ export function imSemanticText(text, botMentioned) {
             return command;
     }
     return botMentioned ? value.replace(/^\s*(?:<@!?[^>\s]+>|[@＠][^\s/／]+)\s*/u, '').trim() : value;
-}
-export function selectImTextChoice(prompt, text) {
-    const value = text.trim();
-    if (prompt.secret || !value)
-        return null;
-    if (['choice', 'confirm'].includes(prompt.kind) && Array.from(value).length <= 200) {
-        const index = isDecimalDigits(value) ? Number(asciiDecimalDigits(value)) : 0;
-        const folded = casefoldSearchText(value);
-        const selected = (index >= 1 && index <= prompt.options.length ? prompt.options[index - 1] : undefined)
-            ?? prompt.options.find(option => [option.id, option.label].some(label => casefoldSearchText(label.trim()) === folded));
-        if (selected)
-            return selected.token ? { action: 'option', token: selected.token } : null;
-    }
-    return prompt.allowTextInput && (prompt.customInputActive || !prompt.options.some(option => option.id !== '__custom_reply__'))
-        ? { action: 'text' } : null;
 }
 /** 控制消息消费发生在下载、队列和历史之前；所有端口缺失均拒绝启动。 */
 export function createImInboundPreflight(ports) {
@@ -135,8 +118,9 @@ export function createImInboundPreflight(ports) {
                 if (choice.status === 'replay')
                     return 'consumed';
                 await reply(choice.status === 'error' ? '交互尚未生效，请重新发起。'
-                    : choice.status === 'awaiting_text' ? '请直接发送你的回复，咕咕会继续处理。'
-                        : `已选择：${choice.text || '已选择'}，继续处理。`);
+                    : choice.status === 'question_next' ? (choice.text || '请继续回答。')
+                        : choice.status === 'awaiting_text' ? '请直接发送你的回复，咕咕会继续处理。'
+                            : `已选择：${choice.text || '已选择'}，继续处理。`);
                 return 'consumed';
             }
             if (unaddressed)

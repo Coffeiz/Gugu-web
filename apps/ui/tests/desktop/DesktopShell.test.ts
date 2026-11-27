@@ -4,6 +4,8 @@ import { createApp, nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
+import { mailAccessKey } from '@/api/mail'
+import { desktopMailAccess } from '@desktop/mail/access'
 import { scheduleAccessKey } from '@/services/scheduleAccess'
 import { mindAccessKey } from '@/services/mindAccess'
 import { desktopScheduleAccess } from '@desktop/schedules/access'
@@ -35,6 +37,7 @@ async function mountShell(section: 'home' | 'contacts' | 'projects' | 'calendar'
     appearance: async () => ok({ theme: 'light', themeFamily: 'glass', palette: 'neutral', defaultView: section }),
     onboarding: async () => ok(null),
     calendar: async () => ok([]),
+    mail: async () => ok([]),
     undoPreview: async () => ok({}),
     sandboxStatus: async () => ok({ supported: false, methods: [], checkAvailable: false }),
     ...bridge,
@@ -46,6 +49,7 @@ async function mountShell(section: 'home' | 'contacts' | 'projects' | 'calendar'
   const app = createApp(DesktopShell).use(createPinia()).use(router).use(i18n)
     .provide(projectAccessKey, list ? { ...desktopProjectAccess, list } : desktopProjectAccess)
     .provide(localPreferencesAccessKey, desktopPreferencesAccess)
+    .provide(mailAccessKey, desktopMailAccess)
     .provide(scheduleAccessKey, desktopScheduleAccess)
     .provide(mindAccessKey, desktopMindAccess)
   installEnterDirective(app)
@@ -64,7 +68,7 @@ async function mountShell(section: 'home' | 'contacts' | 'projects' | 'calendar'
 
 async function clickButton(container: ParentNode, label: string) {
   const button = await vi.waitFor(() => {
-    const matched = Array.from(container.querySelectorAll('button')).find(candidate => candidate.textContent?.trim() === label)
+    const matched = Array.from(container.querySelectorAll('button')).find(candidate => (candidate.getAttribute('aria-label') ?? candidate.textContent?.trim()) === label)
     expect(matched?.disabled).toBe(false)
     return matched!
   })
@@ -104,22 +108,22 @@ it.each([{ available: true }, { available: false }])('桌面启动恢复待确�
 })
 
 
-it('联系人取消重命名不写入，保存后重读本地列表', async () => {
+it('联系人取消编辑不写入，保存邮箱后重读本地列表', async () => {
   let rows = [{ id: 4, name: '旧联系人' }]
   const clients = vi.fn(async () => ok(rows))
-  const renameClient = vi.fn(async (id: number, name: string) => {
-    rows = [{ id, name }]
+  const renameClient = vi.fn(async (id: number, fields: { name: string; email?: string }) => {
+    rows = [{ id, ...fields }]
     return ok(rows[0])
   })
   const { host, cleanup } = await mountShell('contacts', { clients, renameClient })
   try {
     const contacts = host.querySelector('#desktop-clients')!
-    await clickButton(contacts, '重命名')
+    await clickButton(contacts, '编辑联系人')
     await clickButton(contacts, '取消')
     expect(renameClient).not.toHaveBeenCalled()
     expect(contacts.textContent).toContain('旧联系人')
 
-    await clickButton(contacts, '重命名')
+    await clickButton(contacts, '编辑联系人')
     const input = await vi.waitFor(() => {
       const field = contacts.querySelector<HTMLInputElement>('input[aria-label="联系人名称"]')
       expect(field).not.toBeNull()
@@ -127,10 +131,14 @@ it('联系人取消重命名不写入，保存后重读本地列表', async () =
     })
     input.value = '新联系人'
     input.dispatchEvent(new Event('input', { bubbles: true }))
+    const email = contacts.querySelector<HTMLInputElement>('input[type="email"]')!
+    email.value = 'north@example.test'
+    email.dispatchEvent(new Event('input', { bubbles: true }))
     input.form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
 
     await vi.waitFor(() => expect(contacts.textContent).toContain('新联系人'))
-    expect(renameClient).toHaveBeenCalledExactlyOnceWith(4, '新联系人')
+    expect(renameClient).toHaveBeenCalledExactlyOnceWith(4, expect.objectContaining({ name: '新联系人', email: 'north@example.test' }))
+    expect(contacts.textContent).toContain('north@example.test')
     expect(clients).toHaveBeenCalledTimes(2)
   } finally {
     cleanup()
@@ -147,7 +155,7 @@ it('联系人删除取消时不写入，确认后删除并重读本地列表', a
   const { host, cleanup } = await mountShell('contacts', { clients, deleteClient })
   try {
     const contacts = host.querySelector('#desktop-clients')!
-    await clickButton(contacts, '删除')
+    await clickButton(contacts, '删除联系人')
     const cancel = await vi.waitFor(() => {
       const dialog = document.querySelector('.confirm-dialog.is-danger')
       expect(dialog?.textContent).toContain('待删除联系人')
@@ -158,10 +166,10 @@ it('联系人删除取消时不写入，确认后删除并重读本地列表', a
     expect(contacts.textContent).toContain('待删除联系人')
 
     await vi.waitFor(() => expect(cancel.isConnected).toBe(false))
-    await clickButton(contacts, '删除')
-    await clickButton(document, '删除联系人')
+    await clickButton(contacts, '删除联系人')
+    await clickButton(document.querySelector('.confirm-dialog.is-danger')!, '删除联系人')
 
-    await vi.waitFor(() => expect(contacts.textContent).toContain('这里会保存你的联系人'))
+    await vi.waitFor(() => expect(contacts.textContent).toContain('暂无联系人'))
     expect(deleteClient).toHaveBeenCalledExactlyOnceWith(7)
     expect(clients).toHaveBeenCalledTimes(2)
   } finally {

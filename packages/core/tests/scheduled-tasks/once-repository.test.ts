@@ -5,7 +5,7 @@ import { Pool } from 'pg'
 import { describe, expect, it } from 'vitest'
 import { tablesSql } from '../../src/data/schema.js'
 import { databaseTime } from '../../src/data/codec.js'
-import { createKyselyOnceTaskRepository } from '../../src/scheduled-tasks/once-repository.js'
+import { createKyselyOnceTaskRepository } from '../../src/tasks/schedule-storage.js'
 
 const url = process.env.GUGU_CORE_TEST_POSTGRES_URL
 const now = Date.parse('2026-11-14T12:34:56.123Z')

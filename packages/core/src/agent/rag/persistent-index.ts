@@ -31,8 +31,13 @@ function document(row:IndexRow):RagDocument {
   scope_type:String(row.scope_type||'owner'),scope_id:String(row.scope_id||''),document_version:String(row.document_version||''),parent_id:parentId,chunk_index:chunkIndex,chunk_count:chunkCount,
   ...(updated?{updated_at:updated}:{}),metadata:meta}
 }
+type SnapshotTiming = (stage: 'snapshot_sql_ms' | 'snapshot_projection_ms' | 'snapshot_generation_ms'
+ | 'snapshot_cache_hit_copy_ms' | 'snapshot_cache_store_copy_ms', duration: number) => void
+type RagIndexSnapshot = { revision: string | null; documents: RagDocument[]; watermark: RagIndexCursor | null }
+const recentSqliteOwnerSnapshots = new WeakMap<Kysely<any>, { owner: string; generation: string; snapshot: RagIndexSnapshot }>()
+
 /** 读取旧版可重建索引；授权由可信 Host 提供，调用方必须按 scope 再过滤。 */
-export function createSqlRagPersistentIndexReader(db:Kysely<any>,backend:'postgres'|'sqlite') {
+export function createSqlRagPersistentIndexReader(db:Kysely<any>,backend:'postgres'|'sqlite', options: { cacheSqliteOwner?: boolean } = {}) {
  const ownerKey=(raw:string)=>{const owner=dataContext(raw).ownerId;return backend==='sqlite'?owner.replaceAll('-',''):owner}
  const formatStamp=(expression:RawBuilder<unknown>)=>backend==='postgres'
   ? sql`to_char(${expression} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US') || '+00:00'`
@@ -40,7 +45,7 @@ export function createSqlRagPersistentIndexReader(db:Kysely<any>,backend:'postgr
  const stamp=formatStamp(sql`indexed_at`)
  const columns=sql`id,${stamp} AS indexed_stamp,deleted_at,source_type,source_id,scope_type,scope_id,platform,bot_id,group_id,document_id,parent_document_id,document_version,chunk_index,chunk_count,title,summary,content,metadata_json,source_updated_at`
  function key(row:IndexRow){return `${row.source_type}:${row.parent_document_id||row.document_id}:${Number(row.chunk_index||0)}`}
- async function readSnapshot(rawOwner:string, signal?:AbortSignal, scopeFilter?:RawBuilder<unknown>){
+ async function readSnapshot(rawOwner:string, signal?:AbortSignal, scopeFilter?:RawBuilder<unknown>, timing?:SnapshotTiming){
   signal?.throwIfAborted();const owner=ownerKey(rawOwner)
   const ownerRows=sql`FROM knowledge_index_entries WHERE owner_user_id=${owner} AND source_type<>'file'`
   // 版本摘要与有效正文取自同一条语句的读视图，已删除的行只参与版本和水位计算。
@@ -57,8 +62,11 @@ export function createSqlRagPersistentIndexReader(db:Kysely<any>,backend:'postgr
    SELECT id,indexed_stamp,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
     NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'watermark' FROM watermark
    ORDER BY id ASC` : sql`SELECT ${columns},'document' AS row_kind ${ownerRows} ORDER BY id ASC`
+  const sqlStarted=performance.now()
   const result=await sql<IndexRow & {row_kind:'document'|'revision'|'watermark'}>`${query}`.execute(db)
   signal?.throwIfAborted()
+  const projectionStarted=performance.now()
+  timing?.('snapshot_sql_ms',projectionStarted-sqlStarted)
   const revisions=new Map<string,string>(),documents:RagDocument[]=[]
   let watermark:RagIndexCursor|null=null
   for(const row of result.rows){
@@ -80,12 +88,13 @@ export function createSqlRagPersistentIndexReader(db:Kysely<any>,backend:'postgr
    if(row.deleted_at===null)documents.push(document(row))
   }
   const revision=revisions.size?`ts-jieba-words-v3:rag-projection-v5:${[...revisions].sort(([a],[b])=>a.localeCompare(b)).map(([source,value])=>`${source}:${value}`).join(';')}`:null
+  timing?.('snapshot_projection_ms',performance.now()-projectionStarted)
   return {revision,documents,watermark}
  }
  return {
   snapshot: (rawOwner:string,signal?:AbortSignal) => readSnapshot(rawOwner,signal),
   /** scope 必须来自 Host 已验证的授权快照，不能使用模型参数。 */
-  async snapshotForScope(rawOwner:string,scope:RagSearchScope,signal?:AbortSignal){
+  async snapshotForScope(rawOwner:string,scope:RagSearchScope,signal?:AbortSignal,timing?:SnapshotTiming){
    if(!scope || !['owner','group','member','project'].includes(scope.scope_type||''))throw new Error('RAG 授权范围无效')
    if(['group','member'].includes(scope.scope_type!)&&(!scope.scope_id||!scope.platform||!scope.bot_id||!scope.group_id))throw new Error('RAG 授权范围不完整')
    if(scope.scope_type==='project'&&!scope.scope_id)throw new Error('RAG 授权范围不完整')
@@ -93,7 +102,34 @@ export function createSqlRagPersistentIndexReader(db:Kysely<any>,backend:'postgr
     ? sql`platform=${scope.platform} AND bot_id=${scope.bot_id} AND group_id=${scope.group_id}
       AND ((scope_type=${scope.scope_type} AND scope_id=${scope.scope_id}) OR (${Number(scope.scope_type==='member')}=1 AND scope_type='group'))`
     : sql`scope_type='owner' OR scope_type=''`
-   const snapshot=await readSnapshot(rawOwner,signal,scopeFilter)
+   if (backend === 'sqlite' && options.cacheSqliteOwner && scope.scope_type === 'owner' && !scope.scope_id) {
+    const owner = ownerKey(rawOwner)
+    const readGeneration = async () => {
+     const started=performance.now()
+     const { rows } = await sql<{ generation: string }>`SELECT CAST(generation AS TEXT) AS generation
+       FROM rag_snapshot_generations WHERE owner_user_id=${owner}`.execute(db)
+     signal?.throwIfAborted()
+     timing?.('snapshot_generation_ms',performance.now()-started)
+     return rows[0]?.generation ?? '0'
+    }
+    const cached = recentSqliteOwnerSnapshots.get(db)
+    const generation = await readGeneration()
+    if (cached?.owner === owner && cached.generation === generation) {
+     const started=performance.now()
+     const snapshot=structuredClone(cached.snapshot)
+     timing?.('snapshot_cache_hit_copy_ms',performance.now()-started)
+     return snapshot
+    }
+    const snapshot = await readSnapshot(rawOwner, signal, scopeFilter, timing)
+    // 两次版本读取夹住正文查询，避免把并发提交后的正文标为旧版本。
+    if (snapshot.documents.length <= 50_000 && generation === await readGeneration()) {
+     const started=performance.now()
+     recentSqliteOwnerSnapshots.set(db, { owner, generation, snapshot: structuredClone(snapshot) })
+     timing?.('snapshot_cache_store_copy_ms',performance.now()-started)
+    }
+    return snapshot
+   }
+   const snapshot=await readSnapshot(rawOwner,signal,scopeFilter,timing)
    const documents=snapshot.documents.filter(doc=>{
     if(scope.scope_type==='owner')return doc.scope_type==='owner'
     if(scope.scope_type==='project')return doc.scope_type==='owner'&&String(doc.metadata?.project_id??'')===scope.scope_id

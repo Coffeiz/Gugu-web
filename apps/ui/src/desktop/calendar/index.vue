@@ -562,7 +562,7 @@ onUnmounted(() => {
     @toggle-picker="togglePicker"
   />
   <div class="desktop-cal-layout">
-    <section ref="calendarGrid" class="desktop-cal-grid glass-card" :class="{ 'is-initial-loading': initialLoading }" aria-label="月历">
+    <section ref="calendarGrid" class="desktop-cal-grid glass-card" :class="{ 'is-initial-loading': initialLoading }" :aria-label="$t('pageUi.monthCalendar')">
       <div class="desktop-cal-month" :class="{ 'is-week-view': viewMode === 'week' }">
         <MonthGrid
           v-if="viewMode === 'month'"
@@ -702,7 +702,7 @@ onUnmounted(() => {
       :event="eventDraft"
       :form="eventForm"
       :is-past-date="date => !!date && date < todayIso"
-      :title="editingEvent ? '编辑活动' : '添加活动'"
+      :title="editingEvent ? $t('pageUi.editEvent') : $t('pageUi.addEvent')"
       :saving="busy || savingEventForm || eventForm.loadingReminders.value || !!reminderError"
       :show-delete="!!editingEvent"
       autofocus
@@ -717,7 +717,7 @@ onUnmounted(() => {
 <style>
 .desktop-cal-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: var(--space-md); flex: 1; height: auto; min-height: 0; }
 .desktop-cal-grid,.desktop-cal-info > .cal-sidebar { min-width: 0; min-height: 0; }
-.desktop-cal-grid { display: flex; flex-direction: column; padding: var(--space-md, 16px); overflow: hidden; }
+.desktop-cal-grid { display: flex; flex-direction: column; padding: var(--page-content-inset); overflow: hidden; }
 .desktop-cal-grid.is-initial-loading { position: relative; }
 .desktop-cal-grid.is-initial-loading .desktop-cal-month { visibility: hidden; }
 .desktop-cal-month { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; user-select: none; -webkit-user-select: none; }

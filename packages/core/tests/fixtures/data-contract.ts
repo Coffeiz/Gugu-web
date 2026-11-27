@@ -143,9 +143,15 @@ export function dataContract(label: string, create: () => Promise<ContractFixtur
           notes: '初次联系',
         }),
       )
+      await runtime.db.updateTable('clients').set({ contact: '历史称呼' })
+        .where('id', '=', contact.id).execute()
       const updated = await runtime.transaction(context, (data) =>
         data.clients.update(contact.id, { phone: null, notes: '' }),
       )
+      expect(updated).not.toHaveProperty('contact')
+      const stored = await runtime.db.selectFrom('clients').select('contact')
+        .where('id', '=', contact.id).executeTakeFirstOrThrow()
+      expect(stored.contact).toBe('历史称呼')
       expect(updated).toMatchObject({
         id: contact.id,
         name: '小北',
@@ -160,12 +166,12 @@ export function dataContract(label: string, create: () => Promise<ContractFixtur
     it('联系人各字段按 Unicode 码点限制长度，保留空白和未提供字段，非法更新不落库', async () => {
       const { runtime, owner } = fixture, context = dataContext(owner)
       const fields = {
-        name: '😀'.repeat(200), contact: '😀'.repeat(200),
+        name: '😀'.repeat(200),
         email: '甲'.repeat(300), phone: '1'.repeat(50), notes: '  原始备注\n',
       }
       const contact = await runtime.transaction(context, data => data.clients.create(fields))
       expect(contact).toMatchObject(fields)
-      for (const [field, maximum] of Object.entries({ name: 200, contact: 200, email: 300, phone: 50 })) {
+      for (const [field, maximum] of Object.entries({ name: 200, email: 300, phone: 50 })) {
         const invalid = { [field]: '😀'.repeat(maximum + 1) }
         await expect(runtime.transaction(context, data => data.clients.create({ ...fields, ...invalid })))
           .rejects.toMatchObject({ code: 'invalid_request' })
@@ -173,9 +179,9 @@ export function dataContract(label: string, create: () => Promise<ContractFixtur
           .rejects.toMatchObject({ code: 'invalid_request' })
       }
       const updated = await runtime.transaction(context, data => data.clients.update(contact.id, {
-        name: '  小北  ', contact: null, email: null, phone: null,
+        name: '  小北  ', email: null, phone: null,
       }))
-      expect(updated).toEqual({ ...contact, name: '  小北  ', contact: null, email: null, phone: null })
+      expect(updated).toEqual({ ...contact, name: '  小北  ', email: null, phone: null })
       expect(await runtime.transaction(context, data => data.clients.update(contact.id, { name: updated.name })))
         .toEqual(updated)
       expect(await runtime.transaction(context, data => data.clients.list())).toEqual([updated])
@@ -273,7 +279,6 @@ export function dataContract(label: string, create: () => Promise<ContractFixtur
       const rows = await runtime.transaction(context, (data) => data.clients.list())
       expect(rows.map((row) => row.name)).toEqual(['乙😀', '甲😀'])
       expect(rows[0]).toMatchObject({
-        contact: null,
         email: null,
         phone: null,
         notes: '',

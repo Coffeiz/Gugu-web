@@ -2,7 +2,7 @@
   "packages/core/tests/scheduled-tasks/owner-context.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L1",
-    "owner": "packages/core/src/scheduled-tasks/owner-context.ts",
+    "owner": "packages/core/src/agent/scenes/task/owner-context.ts",
     "productionEntry": "定时任务 owner 上下文准备端口",
     "keyBehavior": "按任务 owner 与运行身份读取业务上下文，沿用共享快照 builder，拒绝身份漂移与取消并按配置省略记忆",
     "ci": "core-node"
@@ -10,7 +10,7 @@
   "packages/core/tests/scheduled-tasks/run-now.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L1",
-    "owner": "packages/core/src/scheduled-tasks/execute.ts",
+    "owner": "packages/core/src/agent/scenes/task/execute.ts",
     "productionEntry": "apps/web-host/src/main.ts 定时 Agent 工具准备",
     "keyBehavior": "仅可接收结果附件的渠道开放 send_file；Telegram 单独选择时仍可生成并投递附件",
     "ci": "core-node"
@@ -58,23 +58,23 @@
   "apps/web-host/tests/scheduled-tasks/schedule/repeat.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L1",
-    "owner": "apps/web-host/src/modules/scheduled-tasks/repeating-timer.ts",
-    "productionEntry": "apps/web-host/src/modules/scheduled-tasks/repeating-task-worker.ts",
+    "owner": "packages/scheduler/src/timer.ts",
+    "productionEntry": "apps/web-host/src/modules/scheduled-tasks/schedule/repeat.ts",
     "keyBehavior": "提交后主动刷新使近时任务提前发现，旧回调不能跨停启或改期执行，关闭排空在途投递，验证误点边界及稀疏 Cron",
     "ci": "node-webui"
   },
   "apps/web-host/tests/scheduled-tasks/run/dispatch.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L1",
-    "owner": "packages/core/src/scheduled-tasks/repeating-dispatch.ts",
-    "productionEntry": "apps/web-host/src/modules/scheduled-tasks/repeating-task-worker.ts",
+    "owner": "packages/scheduler/src/repeating-dispatch.ts",
+    "productionEntry": "apps/web-host/src/modules/scheduled-tasks/schedule/repeat.ts",
     "keyBehavior": "重复触发不重放，Redis 失租后阻断后续投递并保留未知收据",
     "ci": "node-webui"
   },
   "apps/web-host/tests/scheduled-tasks/run/repeating.integration.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
-    "owner": "packages/core/src/scheduled-tasks/repeating-repository.ts",
+    "owner": "packages/database/src/scheduled-tasks/repeating-repository.ts",
     "productionEntry": "共享 PostgreSQL 周期任务仓储、触发收据与 Web Redis 租约",
     "keyBehavior": "停用和旧计划版本不执行，竞争只能完成一个触发，已完成收据禁止重放",
     "ci": "node-webui"
@@ -82,7 +82,7 @@
   "apps/web-host/tests/scheduled-tasks/run/receipts.postgres.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
-    "owner": "packages/core/src/scheduled-tasks/fire-receipts.ts",
+    "owner": "packages/database/src/scheduled-tasks/fire-receipts.ts",
     "productionEntry": "正式 PostgreSQL 触发收据",
     "keyBehavior": "同一触发只允许一个执行者认领，异主无法结算，未知收据禁止重领",
     "ci": "node-webui"
@@ -90,7 +90,7 @@
   "apps/web-host/tests/scheduled-tasks/access/authorize.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "packages/core/src/scheduled-tasks/task-filesystem-authorize.ts",
+    "owner": "packages/core/src/workspaces/task-filesystem-authorize.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "任务文件授权确认、事务和并发",
     "ci": "node-webui"
@@ -98,7 +98,7 @@
   "apps/web-host/tests/scheduled-tasks/access/revoke.test.ts": {
     "domain": "api",
     "layer": "L2",
-    "owner": "packages/core/src/scheduled-tasks/task-filesystem-revoke.ts",
+    "owner": "packages/core/src/workspaces/task-filesystem-revoke.ts",
     "productionEntry": "apps/web-host/src/main.ts",
     "keyBehavior": "撤权事务、审计及确认码",
     "ci": "node-webui"
@@ -106,39 +106,39 @@
   "packages/core/tests/scheduled-tasks/once-repository.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
-    "owner": "packages/core/src/scheduled-tasks",
-    "productionEntry": "packages/core/src/scheduled-tasks/once-repository.ts",
+    "owner": "packages/database/src/scheduled-tasks",
+    "productionEntry": "packages/database/src/scheduled-tasks/once-repository.ts",
     "keyBehavior": "双库一次性任务认领、失败重试、owner 隔离和崩溃恢复候选",
     "ci": "core-node"
   },
   "packages/core/tests/scheduled-tasks/fire-receipts.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
-    "owner": "packages/core/src/scheduled-tasks",
-    "productionEntry": "packages/core/src/scheduled-tasks/fire-receipts.ts",
+    "owner": "packages/database/src/scheduled-tasks",
+    "productionEntry": "packages/database/src/scheduled-tasks/fire-receipts.ts",
     "keyBehavior": "双库触发收据并发认领、禁止重放、改期与 owner 复核、失租回滚停用及 PostgreSQL 撤权事务",
     "ci": "core-node"
   },
   "packages/core/tests/scheduled-tasks/sqlite-lease.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
-    "owner": "packages/core/src/scheduled-tasks",
-    "productionEntry": "packages/core/src/scheduled-tasks/sqlite-lease.ts",
+    "owner": "packages/database/src/scheduled-tasks",
+    "productionEntry": "packages/database/src/scheduled-tasks/sqlite-lease.ts",
     "keyBehavior": "跨进程 SQLite 租约竞争、过期 owner 隔离与存储失败",
     "ci": "core-node"
   },
   "packages/core/tests/scheduled-tasks/task-list.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
-    "owner": "packages/core/src/scheduled-tasks",
-    "productionEntry": "packages/core/src/scheduled-tasks/task-list.ts",
+    "owner": "packages/database/src/scheduled-tasks",
+    "productionEntry": "packages/core/src/tasks/task-list.ts",
     "keyBehavior": "双库任务读取、用户隔离与可信能力投影",
     "ci": "core-node"
   },
   "packages/core/tests/scheduled-tasks/task-write.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L1",
-    "owner": "packages/core/src/scheduled-tasks/task-write.ts",
+    "owner": "packages/scheduler/src/tasks/task-write.ts",
     "productionEntry": "Core 创建/更新用例 → PostgreSQL 事务适配器",
     "keyBehavior": "活动提醒幂等与只通知一次、调度类型切换、owner 事务校验失败不写入及提交后发布",
     "ci": "core-node"

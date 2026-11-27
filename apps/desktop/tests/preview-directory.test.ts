@@ -1,20 +1,24 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { createDesktopPreviewEncryption, desktopPreviewDataDirectory } from '../src/main/preview-directory.js'
 
-it('同一检出目录的并行预览按端口隔离 Core 数据库，并在同一端口重启时复用数据目录', () => {
-  const first = desktopPreviewDataDirectory('/synthetic/gugu', '/synthetic/home', 5176)
-  const second = desktopPreviewDataDirectory('/synthetic/gugu', '/synthetic/home', 5177)
-
-  expect(first).not.toBe(second)
-  expect(desktopPreviewDataDirectory('/synthetic/gugu', '/synthetic/home', 5176)).toBe(first)
-})
-
-it('拒绝无效端口，避免不同预览实例意外共用默认目录', () => {
-  expect(() => desktopPreviewDataDirectory('/synthetic/gugu', '/synthetic/home', 0)).toThrow(RangeError)
-  expect(() => desktopPreviewDataDirectory('/synthetic/gugu', '/synthetic/home', 65536)).toThrow(RangeError)
+it('预览复用检出目录的原库，存在旧默认端口库时也保留其数据', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'gugu-preview-test-'))
+  try {
+    const checkout = '/synthetic/gugu'
+    const directory = desktopPreviewDataDirectory(checkout, home)
+    const previousDefault = join(directory, '5176')
+    await mkdir(previousDefault, { recursive: true })
+    await writeFile(join(previousDefault, 'core.db'), '')
+    expect(desktopPreviewDataDirectory(checkout, home)).toBe(previousDefault)
+    await writeFile(join(directory, 'core.db'), '')
+    expect(desktopPreviewDataDirectory(checkout, home)).toBe(directory)
+    expect(desktopPreviewDataDirectory('/synthetic/another', home)).not.toBe(directory)
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
 })
 
 it('同一预览目录重建服务后能读取之前保存的加密凭据', async () => {

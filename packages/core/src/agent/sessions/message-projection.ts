@@ -1,4 +1,6 @@
-import { describeShellActivity } from '../shell-activity.js'
+import { projectEmailComposeReceipt } from '../interactions/email-compose.js'
+import { toolDisplayIdentity } from './tool-labels.js'
+import { describeShellActivity, shellOperationDescription } from '../shell-activity.js'
 import { replacePlatformMentionIds, sanitizeMediaPayload } from '../context/messages/index.js'
 
 export interface AgentMessageProjectionRow {
@@ -53,8 +55,14 @@ function projectAgentTimelineEvent(raw: unknown, messageId: number, index: numbe
   ))
   const shellActivity = item.kind === 'tool' && item.toolName === 'shell'
     ? describeShellActivity(item.toolInput, item.toolResult) : undefined
+  const tool = item.kind === 'tool' && typeof item.toolName === 'string'
+    ? toolDisplayIdentity(item.toolName, item.toolInput) : undefined
+  const emailReceipt = tool?.name === 'send_email' ? projectEmailComposeReceipt(item.toolResult) : undefined
+  const shellDescription = tool?.name === 'shell' ? shellOperationDescription(tool.input) : undefined
   return {
     ...event,
+    ...(emailReceipt ? { toolResult: emailReceipt } : {}),
+    ...(shellDescription ? { shellDescription } : {}),
     ...(shellActivity ? { shellActivity } : {}),
     id: `${messageId}:${index}`,
     messageId,

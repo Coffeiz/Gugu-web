@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { and, asc, count, desc, eq, inArray, lt, not, sql } from 'drizzle-orm'
-import { TraceRunFinishSchema, TraceRunInputSchema, type TokenUsage, type TraceRunInput } from '@loopscope/contracts'
+import { TraceRunFinishSchema, TraceImPlatformSchema, TraceRunInputSchema, type TokenUsage, type TraceRunInput } from '@loopscope/contracts'
 import { artifacts, contextFragments, openDatabase, runs, sessions, spans, usage } from '@loopscope/db'
 
 function record(value: unknown): Record<string, unknown> {
@@ -302,11 +302,14 @@ export class TraceStore {
     return rows.map(row => {
       const latest = this.connection.db.select({ attributes: runs.attributesJson }).from(runs)
         .where(and(eq(runs.sessionKey, row.sessionKey), not(reflectionRun))).orderBy(desc(runs.startedAt)).get()
-      const subagent = record(record(latest?.attributes).subagent_trace)
+      const attributes = record(latest?.attributes)
+      const subagent = record(attributes.subagent_trace)
+      const platform = TraceImPlatformSchema.safeParse(attributes.im_platform)
       return ({
       session_key: row.sessionKey,
       external_session_id: row.externalSessionId ?? '',
       source: row.source,
+      ...(platform.success ? { im_platform: platform.data } : {}),
       title: row.title.startsWith('[{')
         ? sessionTitle(this.connection.db.select({ input: runs.inputJson }).from(runs)
           .where(and(eq(runs.sessionKey, row.sessionKey), not(reflectionRun))).orderBy(desc(runs.startedAt)).get()?.input,

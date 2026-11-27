@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>咕咕</title>
-  <link rel="icon" type="image/svg+xml" href="/brand/bird-colored.svg" sizes="any" />
+  <link rel="icon" type="image/svg+xml" sizes="any" href="/brand/favicon-light.svg" data-dark-href="/brand/favicon-dark.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -12,10 +12,22 @@
     // DevServer 控制台转发开关：未注入转发配置时也必须有明确默认值。
     window.SERVER_FORWARD_CONSOLE = false;
     (() => {
+      const systemTheme = matchMedia('(prefers-color-scheme: dark)')
+      const icon = document.querySelector('link[rel="icon"][data-dark-href]')
+      if (icon) {
+        const lightHref = icon.getAttribute('href')
+        const syncFavicon = () => {
+          const href = systemTheme.matches ? icon.dataset.darkHref : lightHref
+          if (href && icon.getAttribute('href') !== href) icon.setAttribute('href', href)
+        }
+        syncFavicon()
+        systemTheme.addEventListener('change', syncFavicon)
+      }
+
       const saved = localStorage.getItem('gugu-theme')
       const theme = saved === 'dark' || saved === 'light'
         ? saved
-        : (saved === 'system' && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        : (saved === 'system' && systemTheme.matches ? 'dark' : 'light')
       document.documentElement.dataset.theme = theme
       document.documentElement.style.colorScheme = theme
     })()

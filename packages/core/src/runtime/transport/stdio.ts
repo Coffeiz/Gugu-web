@@ -80,6 +80,7 @@ async function main(): Promise<number> {
       ? {
           capabilities: ['operation_receipts', 'undo_mind_v1', 'calendar_v1', 'mind_notes_v1', 'mind_canvases_v1', 'agent_response_chunks_v1'],
           schema: runtime.schemaVersion,
+          ownerId: runtime.ownerId,
           nodeVersion: process.versions.node,
           nodeAbi: process.versions.modules,
         }
@@ -99,11 +100,17 @@ async function main(): Promise<number> {
       void send({ v: protocol, event: 'host_cancel', requestId: request.requestId }).catch(() => {})
       reject(new CoreError('cancelled', '操作已取消'))
     }
+    const frame = { v: protocol, event: 'host_request', requestId: request.requestId,
+      method: request.method, params: request.params }
+    // 宿主请求超限时在本地拒绝，避免错误响应帧被桌面端误认为协议已失步。
+    if (Buffer.byteLength(JSON.stringify(frame)) + 1 > MAX_FRAME) {
+      reject(new CoreError('invalid_request', '桌面 Agent 宿主请求超出协议限制'))
+      return
+    }
     request.signal.addEventListener('abort', abort, { once: true })
     const dispose = () => request.signal.removeEventListener('abort', abort)
     pendingHostRequests.set(request.requestId, { resolve, reject, dispose })
-    void send({ v: protocol, event: 'host_request', requestId: request.requestId,
-      method: request.method, params: request.params }).catch(() => {
+    void send(frame).catch(() => {
       pendingHostRequests.delete(request.requestId)
       dispose()
       reject(new CoreError('storage_error', '桌面 Agent 宿主请求无法发送'))

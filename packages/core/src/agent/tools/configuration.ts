@@ -18,7 +18,7 @@ const CONFIGURED_AGENT_TOOL_NAMES = new Set([
   'canvas_list', 'canvas_get', 'canvas_search', 'canvas_focus_node', 'canvas_search_placeable', 'canvas_create', 'canvas_create_note', 'canvas_add_node', 'canvas_update_node', 'canvas_remove_node',
   'canvas_update_note', 'canvas_update_anchor', 'canvas_connect', 'canvas_delete', 'canvas_delete_note', 'canvas_disconnect', 'canvas_batch',
   'note_search', 'note_get', 'note_delete', 'note_restore', 'note_undo', 'use_skill', 'list_skills', 'create_skill', 'update_skill', 'delete_skill', 'note_create', 'note_update', 'ask_user',
-  'search_tools', 'call_tool', 'manage_mcp_servers', 'web_search', 'web_download', 'http_get', 'similar_image_search', 'deep_research', 'send_link_buttons', 'send_email',
+  'search_tools', 'call_tool', 'manage_mcp_servers', 'web_search', 'web_download', 'http_get', 'similar_image_search', 'deep_research', 'send_link_buttons', 'list_mail', 'send_email',
   'read_knowledge', 'save_knowledge', 'update_knowledge', 'delete_knowledge', 'global_search', 'create_workspace', 'update_workspace', 'set_project_workspace',
   'agent_message', 'agent_inbox', 'agent_cancel', 'agent_inspect',
   'undo_last_action', 'create_event', 'update_event', 'delete_event',

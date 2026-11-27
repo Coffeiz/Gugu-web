@@ -66,12 +66,6 @@ const {
 </script>
 
 <style scoped>
-/* 项目编辑卡拥有自己的 toolbar host 几何；内部 control paint/尺寸仍由共享契约负责。 */
-.file-browser-toolbar {
-  height: 52px;
-  box-sizing: border-box;
-  padding: 0 12px 0 16px;
-}
 .desktop-native-toolbar { app-region: drag; -webkit-app-region: drag; }
 .desktop-native-toolbar :deep(:is(button, input)) { app-region: no-drag; -webkit-app-region: no-drag; }
 </style>

@@ -1,7 +1,7 @@
-import { matchesImInteractionScope, readImReceivedInteraction } from '@gugu/gateway'
+import { sendAuthorizedImPrompt, projectImChoiceButtons, matchesImInteractionScope, readImReceivedInteraction } from '@gugu/gateway'
 import { createHmac,randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
-import { stableJson,type RunEvent,type RunIdentity } from '@gugu/core/agent'
+import { questionBatchText, questionStepOptionId, readQuestionBatch, stableJson,type RunEvent,type RunIdentity } from '@gugu/core/agent'
 import type { ImPreflightScope } from '@gugu/gateway'
 import type { ImDeliveryAcknowledgement } from '@gugu/core/im/run-delivery'
 import { withPostgresTransaction } from '../../../../adapters/database/postgres-transaction.js'
@@ -29,7 +29,7 @@ export function createPostgresImNativeInteractions(options:{
   pool:Pick<Pool,'query'|'connect'>;secretKey:string;supportedPlatforms():readonly string[]|Promise<readonly string[]>
   readRoute:ImAgentReconstructorOptions['readRoute']
   diagnose?(code: 'interaction_callback_failed' | 'qq_interaction_message_unmatched' | 'qq_interaction_action_rejected', error?: unknown): void
-  controls:Pick<ReturnType<typeof createPostgresImControls>,'consumeNativeAction'|'authorizeNativeTarget'>
+  controls:Pick<ReturnType<typeof createPostgresImControls>,'consumeNativeAction'|'authorizeNativeTarget'> & Partial<Pick<ReturnType<typeof createPostgresImControls>, 'replyQuestion'>>
   /** 由connections.sender按可信owner/Bot取当前实例，不自行获取平台凭据。 */
   sender(binding:NodeImBotBinding):GatewayPlatformSender|null
 }){
@@ -45,8 +45,7 @@ export function createPostgresImNativeInteractions(options:{
     if(input.v!==3||input.source!=='im'||input.im.platform==='wechat')throw fail()
     return input
   }
-  return{
-    async interaction(input:{identity:RunIdentity;deliveryId:string;event:RunEvent}):Promise<ImDeliveryAcknowledgement>{
+  async function deliverInteraction(input: { identity: RunIdentity; deliveryId: string; event: RunEvent; questionIndex?: number }): Promise<ImDeliveryAcknowledgement> {
       let intent=false,attempt='',deliveryHash=''
       try{
         const {identity,event}=input
@@ -81,16 +80,26 @@ export function createPostgresImNativeInteractions(options:{
         const proof=createImRunScope({pool:options.pool,secretKey:options.secretKey,identity,actor,scope:evidenceScope,
           messageIds:(dispatched.im.batch?.messageIds??[dispatched.userMessageId]).map(String),payload:route.payload,authorize})
         const evidenceSource=await proof.read()
-        const presentation=event.payload.kind==='credential'&&actor.chatType==='c2c'&&actor.role==='owner'
+        const projected=event.payload.kind==='credential'&&actor.chatType==='c2c'&&actor.role==='owner'
           ?await withPostgresTransaction(options.pool,client=>projectPrivateImSecretPromptLocked(client,identity,String(event.payload.interactionId),scope,options.secretKey),fail)
           :await projection.interaction(event)
+        const questions = readQuestionBatch({ questions: projected.questions })
+        const questionIndex = input.questionIndex ?? 0
+        const question = questions?.[questionIndex]
+        if (questions && (!question || projected.question_index !== questionIndex)) throw fail()
+        const stepOptions = question?.options?.map((_option, index) => questionStepOptionId(questionIndex, index)) ?? []
+        const presentation = questions ? { ...projected, title: question!.title,
+          body: questionBatchText(questions, questionIndex),
+          options: projected.options.filter(option => stepOptions.includes(option.id) || option.id === '__cancel_questions__') } : projectImChoiceButtons(projected) ?? projected
         const sender=options.sender(route.binding)
         if(presentation.resolved||!sender||sender.platform!==dispatched.im.platform||!await access.authorizeDelivery(actor,snapshot.bot))throw fail()
         const rawChat=dispatched.im.chatType==='group'?dispatched.im.chatId:dispatched.im.platformUserId
         const chatId=id(rawChat,256)
-        const sent=sender.platform==='telegram'?await sender.sender.interaction({chatId,chatType:dispatched.im.chatType},presentation,undefined,authorize)
-          :sender.platform==='qq'?await sender.sender.interaction({id:chatId,chatType:dispatched.im.chatType},presentation,undefined,authorize)
-          :sender.platform==='feishu'?await sender.sender.interaction(chatId,presentation,undefined,authorize):null
+        const sent = await sendAuthorizedImPrompt(authorize, async () =>
+          sender.platform === 'telegram' ? sender.sender.interaction({ chatId, chatType: dispatched.im.chatType }, presentation, undefined, authorize)
+            : sender.platform === 'qq' ? sender.sender.interaction({ id: chatId, chatType: dispatched.im.chatType }, presentation, undefined, authorize)
+            : sender.platform === 'feishu' ? sender.sender.interaction(chatId, presentation, undefined, authorize) : null,
+          { outcome: 'rejected' as const, platformMessageIds: [] })
         if(!sent)throw fail()
         let outcome=sent.outcome
         if(outcome==='accepted'&&(!sent.platformMessageIds.length||sender.platform==='qq'&&'delivery'in sent&&sent.delivery!=='native')){
@@ -117,7 +126,8 @@ export function createPostgresImNativeInteractions(options:{
         if(intent)try{await options.pool.query("UPDATE gugu_im_native_deliveries SET state='unknown' WHERE user_id=$1 AND delivery_hash=$2 AND attempt_id=$3 AND state='pending'",[input.identity.ownerId,deliveryHash,attempt])}catch{/* pending同样禁止重发。 */}
         return'unknown'
       }
-    },
+    }
+  return { interaction: deliverInteraction,
     callback: (async(event,signal)=>{
       let token:string|undefined,scope:ImPreflightScope|undefined
       try{
@@ -148,8 +158,23 @@ export function createPostgresImNativeInteractions(options:{
         if(admitted.status==='first')token=admitted.token
         const result=await options.controls.consumeNativeAction(trusted,parsed.promptId,parsed.token,signal,admitted.status!=='first')
         if(token)await admission.finish(scope,token,'consumed')
+        if (result.nextQuestion) {
+          const { index, text } = result.nextQuestion
+          const { rows: [current] } = await options.pool.query<{ interaction_id: string; tool_call_id: string }>(
+            'SELECT interaction_id,tool_call_id FROM agent_interaction_bindings WHERE user_id=$1 AND session_id=$2 AND run_id=$3 AND prompt_id=$4',
+            [identity.ownerId, identity.sessionId, identity.runId, parsed.promptId])
+          if (current) {
+            const deliveryId = `question:${parsed.promptId}:${index}`
+            const next = await deliverInteraction({ identity, deliveryId, questionIndex: index, event: {
+              id: deliveryId, identity, sequence: 0, round: 0, type: 'interaction_required',
+              payload: { kind: 'question', interactionId: current.interaction_id, toolCallId: current.tool_call_id },
+            } })
+            if (next === 'rejected' || typeof next === 'object' && next.outcome === 'rejected')
+              await options.controls.replyQuestion?.(trusted, text, signal)
+          }
+        }
         if(platform==='qq'&&!result.accepted)options.diagnose?.('qq_interaction_action_rejected')
-        const feedback = result.awaitingText ? '请直接发送你的回复，咕咕会继续处理。' : '已确认收到选择；咕咕将继续处理。'
+        const feedback = result.nextQuestion ? '已保存本题答案，请回答下一题。' : result.awaitingText ? '请直接发送你的回复，咕咕会继续处理。' : '已确认收到选择；咕咕将继续处理。'
         return{consumed:true,accepted:result.accepted,...(platform==='feishu'&&result.accepted?{response:{
           toast:{type:'info',content:result.awaitingText?feedback:'已收到选择。'},card:{type:'raw',data:{config:{wide_screen_mode:true},elements:[{tag:'div',text:{tag:'plain_text',content:feedback}}]}}
         }}:{})}

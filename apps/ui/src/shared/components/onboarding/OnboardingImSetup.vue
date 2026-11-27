@@ -29,7 +29,7 @@
         <canvas ref="connectCanvas" class="onboarding-im-qr-canvas"></canvas>
         <div class="onboarding-im-qr-copy">{{ connectErr || connectHint }}</div>
       </div>
-      <div class="onboarding-im-modal-actions"><button type="button" class="onboarding-im-cancel" @click="cancelConnect">{{ t('profileImUi.cancel') }}</button></div>
+      <div class="onboarding-im-modal-actions app-card-actions"><button type="button" class="onboarding-im-cancel" @click="cancelConnect">{{ t('profileImUi.cancel') }}</button></div>
     </div>
   </BaseModal>
 </template>
@@ -162,11 +162,11 @@ onBeforeUnmount(() => { stopPoll(); if (closeTimer) clearTimeout(closeTimer) })
 .onboarding-im-connect:disabled:hover { border-color: var(--choice-chip-border); background: var(--choice-chip-bg); color: var(--choice-chip-fg); }
 .onboarding-im-qr-canvas { display: block; width: 168px; height: 168px; padding: var(--space-xs); border-radius: var(--radius-xs); background: var(--content-on-accent); }
 .onboarding-im-qr-copy { min-width: 0; color: var(--content-secondary); font-size: var(--font-size-xs); line-height: 1.55; }
-.onboarding-im-modal { padding: var(--space-lg); }
+.onboarding-im-modal { --card-actions-inset: var(--space-lg); padding: var(--space-lg) var(--card-actions-inset) 0; }
 .onboarding-im-modal-head { display: flex; align-items: center; gap: var(--space-sm); padding-bottom: var(--space-md); border-bottom: 1px solid var(--panel-divider); }
 .onboarding-im-modal-body { display: flex; flex-direction: column; align-items: center; gap: var(--space-md); padding: var(--space-lg) 0; text-align: center; }
 .onboarding-im-modal-body .onboarding-im-qr-copy { max-width: 280px; }
-.onboarding-im-modal-actions { display: flex; justify-content: flex-end; padding-top: var(--space-sm); border-top: 1px solid var(--panel-divider); }
+.onboarding-im-modal-actions { display: flex; justify-content: flex-end;   }
 @media (max-width: 420px) {
   .onboarding-im-setup { grid-template-columns: minmax(0, 1fr); }
 }

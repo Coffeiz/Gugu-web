@@ -10,10 +10,10 @@
         </div>
       </div>
     </div>
-    <div class="pm-sep"></div>
-    <div class="pm-section smtp-section">
+    <div v-if="!desktop" class="pm-sep"></div>
+    <div v-if="!desktop" class="pm-section smtp-section">
       <div class="pm-section-label">{{ t('profileToolUi.smtpTitle') }}</div>
-      <p class="pm-field-hint">{{ t(desktop ? 'profileToolUi.desktopSmtpHint' : 'profileToolUi.smtpHint') }}</p>
+      <p class="pm-field-hint">{{ t('profileToolUi.smtpHint') }}</p>
       <div class="smtp-grid">
         <input v-model="smtp.host" class="form-input" :placeholder="t('profileToolUi.smtpHost')" autocomplete="off" />
         <input v-model.number="smtp.port" class="form-input" type="number" min="1" max="65535" :placeholder="t('profileToolUi.smtpPort')" />
@@ -105,7 +105,8 @@ else onMounted(loadCapabilities)
 onMounted(async () => {
   void prefsStore.fetch()
   try {
-    const row = await (local ? local.smtpSettings() : preferencesApi.getSmtp())
+    if (desktop) return
+    const row = await preferencesApi.getSmtp()
     if (row) Object.assign(smtp, row, { password: '' })
   } catch {
     smtpMessage.value = t('profileToolUi.smtpSaveFailed')
@@ -173,7 +174,7 @@ async function saveSmtp() {
   smtpMessage.value = ''
   try {
     const input = smtpInput()
-    await (local ? local.saveSmtp(input) : preferencesApi.saveSmtp(input))
+    await preferencesApi.saveSmtp(input)
     smtp.password = ''
     smtp.configured = true
     smtpMessage.value = t('profileToolUi.smtpSaved')
@@ -189,7 +190,7 @@ async function testSmtp() {
   smtpMessage.value = ''
   try {
     const input = { ...smtpInput(), toAddr: smtp.toAddr.trim() || undefined }
-    const result = await (local ? local.testSmtp(input) : preferencesApi.testSmtp(input))
+    const result = await preferencesApi.testSmtp(input)
     smtpMessage.value = t(result.ok ? 'profileToolUi.smtpTestPassed' : 'profileToolUi.smtpTestFailed')
     smtpMessageType.value = result.ok ? 'ok' : 'err'
   } catch {
@@ -201,14 +202,14 @@ async function testSmtp() {
 
 <style>
 .capability-row .pm-field-desc { min-width: 0; flex: 1 1 auto; }
-.capability-editor { display: flex; gap: 6px; align-items: center; flex: 0 1 auto; min-width: 0; flex-wrap: nowrap; justify-content: flex-end; }
+.capability-editor { display: flex; gap: var(--space-xs); align-items: center; flex: 0 1 auto; min-width: 0; flex-wrap: nowrap; justify-content: flex-end; }
 .capability-editor .asel-wrap { flex: 0 0 130px; width: 130px; min-width: 0; }
-.capability-editor .asel-trigger { width: 100%; min-width: 0 !important; padding-left: 8px; padding-right: 8px; }
+.capability-editor .asel-trigger { width: 100%; min-width: 0 !important; padding-left: var(--space-sm); padding-right: var(--space-sm); }
 .capability-editor .form-input { flex: 1 1 120px; width: 150px; min-width: 90px; height: 34px; box-sizing: border-box; }
 .capability-editor .pm-style-chip { flex: 0 0 auto; white-space: nowrap; }
-.smtp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin-top: 12px; }
+.smtp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-sm); margin-top: var(--space-md); }
 .smtp-grid .form-input { min-width: 0; height: 34px; box-sizing: border-box; }
-.smtp-actions { display: flex; gap: 8px; justify-content: flex-start; margin-top: 0; }
+.smtp-actions { display: flex; gap: var(--space-sm); justify-content: flex-start; margin-top: 0; }
 .smtp-actions button:first-of-type { margin-left: auto; }
 .smtp-enabled { margin-right: 0; color: var(--text-secondary); font-size: 12px; }
 .smtp-ssl { color: var(--text-secondary); font-size: 12px; }

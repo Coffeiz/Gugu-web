@@ -151,7 +151,7 @@ export class FeishuPresentation {
     return this.elements().flatMap(element => element.tag === 'markdown' ? [String(element.content ?? '')]
       : element.tag === 'collapsible_panel' && Array.isArray(element.elements) ? element.elements.map(child => child && typeof child === 'object' ? String((child as Element).content ?? '') : '') : []).filter(Boolean).join('\n\n')
   }
-  private label(event: FeishuToolEvent): string { return clip(this.policy!.sanitize((event.label?.trim() || resolveImToolLabel(event.name, event.display, undefined, this.policy!.locale)).replace(/\s+/g, ' ')), 80) }
+  private label(event: FeishuToolEvent): string { return clip(this.policy!.sanitize(resolveImToolLabel(event.name, event.display, event.label, this.policy!.locale).replace(/\s+/g, ' ')), 80) }
   private detail(value: unknown): string {
     if (typeof value === 'string') { try { const parsed: unknown = JSON.parse(value); if (parsed && typeof parsed === 'object') value = parsed } catch { /* 普通文本结果 */ } }
     const language = typeof value === 'string' ? 'text' : 'json'

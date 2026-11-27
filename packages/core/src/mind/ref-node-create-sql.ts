@@ -37,6 +37,11 @@ export function createSqlMindRefNodeCreateRuntime(db: Kysely<Database>, backend:
           if (backend === 'postgres') query = query.forUpdate()
           const row = await query.executeTakeFirst()
           if (row) target = { title: row.name, color: row.color, snapshot: { client: row.contact_name, status: row.status, startDate: row.start_date, deadline: row.deadline, doneAt: row.done_at ? iso(row.done_at) : null } }
+        } else if (type === 'client') {
+          let query = tx.selectFrom('clients').select('name').where('id', '=', id).where('user_id', '=', owner)
+          if (backend === 'postgres') query = query.forUpdate()
+          const row = await query.executeTakeFirst()
+          if (row) target = { title: row.name, color: null, snapshot: {} }
         } else {
           const lock = sql.raw(backend === 'postgres' ? ' FOR UPDATE' : '')
           const row = (await sql<{ title: string; date: string; time: string | null; end_time: string | null }>`SELECT title, date, time, end_time FROM calendar_events WHERE id=${id} AND user_id=${owner}${lock}`.execute(tx)).rows[0]

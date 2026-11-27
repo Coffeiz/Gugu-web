@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { PERSONAL_WORKSPACE_ID } from '@gugu/core/agent/commands/menu'
+import { isMailRecipient, openMailComposer, openMailDraft, readMailDraftLocation } from '@/api/mailLinks'
 import { createDesktopGreetingAccess } from '../greeting-access'
 import { createDesktopChatCommandAccess, listDesktopChatCommands } from '../chat-command-access'
 import { encodeVoiceRecording } from '../voice-recording'
@@ -7,7 +9,7 @@ import { usePanelGeometry } from '../../chat-fab/usePanelGeometry'
 import { chatFabHost } from '../../chat-fab/bridge'
 import { useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
-import { chatAttachmentImageKey, chatCommandCatalogKey, chatModelCatalogKey, chatToolDetailsKey, chatSubagentSnapshotKey } from '@/components/common/gugu-chat/chatPresentationAccess'
+import { chatAttachmentImageKey, chatCommandCatalogKey, chatHideSuccessfulShellResultKey, chatModelCatalogKey, chatToolDetailsKey, chatSubagentSnapshotKey } from '@/components/common/gugu-chat/chatPresentationAccess'
 import type { DesktopBridge } from '@gugu/core/desktop'
 import { type ChatReference, type QueuedMessagePayload } from '@/components/common/gugu-chat/chatTypes'
 import type { ChatConversationAccess } from '@/components/common/gugu-chat/composables/useChatConversation'
@@ -64,6 +66,7 @@ if (hasDesktopAgentModelBridge()) {
 provide(chatCommandCatalogKey, listDesktopChatCommands)
 
 provide(chatToolDetailsKey, readDesktopChatToolDetails)
+provide(chatHideSuccessfulShellResultKey, true)
 provide(chatSubagentSnapshotKey, {
   read: (id, runId, childId) => requestDesktopAgentSessions({ action: 'subagentSnapshot', id, runId, childId }),
   subscribe: subscribeDesktopAgentRunChanges,
@@ -103,6 +106,17 @@ async function readHistory(id: number, before?: number) {
 }
 
 const sessionAccess: ChatConversationAccess = {
+  workspace: {
+    async list(id) {
+      const result = await requestDesktopAgentSessions({ action: 'workspace', id, workspaceAction: 'list', operationId: crypto.randomUUID() })
+      return result.workspaces ?? []
+    },
+    select(id, workspaceId) {
+      if (typeof workspaceId !== 'string') throw new Error('桌面工作区标识无效')
+      return requestDesktopAgentSessions({ action: 'workspace', id, operationId: crypto.randomUUID(),
+        ...(workspaceId === PERSONAL_WORKSPACE_ID ? { workspaceAction: 'unlink' } : { workspaceAction: 'bind', directoryId: workspaceId }) })
+    },
+  },
   subscribeRunChanges: subscribeDesktopAgentRunChanges,
   run: {
     createSession: createDesktopChatSession,
@@ -174,7 +188,7 @@ async function referenceDroppedFile(file: File) {
   return result.result
 }
 
-const mainWindowReferenceTypes = new Set<ChatReference['type']>(['event', 'folder', 'canvas_note', 'skill', 'mcp', 'scheduled_task'])
+const mainWindowReferenceTypes = new Set<ChatReference['type']>(['event', 'client', 'folder', 'canvas_note', 'skill', 'mcp', 'scheduled_task'])
 
 async function openPlatformReference(reference: Pick<ChatReference, 'type' | 'id'>) {
   if ((reference.type === 'file' || reference.type === 'folder')
@@ -218,7 +232,10 @@ onMounted(() => {
     void chat.value?.openFromFab(handoff)
   })
   const offDrop = chatFabHost.onDroppedReference(reply => chat.value?.receiveDroppedReference(reply))
-  const offReferences = chatFabHost.onDroppedReferences(references => chat.value?.receiveFabReferences(references))
+  const offReferences = chatFabHost.onDroppedReferences((references, selection) => {
+    if (selection && references[0]) void chat.value?.receiveSelectionDraft({ ...selection, reference: references[0] })
+    else chat.value?.receiveFabReferences(references)
+  })
   const offClose = chatFabHost.onCloseChat(animated => {
     if (animated) chat.value?.closeChat()
     else chat.value?.closeForHandoff(state => localStorage.setItem(handoffKey, JSON.stringify(state)))
@@ -232,6 +249,18 @@ onMounted(() => {
     return
   }
   const offMainReference = chatFabHost.onOpenMainReference((type, id) => {
+    if (type === 'mail-draft') {
+      const draft = readMailDraftLocation(id)
+      if (draft) { chat.value?.closeChat(); void openMailDraft(router, draft) }
+      return
+    }
+    if (type === 'mail') {
+      if (isMailRecipient(id)) {
+        chat.value?.closeChat()
+        void openMailComposer(router, id)
+      }
+      return
+    }
     void chat.value?.onReferenceClick({ type, id })
   })
   const offDetached = chatFabHost.onBallDetached(detached => { ballDetached.value = detached })

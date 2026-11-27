@@ -17,6 +17,9 @@ marked.use({
     const r = new marked.Renderer()
     const renderLink = r.link
     r.link = function (token: Tokens.Link) {
+      if (/^file:\/\/\/(?!\/)/i.test(token.href) && token.href.length <= 16384) {
+        return renderLink.call(this, { ...token, href: 'gugu://resolve-library-link/' + encodeURIComponent(token.href) })
+      }
       const html = renderLink.call(this, token)
       const icon = renderObjectLinkIcon(token.href)
       return icon ? html.replace(/^<a[^>]*>/, tag => tag + icon) : html
@@ -29,8 +32,11 @@ marked.use({
     // 关掉删除线渲染：口语里 ~ 很常见（好的~、稍等~），~~ 叠出来会被 GFM 当删除线；
     // 伙伴语气几乎不需要真删除线，把 ~~x~~ 直接渲染成纯文本 x（保留表格等其它 GFM 能力）。
     r.del = (t: Tokens.Del) => (t && t.text) || ''
-    r.code = ({ text, lang }: Tokens.Code) => {
-      if (String(lang || '').trim() === 'gugu-ui') return renderSmartView(text)
+    r.code = ({ text, lang, raw }: Tokens.Code) => {
+      if (String(lang || '').trim() === 'gugu-ui') {
+        const { openFence } = scanChatMarkdownFences(raw.split('\n'))
+        return renderSmartView(text, openFence?.info === 'gugu-ui')
+      }
       if (String(lang || '').trim() === 'gugu-ui-stream') return renderSmartStream(text)
       if (String(lang || '').trim() === 'gugu-ui-dsl') return renderSmartDsl(text)
       if (String(lang || '').trim().toLowerCase() === 'mermaid') {
@@ -276,6 +282,9 @@ export function renderMdStream(text: string) {
   if (openFence?.info === 'gugu-ui-stream') {
     const [, ...records] = lines.splice(openFence.line)
     staged = renderSmartStream(records.join('\n'), true)
+  } else if (openFence?.info === 'gugu-ui') {
+    const [, ...records] = lines.splice(openFence.line)
+    staged = renderSmartView(records.join('\n'), true)
   } else if (isSmartFence(openFence?.info) && openFence) {
     lines.splice(openFence.line)
   } else if (openFence) {
@@ -287,7 +296,7 @@ export function renderMdStream(text: string) {
   }
   const prose = marked.parse(prepareMarkdown(lines.join('\n'))) as string
   const html = isSmartFence(openFence?.info) && openFence?.info !== 'gugu-ui-stream'
-    ? prose + `<section class="chat-smart-view chat-smart-view-generating"><span role="status">${escapeHtml(i18n.global.t('smartView.generating'))}</span></section>`
+    ? prose + staged + `<section class="chat-smart-view chat-smart-view-generating"><span role="status">${escapeHtml(i18n.global.t('smartView.generating'))}</span></section>`
     : prose + staged
   _mdStreamCache = { text, locale, html }
   return html

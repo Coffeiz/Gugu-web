@@ -1,21 +1,20 @@
 import { parseDesktopTrashCommand } from '../../runtime/desktop-shell-trash.js'
-import { describeShellActivity } from '../shell-activity.js'
-import { shellActivityLabel, toolNames } from '../sessions/tool-labels.js'
+import { shellOperationDescription } from '../shell-activity.js'
+import { toolNames } from '../sessions/tool-labels.js'
 import { canonicalAgentToolName } from '../tools/configuration.js'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { sql, type Kysely, type Transaction } from 'kysely'
 import { nowUtc } from '../../data/codec.js'
 import { services } from '../../data/repositories.js'
-import { describeClientDeleteTargets } from '../tools/clients.js'
+import { describeClientDeleteTargets } from '../tools/clients/index.js'
 import { CoreError, dataContext } from '../../contracts/index.js'
 import type { Database } from '../../data/schema.js'
 import type { PendingInteraction, RunIdentity } from '../models.js'
 import { createConfirmationGate, type ConfirmationBinding, type ConfirmationClaimReference, type ConfirmationIntent } from '../tools/confirmation.js'
-import { canvasConfirmationLabels } from '../tools/canvas.js'
-import { describeCalendarDeleteTargets } from '../tools/calendar.js'
-import { describeSkillDeleteTarget } from '../tools/skill-management.js'
-import { describeScheduledTaskDeleteTargets } from '../tools/scheduled-tasks.js'
+import { canvasConfirmationLabels } from '../tools/canvas/index.js'
+import { describeCalendarDeleteTargets } from '../tools/calendar/index.js'
+import { describeScheduledTaskDeleteTargets } from '../tools/scheduled-tasks/index.js'
 import type { AgentPromptSpec } from './prompt-description.js'
 
 export function createSqliteToolConfirmation(
@@ -23,7 +22,7 @@ export function createSqliteToolConfirmation(
   authorize: (db: Kysely<Database>, identity: RunIdentity, signal: AbortSignal) => Promise<boolean>,
   action: 'delete_scheduled_task' | 'delete_event' | 'delete_client' | 'delete_skill' | 'delete_knowledge' | 'remove_mcp_server' | 'update_mcp_server' | 'add_mcp_server' | 'shell' | 'open_item' | 'send_item' | 'delete_item' | 'view_image' | 'send_email' | keyof typeof canvasConfirmationLabels,
   describeTarget?: (tx: Transaction<Database>, identity: RunIdentity, input: unknown,
-    snapshot: { targetsDigest: string; versionsDigest: string }) => Promise<string>,
+    snapshot: { targetsDigest: string; versionsDigest: string }) => Promise<string | Pick<AgentPromptSpec, 'body' | 'context'>>,
 ) {
   const purpose = 'action'
   const authorizationEpoch = 'desktop-local-v1'
@@ -72,11 +71,22 @@ export function createSqliteToolConfirmation(
         FROM desktop_agent_confirmation_intents WHERE ${matches(binding)} AND interaction_id=${ref.interactionId}
           AND receipt_id=${ref.receiptId} AND claimed_at IS NULL`.execute(db)
       if (!row) return null
+      const emailReply = action === 'send_email' ? (await sql<{ submission: unknown; editable: number }>`
+        SELECT json_extract(p.schema_json,'$.resolved_result.email_submission') AS submission,
+          json_extract(p.schema_json,'$.context.email_compose.enabled') AS editable
+        FROM agent_interaction_bindings b
+        JOIN interaction_prompts p ON p.id=b.prompt_id AND p.user_id=b.user_id AND p.session_id=b.session_id
+        WHERE b.user_id=${owner(binding)} AND b.session_id=${binding.sessionId} AND b.run_id=${binding.runId}
+          AND b.interaction_id=${ref.interactionId} AND b.tool_call_id=${binding.toolCallId} AND p.status='resolved'
+      `.execute(db)).rows[0] : null
+      if (action === 'send_email' && (!emailReply || emailReply.editable && typeof emailReply.submission !== 'string')) return null
+      const emailSubmission = emailReply?.submission
       const shared = { schemaVersion: 2, binding, intentId: row.intent_id, interactionId: ref.interactionId,
         purpose, action, expiresAt: row.expires_at }
       return {
         intent: { ...shared, operationId: row.operation_id, targetsDigest: row.targets_digest,
           versionsDigest: row.versions_digest, authorizationEpoch: row.authorization_epoch },
+        ...(typeof emailSubmission === 'string' ? { emailSubmission: JSON.parse(emailSubmission) } : {}),
         receipt: { ...shared, receiptId: ref.receiptId, status: 'approved' },
       }
     },
@@ -104,18 +114,20 @@ export function createSqliteToolConfirmation(
       if (!snapshot) throw new CoreError('conflict', '确认意图已失效')
       const input = request.toolCall.input
       let summary: string
+      let context: AgentPromptSpec['context'] = {}
       if (action === 'shell') {
         if (!input || typeof input !== 'object' || !('command' in input) || typeof input.command !== 'string')
           throw new CoreError('invalid_request', 'Shell 命令无效')
         const command = input.command.trim()
-        const cwd = 'cwd' in input && typeof input.cwd === 'string' && isAbsolute(input.cwd) ? input.cwd : undefined
+        const cwd = 'cwd' in input && typeof input.cwd === 'string' && input.cwd !== '.' ? input.cwd : undefined
         const trash = parseDesktopTrashCommand(command)
-        const label = shellActivityLabel(describeShellActivity(input), 'zh-CN', true) ?? toolNames['zh-CN'].shell
+        const label = toolNames['zh-CN'].shell
+        const description = shellOperationDescription(input)
         const action = trash.kind === 'trash'
           ? `${label}，将以下目标移入系统废纸篓：\n${trash.paths.join('\n')}`
-          : `${label}${cwd ? '（宿主机）' : '（桌面隔离目录）'}`
-        summary = [action, cwd && `工作目录：${cwd}`, `命令：${command}`,
-          cwd && trash.kind !== 'trash' && '确认后允许此会话在未来 30 分钟执行宿主机命令。'].filter(Boolean).join('\n')
+          : `${label}`
+        summary = [action, cwd && `工作目录：${cwd}`, `命令：${command}`, description && `操作说明：${description}`,
+          cwd && isAbsolute(cwd) && trash.kind !== 'trash' && '若本次在宿主机执行，确认后此会话可在未来 30 分钟复用宿主机授权。'].filter(Boolean).join('\n')
       } else if (action === 'view_image') {
         if (!input || typeof input !== 'object' || !('path' in input) || typeof input.path !== 'string' || !isAbsolute(input.path))
           throw new CoreError('invalid_request', '本机图片路径无效')
@@ -138,20 +150,23 @@ export function createSqliteToolConfirmation(
       } else if (action === 'delete_client') {
         summary = await describeClientDeleteTargets(services(tx, owner(identity), 'sqlite', nowUtc), input, snapshot)
       } else if (action === 'delete_skill') {
-        summary = await describeSkillDeleteTarget(tx, owner(identity), input, snapshot)
+        if (!describeTarget) throw new CoreError('conflict', '文件技能删除确认不可用')
+        summary = await describeTarget(tx, identity, input, snapshot).then(value => typeof value === 'string' ? value : value.body)
       } else if (action === 'delete_knowledge' || action === 'remove_mcp_server' || action === 'update_mcp_server' || action === 'add_mcp_server') {
         if (!describeTarget) throw new CoreError('conflict', '目标确认不可用')
-        summary = await describeTarget(tx, identity, input, snapshot)
+        summary = await describeTarget(tx, identity, input, snapshot).then(value => typeof value === 'string' ? value : value.body)
       } else if (action === 'delete_scheduled_task') {
         summary = await describeScheduledTaskDeleteTargets(tx, owner(identity), input, snapshot)
       } else if (action === 'send_email') {
         if (!describeTarget) throw new CoreError('conflict', '邮件发送确认不可用')
-        summary = await describeTarget(tx, identity, input, snapshot)
+        const description = await describeTarget(tx, identity, input, snapshot)
+        summary = typeof description === 'string' ? description : description.body
+        if (typeof description !== 'string') context = description.context
       } else {
         summary = canvasConfirmationLabels[action]
       }
-      return { kind: 'confirm', title: '请确认操作', body: summary, context: {}, options: [
-        { id: 'confirm', label: '确认', actionType: 'confirm' },
+      return { kind: 'confirm', title: action === 'send_email' ? '请确认发送邮件' : '请确认操作', body: summary, context, options: [
+        { id: 'confirm', label: action === 'send_email' ? '确认发送' : '确认', actionType: 'confirm' },
         { id: 'cancel', label: '取消', actionType: 'cancel' },
       ], expiresMinutes: 5 }
     },

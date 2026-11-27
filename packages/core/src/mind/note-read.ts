@@ -60,14 +60,18 @@ export function extractMindReferences(markdown:string):Array<{type:string;id:num
     lines.push(line)
   }
   const text=lines.join('').replace(/(?<!`)(?<ticks>`+)(?!`)[\s\S]*?(?<!`)\k<ticks>(?!`)/gu,' ')
-  const pattern=new RegExp('\\[\\[(?<type>[a-z_]+):(?<id>'+decimalDigitPattern+'+|(?:path|drop)-[A-Za-z0-9_-]{1,24000})\\|(?<label>[^\\]]*)\\]\\]','gu')
+  const pattern=new RegExp('\\[\\[(?<type>[a-z_]+):(?<id>'+decimalDigitPattern+'+|(?:path|drop)-[A-Za-z0-9_-]{1,24000}|[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)\\|(?<label>[^\\]]*)\\]\\]','gu')
+  const decimalPattern = new RegExp(`^${decimalDigitPattern}+$`, 'u')
   const refs:Array<{type:string;id:number|string}>=[],seen=new Set<string>()
   for(const match of text.matchAll(pattern)){
     let before=match.index!-1
     while(before>=0&&text[before]==='\\')before--
     if((match.index!-1-before)%2)continue
     const rawId=match.groups!.id!,type=match.groups!.type!
-    const id=type==='file'&&/^(path|drop)-/u.test(rawId)?rawId:Number(asciiDecimalDigits(rawId))
+    const decimal = decimalPattern.test(rawId)
+    if (!decimal && !(type === 'file' && /^(path|drop)-/u.test(rawId))
+      && !(type === 'skill' && /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u.test(rawId))) continue
+    const id = decimal ? Number(asciiDecimalDigits(rawId)) : rawId
     const key=type+':'+id
     if((typeof id==='string'||(id>0&&Number.isSafeInteger(id)))&&!seen.has(key)){seen.add(key);refs.push({type,id})}
   }
@@ -77,7 +81,7 @@ function summary(node:NodeRow){
   return {node_id:Number(node.id),kind:node.kind,title:node.kind==='canvas_note'?canvasNoteDisplayTitle(node):node.title,color:node.color,preview:[...strip(node.content_plain)].slice(0,240).join(''),
     captured_at:utc(node.captured_at).replace(' ','T'),source:node.ref_type?{type:node.ref_type,id:node.ref_id}:null}
 }
-export function agentMindNodeDetail(node:NodeRow){return {...summary(node),content_md:node.content_md,content_plain:node.content_plain,origin:node.origin}}
+export function agentMindNodeDetail(node:NodeRow){return {...summary(node),content_md:node.content_md,content_plain:node.content_plain,origin:node.origin,version:Number(node.version)}}
 
 /** 共享Mind读取：匹配排序不采用全局搜索相关性排名；关系边与正文引用是独立机制。 */
 export function createAgentMindReader(db:Kysely<Database>,backend:Backend,
@@ -109,11 +113,11 @@ export function createAgentMindReader(db:Kysely<Database>,backend:Backend,
     signal?.throwIfAborted()
     const parsed=new Map(matches.map(row=>[Number(row.id),extractMindReferences(row.content_md)])),cache=new Map<string,Reference>()
     // 固定领域来源，SQL标识符不来自模型；读取前校验 owner 与墓碑。
-    for(const [type,table,label] of [['project','projects','name'],['event','calendar_events','title']] as const){
+    for(const [type,table,label] of [['project','projects','name'],['event','calendar_events','title'],['client','clients','name']] as const){
       const refIds=[...new Set([...parsed.values()].flatMap(refs=>refs.filter(ref=>ref.type===type).map(ref=>ref.id)))]
       if(!refIds.length)continue
       const rows=(await sql<{id:number;label:string|null}>`SELECT id,${sql.ref(label)} AS label FROM ${sql.table(table)}
-        WHERE user_id=${owner} AND deleted_at IS NULL AND id IN (${sql.join(refIds)})`.execute(tx)).rows
+        WHERE user_id=${owner} ${type === 'client' ? sql`` : sql`AND deleted_at IS NULL`} AND id IN (${sql.join(refIds)})`.execute(tx)).rows
       signal?.throwIfAborted()
       for(const row of rows)cache.set(type+':'+row.id,{ref_type:type,ref_id:Number(row.id),label:row.label})
     }

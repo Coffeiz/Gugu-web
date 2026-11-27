@@ -1,3 +1,4 @@
+import { createPostgresPool } from '@gugu/database/postgres/pool'
 import { imGatewaySql } from '@gugu/database/postgres/migrations/0013_im_gateway'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
@@ -168,7 +169,7 @@ test('隔离PostgreSQL：真实锁互斥、重启恢复、attempt和scope隔离'
   let pool: Pool | undefined
   try {
     await admin.query(`CREATE SCHEMA "${schema}"`)
-    pool = new Pool({ connectionString: pgUrl, options: `-c search_path=${schema}` })
+    pool = createPostgresPool(Pool, { connectionString: pgUrl, options: `-c search_path=${schema}` })
     // 合成前置表只表达当前生产字段类型，绝不读取真实用户会话。
     await pool.query('CREATE TABLE users(id uuid PRIMARY KEY); CREATE TABLE conversation_sessions(id integer PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id))')
     await pool.query('INSERT INTO users(id) VALUES($1),($2)', [identity.ownerId, '00000000-0000-4000-8000-000000000022'])

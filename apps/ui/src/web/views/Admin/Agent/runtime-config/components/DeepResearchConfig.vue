@@ -15,13 +15,13 @@
         <AdminSelect :model-value="draft.deep_research_provider" :options="providerOptions" @update:model-value="draft.deep_research_provider = $event" />
       </div>
       <div v-if="draft.deep_research_provider === 'tavily'" class="behavior-item">
-        <div class="behavior-label"><span>Tavily API Key</span><span class="behavior-desc">{{ t('searchConfigUi.keepKey') }}</span></div>
+        <div class="behavior-label"><span>{{ t('pageUi.providerApiKey', { provider: 'Tavily' }) }}</span><span class="behavior-desc">{{ t('searchConfigUi.keepKey') }}</span></div>
         <input v-model="draft.tavily_api_key" type="password" class="behavior-input deep-research-input" placeholder="tvly-…" autocomplete="new-password" />
       </div>
       <template v-else-if="draft.deep_research_provider === 'baidu'">
-        <div class="behavior-item"><div class="behavior-label"><span>{{ t('searchConfigUi.searchKey') }}</span><span class="behavior-desc">{{ t('searchConfigUi.keyHint') }}</span></div><input v-model="draft.deep_research_baidu_api_key" type="password" class="behavior-input deep-research-input" placeholder="API Key" autocomplete="new-password" /></div>
+        <div class="behavior-item"><div class="behavior-label"><span>{{ t('searchConfigUi.searchKey') }}</span><span class="behavior-desc">{{ t('searchConfigUi.keyHint') }}</span></div><input v-model="draft.deep_research_baidu_api_key" type="password" class="behavior-input deep-research-input" :placeholder="t('pageUi.apiKey')" autocomplete="new-password" /></div>
       </template>
-      <div v-else class="behavior-item"><div class="behavior-label"><span>You.com API Key</span><span class="behavior-desc">{{ t('searchConfigUi.youApiHint') }}</span></div><input v-model="draft.deep_research_you_api_key" type="password" class="behavior-input deep-research-input" :placeholder="t('searchConfigUi.youApiPlaceholder')" autocomplete="new-password" /></div>
+      <div v-else class="behavior-item"><div class="behavior-label"><span>{{ t('pageUi.providerApiKey', { provider: 'You.com' }) }}</span><span class="behavior-desc">{{ t('searchConfigUi.youApiHint') }}</span></div><input v-model="draft.deep_research_you_api_key" type="password" class="behavior-input deep-research-input" :placeholder="t('searchConfigUi.youApiPlaceholder')" autocomplete="new-password" /></div>
     </div>
     <div class="card-actions">
       <span v-if="saved || error" class="save-hint" :class="{ error: !!error }">

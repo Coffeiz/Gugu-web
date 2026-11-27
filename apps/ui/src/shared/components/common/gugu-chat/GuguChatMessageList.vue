@@ -26,10 +26,10 @@
           />
         </div>
         <div v-else :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-           v-memo="[timestamp, msg.role, msg.subagentOutput, msg.subagentElapsedMs, msg.subagentOutput && expandedActivityIds.has(msg.id), msg.speakerLabel, msg.text, msg.html, msg.streaming, messageIndex < messages.length - 1, msg.references, msg.roundId, msg.runOutcome, msg.linkButtons, sourceByMessage.get(msg.id), msg.interaction?.resolved, msg.interaction?.expired, msg.interaction?.selectedOptionId, msg.interaction?.selectedOptionIds, msg.interaction?.customAnswer, msg.interaction?.selectionMode, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_path ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}:${f.transcript ?? ''}:${f.transcript_status ?? ''}:${f.transcript_origin ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId), voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId) ? voiceBars.join(',') : '']">
+           v-memo="[timestamp, msg.role, msg.subagentOutput, msg.subagentElapsedMs, msg.subagentOutput && expandedActivityIds.has(msg.id), msg.speakerLabel, msg.text, msg.html, msg.streaming, messageIndex < messages.length - 1, msg.references, msg.roundId, msg.runOutcome, msg.linkButtons, sourceByMessage.get(msg.id), msg.interaction?.resolved, msg.interaction?.expired, msg.interaction?.selectedOptionId, msg.interaction?.selectedOptionIds, msg.interaction?.customAnswer, msg.interaction?.emailCompose, msg.interaction?.questions, msg.interaction?.questionAnswers, emailTools.get(msg.interaction?.toolCallId ?? ''), msg.interaction?.selectionMode, msg.interaction?.allowTextInput, msg.interaction?.customInputActive, msg.interaction?.taskPaused, msg.interaction?.submitting, msg.interaction?.responseText, msg.interaction?.secretFields, interactionAnswerMode, msg.files?.length, msg.files?.map(f => `${f.file_path ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}:${f.transcript ?? ''}:${f.transcript_status ?? ''}:${f.transcript_origin ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId), voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId) ? voiceBars.join(',') : '']">
           <GuguChatMessageRow
             :subagent-expanded="msg.subagentOutput && expandedActivityIds.has(msg.id)" @toggle-subagent="toggleActivity(msg.id)"
-            :msg="msg" :timestamp="timestamp" :sources="sourceByMessage.get(msg.id)" :has-following-message="messageIndex < messages.length - 1" :session-id="sessionId" :is-group-session="isGroupSession" :interaction-answer-mode="interactionAnswerMode"
+            :msg="msg" :email-tool="emailTools.get(msg.interaction?.toolCallId ?? '')" :timestamp="timestamp" :sources="sourceByMessage.get(msg.id)" :has-following-message="messageIndex < messages.length - 1" :session-id="sessionId" :is-group-session="isGroupSession" :interaction-answer-mode="interactionAnswerMode"
             :copied-id="copiedId" :voice-playing-id="voicePlayingId" :voice-bars="voiceBars"
             @copy="$emit('copy', $event)" @toggle-voice="$emit('toggleVoice', $event)"
             @open-file="$emit('openFile', $event)" @download="$emit('download', $event)" @action-click="$emit('actionClick', $event)"
@@ -153,6 +153,10 @@ watchEffect(() => {
     })
   }
 })
+const emailTools = computed(() => new Map(props.messages.flatMap(message =>
+  message.toolName === 'send_email' && message.toolCallId ? [[message.toolCallId, {
+    status: message.toolStatus, result: message.toolResult,
+  }] as const] : [])))
 const projection = computed(() => projectChatRows(props.messages))
 const selectionActive = ref(false)
 const pinnedSelectionIds = ref<{ anchorId: string; focusId: string } | null>(null)
@@ -223,10 +227,25 @@ function updateScrollPosition() {
   showScrollToBottom.value = distanceFromBottom > SCROLL_TO_BOTTOM_THRESHOLD
 }
 
+function cancelVirtualScroll() {
+  const list = virtualizer.value
+  if ('cancelScroll' in list && typeof list.cancelScroll === 'function') {
+    list.cancelScroll()
+    return true
+  }
+  return false
+}
+
+function cancelScroll() {
+  if (!cancelVirtualScroll() && messagesEl.value)
+    virtualizer.value.scrollToOffset(messagesEl.value.scrollTop)
+}
+
 function scrollToBottom(behavior: 'auto' | 'smooth' = 'auto') {
-  const lastRow = projection.value.rows.length - 1
-  if (!messagesEl.value || lastRow < 0) return
-  virtualizer.value.scrollToIndex(lastRow, { align: 'end', behavior })
+  const element = messagesEl.value
+  if (!element || !projection.value.rows.length) return
+  if (behavior === 'smooth' || !cancelVirtualScroll()) virtualizer.value.scrollToEnd({ behavior })
+  else element.scrollTo({ top: element.scrollHeight, behavior: 'instant' })
 }
 
 // 消息高度不定长（纯文本/代码块/文件卡片/语音条差异很大），measureElement 首次挂载
@@ -256,17 +275,22 @@ const virtualizer = useVirtualizer({
   },
   // 虚拟行 key 必须唯一对应一个展示气泡。一个持久化助手消息可能展开为多个
   // timeline 气泡，共享 dbId；优先使用前端气泡 id，避免 key 冲突和测量高度串行。
-  getItemKey: (index) => {
-    const message = projection.value.rows[index]?.msg
-    return message?.id ?? message?.dbId ?? `${props.sessionId ?? 'new'}:${index}`
+  get getItemKey() {
+    const { rows } = projection.value
+    const sessionId = props.sessionId
+    return (index: number) => {
+      const message = rows[index]?.msg
+      return message?.id ?? message?.dbId ?? `${sessionId ?? 'new'}:${index}`
+    }
   },
 })
 // 只补偿完全位于视口上方的行；跨越顶部的长消息变高不应推动正在阅读的内容。
 // 上翻时新挂载行与 Markdown 异步变高共用此规则，避免首次测量按整条高度误补偿。
+// 插入旧页时虚拟偏移先于 DOM 更新，测量补偿应使用同一坐标。
 // 尺寸过渡由窗口域维护视口底部锚点，避免虚拟列表同时纠偏。
 watchEffect(() => {
   virtualizer.value.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
-    !props.resizing && item.end <= (instance.scrollElement?.scrollTop ?? instance.scrollOffset ?? 0)
+    !props.resizing && item.end <= (instance.scrollOffset ?? instance.scrollElement?.scrollTop ?? 0)
 })
 const virtualRows = computed(() => virtualizer.value.getVirtualItems())
 const nearHistoryTop = computed(() => (virtualRows.value[0]?.index ?? 0) <= 10)
@@ -363,24 +387,18 @@ watch(virtualRows, (rows) => {
     if (m && m.role === 'ai' && !m.streaming && m.html == null) m.html = renderMd(m.text)
   }
 })
-watch([virtualTotalSize, () => props.messages.length], ([, count], [previousSize, previousCount]) => {
-  const el = messagesEl.value
-  // 行高更新与占位 DOM 在同一轮提交。只延续原本贴底的视口，新增消息走既有跟随流程。
-  if (el && !props.resizing && !props.sessionSettling && count === previousCount
-    && previousSize - el.scrollTop - el.clientHeight <= 2) {
-    el.scrollTop = el.scrollHeight - el.clientHeight
-  }
-  updateScrollPosition()
-}, { flush: 'post' })
+// 行高的贴底和视口锚点由虚拟列表统一处理。
+watch(virtualTotalSize, updateScrollPosition, { flush: 'post' })
 
-function captureScrollAnchor(): SessionScrollAnchor | null {
+function captureScrollAnchor(): SessionScrollAnchor | null | undefined {
   const el = messagesEl.value
-  if (!el || !el.clientHeight || el.scrollHeight - el.scrollTop - el.clientHeight <= 2) return null
+  if (!el || !el.clientHeight) return undefined
+  if (el.scrollHeight - el.scrollTop - el.clientHeight <= 2) return null
   const row = virtualRows.value.find(({ start, end, index }) =>
     end > el.scrollTop && start < el.scrollTop + el.clientHeight && projection.value.rows[index]?.msg._syncKey,
   )
   const messageKey = row && projection.value.rows[row.index]?.msg._syncKey
-  return row && messageKey ? { messageKey, offset: el.scrollTop - row.start } : null
+  return row && messageKey ? { messageKey, offset: el.scrollTop - row.start } : undefined
 }
 
 function restoreScrollAnchor(messageIndex: number, offset: number): boolean {
@@ -406,6 +424,7 @@ function restoreScrollAnchor(messageIndex: number, offset: number): boolean {
 defineExpose({
   el: computed(() => messagesEl.value),
   scrollToBottom,
+  cancelScroll,
   captureScrollAnchor,
   restoreScrollAnchor,
   getVirtualRangeStart: () => projection.value.rows[virtualRows.value[0]?.index ?? 0]?.messageIndex ?? 0,

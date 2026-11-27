@@ -14,7 +14,7 @@ import { prepareProjectStageChange } from '../../../projects/stages.js'
 import { projectResponse } from '../../../projects/project-projection.js'
 import { projectPersistentToolResult, redactToolError } from '../../core.js'
 import { resolveProject } from './selector.js'
-import type { ProjectMutationIntent, ProjectMutationOutcome, ProjectMutationPort } from '../projects.js'
+import type { ProjectMutationIntent, ProjectMutationOutcome, ProjectMutationPort } from './tools.js'
 
 type Rejection = Extract<ProjectMutationOutcome, { status: 'rejected' }>['value']
 export interface ProjectMutationPortOptions {

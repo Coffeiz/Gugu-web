@@ -431,3 +431,40 @@ test('自定义补充仅允许用于支持文本的多选，直接填写也可�
   assert.equal(result.value, '补充说明')
   assert.equal(multi.commits, 1)
 })
+
+test('多题卡片只接受整组合法答案，纠正后可用原令牌一次提交', async () => {
+  const data = state({ prompt: { kind: 'question', schema: { source: 'agent', questions: [
+    { id: 'format', title: '格式', options: [{ id: 'md', label: 'Markdown' }] },
+    { id: 'length', title: '篇幅' },
+  ] } }, action: { tokenHash, actionType: 'question_batch', optionId: '__submit_questions__',
+    context: { tool_name: 'ask_user', tool_call_id: 'call-a' } } })
+  const params = { ownerId: 'owner-a', promptId: 17, token: 'token' }
+  await assert.rejects(consume(data, { ...params, customAnswer: '[{"question_id":"format","option_ids":["md"]}]' }), { code: 'action_invalid' })
+  assert.equal(data.commits, 0)
+  assert.equal(data.prompt.status, 'active')
+  const answers = [{ question_id: 'format', option_ids: ['md'] }, { question_id: 'length', text: '简短' }]
+  const result = await consume(data, { ...params, customAnswer: JSON.stringify([...answers].reverse()) })
+  assert.deepEqual(result.result.answers, answers)
+  assert.equal(data.prompt.status, 'resolved')
+  assert.equal(data.commits, 1)
+  await assert.rejects(consume(data, { ...params, customAnswer: JSON.stringify(answers) }), { code: 'interaction_ended' })
+})
+
+test('IM 回调只消费当前题的动作令牌，全部答完才结束交互', async () => {
+  const data = state({ prompt: { kind: 'question', schema: { source: 'agent', questions: [
+    { id: 'q1', title: '第一题', options: [{ id: 'a', label: '选项 A' }] },
+    { id: 'q2', title: '第二题', options: [{ id: 'b', label: '选项 B' }] },
+  ] } }, action: { tokenHash, actionType: 'question_step', optionId: '__question_1_0__',
+    context: { tool_name: 'ask_user', tool_call_id: 'call-a' } } })
+  const base = { ownerId: 'owner-a', promptId: 17, token: 'token' }
+  await assert.rejects(consume(data, { ...base, eventId: 'too-early' }), { code: 'action_invalid' })
+  data.action.optionId = '__question_0_0__'
+  const first = await consume(data, { ...base, eventId: 'first' })
+  assert.equal(first.result.status, 'question_next')
+  assert.equal(data.prompt.status, 'active')
+  data.action = { ...data.action, status: 'pending', optionId: '__question_1_0__' }
+  const final = await consume(data, { ...base, eventId: 'second' })
+  assert.equal(final.result.status, 'answered')
+  assert.deepEqual(final.result.answers, [{ question_id: 'q1', option_ids: ['a'] }, { question_id: 'q2', option_ids: ['b'] }])
+  assert.equal(data.prompt.status, 'resolved')
+})

@@ -14,7 +14,7 @@ import { createAgentMindReader, createAgentPlaceableSearch, createSqlMindCanvasR
 import { createCanvasCreationPort, createClientDeletePort, createDurableProjectMutationPort, createWebLinkButtonDeliveryPort, createWorkspaceMutationPort } from '@gugu/core/tools'
 import type { ClientDeleteConfirmationPort } from '@gugu/core/tools'
 import { createWebAgentCanvasMutationPorts } from '../../../src/modules/agent/tools/canvas.js'
-import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/scheduled-task-list'
+import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/tasks/list'
 import { createAgentCalendarReader, createKyselyCalendarAgentReadPort, createKyselyCalendarReadPort } from '@gugu/core/calendar'
 import { createAgentWorkspaceQueries, createKyselyAgentWorkspaceReader } from '@gugu/core/workspaces'
 import { createAgentToolRegistry } from '../../../src/modules/agent/tools/registry.js'
@@ -470,7 +470,7 @@ test('生产 Web Run 复用 Core 客户端工具，按可信 owner 创建、列�
     const listed = await run.toolRegistry.tools.dispatch({ id: 'list-clients', name: 'list_contacts', input: {} }, scope)
     assert.equal(listed.kind === 'completed' && listed.successful, true, JSON.stringify(listed))
     assert.deepEqual(listed.kind === 'completed' ? listed.value : null, [{ id: createdValue!.contact_id,
-      name: '合成联系人', contact: null, email: 'synthetic@example.test', phone: '000-0000', notes: '' }])
+      name: '合成联系人', email: 'synthetic@example.test', phone: '000-0000', notes: '' }])
   } finally {
     await runtime?.close()
     await rm(directory, { recursive: true, force: true })

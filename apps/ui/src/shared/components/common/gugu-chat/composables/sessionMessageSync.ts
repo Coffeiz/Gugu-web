@@ -90,11 +90,12 @@ export function mapSessionMessageDelta(
       }
     : {
         id: mkid(), role: 'tool', text: '', toolCallId: event.toolCallId,
+        _replayedTool: true,
         toolName: event.toolName, toolLabel: event.toolLabel,
         toolLabelOverride: typeof event.toolLabelOverride === 'string' ? event.toolLabelOverride : undefined,
         runId: event.runId, roundId: event.roundId,
         toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
-        shellActivity: event.shellActivity,
+        shellActivity: event.shellActivity, shellDescription: event.shellDescription,
         toolInput: event.toolInput, toolResult: event.toolResult,
         toolDetailsAvailable: event.detailsAvailable,
         _toolDetailsSource: event.detailSource,
@@ -130,6 +131,8 @@ export function mapSessionInteraction(item: any, mkid: () => number, existing?: 
       toolCallId: item.tool_call_id ? String(item.tool_call_id) : previous?.toolCallId ?? null,
       title: String(item.title || previous?.title || i18n.global.t('chatUi.confirmRequired')),
       body: String(item.body ?? previous?.body ?? ''),
+      questions: Array.isArray(item.questions) ? item.questions : previous?.questions,
+      questionAnswers: Array.isArray(item.question_answers) ? item.question_answers : previous?.questionAnswers,
       options: item.resolved === undefined && previous?.resolved ? previous.options
         : Array.isArray(item.options) ? item.options : previous?.options ?? [],
       allowTextInput: Boolean(item.allow_text_input ?? previous?.allowTextInput),
@@ -140,6 +143,7 @@ export function mapSessionInteraction(item: any, mkid: () => number, existing?: 
       resolved: Boolean(item.resolved ?? previous?.resolved),
       expired: Boolean(item.expired ?? previous?.expired),
       selectionMode: item.selection_mode === 'multiple' ? 'multiple' : previous?.selectionMode,
+      emailCompose: item.email_compose?.enabled === true ? item.email_compose : previous?.emailCompose,
       customAnswer: typeof item.custom_answer === 'string' ? item.custom_answer : previous?.customAnswer,
       selectedOptionIds: Array.isArray(item.selected_option_ids) ? item.selected_option_ids : previous?.selectedOptionIds,
       selectedOptionId: item.selected_option_id ?? previous?.selectedOptionId ?? null,

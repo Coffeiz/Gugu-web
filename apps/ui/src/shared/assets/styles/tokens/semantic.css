@@ -71,15 +71,11 @@
   --action-primary: var(--theme-action-primary);
   --action-primary-hover: var(--theme-action-hover);
   --action-primary-pressed: var(--theme-action-pressed);
-  /* Primary actions share one restrained gradient; theme-specific contrast is supplied by fill tokens. */
+  /* 主操作按钮使用主题纯色填充。 */
   --action-primary-fill: var(--action-primary);
   --action-primary-fill-hover: var(--action-primary-hover);
-  --action-primary-bg: linear-gradient(to bottom,
-    color-mix(in srgb, var(--action-primary-fill) 94%, white),
-    color-mix(in srgb, var(--action-primary-fill) 94%, black));
-  --action-primary-bg-hover: linear-gradient(to bottom,
-    color-mix(in srgb, var(--action-primary-fill-hover) 94%, white),
-    color-mix(in srgb, var(--action-primary-fill-hover) 94%, black));
+  --action-primary-bg: var(--action-primary-fill);
+  --action-primary-bg-hover: var(--action-primary-fill-hover);
   --action-soft: color-mix(in srgb, var(--action-primary) 9%, transparent);
   --action-soft-hover: color-mix(in srgb, var(--action-primary) 15%, transparent);
   --action-outline: color-mix(in srgb, var(--action-primary) 34%, transparent);
@@ -178,6 +174,12 @@
   --status-warning: color-mix(in srgb, var(--theme-warning) 82%, var(--content-secondary) 18%);
   --status-danger: color-mix(in srgb, var(--theme-danger) 82%, var(--content-secondary) 18%);
   --status-info: color-mix(in srgb, var(--theme-info) 82%, var(--content-secondary) 18%);
+}
+
+/* 亮色成功状态保留绿色辨识度，并与当前色板协调。 */
+:root[data-theme='light'][data-palette] {
+  --status-success: color-mix(in srgb, #21804e 60%, var(--theme-success) 40%);
+  --status-success-bg: color-mix(in srgb, var(--status-success) 15%, transparent);
 }
 
 /* 暗色导航只保留很轻的提亮，避免 10% 白色混入把侧栏抬成灰亮面板；同时继续

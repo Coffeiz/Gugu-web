@@ -118,3 +118,39 @@ it('定时任务表单请求桌面渠道，并把所选微信和 QQ 交给任务
   await expect(handle({ action: 'create', fields })).resolves.toEqual({ id: 1 })
   expect(request).toHaveBeenCalledWith('schedules.create', { fields })
 })
+
+it('私聊定时任务使用当前 QQ 绑定，发送中换绑时停止投递', async () => {
+  const target = { platform: 'qq', chatType: 'c2c' }
+  let bot = { appId: 'new-bot', appSecret: 'synthetic-secret', userId: 'new-owner', enabled: true, privateMessageFormat: 'markdown' as 'markdown' | 'compat' }
+  let changeAfterToken = false
+  const requests: string[] = []
+  const messageTypes: number[] = []
+  const sender = createDesktopScheduledIm({
+    qq: async () => bot,
+    feishu: async () => null,
+    telegram: async () => null,
+    wechat: async () => null,
+    transport: () => ({
+      async request(request) {
+        const path = new URL(request.url).pathname
+        requests.push(path)
+        const isToken = path.endsWith('/getAppAccessToken')
+        if (!isToken) messageTypes.push(JSON.parse(String(request.body)).msg_type)
+        if (isToken && changeAfterToken) bot = { ...bot, appId: 'other-bot', userId: 'other-owner' }
+        return { status: 200, headers: {}, body: (async function* () {
+          yield Buffer.from(JSON.stringify(isToken ? { access_token: 'synthetic-access' } : { id: 'synthetic-send' }))
+        })(), cancel() {} }
+      },
+      async close() {},
+    }),
+  })
+  const signal = new AbortController().signal
+  await sender.deliver(target, '合成提醒', signal)
+  expect(requests).toEqual(['/app/getAppAccessToken', '/v2/users/new-owner/messages'])
+  bot.privateMessageFormat = 'compat'
+  await sender.deliver(target, '合成兼容提醒', signal)
+  expect(messageTypes).toEqual([2, 0])
+  changeAfterToken = true
+  await expect(sender.deliver(target, '合成提醒', signal)).rejects.toMatchObject({ code: 'schedule_failed' })
+  expect(requests.slice(4)).toEqual(['/app/getAppAccessToken'])
+})

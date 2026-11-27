@@ -41,7 +41,7 @@ export function bubblewrapArguments(request: BubblewrapLaunch): string[] {
     if (!absolute(mount.source) || !absolute(mount.target) || typeof mount.readonly !== 'boolean'
       || (mount.descriptor !== undefined && (!Number.isSafeInteger(mount.descriptor) || mount.descriptor < 3))
       || !['/workspace/', '/personal/', '/project/'].some(prefix => mount.target.startsWith(prefix))
-        && !['/workspace', '/personal', '/project'].includes(mount.target)
+        && !['/workspace', '/personal', '/project', '/skills'].includes(mount.target)
       || targets.has(mount.target)) throw new Error('沙盒挂载参数无效')
     targets.add(mount.target)
   }

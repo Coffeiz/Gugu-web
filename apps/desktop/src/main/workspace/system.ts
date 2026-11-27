@@ -10,6 +10,8 @@ export function systemHandlers(host: IpcHost): IpcHandlers {
     [DESKTOP_CHANNELS.agentPreference]: (kind: unknown, patch?: unknown) => host.request('preferences.agent', { kind, patch }),
     [DESKTOP_CHANNELS.appearance]: () => host.request('preferences.desktop.get'),
     [DESKTOP_CHANNELS.updateAppearance]: (patch: unknown) => host.request('preferences.desktop.update', { patch }),
-    [DESKTOP_CHANNELS.onboarding]: () => host.request('onboarding.desktop.get'),
+    [DESKTOP_CHANNELS.onboarding]: (patch?: unknown, reopen?: unknown) => host.request('onboarding.desktop.get', {
+      ...(patch == null ? {} : { patch }), ...(reopen === true ? { reopen } : {}),
+    }),
   }
 }

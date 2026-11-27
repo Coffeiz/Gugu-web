@@ -107,12 +107,12 @@ const chartOpts = computed(() => lineChartOptions({
 </script>
 
 <style scoped>
-.ttc-card { border: 1px solid var(--subpanel-border); border-radius: 9px; background: var(--subpanel-bg); padding: 10px 12px 8px; }
-.ttc-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.ttc-card { border: 1px solid var(--subpanel-border); border-radius: 9px; background: var(--subpanel-bg); padding: var(--space-sm) var(--space-md) var(--space-sm); }
+.ttc-header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-sm); flex-wrap: wrap; margin-bottom: var(--space-xs); }
 .ttc-title { color: var(--content-tertiary); font-size: 12px; }
-.ttc-stats { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.ttc-stats { display: flex; align-items: baseline; gap: var(--space-xs); flex-wrap: wrap; }
 .ttc-stat { color: var(--content-primary); font-size: 13px; font-variant-numeric: tabular-nums; }
-.ttc-stat em { font-style: normal; color: var(--content-tertiary); font-size: 11px; margin-right: 4px; }
+.ttc-stat em { font-style: normal; color: var(--content-tertiary); font-size: 11px; margin-right: var(--space-xs); }
 .ttc-sep { color: var(--content-tertiary); opacity: 0.5; }
 .ttc-chart { position: relative; height: 180px; }
 </style>

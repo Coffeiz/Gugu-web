@@ -1,4 +1,4 @@
-import { createProjectWorkspaceBindingTool, type ProjectWorkspaceBindingPort } from './workspaces.js'
+import { createProjectWorkspaceBindingTool, type ProjectWorkspaceBindingPort } from './workspaces/index.js'
 import { CoreError } from '../../contracts/index.js'
 import { agentProjectDispatchKey } from './projects/creation-port.js'
 import { createPresentFileTool, createListRecentAttachmentsTool, createDeleteFileTool } from './index.js'
@@ -25,12 +25,12 @@ import { createClientTools, createClientDeleteTool, createCanvasReadTools, creat
 import type { ClientDeletePort, CalendarDeletePort, CalendarEventCreateToolPort, CalendarEventUpdateToolPort, WorkspaceMutationPort, WorkspaceCreatePort, ProjectMutationPort, ProjectFileOverview, ScheduledTaskListPort, UseSkillPorts } from './index.js'
 import type { ProjectCreateRuntime } from '../../projects/project-create.js'
 
-type AuthorizedToolName = 'shell' | 'create_project' | 'list_contacts' | 'create_contact' | 'update_contact' | 'delete_contact' | 'list_projects' | 'get_project' | 'get_current_time' | 'use_skill' | 'list_scheduled_tasks' | 'create_scheduled_task' | 'update_scheduled_task' | 'delete_scheduled_task' | 'global_search' | 'get_upcoming' | 'list_trash' | 'restore_file' | 'restore_folder' | 'permanent_delete' | 'list_events' | 'create_event' | 'update_event' | 'delete_event' | 'list_workspaces' | 'create_workspace' | 'set_project_workspace' | 'undo_last_action' | 'update_project' | 'set_color' | 'archive_project' | 'add_stage' | 'remove_stage' | 'rename_stage' | 'set_stages' | 'update_stage' | 'note_search' | 'note_get' | 'search_tools' | 'canvas_list' | 'canvas_get' | 'canvas_search' | 'canvas_focus_node' | 'update_workspace' | 'canvas_search_placeable' | 'canvas_create' | 'canvas_batch' | 'canvas_delete_note' | 'canvas_disconnect' | 'canvas_delete' | 'list_skills' | 'create_skill' | 'update_skill' | 'call_tool' | 'manage_mcp_servers' | 'http_get' | 'web_search' | 'similar_image_search' | 'deep_research' | 'delete_skill' | 'note_create' | 'note_update' | 'canvas_update_node' | 'canvas_remove_node' | 'canvas_update_note' | 'canvas_create_note' | 'canvas_add_node' | 'canvas_update_anchor' | 'canvas_connect' | 'note_delete' | 'note_restore' | 'note_undo' | 'view_image' | 'delete_file' | 'delete_item' | 'send_item' | 'open_item' | 'save_attachment' | 'list_recent_attachments' | 'send_email' | 'delete_knowledge' | 'delete_project' | 'web_download' | 'remember'
+type AuthorizedToolName = 'shell' | 'create_project' | 'list_contacts' | 'create_contact' | 'update_contact' | 'delete_contact' | 'list_projects' | 'get_project' | 'get_current_time' | 'use_skill' | 'list_scheduled_tasks' | 'create_scheduled_task' | 'update_scheduled_task' | 'delete_scheduled_task' | 'global_search' | 'get_upcoming' | 'list_trash' | 'restore_file' | 'restore_folder' | 'permanent_delete' | 'list_events' | 'create_event' | 'update_event' | 'delete_event' | 'list_workspaces' | 'create_workspace' | 'set_project_workspace' | 'undo_last_action' | 'update_project' | 'set_color' | 'archive_project' | 'add_stage' | 'remove_stage' | 'rename_stage' | 'set_stages' | 'update_stage' | 'note_search' | 'note_get' | 'search_tools' | 'canvas_list' | 'canvas_get' | 'canvas_search' | 'canvas_focus_node' | 'update_workspace' | 'canvas_search_placeable' | 'canvas_create' | 'canvas_batch' | 'canvas_delete_note' | 'canvas_disconnect' | 'canvas_delete' | 'list_skills' | 'create_skill' | 'update_skill' | 'call_tool' | 'manage_mcp_servers' | 'http_get' | 'web_search' | 'similar_image_search' | 'deep_research' | 'delete_skill' | 'note_create' | 'note_update' | 'canvas_update_node' | 'canvas_remove_node' | 'canvas_update_note' | 'canvas_create_note' | 'canvas_add_node' | 'canvas_update_anchor' | 'canvas_connect' | 'note_delete' | 'note_restore' | 'note_undo' | 'view_image' | 'delete_file' | 'delete_item' | 'send_item' | 'open_item' | 'save_attachment' | 'list_recent_attachments' | 'list_mail' | 'send_email' | 'delete_knowledge' | 'delete_project' | 'web_download' | 'remember'
 
 import type { RunIdentity } from '../models.js'
 
 export interface OwnerToolOptions {
-  subagentTools?: ReturnType<typeof import('./subagent.js').createSubagentServiceTools>
+  subagentTools?: ReturnType<typeof import('./subagent/index.js').createSubagentServiceTools>
   groupContext?: GroupContextSearchPort
   imOwnerSession?: ImOwnerSessionBindPort
   imReaction?: { platform: 'feishu'; port: ImReactionPort }
@@ -72,6 +72,7 @@ export interface OwnerToolOptions {
   /** 仅提供可信渠道与可恢复投递时开放；不会推断或降级渠道。 */
   linkButtons?: LinkButtonDeliveryPort
   /** 仅由具备持久确认和实际 SMTP 的 Host 注入。 */
+  listMail?: ToolDefinition
   sendEmail?: ToolDefinition
   /** 未提供可信用户时区时，不能开放时间工具。 */
   time?: { now(): Date; timezone(identity: RunIdentity): Promise<string> }
@@ -140,9 +141,12 @@ export function createOwnerToolRegistry(options: OwnerToolOptions) {
     ? createProjectCreationPort({
       runtime: options.projects,
       keyForCall({ identity, roundId, toolCallId }) {
-        const sessionId = Number(identity.sessionId)
-        if (!/^[1-9]\d*$/.test(identity.sessionId) || !Number.isSafeInteger(sessionId))
-          throw new CoreError('invalid_request', '工具运行身份无效')
+        const numericId = Number(identity.sessionId)
+        const taskId = /^scheduled-task:([1-9]\d*)$/u.exec(identity.sessionId)?.[1]
+        let sessionId: number | `scheduled-task:${number}`
+        if (taskId && Number.isSafeInteger(Number(taskId))) sessionId = `scheduled-task:${Number(taskId)}`
+        else if (/^[1-9]\d*$/u.test(identity.sessionId) && Number.isSafeInteger(numericId)) sessionId = numericId
+        else throw new CoreError('invalid_request', '工具运行身份无效')
         const key = agentProjectDispatchKey({ sessionId, runId: identity.runId, roundId, toolCallId })
         if (!key) throw new CoreError('invalid_request', '工具运行身份无效')
         return key
@@ -150,16 +154,7 @@ export function createOwnerToolRegistry(options: OwnerToolOptions) {
     })
     : null
   const clientDelete = options.clientDelete?.confirmation ? createClientDeleteTool(options.clientDelete) : undefined
-  const registry: ReturnType<typeof createToolRegistry> = createToolRegistry({
-    confirmationGatedDestructiveTool: options.shell,
-    confirmationGatedDestructiveTools: [
-      ...(options.diskTrashTools?.filter(tool => tool.destructive) ?? []),
-      ...(options.knowledgeDelete?.destructive ? [options.knowledgeDelete] : []),
-      ...(options.skillDelete?.destructive ? [options.skillDelete] : []),
-      ...(clientDelete?.destructive ? [clientDelete] : []),
-      ...(options.sendEmail?.destructive ? [options.sendEmail] : []),
-    ],
-    groups: [
+  const groups: import('./contracts.js').ToolGroupDefinition[] = [
       ...(options.subagentTools ? [{ id: 'subagents', name: '子 Agent', tools: options.subagentTools }] : []),
       { id: 'files', name: '文件和附件', tools: [
         ...(options.viewImage ? [options.viewImage] : []),
@@ -233,7 +228,10 @@ export function createOwnerToolRegistry(options: OwnerToolOptions) {
       ...(options.groupContext ? [{ id: 'group_context', name: '当前群上下文', tools: [createGroupContextSearchTool(options.groupContext)] }] : []),
       { id: 'meta', name: '元工具', tools: [createSearchToolsTool(identity=>registry.capabilities(identity)),...(options.skills?[createUseSkillTool(options.skills)]:[]),...(options.askUser?[createAskUserTool(options.askUser)]:[]),...(options.callTool?[createCallToolAdapter()]:[])] },
       ...(options.notes || options.noteLifecycle || options.noteWrites ? [{id:'mind',name:'思维笔记',tools:[...(options.notes?createNoteReadTools(options.notes):[]),...(options.noteLifecycle?createNoteLifecycleTools(options.noteLifecycle):[]),...(options.noteWrites?createNoteWriteTools(options.noteWrites):[])]}] : []),
-      ...(options.sendEmail && !options.sendEmail.destructive ? [{ id: 'email', name: '邮件', tools: [options.sendEmail] }] : []),
+      ...(options.listMail || options.sendEmail && !options.sendEmail.destructive ? [{ id: 'email', name: '邮件', tools: [
+        ...(options.listMail ? [options.listMail] : []),
+        ...(options.sendEmail && !options.sendEmail.destructive ? [options.sendEmail] : []),
+      ] }] : []),
       ...(options.scheduledTasks || options.scheduledTaskWrites?.length || options.scheduledTaskDelete ? [{
         id: 'scheduled_tasks', name: '定时任务', tools: [
           ...(options.scheduledTasks ? [createListScheduledTasksTool(options.scheduledTasks)] : []),
@@ -241,8 +239,18 @@ export function createOwnerToolRegistry(options: OwnerToolOptions) {
           ...(options.scheduledTaskDelete ? [options.scheduledTaskDelete] : []),
         ],
       }] : []),
+    ]
+  const registry: ReturnType<typeof createToolRegistry> = createToolRegistry({
+    confirmationGatedDestructiveTool: options.shell,
+    confirmationGatedDestructiveTools: [
+      ...(options.diskTrashTools?.filter(tool => tool.destructive) ?? []),
+      ...(options.knowledgeDelete?.destructive ? [options.knowledgeDelete] : []),
+      ...(options.skillDelete?.destructive ? [options.skillDelete] : []),
+      ...(clientDelete?.destructive ? [clientDelete] : []),
+      ...(options.sendEmail?.destructive ? [options.sendEmail] : []),
     ],
+    groups,
     authorize: (identity, name) => options.authorize(identity, name as AuthorizedToolName | 'send_link_buttons' | 'ask_user' | 'restore_file' | 'restore_folder' | 'read_conversation' | 'search_conversations' | 'search_memory' | 'read_knowledge' | 'save_knowledge' | 'update_knowledge'),
   })
-  return registry
+  return Object.assign(registry, { definitions: groups.flatMap(group => group.tools) })
 }

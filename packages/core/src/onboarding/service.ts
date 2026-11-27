@@ -12,6 +12,7 @@ export function createOnboardingService(store: OnboardingStore) {
     },
     async reopen(ownerId: string) {
       const state = await store.updateGuide(ownerId, {
+        enabled: true,
         version: GUIDE_VERSION,
         dismissed: false,
         completed_at: null,

@@ -1,3 +1,5 @@
+import { advanceQuestionBatch, questionBatchText, QUESTION_BATCH_CANCEL, QUESTION_BATCH_SUBMIT, readQuestionBatch, validateQuestionAnswers, type AskQuestionAnswer } from './question-batch.js'
+import { parseEmailComposeSubmission, type EmailComposeSubmission } from './email-compose.js'
 import { createHash } from 'node:crypto'
 
 export interface InteractionPromptRecord {
@@ -62,6 +64,9 @@ export interface InteractionActionResult {
   prompt_id: number
   option_id: string
   selected_option_ids?: string[]
+  question_index?: number
+  answers?: AskQuestionAnswer[]
+  email_submission?: EmailComposeSubmission
   custom_answer?: string
   value: string | string[] | null
   text: string
@@ -176,6 +181,54 @@ export async function consumeInteractionAction(
       throw new InteractionConsumeError('action_invalid', '动作无效或已使用')
 
     const actionContext = { ...record(action.context) }
+    const questions = readQuestionBatch(schema)
+    if (questions && schema.source === 'agent' && actionContext.tool_name === 'ask_user') {
+      if (action.actionType === 'question_step') {
+        const match = /^__question_([0-4])_([0-7])__$/u.exec(action.optionId)
+        const index = Number(match?.[1])
+        const question = questions[index], option = question?.options?.[Number(match?.[2])]
+        const current = Array.isArray(schema.question_progress) ? schema.question_progress.length : 0
+        if (!option || index !== current || !options.eventId || options.customAnswer !== undefined || options.selectedOptionIds !== undefined)
+          throw new InteractionConsumeError('action_invalid', '该问题已经处理，请回答当前题目')
+        const progress = advanceQuestionBatch(schema, questions, { question_id: question.id, option_ids: [option.id] }, options.eventId, timestamp)
+        const result: InteractionActionResult = {
+          kind: prompt.kind, status: progress.complete ? 'answered' : 'question_next', prompt_id: prompt.id,
+          option_id: action.optionId, value: null, text: progress.complete ? '已提交全部答案' : questionBatchText(questions, current + 1),
+          ...(progress.complete ? { answers: progress.answers } : { question_index: current + 1 }),
+        }
+        action.status = 'consumed'
+        action.consumedAt = timestamp
+        action.consumedEventId = options.eventId
+        prompt.schema = progress.complete ? { ...progress.schema, resolved_result: result } : progress.schema
+        if (progress.complete) {
+          prompt.status = 'resolved'
+          prompt.resolvedAt = timestamp
+        }
+        await tx.commit()
+        return { prompt_id: prompt.id, session_id: prompt.sessionId, kind: prompt.kind,
+          option_id: action.optionId, action_type: action.actionType, context: actionContext, result }
+      }
+      const cancelled = action.optionId === QUESTION_BATCH_CANCEL && action.actionType === 'cancel'
+      let answers: AskQuestionAnswer[] | null = null
+      if (action.optionId === QUESTION_BATCH_SUBMIT && action.actionType === 'question_batch'
+        && typeof options.customAnswer === 'string' && Buffer.byteLength(options.customAnswer) <= 55_000) {
+        try { answers = validateQuestionAnswers(questions, JSON.parse(options.customAnswer)) } catch { /* 返回统一的回答校验错误。 */ }
+      }
+      if (options.selectedOptionIds !== undefined || (cancelled ? options.customAnswer !== undefined : !answers))
+        throw new InteractionConsumeError('action_invalid', '请为每道题提交有效答案')
+      const result: InteractionActionResult = { kind: prompt.kind, status: cancelled ? 'cancelled' : 'answered',
+        prompt_id: prompt.id, option_id: action.optionId, value: null, text: cancelled ? '已取消问答' : '已提交全部答案',
+        ...(answers ? { answers } : {}) }
+      action.status = 'consumed'
+      action.consumedAt = timestamp
+      action.consumedEventId = options.eventId ?? null
+      prompt.status = 'resolved'
+      prompt.resolvedAt = timestamp
+      prompt.schema = { ...schema, resolved_result: result }
+      await tx.commit()
+      return { prompt_id: prompt.id, session_id: prompt.sessionId, kind: prompt.kind,
+        option_id: action.optionId, action_type: action.actionType, context: actionContext, result }
+    }
     const customReply = action.optionId === '__custom_reply__' || action.actionType === 'custom_reply'
     const promptContext = record(schema.context)
     const secretTarget = record(promptContext.secret_target)
@@ -189,9 +242,19 @@ export async function consumeInteractionAction(
     }
 
     const customAnswer = typeof options.customAnswer === 'string' ? options.customAnswer.trim() : ''
+    const emailCompose = schema.source === 'agent' && prompt.kind === 'confirm' && promptContext.tool_name === 'send_email'
+      ? record(promptContext.email_compose) : {}
+    const emailSubmit = emailCompose.enabled === true && action.optionId === 'confirm' && action.actionType === 'confirm'
+    const editedEmail = emailSubmit ? parseEmailComposeSubmission(options.customAnswer) : null
+    const accounts = Array.isArray(emailCompose.accounts) ? emailCompose.accounts.map(record) : []
+    const sender = editedEmail?.account ? accounts.find(account => account.id === editedEmail.account)?.email : emailCompose.sender
+    if (emailSubmit && (!editedEmail || typeof sender !== 'string' || !sender
+      || editedEmail.action === 'draft' && (emailCompose.canDraft !== true || !editedEmail.account)))
+      throw new InteractionConsumeError('action_invalid', '邮件表单无效，请核对地址、主题和正文')
+    const emailSubmission = editedEmail ? { ...editedEmail, senderAddress: String(sender) } : null
     const multiplePrompt = schema.selection_mode === 'multiple' && schema.source === 'agent' &&
       (prompt.kind === 'choice' || prompt.kind === 'question') && !actionContext.command_action
-    if (options.customAnswer !== undefined && (!multiplePrompt || !schema.allow_text_input ||
+    if (options.customAnswer !== undefined && !emailSubmission && (!multiplePrompt || !schema.allow_text_input ||
       !customAnswer || Buffer.byteLength(customAnswer) > 8_000))
       throw new InteractionConsumeError('action_invalid', '自定义回复无效')
     const multiple = multiplePrompt && action.actionType === 'choice' && !customReply
@@ -282,9 +345,9 @@ export async function consumeInteractionAction(
       prompt_id: prompt.id,
       option_id: action.optionId,
       ...(selectedIds ? { selected_option_ids: selectedIds } : {}),
-      ...(customAnswer ? { custom_answer: customAnswer } : {}),
+      ...(emailSubmission ? { email_submission: emailSubmission } : customAnswer ? { custom_answer: customAnswer } : {}),
       value: selectedIds ?? (customOnly ? customAnswer : action.optionId),
-      text: customAnswer ? [customOnly ? '' : text, customAnswer].filter(Boolean).join('\n') : text,
+      text: customAnswer && !emailSubmission ? [customOnly ? '' : text, customAnswer].filter(Boolean).join('\n') : text,
     }
     if (confirmPrompt) {
       if (status !== 'error') {

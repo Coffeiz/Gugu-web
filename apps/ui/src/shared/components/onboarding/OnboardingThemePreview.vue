@@ -23,7 +23,7 @@
       <header class="preview-topbar">
         <div class="preview-title">
           <b>{{ t('navigation.projects') }}</b>
-          <small>Design token preview</small>
+          <small>{{ $t('pageUi.designPreview') }}</small>
         </div>
         <div class="preview-search"><Icon name="action.search" size="xs" /><span>{{ t('common.search') }}</span></div>
         <button type="button" class="preview-secondary">{{ t('common.actions.upload') }}</button>
@@ -296,7 +296,7 @@ const columns = [
 .preview-calendar-nav { gap: var(--space-xs); }
 .preview-calendar-nav button { width: 21px; height: 21px; display: grid; place-items: center; border: 0; border-radius: var(--radius-xs); color: var(--content-secondary); background: transparent; }
 .preview-calendar-nav strong { min-width: 76px; color: var(--content-primary); font-size: 10px; text-align: center; }
-.preview-calendar-actions { gap: var(--space-sm); }
+.preview-calendar-actions { gap: var(--space-xs); }
 .preview-calendar-actions span { gap: 2px; padding: 2px; border-radius: var(--radius-xs); background: var(--action-soft); font-size: 8px; }
 .preview-calendar-actions span > * { padding: 3px 6px; border-radius: calc(var(--radius-xs) - 2px); font-style: normal; }
 .preview-calendar-actions b { color: var(--action-primary); background: var(--surface-raised); }

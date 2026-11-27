@@ -1,4 +1,4 @@
-import type { RecentAttachment } from '../tools/files.js'
+import type { RecentAttachment } from '../tools/files/index.js'
 
 export interface RecentAttachmentRow {
   readonly attach_id: string

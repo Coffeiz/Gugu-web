@@ -13,13 +13,13 @@ for i,key in ipairs(KEYS) do
  local kind=redis.call('TYPE',key); if type(kind)=='table' then kind=kind.ok end
  if kind~='none' and kind~=expected[i] then return redis.error_reply('QQ reference type invalid') end
 end
-local expired=redis.call('ZRANGEBYSCORE',KEYS[2],'-inf',ARGV[4])
-local extra=redis.call('ZCARD',KEYS[2])-#expired
+local expired=redis.call('ZCOUNT',KEYS[2],'-inf',ARGV[4])
+local extra=redis.call('ZCARD',KEYS[2])-expired
 local existing=redis.call('ZSCORE',KEYS[2],KEYS[1])
 if not existing or tonumber(existing)<=tonumber(ARGV[4]) then extra=extra+1 end
 extra=math.max(0,extra-tonumber(ARGV[3]))
 local evicted={}
-if extra>0 then evicted=redis.call('ZRANGE',KEYS[2],#expired,#expired+extra-1) end
+if extra>0 then evicted=redis.call('ZRANGE',KEYS[2],expired,expired+extra-1) end
 for _,key in ipairs(evicted) do
  if string.sub(key,1,#ARGV[5])~=ARGV[5] then return redis.error_reply('QQ reference scope invalid') end
 end

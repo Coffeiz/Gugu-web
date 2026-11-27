@@ -15,7 +15,7 @@
       </div>
       <div v-if="privateAccess === 'specified'" class="network-policy__fields">
         <span>{{ t('sandboxNetwork.rules') }}</span>
-        <textarea v-model="rulesText" class="form-input network-policy__rules"
+        <textarea v-model="rulesText" class="form-input network-policy__rules control-resizable"
           :aria-label="t('sandboxNetwork.rules')" :placeholder="t('sandboxNetwork.example')" :disabled="saving" rows="4" />
         <small>{{ t('sandboxNetwork.format') }}</small>
       </div>
@@ -107,5 +107,5 @@ defineExpose({ draft, reset, commit })
 .network-policy__copy { display: grid; flex: 1 1 220px; gap: 4px; min-width: 0; }
 .network-policy__fields { display: grid; gap: 6px; }
 .network-policy small { color: var(--content-tertiary); font-size: 11px; line-height: 1.4; }
-.network-policy__rules { width: 100%; box-sizing: border-box; resize: vertical; }
+.network-policy__rules { width: 100%; box-sizing: border-box; }
 </style>

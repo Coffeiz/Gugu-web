@@ -7,7 +7,7 @@ import { Pool } from 'pg'
 import test from 'node:test'
 import { createUserToken, verifyUserToken } from '../../src/modules/auth/session/token.js'
 import { registerProfileRoute, type ProfileUser } from '../../src/modules/auth/account/profile.js'
-import { createPostgresProfileUpdateStore } from '../../src/modules/auth/account/profile-store.js'
+import { createPostgresProfileUpdateStore } from '@gugu/users/postgres'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const secret = 'synthetic-profile-secret-with-enough-entropy'

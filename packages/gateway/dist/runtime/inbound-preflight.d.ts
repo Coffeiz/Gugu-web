@@ -1,3 +1,4 @@
+import type { ImTextChoiceResult } from './interactions/text-choice.js';
 import type { ImConversationScope } from '../ir/inbound.js';
 /** owner/Bot 必须来自连接配置；chat/user/event 必须来自已验证的平台事件。 */
 export interface ImPreflightScope extends ImConversationScope {
@@ -31,10 +32,6 @@ export type ImSecretAction = {
 export type ImSecretResult = {
     readonly status: 'awaiting_secret' | 'completed' | 'cancelled' | 'replay' | 'failed';
     readonly fieldLabel?: string;
-};
-export type ImTextChoiceResult = {
-    readonly status: 'awaiting_text' | 'selected' | 'replay' | 'error';
-    readonly text?: string;
 };
 export type ImShortcut = {
     readonly action: 'run' | 'drop';
@@ -91,23 +88,5 @@ export declare function readImAddressedCommand(input: {
     } | null;
 };
 export declare function imSemanticText(text: string, botMentioned: boolean): string;
-export interface ImTextChoicePrompt {
-    readonly kind: string;
-    readonly secret: boolean;
-    readonly allowTextInput: boolean;
-    readonly customInputActive: boolean;
-    /** 保留 schema 声明顺序；已消费选项仍占序号，但 token=null。 */
-    readonly options: readonly {
-        readonly id: string;
-        readonly label: string;
-        readonly token: string | null;
-    }[];
-}
-export declare function selectImTextChoice(prompt: ImTextChoicePrompt, text: string): {
-    readonly action: 'option';
-    readonly token: string;
-} | {
-    readonly action: 'text';
-} | null;
 /** 控制消息消费发生在下载、队列和历史之前；所有端口缺失均拒绝启动。 */
 export declare function createImInboundPreflight(ports: ImPreflightPorts): (input: ImPreflightMessage, signal: AbortSignal) => Promise<"enqueue" | "consumed">;

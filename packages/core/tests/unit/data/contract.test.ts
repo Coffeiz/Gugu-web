@@ -49,7 +49,7 @@ it('桌面项目改名和联系人维护命令经 Core 收据提交，正式 SQL
       runtime!.operation(context, operationId, method, params, data => execute(data, method, params) as Promise<T>)
     const project = await run<ProjectRecord>('projects.create', { name: '原项目' })
     const client = await run<ClientRecord>('clients.create', {
-      name: '小北', contact: '联系人', email: 'test@example.invalid', phone: '10000', notes: '保留资料',
+      name: '小北', email: 'test@example.invalid', phone: '10000', notes: '保留资料',
     })
     const renameId = randomUUID(), rename = { id: project.id, version: 1, name: '新项目' }
     const changed = await run<ProjectRecord>('projects.rename', rename, renameId)

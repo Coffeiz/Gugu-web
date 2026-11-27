@@ -309,7 +309,7 @@ onMounted(() => { load(); loadSecurity() })
 .audit-log { min-height: 100%; }
 .audit-tabs { margin: 22px 36px 0; }
 .security-events { padding: 18px 36px 32px; }
-.security-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+.security-toolbar { display: flex; gap: var(--space-xs); align-items: center; margin-bottom: 12px; }
 .security-table code { color: rgba(180,190,230,.75); font-size: 11px; }
 .security-events > .log-table-wrap { margin: 14px 0 32px; }
 .security-table { table-layout: fixed; }

@@ -2,7 +2,8 @@ import { appendWorkspaceAgentInstructions, assembleSubagentCatalog, builtinSubag
 import { canonicalAgentToolName } from '@gugu/core/agent'
 import { AgentRunReconstructionVersionError as AgentReconstructionVersionError, createAgentCompactionPort, createAgentRunReconstructor, createAgentRunToolPorts, createLazyAgentCompactionPort, restoreAgentRequestPrefix } from '@gugu/core/agent'
 import type { AgentObservationPort, AgentProviderAuxiliaryPorts, AgentRunBinding, AgentRuntimeOptions, CanonicalContextPorts, CanonicalRunContext, CanonicalRunPreparationPorts, ContextDataPorts, ContextSourcePorts, CurrentTurnSources, RunIdentity, HistoryIdentity } from '@gugu/core/agent'
-import type { ProviderRuntimeOptions } from '@gugu/core/providers'
+import { adapterFor, type ProviderRuntimeOptions } from '@gugu/core/providers'
+import { createProviderReasoningPersistence } from './reasoning/active.js'
 import type { OwnedCurrentMessage } from '../context/source.js'
 import { createPostgresCurrentTurnReader, createWebAgentSourceLoader } from '../context/source.js'
 import { createPersistentAgentRuntime, type PersistentAgentRuntimeOptions } from './runtime.js'
@@ -28,9 +29,10 @@ export interface WebAgentBinding extends AgentRunBinding {
 }
 
 /** 从与 Provider 相同的原子绑定中取非密钥用量配置，禁止按模型身份字符串推断。 */
-export function createWebAgentBindingHistory(lease: AgentDispatchLease, binding: WebAgentBinding): PersistentAgentRuntimeOptions['history'] {
+export function createWebAgentBindingHistory(lease: AgentDispatchLease, binding: WebAgentBinding,
+  commitContinuation?: NonNullable<Parameters<typeof createCanonicalHistoryWriter>[1]>['commitContinuation']): PersistentAgentRuntimeOptions['history'] {
   const identity = Object.freeze({ ...lease.identity })
-  const writer = createCanonicalHistoryWriter(async () => binding.usageConfig, { postCommitCompaction: true })
+  const writer = createCanonicalHistoryWriter(async () => binding.usageConfig, { postCommitCompaction: true, commitContinuation })
   return { writeHistory: async (client, candidate, history, checkpoint) => {
     if (candidate.ownerId !== identity.ownerId || candidate.sessionId !== identity.sessionId || candidate.runId !== identity.runId
       || history.context.identity.ownerId !== identity.ownerId || history.context.identity.sessionId !== identity.sessionId
@@ -41,7 +43,7 @@ export function createWebAgentBindingHistory(lease: AgentDispatchLease, binding:
 }
 export interface WebAgentReconstructionResources {
   /** 每个业务数据源均为真实服务；没有服务应返回 null，不得提供假空值。 */
-  source: Omit<ContextSourcePorts, 'readSnapshot' | 'historyReader' | 'currentTurn' | 'select' | 'digest' | 'nextId' | 'data'> & { data: Omit<ContextSourcePorts['data'], 'loadImMemory'> }
+  source: Omit<ContextSourcePorts, 'readSnapshot' | 'historyReader' | 'currentTurn' | 'select' | 'digest' | 'nextId' | 'data'> & { data: Omit<ContextSourcePorts['data'], 'loadImMemory'>; skillDataRoot?: string }
   context: Omit<CanonicalContextPorts, 'load'>
   /** Web Agent 每轮的正式 RAG 构建器；由 Host 按该 lease 提供，Core 准备链直接调用。 */
   ragContext(input: Parameters<CanonicalContextPorts['preparation']['buildRag']>[0], signal?: AbortSignal): ReturnType<CanonicalContextPorts['preparation']['buildRag']>
@@ -93,6 +95,7 @@ export function createWebAgentToolPorts(
   })
 }
 export interface WebAgentReconstructorOptions {
+  authorizeReasoning?(lease: AgentDispatchLease): Promise<boolean>
   subagentTools?(lease: AgentDispatchLease): Pick<ReturnType<typeof createAgentToolRegistry>, 'tools' | 'capabilities' | 'catalog'>
   readWorkspaceInstructions?(lease: AgentDispatchLease, signal?: AbortSignal): Promise<string | undefined>
   pool: PersistentAgentRuntimeOptions['pool']
@@ -274,7 +277,7 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
       const id = lease.identity
       const selection = binding.selection
       const source = createWebAgentSourceLoader(options.pool, { ...resources.source, data: { ...resources.source.data, loadImMemory: createWebImMemoryLoader(lease) }, digest: resources.context.digest, nextId: resources.context.nextId,
-        select: async () => selection, currentTurn: createPostgresCurrentTurnReader(options.pool, String(lease.input.userMessageId), resources.materialize) }, options.observation)
+        select: async () => selection, currentTurn: createPostgresCurrentTurnReader(options.pool, String(lease.input.userMessageId), resources.materialize) }, options.observation, resources.source.skillDataRoot)
       const toolPorts = createWebAgentToolPorts(lease, resources.toolRegistry, resources.preparation, resources.mcp)
       const delegation = options.subagentTools?.(lease)
       const names = new Set(delegation?.catalog().map(tool => tool.name))
@@ -296,10 +299,40 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
         reconcile: (call: Parameters<typeof toolPorts.tools.reconcile>[0], identity: Parameters<typeof toolPorts.tools.reconcile>[1]) =>
           (names.has(call.name) ? delegation.tools : toolPorts.tools).reconcile(call, identity),
       } : toolPorts.tools
-      const history = options.historyForBinding?.(lease, binding) ?? createWebAgentBindingHistory(lease, binding)
-      return createPersistentAgentRuntime({ pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe, history,
+      const authorize = options.authorizeReasoning
+      let provider: ReturnType<typeof createPersistentAgentRuntime>['provider']
+      let reasoning: Promise<ReturnType<typeof createProviderReasoningPersistence>> | undefined
+      function reasoningFor(signal = new AbortController().signal) {
+        return reasoning ??= Promise.resolve(binding.resolve(id, selection.modelIdentity, signal)).then(selected => {
+          const { config, modelIdentity, accessScopeHash } = selected
+          const policy = adapterFor(config)
+          return createProviderReasoningPersistence({
+            pool: options.pool, secretKey: options.secretKey, provider,
+            authorize: () => authorize!(lease),
+            binding: {
+              runId: id.runId, modelIdentity, accessScopeHash, expectedVersion: 0,
+              identity: { ownerId: id.ownerId, sessionId: id.sessionId, provider: policy.name,
+                apiFormat: policy.protocol(config), model: config.model,
+                configDigest: resources.context.digest({ config, accessScopeHash }),
+                reasoningConfigDigest: resources.context.digest([config.thinking ?? null, config.reasoning_effort ?? null]) },
+            },
+          })
+        })
+      }
+      const history = options.historyForBinding?.(lease, binding) ?? createWebAgentBindingHistory(lease, binding,
+        authorize ? async (client, _identity, context) => (await reasoningFor()).commitSuccess(client, context) : undefined)
+      const instance = createPersistentAgentRuntime({ pool: options.pool, secretKey: options.secretKey, redis: options.redis, subscribe: options.subscribe, history: { ...history,
+          ...(authorize ? { async persistPrivateContext(client, identity, next, previous) {
+            await history.persistPrivateContext?.(client, identity, next, previous)
+            if (next.context?.continuationRef || previous?.context?.continuationRef)
+              await (await reasoningFor()).checkpointHook(client, identity, next, previous)
+          } } : {}),
+        },
         observation: options.observation,
         context: { ...resources.context,
+          ...(authorize ? { async initializeContinuation(context, signal, areaDigest) {
+            return (await reasoningFor(signal)).initialize(context, signal, areaDigest)
+          } } : {}),
           ...(checkpoint ? { prepareRequest: restoreAgentRequestPrefix(id, checkpoint, selection, {
             digest: resources.context.digest,
             builder: resources.source.builder,
@@ -315,8 +348,15 @@ export function createWebAgentReconstructor(options: WebAgentReconstructorOption
             return loaded
           } }, runPreparation: preparation,
         runtime: { ...resources.runtime, tools }, executor: resources.executor,
-        provider: { ...resources.provider, resolve: binding.resolve }, interactionActivation: resources.interactionActivation,
+        provider: { ...resources.provider, resolve: binding.resolve,
+          ...(authorize ? {
+            async ensureContinuation(context, signal) { await (await reasoningFor(signal)).ensure(context, signal) },
+            async invalidateContinuation(context, signal) { await (await reasoningFor(signal)).invalidate(context, signal) },
+          } : {}),
+        }, interactionActivation: resources.interactionActivation,
         scheduling: { mode: 'dispatch', readReconstructionStatus: options.readReconstructionStatus, leaseFor: target => target.ownerId === id.ownerId && target.sessionId === id.sessionId && target.runId === id.runId ? lease : null } })
+      provider = instance.provider
+      return instance
     },
   })
 }

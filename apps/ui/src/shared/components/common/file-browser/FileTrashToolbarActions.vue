@@ -27,7 +27,7 @@ const emit = defineEmits<{ 'toggle-select': []; empty: [] }>()
 </script>
 
 <style scoped>
-.empty-trash-progress { display: grid; grid-template-columns: minmax(60px, 100px) auto; align-items: center; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: 11px; }
+.empty-trash-progress { display: grid; grid-template-columns: minmax(60px, 100px) auto; align-items: center; gap: var(--space-xs); min-width: 0; color: var(--text-secondary); font-size: 11px; }
 .empty-trash-progress progress { inline-size: 100%; }
 .empty-trash-progress span { white-space: nowrap; }
 </style>

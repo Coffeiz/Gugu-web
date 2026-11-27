@@ -143,8 +143,8 @@ async function cancelEmailChange() {
 </script>
 
 <style scoped>
-.email-change-section { margin-top: 0; padding-top: 14px; }
-.email-change-divider { margin-top: 2px; }
-.email-change-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.email-change-hint { margin: 10px 0 0; color: var(--content-tertiary); font-size: 12px; }
+.email-change-section { margin-top: 0; padding-top: var(--space-md); }
+.email-change-divider { margin-top: var(--space-xs); }
+.email-change-actions { display: flex; gap: var(--space-sm); justify-content: flex-end; }
+.email-change-hint { margin: var(--space-sm) 0 0; color: var(--content-tertiary); font-size: 12px; }
 </style>

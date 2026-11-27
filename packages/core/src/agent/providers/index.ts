@@ -40,3 +40,4 @@ export { transcribeMiniMax, transcribeCompatibleAsr, transcribeDashscopeAsr, das
 export type { AsrMedia, AsrDependencies, CompatibleAsrDependencies } from './asr.js'
 export { minimaxErrorDetails } from './minimax/errors.js'
 export type { MiniMaxErrorDetails } from './minimax/errors.js'
+export { crossRunProviderReasoning, supportsCrossRunProviderReasoning } from './cross-run-reasoning.js'

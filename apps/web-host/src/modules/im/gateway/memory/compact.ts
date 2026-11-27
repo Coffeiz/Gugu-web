@@ -35,7 +35,7 @@ export function createImProductionCompact(options:Options){
           if(!row||typeof row.group_memory_enabled!=='boolean'||typeof row.member_memory_enabled!=='boolean'||typeof row.group_owner_memory_enabled!=='boolean')throw unavailable()
           return {...scope,groupMemoryEnabled:row.group_memory_enabled,memberMemoryEnabled:row.member_memory_enabled,groupOwnerMemoryEnabled:row.group_owner_memory_enabled}}
       })
-      const skills=await createImProductionSkills({pool:options.pool,identity,actor,loadOwnerContext:selection.contextPolicy.loadOwnerContext,authorize:current})
+      const skills=await createImProductionSkills({pool:options.pool,storageRoot:options.storageRoot,identity,actor,loadOwnerContext:selection.contextPolicy.loadOwnerContext,authorize:current})
       const services=await createImAgentContextServices({pool:options.pool,storageRoot:options.storageRoot,promptRoot:options.promptRoot,
         identity,actor,selection,redis:createRedisAgentCancellationCommands(options.redisUrl),serverTimezone:options.serverTimezone??'UTC',now:Date.now,
         authorize:current,imMemory:memory.loadImMemory,platformEnabled:async platform=>(await options.supportedPlatforms()).includes(platform),

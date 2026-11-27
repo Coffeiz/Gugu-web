@@ -520,14 +520,13 @@ test('Node auth, project, client, calendar, and notification routes preserve Pos
         method: 'POST',
         url: '/api/v1/clients',
         headers: { authorization: `Bearer ${signedUserToken(secret, userId, 4)}` },
-        payload: { name: 'Synthetic Core client', contact: 'Test contact' },
+        payload: { name: 'Synthetic Core client' },
       })
       assert.equal(createResponse.statusCode, 201)
       const createdClient = createResponse.json()
       assert.deepEqual(createdClient, {
         id: createdClient.id,
         name: 'Synthetic Core client',
-        contact: 'Test contact',
         email: null,
         phone: null,
         notes: '',

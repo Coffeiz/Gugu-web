@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { readWorkspaceAgentInstructions, watchDirectoryChanges } from '@gugu/fs/node'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createWriteStream, rmSync, type BigIntStats } from 'node:fs'
@@ -7,6 +8,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'nod
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { agentDownloadsLimit } from '@gugu/core/tools'
+import { createLocalSkillPackageMover, patchSkillDocument, skillPackageDigest, type SkillDocumentPatch } from '@gugu/core/skills'
 import { scanFilesystem } from '@gugu/search'
 import { DesktopError } from '../core-host.js'
 import { fileWorkspaces } from './workspaces.js'
@@ -330,8 +332,36 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
     await writeAtomically(path, temp => writeFile(temp, data, { flag: 'wx', mode: 0o600 }), overwrite, identity)
   }
 
+  async function replaceSelection(path: unknown, identity: unknown, revision: unknown, expected: unknown, replacement: unknown) {
+    if (typeof identity !== 'string' || !identity || typeof revision !== 'string' || !revision || revision.length > 512
+      || typeof expected !== 'string' || !expected || expected.length > 8000
+      || typeof replacement !== 'string' || replacement.length > 32000)
+      throw new DesktopError('invalid_request', '文件选区参数无效')
+    const source = await read(path, identity)
+    let text: string
+    try {
+      if (source.thumbnailKey !== revision) throw new DesktopError('conflict', '文件版本已变化，请重新选择原文')
+      if (source.size > maxUpload) throw new DesktopError('invalid_request', '文件超过选区修改大小限制')
+      const data = await source.handle.readFile()
+      if (data.length > maxUpload || data.includes(0))
+        throw new DesktopError('invalid_request', '只能替换纯文本文件中的选区')
+      try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(data) }
+      catch { throw new DesktopError('invalid_request', '只能替换 UTF-8 文件中的选区') }
+    } finally {
+      await source.handle.close()
+    }
+    const first = text.indexOf(expected)
+    if (first < 0 || text.indexOf(expected, first + 1) >= 0)
+      throw new DesktopError('conflict', '原文无法唯一匹配，请重新选择')
+    const result = text.slice(0, first) + replacement + text.slice(first + expected.length)
+    if (Buffer.byteLength(result) > maxUpload) throw new DesktopError('invalid_request', '替换后的文件超过大小限制')
+    if (result === text) return { changed: false }
+    await writeAtomically(path, temp => writeFile(temp, result, { flag: 'wx', mode: 0o600 }), true, identity, undefined, revision)
+    return { changed: true }
+  }
+
   async function writeAtomically(path: unknown, stage: (temp: string) => Promise<void>, overwrite = false,
-    identity?: string, beforeCommit?: () => Promise<void>) {
+    identity?: string, beforeCommit?: () => Promise<void>, expectedRevision?: string) {
     const parts = segments(path)
     const target = await destination(parts)
     const before = await lstat(dirname(target), { bigint: true })
@@ -345,6 +375,8 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
       if (overwrite) {
         const original = await read(path, identity)
         await original.handle.close()
+        if (expectedRevision !== undefined && original.thumbnailKey !== expectedRevision)
+          throw new DesktopError('conflict', '文件版本已变化，请重新选择原文')
         await rename(temp, target)
       } else await link(temp, target)
     } finally { await rm(temp, { force: true }) }
@@ -399,12 +431,13 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
     }
   }
 
-  async function moveDropped(path: unknown, sources: unknown, protectedRoot: string | undefined,
+  async function moveDropped(path: unknown, sources: unknown, protectedRoot: string | readonly string[] | undefined,
     options: DropOptions, report: (percent: number) => void) {
     if (!native || !Array.isArray(sources) || !sources.length)
       throw new DesktopError('invalid_request', '请直接拖入本机文件或文件夹')
     const folder = await locate(segments(path, true))
-    const protectedPath = protectedRoot ? await realpath(protectedRoot) : undefined
+    const protectedRoots = typeof protectedRoot === 'string' ? [protectedRoot] : protectedRoot ?? []
+    const protectedPaths = await Promise.all(protectedRoots.map(path => realpath(path)))
     let retained = 0
     for (const item of sources) {
       if (typeof item !== 'string' || !isAbsolute(item))
@@ -417,7 +450,7 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
         const offset = relative(parent, child)
         return !isAbsolute(offset) && offset !== '..' && !offset.startsWith('..' + sep)
       }
-      if (protectedPath && (contains(protectedPath, source) || contains(source, protectedPath)))
+      if (protectedPaths.some(protectedPath => contains(protectedPath, source) || contains(source, protectedPath)))
         throw new DesktopError('forbidden', '不能移动应用数据')
       const filename = basename(item)
       let target = await destination([...segments(path, true), ...segments(filename)])
@@ -594,15 +627,17 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
     }
   }
 
-  return { smb, list, scan, reference, search, destination, upload, writeAtomically, move, moveDropped, trash, download, locate, locateFile, content, scanOverview, resolveAgentPath, preview, read }
+  return { smb, list, scan, reference, search, destination, upload, replaceSelection, writeAtomically, move, moveDropped, trash, download, locate, locateFile, content, scanOverview, resolveAgentPath, preview, read }
 }
 
-export function createDesktopFileService(root: string, native?: NativeFileOperations, registry?: string, protectedRoot?: string, readProject?: ReadProjectFilesMetadata) {
+export function createDesktopFileService(root: string, native?: NativeFileOperations, registry?: string, protectedRoot?: string | readonly string[], readProject?: ReadProjectFilesMetadata) {
   const workspaces = fileWorkspaces(root, registry, protectedRoot)
   const thumbnailCache = createThumbnailCache()
   const directoryOperations = new Map<string, Promise<unknown>>()
-  type DeletedFile = { path: string; source: string; parentIdentity: string; identity: string; backup?: string; shareTrash?: string; heldIdentity?: string; created?: boolean; directory: boolean }
-  type HistoryEntry = DeletedFile | FileMoveHistory
+  type DeletedFile = { path: string; source: string; parentIdentity: string; identity: string; backup?: string; shareTrash?: string; heldIdentity?: string; created?: boolean; directory: boolean; packageDigest?: string; operationId?: string; operationFingerprint?: string }
+  type SkillEditHistory = { kind: 'skill-edit'; path: string; source: string; identity: string; parentIdentity: string; before: string; after: string }
+  type SkillRemoveHistory = { kind: 'skill-remove'; slug: string; storageSource: 'user' | 'clawhub'; digest: string; operationId: string }
+  type HistoryEntry = (DeletedFile | FileMoveHistory | SkillEditHistory | SkillRemoveHistory) & { operationId?: string; operationFingerprint?: string }
   const fileHistory = new Map<string, { undo: HistoryEntry[]; redo: HistoryEntry[] }>()
   function historyFor(directoryId: unknown) {
     const key = typeof directoryId === 'string' ? directoryId : 'personal'
@@ -629,7 +664,61 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     finally { if (directoryOperations.get(directoryId) === next) directoryOperations.delete(directoryId) }
   }
 
+  const skillLeases = new Map<string, { release(): void; held: boolean }>()
+  async function acquireAgentSkillLock(operationId: unknown, signal: AbortSignal) {
+    if (typeof operationId !== 'string' || !/^[a-f0-9-]{36}$/u.test(operationId))
+      throw new DesktopError('invalid_request', '技能操作标识无效')
+    if (skillLeases.has(operationId)) throw new DesktopError('conflict', '技能操作正在执行')
+    let releaseHold!: () => void
+    const hold = new Promise<void>(resolve => { releaseHold = resolve })
+    let releaseRequested = false
+    const lease = { held: false, release() { releaseRequested = true; releaseHold() } }
+    skillLeases.set(operationId, lease)
+    let resolveReady!: () => void, rejectReady!: (error: unknown) => void
+    const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject })
+    const abort = () => lease.release()
+    signal.addEventListener('abort', abort, { once: true })
+    void withDirectory('skill-packages', async () => {
+      if (signal.aborted || releaseRequested) throw new DesktopError('cancelled', '技能操作已取消')
+      lease.held = true
+      signal.removeEventListener('abort', abort)
+      resolveReady()
+      await hold
+    }).catch(rejectReady).finally(() => {
+      signal.removeEventListener('abort', abort)
+      if (skillLeases.get(operationId) === lease) skillLeases.delete(operationId)
+    })
+    if (signal.aborted) lease.release()
+    await ready
+    return { acquired: true }
+  }
+  function releaseAgentSkillLock(operationId: unknown) {
+    if (typeof operationId !== 'string' || !/^[a-f0-9-]{36}$/u.test(operationId))
+      throw new DesktopError('invalid_request', '技能操作标识无效')
+    skillLeases.get(operationId)?.release()
+    return { released: true }
+  }
+  function releaseAllAgentSkillLocks() { for (const lease of skillLeases.values()) lease.release() }
+
+  async function skillRoot(create = false) {
+    const base = await realpath(root)
+    let current = base
+    for (const part of ['.agent', 'skills']) {
+      current = join(current, part)
+      if (create) {
+        try { await mkdir(current, { mode: 0o700 }) }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+      }
+      const info = await lstat(current)
+      if (!info.isDirectory() || info.isSymbolicLink() || await realpath(current) !== current)
+        throw new DesktopError('forbidden', '技能目录无效')
+    }
+    return current
+  }
+
   const scope = async (directoryId: unknown, create = false, browse = false) => {
+    if (directoryId === 'skill-packages')
+      return workspaceFiles('personal', () => skillRoot(create), native, thumbnailCache)
     if (typeof directoryId === 'string' && directoryId.startsWith('project:')) {
       const id = Number(directoryId.slice('project:'.length))
       if (!Number.isSafeInteger(id) || id < 1 || directoryId !== `project:${id}`)
@@ -689,7 +778,7 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     const previewFile = await files.preview(relativeParts.join('/'))
     const name = relativeParts.at(-1)!
     const extension = extname(name).slice(1).toLowerCase()
-    const textExtensions = new Set(['md', 'txt', 'json', 'csv', 'yaml', 'yml', 'log', 'py', 'js', 'ts', 'tsx', 'jsx', 'vue', 'html', 'css', 'scss', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'sh', 'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'tex', 'svg'])
+    const textExtensions = new Set(['md', 'txt', 'json', 'csv', 'yaml', 'yml', 'log', 'py', 'js', 'mjs', 'cjs', 'ts', 'mts', 'cts', 'tsx', 'jsx', 'vue', 'html', 'css', 'scss', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'sh', 'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'tex', 'svg'])
     return { id: undefined, name, ...resolved, previewFile, text: textExtensions.has(extension), extensionless: !extension, ...(extension ? { extension } : {}) }
   }
   function projectSearchTarget(readProject: ReadProjectFilesMetadata) {
@@ -738,9 +827,10 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     return results.slice(0, 30)
   }
 
-  async function globalFileSearch(queries: readonly string[], mode: 'OR' | 'AND' = 'OR', perType = 6, signal?: AbortSignal) {
+  async function globalFileSearch(queries: readonly string[], mode: 'OR' | 'AND' = 'OR', perType = 6, signal?: AbortSignal, maxEntries = 10_000) {
     const terms = queries.map(term => isAbsolute(term) ? term : term.normalize('NFC').toLowerCase())
-    const budget = { remaining: 10000 }
+    const budget = { remaining: maxEntries }
+    let truncated = false
     type Item = { id: string; title: string; subtitle: string; path_file: {
       directoryId: DesktopFileDirectory; directoryName: string; relativePath: string; location: { kind: 'host_absolute'; value: string }
     } }
@@ -762,7 +852,10 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
       }
       results.push(result)
       results.sort(compare)
-      if (results.length > perType) results.pop()
+      if (results.length > perType) {
+        results.pop()
+        truncated = true
+      }
     }
 
     async function addProjectFolder(name: string, directoryId: DesktopFileDirectory) {
@@ -860,6 +953,7 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     }))
     return {
       partial: budget.remaining === 0,
+      truncated,
       groups: Object.values(groups).filter(group => group.results.length)
         .map(({ type, label, results }) => ({ type, label, items: type === 'folder' ? folderItems : results.map(({ item }) => item) })),
     }
@@ -990,6 +1084,7 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
 
   function updateRestoredIdentity(entries: HistoryEntry[], previous: string, restored: string) {
     for (const entry of entries) {
+      if ('kind' in entry && entry.kind === 'skill-remove') continue
       if (entry.identity === previous) entry.identity = restored
       if ('from' in entry) {
         if (entry.fromParent === previous) entry.fromParent = restored
@@ -1002,6 +1097,8 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     const file = await describeHistoryPath(files, path)
     if (expected && (file.identity !== expected.identity || file.parentIdentity !== expected.parentIdentity || file.source !== expected.source))
       throw new DesktopError('conflict', '文件或目录已变化，无法撤销或重做')
+    if (expected?.packageDigest && await skillPackageDigest(file.source) !== expected.packageDigest)
+      throw new DesktopError('conflict', '技能文件已变化，无法撤销或重做')
     if (files.smb) {
       const holding = await mkdtemp(join(dirname(file.source), '.gugu-trash-'))
       const shareTrash = join(holding, basename(file.source))
@@ -1012,7 +1109,7 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
         await rmdir(holding)
         throw error
       }
-      return { ...file, created: expected?.created, shareTrash, heldIdentity: identityOf(await lstat(shareTrash, { bigint: true })) }
+      return { ...file, created: expected?.created, packageDigest: expected?.packageDigest, operationId: expected?.operationId, operationFingerprint: expected?.operationFingerprint, shareTrash, heldIdentity: identityOf(await lstat(shareTrash, { bigint: true })) }
     }
     const holding = await mkdtemp(join(tmpdir(), 'gugu-file-undo-'))
     fileUndoCopies.add(holding)
@@ -1030,7 +1127,7 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
       else await copyFile(file.source, backup, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
       await files.locateFile(path, file.identity, file.directory ? 'folder' : 'file')
       await files.trash(path)
-      return { ...file, created: expected?.created, backup }
+      return { ...file, created: expected?.created, packageDigest: expected?.packageDigest, operationId: expected?.operationId, operationFingerprint: expected?.operationFingerprint, backup }
     } catch (error) {
       await discardFileUndoCopy(holding).catch(() => {})
       throw error
@@ -1043,6 +1140,27 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     const path = 'path' in command ? command.path : undefined
     try {
       switch (command.action) {
+        case 'resolve-library-link': {
+          if (!('url' in command) || typeof command.url !== 'string' || command.url.length > 16384
+            || !/^file:\/\/\/(?!\/)/i.test(command.url)) return null
+          let localPath: string
+          try {
+            const url = new URL(command.url)
+            if (url.host || url.search || url.hash) return null
+            localPath = fileURLToPath(url)
+          } catch { return null }
+          const { groups } = await globalFileSearch([localPath], 'OR', 1)
+          for (const group of groups) {
+            const hit = group.items.find(item => item.path_file.location.value === localPath)
+            if (!hit) continue
+            const { directoryId, relativePath } = hit.path_file
+            const kind = group.type === 'folder' ? 'folder' : 'file'
+            const reference = await (await scope(directoryId))?.reference(relativePath, undefined, kind)
+            if (!reference) return null
+            return (await resolveWorkspaceReference(reference.id))?.path === localPath ? { id: reference.id, kind } : null
+          }
+          return null
+        }
         case 'workspace-list': return await workspaces.list()
         case 'project-workspaces': {
           const id = await requireWorkspaceProject('projectId' in command ? command.projectId : undefined)
@@ -1096,6 +1214,12 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
             await recordHistory(directoryId, { ...await describeHistoryPath(files, relativePath), created: true })
             break
           }
+          case 'replace-selection': {
+            if (directoryId === 'personal' && segments(path)[0]?.toLowerCase() === 'download')
+              throw new DesktopError('forbidden', '不能替换系统下载目录中的内容')
+            const { identity, revision, expected, replacement } = command as Record<string, unknown>
+            return await files.replaceSelection(path, identity, revision, expected, replacement)
+          }
           case 'upload': {
             const overwrite = 'overwrite' in command && command.overwrite === true
             await files.upload(path, 'data' in command ? command.data : undefined, overwrite,
@@ -1148,6 +1272,29 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
             const undo = command.action === 'undo-trash'
             const stack = undo ? history.undo : history.redo
             const entry = stack.at(-1)
+            if (entry && 'kind' in entry && entry.kind === 'skill-remove') {
+              await createLocalSkillPackageMover(dirname(root)).move({ ownerId: basename(root), slug: entry.slug, storageSource: entry.storageSource,
+                operationId: `op-${entry.operationId.replaceAll('-', '')}`, digest: entry.digest, mode: undo ? 'redo' : 'undo' })
+              stack.pop()
+              ;(undo ? history.redo : history.undo).push(entry)
+              return { changed: true }
+            }
+            if (entry && 'kind' in entry) {
+              const current = await files.read(entry.path, entry.identity)
+              let text: string
+              try { text = await current.handle.readFile('utf8') } finally { await current.handle.close() }
+              if (text !== (undo ? entry.after : entry.before)) throw new DesktopError('conflict', '技能文件已变化，无法撤销或重做')
+              await files.writeAtomically(entry.path, temp => writeFile(temp, undo ? entry.before : entry.after, { flag: 'wx', mode: 0o600 }),
+                true, entry.identity, undefined, current.thumbnailKey)
+              const previous = entry.identity
+              const updated = await describeHistoryPath(files, entry.path)
+              stack.pop()
+              const other = undo ? history.redo : history.undo
+              updateRestoredIdentity(stack, previous, updated.identity)
+              updateRestoredIdentity(other, previous, updated.identity)
+              other.push({ ...entry, identity: updated.identity })
+              return { changed: true }
+            }
             if (entry && 'from' in entry) {
               const direction = undo ? { ...entry, from: entry.to, to: entry.from,
                 fromParent: entry.toParent, toParent: entry.fromParent } : entry
@@ -1271,10 +1418,11 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
       throw new DesktopError('invalid_request', '附件保存参数无效')
     const directoryId: DesktopFileDirectory = space === 'project' ? `project:${projectId as number}`
       : space === 'workspace' ? workspaceDirectoryId as DesktopFileDirectory : 'personal'
-    const operationRoot = join(protectedRoot ?? root, 'agent-file-save-receipts')
+    const runtimeRoot = typeof protectedRoot === 'string' ? protectedRoot : protectedRoot?.[0] ?? root
+    const operationRoot = join(runtimeRoot, 'agent-file-save-receipts')
     await mkdir(operationRoot, { recursive: true, mode: 0o700 })
     const receiptPath = join(operationRoot, `${operationId}.json`)
-    const sourcePath = join(protectedRoot ?? root, 'agent-attachments', attachId)
+    const sourcePath = join(runtimeRoot, 'agent-attachments', attachId)
     const persist = async (receipt: Record<string, unknown>) => {
       const temp = join(operationRoot, `.gugu-save-${randomUUID()}`)
       try {
@@ -1383,6 +1531,147 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
     }
   }
   return {
+    /** 将 Agent 已提交的技能操作登记进桌面文件历史。 */
+    acquireAgentSkillLock, releaseAgentSkillLock, releaseAllAgentSkillLocks,
+    async agentRecordSkillHistory(input: Record<string, unknown>) {
+      const { operationId, slug, action, before, after, packageDigest, storage_source: storageSource } = input
+      if (typeof operationId !== 'string' || !/^[a-f0-9-]{36}$/u.test(operationId)
+        || typeof slug !== 'string' || !/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u.test(slug)
+        || (storageSource !== 'user' && storageSource !== 'clawhub')
+        || !['install', 'update', 'remove'].includes(String(action)) || (action !== 'remove' && (typeof after !== 'string' || Buffer.byteLength(after) > 256 * 1024))
+        || (action === 'update' && (typeof before !== 'string' || Buffer.byteLength(before) > 256 * 1024 || packageDigest !== null))
+        || (action === 'install' && (before !== null || typeof packageDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(packageDigest)))
+        || (action === 'remove' && (before !== null || after !== null || typeof packageDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(packageDigest)))
+        || Object.keys(input).some(key => !['operationId', 'slug', 'storage_source', 'action', 'before', 'after', 'packageDigest'].includes(key)))
+        throw new DesktopError('invalid_request', '技能历史参数无效')
+      const record = async () => {
+        const { history } = historyFor('skill-packages')
+        const operationFingerprint = createHash('sha256').update(JSON.stringify([slug, storageSource, action, before, after, packageDigest])).digest('hex')
+        const prior = [...history.undo, ...history.redo].find(entry => entry.operationId === operationId)
+        if (prior) {
+          if (prior.operationFingerprint !== operationFingerprint) throw new DesktopError('conflict', '技能操作标识已用于不同内容')
+          return { recorded: false }
+        }
+        const files = await scope('skill-packages')
+        if (!files) throw new DesktopError('not_found', '技能不存在')
+        if (action === 'remove') {
+          const held = join(await realpath(root), '.agent', '.skill-undo', `op-${operationId.replaceAll('-', '')}`, storageSource, slug)
+          const info = await lstat(held)
+          if (!info.isDirectory() || info.isSymbolicLink() || await realpath(held) !== held || await skillPackageDigest(held) !== packageDigest)
+            throw new DesktopError('conflict', '技能已变化，无法登记历史')
+          await recordHistory('skill-packages', { kind: 'skill-remove', slug, storageSource, digest: packageDigest as string, operationId, operationFingerprint })
+          return { recorded: true }
+        }
+        const current = await files.read(`${storageSource}/${slug}/SKILL.md`)
+        let source: string
+        try {
+          if (current.size > 256 * 1024) throw new DesktopError('conflict', '技能已变化，无法登记历史')
+          source = await current.handle.readFile('utf8')
+        } finally { await current.handle.close() }
+        if (source !== after) throw new DesktopError('conflict', '技能已变化，无法登记历史')
+        if (action === 'install') {
+          const entry = await describeHistoryPath(files, `${storageSource}/${slug}`)
+          if (await skillPackageDigest(entry.source) !== packageDigest) throw new DesktopError('conflict', '技能已变化，无法登记历史')
+          await recordHistory('skill-packages', { ...entry, created: true, packageDigest: packageDigest as string, operationId, operationFingerprint })
+        } else {
+          const entry = await describeHistoryPath(files, `${storageSource}/${slug}/SKILL.md`)
+          await recordHistory('skill-packages', { kind: 'skill-edit', path: `${storageSource}/${slug}/SKILL.md`, source: entry.source,
+            identity: entry.identity, parentIdentity: entry.parentIdentity, before: before as string, after, operationId, operationFingerprint })
+        }
+        return { recorded: true }
+      }
+      return skillLeases.get(operationId)?.held ? record() : withDirectory('skill-packages', record)
+    },
+    async deleteSkillPackage(slug: string, expectedDigest: string, storageSource: 'user' | 'clawhub' = 'user') {
+      if (!/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u.test(slug) || !/^[a-f0-9]{64}$/u.test(expectedDigest)
+        || (storageSource !== 'user' && storageSource !== 'clawhub'))
+        throw new DesktopError('invalid_request', '技能标识或版本无效')
+      return withDirectory('skill-packages', async () => {
+        const files = await scope('skill-packages')
+        if (!files) throw new DesktopError('not_found', '技能不存在')
+        const current = await files.read(`${storageSource}/${slug}/SKILL.md`)
+        let content: Buffer
+        try {
+          if (current.size > 256 * 1024) throw new DesktopError('invalid_request', '技能文档过大')
+          content = await current.handle.readFile()
+        } finally { await current.handle.close() }
+        if (createHash('sha256').update(content).digest('hex') !== expectedDigest)
+          throw new DesktopError('conflict', '技能已变化，请刷新后重试')
+        const entry = await describeHistoryPath(files, `${storageSource}/${slug}`)
+        const digest = await skillPackageDigest(entry.source)
+        const operationId = randomUUID()
+        const rollback = await createLocalSkillPackageMover(dirname(root)).move({
+          ownerId: basename(root), slug, storageSource, digest, operationId: `op-${operationId.replaceAll('-', '')}`, mode: 'undo',
+        })
+        try {
+          await recordHistory('skill-packages', { kind: 'skill-remove', slug, storageSource, digest, operationId })
+        } catch (error) {
+          await rollback()
+          throw error
+        }
+        return { id: slug }
+      })
+    },
+    /** 文件技能编辑与普通文件历史共用撤销栈，写入前校验调用方读取的摘要。 */
+    async updateSkillDocument(slug: string, expectedDigest: string, patch: SkillDocumentPatch, storageSource: 'user' | 'clawhub' = 'user') {
+      if (!/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u.test(slug) || !/^[a-f0-9]{64}$/u.test(expectedDigest)
+        || (storageSource !== 'user' && storageSource !== 'clawhub'))
+        throw new DesktopError('invalid_request', '技能标识或版本无效')
+      return withDirectory('skill-packages', async () => {
+        const files = await scope('skill-packages')
+        if (!files) throw new DesktopError('not_found', '技能不存在')
+        const path = `${storageSource}/${slug}/SKILL.md`
+        const before = await files.read(path)
+        let original: string
+        try {
+          if (before.size > 256 * 1024) throw new DesktopError('invalid_request', '技能文档过大')
+          original = await before.handle.readFile('utf8')
+        } finally { await before.handle.close() }
+        if (createHash('sha256').update(original).digest('hex') !== expectedDigest)
+          throw new DesktopError('conflict', '技能已变化，请刷新后重试')
+        const changed = patchSkillDocument(original, patch)
+        if (changed === original) return { id: slug }
+        const beforeInfo = await describeHistoryPath(files, path)
+        await files.writeAtomically(path, temp => writeFile(temp, changed, { flag: 'wx', mode: 0o600 }),
+          true, beforeInfo.identity, undefined, before.thumbnailKey)
+        const afterInfo = await describeHistoryPath(files, path)
+        await recordHistory('skill-packages', { kind: 'skill-edit', path, source: afterInfo.source,
+          identity: afterInfo.identity, parentIdentity: afterInfo.parentIdentity, before: original, after: changed })
+        return { id: slug }
+      })
+    },
+    /** 安装目录与文件库共用创建操作历史，供撤销与重做使用。 */
+    async installSkillPackage(stagedDirectory: string, slug: string, storageSource: 'user' | 'clawhub' = 'user') {
+      if (!/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u.test(slug)
+        || (storageSource !== 'user' && storageSource !== 'clawhub'))
+        throw new DesktopError('invalid_request', '技能目录名无效')
+      return withDirectory('skill-packages', async () => {
+        const destinationRoot = await skillRoot(true)
+        const stagingRoot = join(dirname(destinationRoot), '.skill-staging')
+        if (await realpath(stagingRoot) !== stagingRoot || dirname(stagedDirectory) !== stagingRoot
+          || !basename(stagedDirectory).startsWith('package-') || await realpath(stagedDirectory) !== stagedDirectory)
+          throw new DesktopError('forbidden', '技能暂存目录无效')
+        const staged = await lstat(stagedDirectory)
+        if (!staged.isDirectory() || staged.isSymbolicLink()) throw new DesktopError('forbidden', '技能暂存目录无效')
+        const packageDigest = await skillPackageDigest(stagedDirectory)
+        const otherSource = storageSource === 'user' ? 'clawhub' : 'user'
+        try { await lstat(join(destinationRoot, otherSource, slug)); throw new DesktopError('conflict', '技能目录名已被另一来源使用') }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+        const categoryRoot = join(destinationRoot, storageSource)
+        try { await mkdir(categoryRoot, { mode: 0o700 }) }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+        const categoryInfo = await lstat(categoryRoot)
+        if (!categoryInfo.isDirectory() || categoryInfo.isSymbolicLink() || await realpath(categoryRoot) !== categoryRoot)
+          throw new DesktopError('forbidden', '技能来源目录无效')
+        const target = join(categoryRoot, slug)
+        await mkdir(target, { mode: 0o700 })
+        try { await rename(stagedDirectory, target) }
+        catch (error) { await rmdir(target).catch(() => {}); throw error }
+        const files = await scope('skill-packages')
+        await recordHistory('skill-packages', { ...await describeHistoryPath(files!, `${storageSource}/${slug}`), created: true, packageDigest })
+        return { path: target }
+      })
+    },
     async changeProjectDirectory<T>(id: unknown, action: 'delete' | 'restore' | 'purge', commit: () => Promise<T>, readLifecycleProject = readProject) {
       if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1 || !readLifecycleProject)
         throw new DesktopError('invalid_request', '项目标识无效')

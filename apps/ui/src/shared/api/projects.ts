@@ -18,6 +18,7 @@ export interface ProjectAccess {
   pickWorkspace?(): Promise<`desktop:${string}` | null>
   listWorkspaceBindings?(id: number): Promise<ProjectWorkspaceBinding[]>
   selectWorkspace?(id: number, directoryId: `project:${number}` | ProjectWorkspaceBinding['id'], workspaceId?: number): Promise<unknown>
+  projectFilesEnabled?: boolean
   storesProjectsLocally: boolean
   list(archived?: boolean, deleted?: boolean): Promise<ProjectResponse[]>
   fileCounts?(): Promise<{ projectId: number; fileCount: number }[]>

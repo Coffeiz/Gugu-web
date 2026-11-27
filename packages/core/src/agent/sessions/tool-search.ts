@@ -1,4 +1,4 @@
-import type { ConversationSearchPort, ConversationSearchHit } from '../tools/conversations.js'
+import type { ConversationSearchPort, ConversationSearchHit } from '../tools/conversations/index.js'
 import type { AgentObservationPort } from '../observation.js'
 import type { RunIdentity } from '../models.js'
 import type { SqlDataRuntime } from '../../data/runtime.js'

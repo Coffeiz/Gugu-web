@@ -606,7 +606,7 @@ describe('主题 CSS 回归契约', () => {
     expect(brandPalettesCss).toContain("[data-palette='cafe'][data-theme='light']")
     expect(brandPalettesCss).toContain("[data-palette='cafe'][data-theme='dark']")
     expect(brandPalettesCss).not.toContain('#ffc05f')
-    expect(load('../../views/Design/components/DesignSystemPage.vue')).toContain("label: 'Amber', token: '--note-paper-amber'")
+    expect(load('../../views/Design/components/DesignSystemPage.vue')).toContain("NOTE_COLOR_OPTIONS")
   })
 
   it('真实项目页样板按主题族选择材质层', () => {

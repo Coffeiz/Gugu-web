@@ -8,7 +8,7 @@ import { dataContext, CoreError } from '../../../src/contracts/index.js'
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { createDurableProjectMutationPort } from '../../../src/agent/tools/projects/mutation-port.js'
-import { createProjectMutationTools, createProjectStageTools } from '../../../src/agent/tools/projects.js'
+import { createProjectMutationTools, createProjectStageTools } from '../../../src/agent/tools/projects/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect, fixture } from '../run/fixtures.js'
 

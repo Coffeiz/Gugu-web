@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
@@ -83,6 +86,7 @@ vi.mock('../src/main/windows.js', async importOriginal => ({
 }))
 
 const { registerChatFabWindow } = await import('../src/main/chat-fab-window.js')
+const { createChatFabGeometryStore } = await import('../src/main/windows.js')
 import { chatFabChannels as channels } from '../src/chat-fab-channels.js'
 
 const uiUrl = 'gugu-desktop://app/desktop.html'
@@ -525,4 +529,49 @@ it('独立窗口未就绪时保留主界面入口，其他渲染器无法冒充�
   await expect(attaching).resolves.toBe(false)
   expect(state.windows).toHaveLength(1)
   expect(state.windows[0]?.destroyed).toBe(true)
+})
+
+it('重开后恢复分离位置，屏幕移除时将球收回到可用区域', async () => {
+  vi.useFakeTimers()
+  const dataDirectory = mkdtempSync(join(tmpdir(), 'gugu-fab-'))
+  try {
+    const store = createChatFabGeometryStore(dataDirectory)
+    store.save({ detachedPosition: { x: 2400, y: 650 }, expandedSize: { width: 700, height: 540 } })
+    const main = new WindowStub()
+    await main.loadURL(uiUrl)
+    main.visible = true
+    const manager = registerChatFabWindow({ dataDirectory, uiUrl, preload: '合成预加载',
+      panelPreload: '合成面板预加载', prewarm: false, enabled: () => true, mainWindow: () => main.asWindow() })
+    const attaching = state.attach.get(channels.attach)!(main.sender())
+    const ball = state.windows[0]!
+    state.events.get(channels.gesture)!(ball.sender(), 'ready')
+    await expect(attaching).resolves.toBe(true)
+    expect(manager.hasVisibleDetachedWindow()).toBe(true)
+    expect(ball.x + ball.width).toBe(1600)
+    expect(ball.y).toBe(650)
+    expect(store.read()).toEqual({
+      detachedPosition: { x: ball.x, y: 650 }, expandedSize: { width: 700, height: 540 },
+    })
+  } finally {
+    rmSync(dataDirectory, { recursive: true, force: true })
+  }
+})
+
+it('仅转发可信来源的选区草稿，拒绝超长内容', async () => {
+  const main = new WindowStub()
+  await main.loadURL(uiUrl)
+  const preview = new WindowStub()
+  registerChatFabWindow({ uiUrl, preload: '合成预加载', panelPreload: '合成面板预加载',
+    prewarm: false, enabled: () => true, mainWindow: () => main.asWindow(),
+    trustsSelectionSource: event => event.sender === preview.asWindow().webContents })
+  const drop = state.events.get(channels.dropReferences)!
+  const reference = [{ type: 'file', id: 'path-synthetic', label: '配置.yml' }]
+  const snapshot = { location: '配置.yml:2:1–2:10', content: '超时: 10', unsaved: false }
+
+  drop(new WindowStub().sender(), reference, snapshot)
+  drop(preview.sender(), reference, { ...snapshot, content: 'x'.repeat(8001) })
+  expect(main.webContents.send).not.toHaveBeenCalled()
+
+  drop(preview.sender(), reference, snapshot)
+  expect(main.webContents.send).toHaveBeenCalledExactlyOnceWith(channels.droppedReferences, reference, snapshot)
 })

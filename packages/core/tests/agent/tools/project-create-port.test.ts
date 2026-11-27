@@ -9,7 +9,7 @@ import type { ProjectCreateRuntime } from '../../../src/projects/project-create.
 import { createKyselyProjectCreateRuntime } from '../../../src/projects/create-store.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { agentProjectDispatchKey, createProjectCreationPort, createAgentProjectCreator } from '../../../src/agent/tools/projects/creation-port.js'
-import { createProjectTool } from '../../../src/agent/tools/projects.js'
+import { createProjectTool } from '../../../src/agent/tools/projects/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { createOwnerToolRegistry } from '../../../src/agent/tools/owner.js'
 import type { ToolScope } from '../../../src/agent/tools/contracts.js'
@@ -237,4 +237,12 @@ describe('真实SQLite创建事务错误归属边界', () => {
       value: { error: '合成平台调用标识无效', error_code: 'invalid_request' } })
     expect(await f.rows()).toHaveLength(0)
   })
+})
+
+it('定时任务与同编号聊天会话的项目创建回执互相隔离', () => {
+  const call = { runId: '合成运行', roundId: '合成轮次', toolCallId: '合成调用' }
+  const scheduled = agentProjectDispatchKey({ ...call, sessionId: 'scheduled-task:1' })
+  expect(scheduled).toMatch(/^agent:v2:[a-f0-9]{64}$/u)
+  expect(agentProjectDispatchKey({ ...call, sessionId: 'scheduled-task:1' })).toBe(scheduled)
+  expect(agentProjectDispatchKey({ ...call, sessionId: 1 })).not.toBe(scheduled)
 })

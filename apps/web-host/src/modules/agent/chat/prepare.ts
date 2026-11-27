@@ -1,3 +1,4 @@
+import { agentChatReceiptKey, postgresAgentChatReceipts } from '@gugu/core/agent/chat-admission'
 import type { Pool, PoolClient } from 'pg'
 import type { AgentChatInput } from './routes.js'
 import type { AgentObservation, AgentObservationPort, RunIdentity } from '@gugu/core/agent'
@@ -51,6 +52,22 @@ export function createPostgresAgentChatPreparation(pool: Pick<Pool, 'connect'>, 
     const observations: AgentObservation[] = []
     const result = await withPostgresTransaction(pool, async client => {
     if (!ownerId || !runId || runId.length > 128) throw new TypeError('用户或运行身份无效')
+    const key = input.client_message_id ? agentChatReceiptKey(ownerId, input.session_id, input.client_message_id, {
+      message: input.message, greeting: input.greeting?.trim() || null,
+      attachments: input.attachments ?? [], references: input.references ?? [],
+      credential: input.credential_id ?? null, locale: input.locale ?? null,
+      queue: input.pending_queue_id ?? null, queueItem: input.pending_queue_item_key ?? null,
+      interaction: input.interaction_prompt_id ?? null, interactionEvent: input.interaction_event_id ?? null,
+      mode: scheduling.mode,
+    }) : null
+    const receipts = postgresAgentChatReceipts(client)
+    if (key) {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [JSON.stringify(['agent-chat', key.ownerKey, key.sessionScope, key.clientId])])
+      const receipt = await receipts.read(key)
+      if (receipt) return { sessionId: receipt.session_id, userMessageId: receipt.message_id,
+        runId: receipt.run_id, isNew: false, replay: true as const }
+    }
     const sessionStartedAt = Date.now()
     let sessionId = input.session_id ?? null
     let isNew = false
@@ -92,6 +109,8 @@ export function createPostgresAgentChatPreparation(pool: Pick<Pool, 'connect'>, 
     await ports.bindQueue(client, ownerId, sessionId, isNew, input)
     observe('Message persistence and attachment claim', messageStartedAt,
       { message_count: count, attachment_count: attachments.attachIds.length, reference_count: input.references?.length ?? 0 }, 'message-persistence')
+    const admitted = { sessionId, userMessageId: messageId, isNew, runId }
+    if (key) await receipts.write(key, admitted)
     if (scheduling.mode === 'dispatch') {
       const dispatchStartedAt = Date.now()
       const identity = { ownerId, sessionId: String(sessionId), runId }
@@ -105,7 +124,7 @@ export function createPostgresAgentChatPreparation(pool: Pick<Pool, 'connect'>, 
       await ports.enqueueDispatch(client, identity, { userMessageId: messageId, locale: input.locale ?? null, origin: scheduling.origin, accessVersion, v: 2, source: 'web', ...(model && { model }) }, scheduling.ttlSeconds)
       observe('Run dispatch enqueue', dispatchStartedAt, { queued: true }, 'dispatch-enqueue')
     }
-    return { sessionId, userMessageId: messageId, isNew, runId }
+    return admitted
     })
     for (const event of observations) {
       try { ports.observation?.record(event) } catch { /* 观测失败不能影响响应。 */ }

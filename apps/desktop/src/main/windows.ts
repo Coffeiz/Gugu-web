@@ -1,3 +1,4 @@
+import { desktopPlatform } from './platform/index.js'
 import { applicationMenuChannels, type ApplicationEditAction } from '@gugu/desktop-contracts'
 import { nativeEditingChannel, type EditingFocus } from '../keyboard-editing.js'
 import type {
@@ -5,6 +6,7 @@ import type {
   BrowserWindow,
   IpcMainInvokeEvent,
   Rectangle,
+  Point,
   Size,
   MediaAccessPermissionRequest,
 } from 'electron'
@@ -31,13 +33,40 @@ export function createMainWindowSizeStore(directory: string, filename = 'main-wi
   }
 }
 
-function writeWindowGeometry(path: string, geometry: Size | Rectangle) {
+function writeWindowGeometry(path: string, geometry: object) {
   const temporary = `${path}.${randomUUID()}.tmp`
   try {
     writeFileSync(temporary, JSON.stringify(geometry), { flag: 'wx', mode: 0o600 })
     renameSync(temporary, path)
   } finally {
     rmSync(temporary, { force: true })
+  }
+}
+
+export interface ChatFabGeometry {
+  detachedPosition?: Point
+  expandedSize?: Size
+}
+
+export function createChatFabGeometryStore(directory: string) {
+  const path = join(directory, 'chat-fab-geometry.json')
+  return {
+    read(): ChatFabGeometry {
+      try {
+        const { detachedPosition, expandedSize } = JSON.parse(readFileSync(path, 'utf8'))
+        const position = detachedPosition && [detachedPosition.x, detachedPosition.y].every(Number.isSafeInteger)
+          ? { x: detachedPosition.x, y: detachedPosition.y } : undefined
+        const size = expandedSize && [expandedSize.width, expandedSize.height].every(Number.isSafeInteger)
+          && expandedSize.width > 0 && expandedSize.height > 0
+          ? { width: expandedSize.width, height: expandedSize.height } : undefined
+        return { detachedPosition: position, expandedSize: size }
+      } catch {
+        return {}
+      }
+    },
+    save(geometry: ChatFabGeometry): void {
+      writeWindowGeometry(path, geometry)
+    },
   }
 }
 
@@ -91,11 +120,7 @@ export async function uiResourcePath(address: string, directory: string): Promis
 }
 
 export function desktopWindowMaterial(): BrowserWindowConstructorOptions {
-  if (process.platform === 'darwin')
-    return { vibrancy: 'under-window', visualEffectState: 'followWindow', transparent: true, backgroundColor: '#00000000' }
-  if (process.platform === 'win32')
-    return { backgroundMaterial: 'acrylic', transparent: true, backgroundColor: '#00000000' }
-  return {}
+  return { ...desktopPlatform().windowMaterial }
 }
 
 export function windowOptions(
@@ -106,12 +131,8 @@ export function windowOptions(
   const minWidth = 960, minHeight = 600
   return {
     title: '咕咕 · 本地工作台',
-    titleBarStyle: 'hidden',
-    trafficLightPosition: { x: 16, y: 16 },
     ...desktopWindowMaterial(),
-    ...(process.platform === 'win32'
-      ? { frame: false, titleBarOverlay: { color: '#00000000', symbolColor: '#343741', height: 64 } }
-      : {}),
+    ...desktopPlatform().mainWindowOptions,
     width: restored ? Math.max(minWidth, Math.min(restored.size.width, restored.workArea.width)) : 1440,
     height: restored ? Math.max(minHeight, Math.min(restored.size.height, restored.workArea.height)) : 800,
     minWidth,
@@ -166,17 +187,21 @@ export function secureWindow(window: BrowserWindow, openExternal?: (url: string)
   })
   window.webContents.on('before-input-event', (_event, input) => {
     // 业务操作和富文本历史交给渲染器，原生输入框及文本剪贴板由系统处理。
-    const mac = process.platform === 'darwin'
+    const mac = desktopPlatform().mac
     const primary = mac ? input.meta : input.control
     const key = input.key.toLowerCase()
     const focus = editingFocus.get(window.webContents) ?? 'page'
     const renderer = focus === 'page' || (mac && focus === 'editor' && (key === 'z' || key === 'y'))
     window.webContents.setIgnoreMenuShortcuts(renderer && primary && !input.alt && rendererEditKeys.has(key))
   })
-  window.webContents.setWindowOpenHandler(({ url, postBody }) => {
+  window.webContents.setWindowOpenHandler(({ url, postBody, frameName }) => {
     if (openExternal && !postBody) {
       const target = URL.parse(url)
-      if (target && ['https:', 'http:'].includes(target.protocol) && !target.username && !target.password)
+      const contactLink = frameName === 'gugu-contact-handler' && (
+        /^tel:\+?[0-9]{1,32}$/.test(url) ||
+        /^mailto:(?:[a-z0-9_.!~*'()%-]+)@(?:[a-z0-9_.!~*'()%-]+)$/i.test(url) && url.length <= 1024
+      )
+      if (target && !target.username && !target.password && (contactLink || ['https:', 'http:'].includes(target.protocol)))
         openExternal(target.href)
     }
     return { action: 'deny' }

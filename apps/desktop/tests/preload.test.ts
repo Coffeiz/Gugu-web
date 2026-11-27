@@ -57,13 +57,13 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'feishuPairing',
     'files',
     'mail',
+    'moveDroppedFiles',
     'notes',
     'onAgentChatEvent',
     'onAgentRunChanged',
     'onScheduleChanged',
     'onboarding',
     'openDroppedFileReference',
-    'personalSmtp',
     'preflightBusinessArchive',
     'projectBoard',
     'projectDetails',
@@ -100,8 +100,6 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
   ])
   await bridge.applyBusinessArchive('synthetic-preflight-id')
   expect(spies.invoke).toHaveBeenLastCalledWith('gugu:preferences:apply-business-archive', 'synthetic-preflight-id')
-  await bridge.personalSmtp('get')
-  expect(spies.invoke).toHaveBeenLastCalledWith('gugu:preferences:personal-smtp', 'get')
   await bridge.files({ action: 'list', path: '' })
   expect(spies.invoke).toHaveBeenLastCalledWith('gugu:files:request', { action: 'list', path: '' })
   await bridge.search(['样本'])
@@ -125,11 +123,11 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
   const droppedFile = new File([], 'report.txt')
   await bridge.createDroppedFileReference(droppedFile)
   expect(spies.getPathForFile).toHaveBeenCalledWith(droppedFile)
-  expect(spies.invoke).toHaveBeenLastCalledWith('gugu:files:dropped-reference', '/synthetic/report.txt')
+  expect(spies.invoke).toHaveBeenLastCalledWith('gugu:files:dropped-reference', '/synthetic/report.txt', undefined)
   await bridge.openDroppedFileReference('synthetic-reference')
   expect(spies.invoke).toHaveBeenLastCalledWith('gugu:files:open-dropped-reference', 'synthetic-reference')
-  await bridge.resources({ domain: 'skills', action: 'list' })
-  expect(spies.invoke).toHaveBeenLastCalledWith('gugu:resources:request', { domain: 'skills', action: 'list' })
+  await bridge.resources({ domain: 'skills', action: 'file-list' })
+  expect(spies.invoke).toHaveBeenLastCalledWith('gugu:resources:request', { domain: 'skills', action: 'file-list' })
   await bridge.scheduleTask({ action: 'list' })
   expect(spies.invoke).toHaveBeenLastCalledWith('gugu:schedules:request', { action: 'list' })
   const changed = vi.fn()
@@ -145,7 +143,7 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
   const [runChannel, runListener] = spies.on.mock.calls.at(-1)!
   expect(runChannel).toBe('gugu:agent:run-changed')
   runListener({ sender: '仅供主进程使用' }, 42)
-  expect(runChanged).toHaveBeenCalledWith(42)
+  expect(runChanged).toHaveBeenCalledWith(42, undefined)
   stopRunChanges()
   expect(spies.removeListener).toHaveBeenCalledWith(runChannel, runListener)
   await bridge.onboarding()

@@ -1,17 +1,19 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { desktopKeyFile } from '../../../../packages/core/src/shared/desktop-key-file.js'
 
-/** 同一检出目录并行运行多个 Vite 预览时，为每个端口保留独立 Core 数据库。 */
-export function desktopPreviewDataDirectory(desktopRoot: string, homeDirectory: string, port: number): string {
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new RangeError('桌面预览端口无效')
+/** 数据归检出目录所有，开发服务换端口后继续使用同一份库。 */
+export function desktopPreviewDataDirectory(desktopRoot: string, homeDirectory: string): string {
   const checkout = createHash('sha256').update(desktopRoot).digest('hex').slice(0, 16)
-  return join(homeDirectory, '.gugu-desktop-preview', checkout, String(port))
+  const directory = join(homeDirectory, '.gugu-desktop-preview', checkout)
+  if (existsSync(join(directory, 'core.db'))) return directory
+  const previousDefault = join(directory, '5176')
+  return existsSync(join(previousDefault, 'core.db')) ? previousDefault : directory
 }
 
-
-// 浏览器预览没有系统钥匙串。密钥仅保存在当前检出目录和端口的本机预览目录。
+// 浏览器预览没有系统钥匙串，密钥随预览数据目录保存。
 export function createDesktopPreviewEncryption(directory: string) {
   const keyFile = desktopKeyFile(join(directory, 'preview.key'), '桌面预览密钥无效')
   let key: ReturnType<typeof keyFile.readOrCreate> | undefined

@@ -1,6 +1,5 @@
 <template>
   <div>
-    <div v-if="desktop" class="pm-section"><p class="pm-field-hint">{{ t('desktopSettings.deviceStorage') }}</p></div>
     <div class="pm-section">
       <div class="pm-section-label">{{ t('common.language') }}</div>
       <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ t('common.language') }}</span><span class="pm-field-hint">{{ t('common.languageHint') }}</span></div><div class="pm-style-group"><button v-for="item in languages" :key="item.value" class="pm-style-chip" :class="{ active: currentLocale === item.value }" @click="prefsStore.saveLocale(item.value)">{{ item.label }}</button></div></div>
@@ -38,6 +37,8 @@
     </div>
     <div class="pm-sep"></div>
     <template v-if="desktop">
+      <slot name="desktop-file-settings" />
+      <div v-if="$slots['desktop-file-settings']" class="pm-sep"></div>
       <div class="pm-section">
         <div class="pm-section-label">{{ t('desktopSettings.network') }}</div>
         <div class="pm-field-row">
@@ -47,6 +48,29 @@
           </div>
           <ToggleSwitch :model-value="useSystemProxy" :disabled="proxySaving" :aria-label="t('desktopSettings.systemProxy')"
             @update:model-value="saveSystemProxy" />
+        </div>
+        <div class="pm-field-row">
+          <div class="pm-field-desc">
+            <span class="pm-field-name">{{ t('profileImUi.keepGatewayOnline') }}</span>
+            <span class="pm-field-hint">{{ t('profileImUi.keepGatewayOnlineHint') }}</span>
+          </div>
+          <ToggleSwitch :model-value="keepGatewayOnline"
+            :disabled="!gatewayPreferenceLoaded || gatewayPreferenceSaving" :aria-label="t('profileImUi.keepGatewayOnline')"
+            @update:model-value="saveKeepGatewayOnline" />
+        </div>
+      </div>
+      <div class="pm-sep"></div>
+      <div class="pm-section">
+        <div class="pm-section-label">{{ t('profileGuguUi.conversation') }}</div>
+        <div class="pm-field-row">
+          <div class="pm-field-desc">
+            <span class="pm-field-name">{{ t('profileGuguUi.reopenDesktop') }}</span>
+            <span class="pm-field-hint">{{ t('profileGuguUi.reopenDesktopHint') }}</span>
+          </div>
+          <div class="pm-style-group">
+            <button type="button" class="pm-style-chip" :class="{ active: reopenResume }" :aria-pressed="reopenResume" @click="setReopenResume(true)">{{ t('profileGuguUi.resume') }}</button>
+            <button type="button" class="pm-style-chip" :class="{ active: !reopenResume }" :aria-pressed="!reopenResume" @click="setReopenResume(false)">{{ t('profileGuguUi.newConversation') }}</button>
+          </div>
         </div>
       </div>
       <div class="pm-sep"></div>
@@ -119,12 +143,29 @@ const { preference, family, palette, setTheme, setFamily, setPalette } = useThem
 } : undefined)
 const useSystemProxy = ref(false)
 const proxySaving = ref(false)
+const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
+function setReopenResume(value: boolean) {
+  reopenResume.value = value
+  localStorage.setItem('gugu_reopen_resume', value ? '1' : '0')
+}
+const keepGatewayOnline = ref(true)
+const gatewayPreferenceLoaded = ref(false)
+const gatewayPreferenceSaving = ref(false)
+async function saveKeepGatewayOnline(value: boolean) {
+  if (!desktop || gatewayPreferenceSaving.value) return
+  gatewayPreferenceSaving.value = true
+  try { keepGatewayOnline.value = (await desktop.updateAppearance({ keepGatewayOnline: value })).keepGatewayOnline !== false }
+  catch { showAppError(t('desktopSettings.saveAppearanceFailed')) }
+  finally { gatewayPreferenceSaving.value = false }
+}
 const timezoneSaving = ref(Boolean(desktop))
 if (desktop) onMounted(async () => {
   proxySaving.value = true
   try {
     const preferences = await desktop.appearance()
     useSystemProxy.value = preferences.useSystemProxy === true
+    keepGatewayOnline.value = preferences.keepGatewayOnline !== false
+    gatewayPreferenceLoaded.value = true
     setUserTimezone(preferences.timezone)
   }
   catch { showAppError(t('desktopSettings.loadProxyFailed')) }
@@ -189,11 +230,11 @@ function onEmailSubscriptionChange(value: boolean) {
 
 <style scoped>
 .pm-palette-group { flex-wrap: wrap; }
-.pm-palette-chip { display: inline-flex; align-items: center; gap: 6px; }
+.pm-palette-chip { display: inline-flex; align-items: center; gap: var(--space-xs); }
 .pm-palette-swatch { width: 12px; height: 12px; flex: 0 0 12px; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--content-primary) 14%, transparent); }
-.pm-timezone-control { display: flex; flex: 0 1 360px; flex-direction: column; gap: 5px; min-width: 220px; }
+.pm-timezone-control { display: flex; flex: 0 1 360px; flex-direction: column; gap: var(--space-xs); min-width: 220px; }
 .pm-timezone-control small { color: var(--content-tertiary); font-size: 11px; }
 :deep(.pm-timezone-control .asel-wrap), :deep(.pm-timezone-control .asel-trigger) { width: 100%; }
 :global(.asel-popup--model-list) { max-height: min(420px, calc(100vh - 32px)); overflow-y: auto; }
-@media (max-width: 720px) { .pm-timezone-row { align-items: stretch; flex-direction: column; gap: 10px; } .pm-timezone-control { max-width: none; } }
+@media (max-width: 720px) { .pm-timezone-row { align-items: stretch; flex-direction: column; gap: var(--space-sm); } .pm-timezone-control { max-width: none; } }
 </style>

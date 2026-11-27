@@ -132,12 +132,13 @@ export function mountSmartChart(root: HTMLElement) {
         },
       } } },
     }
-    const horizontalAxis = <T extends { ticks: object }>(axis: T) => ({
-      ...axis, ticks: { ...axis.ticks, maxRotation: 0, autoSkip: true },
-    })
     if (kind === 'line') {
       const line = lineChartOptions({ tooltipLabel })
-      return { ...line, plugins: { ...line.plugins, legend: { ...line.plugins.legend, display: multi } }, scales: { ...line.scales, x: horizontalAxis(line.scales.x) } }
+      return {
+        ...line,
+        plugins: { ...line.plugins, legend: { ...line.plugins.legend, display: multi } },
+        scales: { ...line.scales, x: { ...line.scales.x, ticks: { ...line.scales.x.ticks, maxRotation: 0, autoSkip: true } } },
+      }
     }
     const bar = barChartOptions({ tooltipLabel })
     return {
@@ -146,7 +147,7 @@ export function mountSmartChart(root: HTMLElement) {
       layout: { padding: { top: 8, right: 6 } },
       scales: {
         ...bar.scales,
-        x: horizontalAxis(bar.scales.x),
+        x: { ...bar.scales.x, ticks: { ...bar.scales.x.ticks, maxRotation: 90, autoSkip: false } },
         y: {
           ...bar.scales.y, grace: '15%',
           border: { ...bar.scales.y.border, dash: [3, 4] },

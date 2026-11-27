@@ -51,7 +51,7 @@ export function useChatAudio(options: {
     try {
       const source = context.createMediaElementSource(element)
       const analyser = context.createAnalyser()
-      analyser.fftSize = 256
+      analyser.fftSize = 2048
       analyser.smoothingTimeConstant = 0.72
       source.connect(analyser)
       analyser.connect(context.destination)
@@ -66,13 +66,18 @@ export function useChatAudio(options: {
   function sampleWave(analyser: AnalyserNode, count: number): number[] {
     const spectrum = new Uint8Array(analyser.frequencyBinCount)
     analyser.getByteFrequencyData(spectrum)
+    if (!audioContext) return Array(count).fill(12)
+    const binHz = audioContext.sampleRate / analyser.fftSize
+    const lowHz = 60
+    const highHz = Math.min(8000, audioContext.sampleRate / 2)
+    // 对数分段让中低频的基音和泛音能分布在不同柱上。
+    const bandEdge = (edge: number) => lowHz * (highHz / lowHz) ** (edge / count)
     return Array.from({ length: count }, (_, index) => {
-      const start = Math.max(1, Math.floor(index * spectrum.length / count))
-      const end = Math.max(start + 1, Math.floor((index + 1) * spectrum.length / count))
-      let total = 0
-      for (let bin = start; bin < Math.min(end, spectrum.length); bin++) total += spectrum[bin]
-      const average = total / Math.max(1, Math.min(end, spectrum.length) - start)
-      return Math.max(12, Math.min(100, Math.round(Math.sqrt(average / 255) * 100)))
+      const start = Math.max(1, Math.ceil(bandEdge(index) / binHz))
+      const end = Math.min(spectrum.length, Math.max(start + 1, Math.ceil(bandEdge(index + 1) / binHz)))
+      let peak = 0
+      for (let bin = start; bin < end; bin++) peak = Math.max(peak, spectrum[bin]!)
+      return Math.max(12, Math.round(Math.sqrt(peak / 255) * 100))
     })
   }
 

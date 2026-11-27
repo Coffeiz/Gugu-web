@@ -91,7 +91,22 @@ export function createTerminalWorkspaceMounts<DB>(pool: Pick<Pool, 'connect' | '
       writable.push(key)
       workspaceIds.set(key, directory.id)
     }
-    const mount = await prepareTerminalMounts(storageRoot, owner, primary, readonly, [...new Set(writable)], cwd, initialize)
+    const baseMount = await prepareTerminalMounts(storageRoot, owner, primary, readonly, [...new Set(writable)], cwd, initialize)
+    let skills: Awaited<ReturnType<typeof pinTerminalDirectory>> | undefined
+    try {
+      try { skills = await pinTerminalDirectory(storageRoot, owner, `${owner}/.agent/skills`) }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      if (skills && baseMount.sandboxMounts.length >= 64) throw new Error('终端挂载数量超限')
+    } catch (error) {
+      await baseMount.close()
+      throw error
+    }
+    const mount = {
+      ...baseMount,
+      sandboxMounts: skills ? [...baseMount.sandboxMounts,
+        { source: skills.path, descriptor: skills.fd, target: '/skills', readonly: true }] : baseMount.sandboxMounts,
+      async close() { try { await skills?.close() } finally { await baseMount.close() } },
+    }
     const trashDirectory: FileDirectory = selected?.kind === 'directory' ? selected.directoryId
       : selected?.kind === 'project' ? { projectId: selected.projectId } : 'personal'
     async function resolveTrashTarget(path: string) {

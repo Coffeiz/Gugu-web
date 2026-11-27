@@ -82,7 +82,7 @@ import { createKyselyCalendarReadPort } from '../../../../../packages/core/src/c
 import { createNoteRagSource } from '../../../../../packages/core/src/agent/rag/note-source.js'
 import { createSqlMindNoteReader } from '../../../../../packages/core/src/mind/note-read.js'
 import { createScheduledTaskRagSource } from '../../../../../packages/core/src/agent/rag/scheduled-task-source.js'
-import { createKyselyScheduledTaskRagReader } from '../../../../../packages/core/src/scheduled-tasks/task-list.js'
+import { createKyselyScheduledTaskRagReader } from '../../../../../packages/core/src/tasks/task-list.js'
 import { buildDocuments } from '../../../../../packages/core/src/agent/rag/adapters/base.js'
 import { createOwnerRagVectorSource } from '../../../src/modules/agent/rag/vectors.js'
 import { readRagDocumentVectors } from '../../../../../packages/core/src/agent/rag/vector-reader.js'

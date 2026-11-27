@@ -6,6 +6,9 @@ html[data-theme][data-family] input[type='number']::-webkit-outer-spin-button {
   -webkit-appearance: none;
 }
 
+/* 多行输入框通过公共类显式启用手动调整。 */
+:where(textarea) { resize: none; }
+
 /* 多行输入框的原生缩放柄使用公共契约，避免 Chromium 默认绘制白色方块。 */
 html[data-theme][data-family] .control-resizable {
   resize: vertical;

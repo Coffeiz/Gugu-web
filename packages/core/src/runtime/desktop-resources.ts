@@ -1,21 +1,13 @@
 import { desktopMcpConfigDigest } from '../mcp/desktop-agent-runtime.js'
 import { createMcpSnapshotStore } from '../mcp/snapshot-store.js'
 import { createHash, randomUUID } from 'node:crypto'
-import { sql, type Kysely } from 'kysely'
+import type { Kysely } from 'kysely'
 import { z } from 'zod'
 import { CoreError } from '../contracts/index.js'
-import { createUserSkillManager, UserSkillValidationError } from '../agent/skills/user-management.js'
-import { createUserSkillDeletion } from '../agent/skills/user-delete.js'
 import { createMcpServerCreator } from '../mcp/server-create.js'
 import { createMcpServerMutations, type McpEnvelopeCrypto } from '../mcp/server-mutations.js'
 import { createMcpServerConfigLister } from '../mcp/server-list.js'
 
-const skill = z.strictObject({
-  name: z.string().max(120), description_short: z.string().max(100),
-  description_long: z.string().max(500).nullable().default(null),
-  category: z.string().max(32).default('personal'), body: z.string().max(20_000),
-  related_tools: z.array(z.string().max(128)).max(32).default([]), enabled: z.boolean().default(true),
-})
 const mcp = z.strictObject({
   name: z.string().min(1).max(64), endpoint: z.url({ protocol: /^https?$/ }).max(1000).refine(value => {
     const url = new URL(value)
@@ -32,46 +24,6 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value)
   if (!result.success) throw new CoreError('invalid_request', '资源配置参数无效')
   return result.data
-}
-
-export async function allocateDesktopSkillSequence<DB>(tx: Kysely<DB>) {
-  const { rows: [row] } = await sql<{ value: string }>`INSERT INTO core_runtime_meta(key,value)
-    VALUES('desktop_skill_sequence','2') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1 RETURNING value`.execute(tx)
-  return Number(row?.value)
-}
-
-export function createDesktopSkillManager<DB>(db: Kysely<DB>, knownTools: ReadonlySet<string> = new Set()) {
-  return createUserSkillManager(db, 'sqlite', {
-    knownTools: async () => knownTools,
-    digest: text => createHash('sha256').update(text).digest('hex'),
-    publish: async () => {},
-    allocateSequence: allocateDesktopSkillSequence,
-  })
-}
-
-export function desktopSkills<DB>(db: Kysely<DB>, owner: string, knownTools?: ReadonlySet<string>) {
-  const manager = createDesktopSkillManager(db, knownTools)
-  return {
-    async list(offset: number) {
-      const rows = await manager.list(owner, { limit: 2, offset })
-      return { skills: rows.slice(0, 1), nextOffset: rows.length > 1 ? offset + 1 : null }
-    },
-    async write(id: string | undefined, value: unknown) {
-      try {
-        const fields = parse(id ? skill.partial() : skill, value)
-        if (JSON.stringify(fields).length > 20_000 || Buffer.byteLength(JSON.stringify(fields)) > 48_000)
-          throw new CoreError('invalid_request', '技能内容超出桌面传输大小限制')
-        const save = id
-          ? await manager.prepareUpdate(owner, id, { ...fields, managed_by: 'user' })
-          : await manager.prepareCreate(owner, { ...parse(skill, value), managed_by: 'user' })
-        return { id: (await save(db)).id }
-      } catch (error) {
-        if (error instanceof UserSkillValidationError) throw new CoreError('invalid_request', '技能内容或关联工具无效')
-        throw error
-      }
-    },
-    remove: async (id: string) => { await createUserSkillDeletion(db, 'sqlite', async () => {})(owner, id); return null },
-  }
 }
 
 export const desktopMcpMaxServers = null

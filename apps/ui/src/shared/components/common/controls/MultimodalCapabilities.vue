@@ -12,7 +12,7 @@
       <button type="button" :class="variant === 'admin' ? 'pca-btn pca-btn--sm' : 'pm-style-chip'" :disabled="probing !== null && probing !== dim.key" @click="$emit('probe', dim.key)">
         {{ probing === dim.key ? probingLabel : probeLabel }}
       </button>
-      <ToggleSwitch :model-value="Boolean(model[dim.key])" :aria-label="`切换${dim.label}`" @update:model-value="model[dim.key] = $event" />
+      <ToggleSwitch :model-value="Boolean(model[dim.key])" :aria-label="$t('pageUi.switchDimension', { label: dim.label })" @update:model-value="model[dim.key] = $event" />
     </div>
   </div>
 </template>

@@ -4,8 +4,8 @@ import { basename, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { RunIdentity } from '../agent/models.js'
-import { createWebDownloadTool, type WebDownloadPort } from '../agent/tools/web.js'
-import { agentDownloadsLimit, saveAgentDownloadTo } from '../agent/tools/download-to-disk.js'
+import { createWebDownloadTool, type WebDownloadPort } from '../agent/tools/web/index.js'
+import { agentDownloadsLimit, saveAgentDownloadTo } from '../agent/tools/web/download-to-disk.js'
 
 const stagingPrefix = '.gugu-download-'
 const stagingRetentionMs = 24 * 60 * 60 * 1000

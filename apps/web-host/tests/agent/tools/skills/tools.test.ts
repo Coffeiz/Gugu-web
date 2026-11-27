@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createAgentToolRegistry } from '../../../../src/modules/agent/tools/registry.js'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
-import { createAgentSkillRuntimePorts, createBuiltinSkillDefinitions } from '@gugu/core/skills'
+import { createAgentSkillRuntimePorts, createBuiltinSkillDefinitions, createFileSkillDefinitions, createUserSkillBundle, isUserSkillBundleEnabled, patchSkillDocument } from '@gugu/core/skills'
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 
 test('Web use_skill 经 Markdown head、Core registry 与 owner scoped Skill 端口加载并复验撤权', async () => {
@@ -19,29 +18,19 @@ test('Web use_skill 经 Markdown head、Core registry 与 owner scoped Skill 端
     runtime = opened.runtime
     const ownerId = opened.ownerId
     const otherOwner = '00000000-0000-4000-8000-000000000002'
-    const digest = (body: string) => createHash('sha256').update(body, 'utf8').digest('hex').slice(0, 16)
     const builtins = await createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal)
     const expectedBuiltin = await builtins.find(skill => skill.id === 'S2')!.load(
       { ownerId, sessionId: '1', runId: 'builtin-read' }, new AbortController().signal,
     )
-    const userSkillId = 'U1'
-    let userSkillEnabled = true
-    const userSkillBody = '合成用户正文不可跨 owner 读取。'
-    const listUser = async (owner: string, signal: AbortSignal) => {
-      signal.throwIfAborted()
-      return { skills: owner === ownerId ? [{ id: userSkillId, name: '合成用户技能',
-        description_short: '仅用于 owner 隔离回归。', category: 'personal', related_tools: ['search_conversations'],
-        enabled: userSkillEnabled, source: 'user' as const }] : [] }
-    }
+    const userSkillId = 'demo'
+    const source = '---\nname: 合成用户技能\ndescription: 合成摘要\n---\n合成用户正文不可跨 owner 读取。'
+    const bundle = await createUserSkillBundle(directory, ownerId, userSkillId, source)
+    const isFileSkillEnabled = (owner: string, id: string) => isUserSkillBundleEnabled(directory, owner, id)
+    const { definitions: fileSkills } = await createFileSkillDefinitions({
+      dataRoot: directory, ownerId, isEnabled: isFileSkillEnabled, mapPath: path => path,
+    })
     const skillPorts = await createAgentSkillRuntimePorts({
-      ownerId,
-      builtins,
-      listUser,
-      async readUser(owner, id) {
-        return owner === ownerId && id === userSkillId && userSkillEnabled
-          ? { id, name: '合成用户技能', body: userSkillBody, contentDigest: digest(userSkillBody) }
-          : null
-      },
+      ownerId, builtins, fileSkills, isFileSkillEnabled,
       fingerprint: owner => `synthetic:${owner}`,
     })
     const registry = createAgentToolRegistry({
@@ -73,7 +62,7 @@ test('Web use_skill 经 Markdown head、Core registry 与 owner scoped Skill 端
     assert.equal(foreign.kind === 'completed' && foreign.successful, false)
     assert.doesNotMatch(JSON.stringify(foreign), /合成用户正文不可跨 owner 读取/u)
 
-    userSkillEnabled = false
+    await writeFile(join(bundle.path, 'SKILL.md'), patchSkillDocument(source, { enabled: false }))
     const disabled = await dispatch(userSkillId)
     assert.equal(disabled.kind === 'completed' && disabled.successful, false)
     assert.doesNotMatch(JSON.stringify(disabled), /合成用户正文不可跨 owner 读取/u)

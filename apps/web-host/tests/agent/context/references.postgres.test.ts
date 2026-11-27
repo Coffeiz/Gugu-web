@@ -67,3 +67,25 @@ test('磁盘文件引用和正文组装在同一条消息中，沙盒路径从�
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('文件技能引用限定当前用户并注入沙盒目录', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-web-skill-reference-'))
+  const owner = randomUUID(), other = randomUUID()
+  const db = { query: async () => { throw new Error('文件技能引用不应查询数据库') } }
+  try {
+    const { createUserSkillBundle } = await import('@gugu/core/skills')
+    await createUserSkillBundle(root, owner, 'demo', '---\nname: 技能名称\ndescription: 技能简介\n---\n不应注入的正文')
+    const input = { message: '问题', references: [{ type: 'skill', id: 'demo', label: '伪造名称' }] }
+    const result = await resolveAgentChatReferences(db, owner, input, root)
+    assert.ok(result)
+    assert.match(JSON.stringify(result), /技能名称/u)
+    assert.match(JSON.stringify(result), /\/workspace\/\.agent\/skills\/demo/u)
+    assert.doesNotMatch(JSON.stringify(result), /不应注入的正文|伪造名称/u)
+    assert.equal(await resolveAgentChatReferences(db, other, input, root), null)
+    for (const id of ['U1', 1]) {
+      assert.equal(await resolveAgentChatReferences(db, owner, {
+        ...input, references: [{ type: 'skill', id, label: '旧技能' }],
+      }, root), null)
+    }
+  } finally { await rm(root, { recursive: true, force: true }) }
+})

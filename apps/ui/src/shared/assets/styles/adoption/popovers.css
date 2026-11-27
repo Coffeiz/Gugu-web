@@ -36,6 +36,8 @@ html[data-theme][data-family] :is(
   -webkit-backdrop-filter: none;
 }
 
+.popup-menu-host > .popup-menu-item + .popup-menu-item { margin-block-start: var(--option-gap); }
+
 /* Item paint is scoped to real generic popup containers. Do not target .popup-menu-item globally:
    AppSidebar's settings menu deliberately has its own edge-to-edge pseudo-element hover geometry. */
 html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) .popup-menu-item {

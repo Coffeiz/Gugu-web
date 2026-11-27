@@ -91,12 +91,13 @@ export function createToolRegistry(options: ToolRegistryOptions): {
   }
   for (const tool of options.tools ?? []) register(tool)
   for (const group of options.groups ?? []) registerGroup(group)
+  const preauthorizedEntries = new Set<ToolDefinition>()
   const preauthorized = options.preauthorizedDestructiveTool
-  if (preauthorized) {
-    if (!preauthorized.destructive || preauthorized.effect !== 'write') throw new Error('预授权工具定义无效')
-    register(preauthorized)
+  for (const tool of [...(preauthorized ? [preauthorized] : []), ...options.preauthorizedDestructiveTools ?? []]) {
+    if (!tool.destructive || tool.effect !== 'write') throw new Error('预授权工具定义无效')
+    register(tool)
+    preauthorizedEntries.add(entries.get(tool.definition.name)!)
   }
-  const preauthorizedEntry = preauthorized && entries.get(preauthorized.definition.name)
   const confirmedEntries = new Set<ToolDefinition>()
   const legacyConfirmation = options.confirmationGatedDestructiveTool
   for (const confirmationGated of [...(legacyConfirmation ? [legacyConfirmation] : []), ...options.confirmationGatedDestructiveTools ?? []]) {
@@ -105,7 +106,7 @@ export function createToolRegistry(options: ToolRegistryOptions): {
     register(confirmationGated)
     confirmedEntries.add(entries.get(confirmationGated.definition.name)!)
   }
-  const blocked = (tool: ToolDefinition) => tool.destructive && tool !== preauthorizedEntry && !confirmedEntries.has(tool)
+  const blocked = (tool: ToolDefinition) => tool.destructive && !preauthorizedEntries.has(tool) && !confirmedEntries.has(tool)
   configure(options.configuration ?? {})
   async function authorized(identity: RunIdentity, name: string): Promise<boolean> {
     try { return await options.authorize(identity, name) === true } catch { return false }

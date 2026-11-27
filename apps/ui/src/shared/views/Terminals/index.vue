@@ -3,9 +3,11 @@
     <TerminalSkeleton :show-content="visible" />
   </SkeletonGate>
   <div v-else class="terminals-page">
-    <section v-if="!enabled" class="terminal-state terminal-panel glass-card">
+    <section v-if="!enabled" class="terminal-state terminal-panel glass-card empty-state-viewport">
       <div v-if="error" class="terminal-page-error" role="alert">{{ error }}</div>
-      <div class="terminal-empty">{{ t('terminals.unavailable') }}</div>
+      <FirstUseEmptyState v-if="!error" :title="t('terminals.unavailable')">
+        <template #icon><Icon name="admin.terminal" :size="22" /></template>
+      </FirstUseEmptyState>
     </section>
     <template v-else>
       <div v-if="error && !selected" class="terminal-page-error" role="alert">{{ error }}</div>
@@ -32,7 +34,7 @@
             <ActionButton v-if="renaming" variant="secondary" fit @click="cancelRename">{{ t('terminals.cancel') }}</ActionButton>
             <ActionButton v-else variant="secondary" fit @click="startRename"><Icon name="action.edit" :size="14" />{{ t('terminals.rename') }}</ActionButton>
             <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />{{ t('terminals.stop') }}</ActionButton>
-            <ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.play" :size="14" />{{ t('terminals.start') }}</ActionButton>
+            <ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.play" :size="16" />{{ t('terminals.start') }}</ActionButton>
             <ActionButton variant="secondary" fit @click="resetSelected"><Icon name="action.refresh" :size="14" />{{ t('terminals.reset') }}</ActionButton>
             <ActionButton variant="danger" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />{{ t('terminals.delete') }}</ActionButton>
           </div>
@@ -54,7 +56,9 @@
             @error="error = $event"
           />
         </KeepAlive>
-        <div v-if="selected?.mode === 'interactive-pty' && !ptyEnabled" class="terminal-empty">{{ t(desktop ? 'terminalUi.desktopNative' : 'terminalUi.ptyUnavailable') }}</div>
+        <FirstUseEmptyState v-if="selected?.mode === 'interactive-pty' && !ptyEnabled" :title="t(desktop ? 'terminalUi.desktopNative' : 'terminalUi.ptyUnavailable')">
+          <template #icon><Icon name="admin.terminal" :size="22" /></template>
+        </FirstUseEmptyState>
         <div v-if="selected && selected.mode !== 'interactive-pty'" ref="outputRef" class="terminal-output">
           <div v-if="error" class="terminal-output-error" role="alert">[{{ t('terminalUi.errorLabel') }}] {{ error }}</div>
           <div v-for="event in events" :key="event.localId ?? event.sequence" class="terminal-event" :class="{ 'is-pending': event.state === 'running', 'is-failed': event.state === 'failed' }">
@@ -68,9 +72,13 @@
             <small v-else-if="event.type === 'command'"><span>{{ event.exitCode === 0 ? t('terminals.completed') : t('terminals.failed') }} · {{ formatTime(event.occurredAt) }}</span><span v-if="event.exitCode !== null" class="terminal-exit-code">{{ event.exitCode }}</span></small>
             <small v-else>{{ t('terminals.stateUpdated') }} · {{ formatTime(event.occurredAt) }}</small>
           </div>
-          <div v-if="!events.length && !error" class="terminal-output-empty">{{ t('terminals.waitingOutput') }}</div>
+          <FirstUseEmptyState v-if="!events.length && !error" :title="t('terminals.waitingOutput')">
+            <template #icon><Icon name="admin.terminal" :size="22" /></template>
+          </FirstUseEmptyState>
         </div>
-        <div v-else-if="!selected" class="terminal-empty">{{ t('terminals.select') }}</div>
+        <FirstUseEmptyState v-else-if="!selected && !error" :title="t('terminals.select')">
+          <template #icon><Icon name="admin.terminal" :size="22" /></template>
+        </FirstUseEmptyState>
         <form v-if="selected && selected.mode === 'agent-events' && selected.status !== 'terminated' && selected.status !== 'exited'" class="terminal-input" @submit.prevent="submitCommand">
           <input ref="commandInput" v-model="command" :placeholder="t('terminals.commandPlaceholder')" autocomplete="off" />
           <ActionButton fit type="submit" :disabled="!command.trim()"><Icon name="action.send" :size="14" />{{ t('terminals.execute') }}</ActionButton>
@@ -81,6 +89,7 @@
 </template>
 
 <script setup lang="ts">
+import FirstUseEmptyState from '@/components/common/layout/FirstUseEmptyState.vue'
 import SkeletonGate from '@/components/common/feedback/skeleton/SkeletonGate.vue'
 import TerminalSkeleton from './components/TerminalSkeleton.vue'
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -458,32 +467,31 @@ onUnmounted(() => {
 .terminal-item :deep(.app-action-button-content) { width:100%; min-width:0; }
 .terminal-item[aria-pressed="true"] { border-color:var(--border-focus); }
 .terminal-item-icon { display:grid; place-items:center; width:28px; height:28px; flex:none; border-radius:var(--radius-compact); background:var(--surface-soft); color:var(--selection-fg); }
-.terminal-item-copy { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; }
+.terminal-item-copy { min-width:0; flex:1; display:flex; flex-direction:column; gap:var(--space-xs); }
 .terminal-item-copy b { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .terminal-item-copy small { color:var(--content-tertiary); font-size:10px; }
 .terminal-status { width:7px; height:7px; flex:none; border-radius:50%; background:var(--content-tertiary); }
 .terminal-status.running { background:var(--success-fg); }
 .terminal-status.failed { background:var(--danger-fg); }
-.terminal-output-empty,.terminal-empty { display:grid; place-items:center; min-height:180px; color:var(--content-tertiary); font-size:12px; }
-.terminal-page-error { margin:0 0 var(--space-md); padding:8px 12px; color:var(--danger-fg); font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.terminal-page-error { margin:0 0 var(--space-md); padding:var(--space-sm) var(--space-md); color:var(--danger-fg); font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
 .terminal-main-head h2 { margin:0; color:var(--content-primary); font-size:14px; overflow-wrap:anywhere; }
-.terminal-title > span { display:block; margin-top:4px; color:var(--content-tertiary); font-size:10px; }
-.terminal-output { min-height:0; flex:1; display:flex; flex-direction:column; overflow:auto; padding:16px; background:#101319; color:#e7edf7; font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.01em; }
+.terminal-title > span { display:block; margin-top:var(--space-xs); color:var(--content-tertiary); font-size:10px; }
+.terminal-output { min-height:0; flex:1; display:flex; flex-direction:column; overflow:auto; padding:var(--page-content-inset); background:#101319; color:#e7edf7; font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.01em; }
 .terminal-output-empty { color:#778196; }
 .terminal-output-empty { flex:1; min-height:0; display:grid; place-items:center; }
-.terminal-output-error { padding:0 0 12px; margin-bottom:14px; border-bottom:1px solid color-mix(in srgb,var(--danger-fg) 32%,transparent); color:var(--danger-fg); font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; }
-.terminal-event { padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid var(--divider-line); }
+.terminal-output-error { padding:0 0 var(--space-md); margin-bottom:var(--space-md); border-bottom:1px solid color-mix(in srgb,var(--danger-fg) 32%,transparent); color:var(--danger-fg); font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; }
+.terminal-event { padding-bottom:var(--space-md); margin-bottom:var(--space-md); border-bottom:1px solid var(--divider-line); }
 .terminal-command { color:var(--selection-fg); white-space:pre-wrap; overflow-wrap:anywhere; }
 .terminal-command span { color:var(--success-fg); }
-.terminal-event pre { margin:6px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+.terminal-event pre { margin:var(--space-xs) 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
 .terminal-event pre.stderr { color:var(--danger-fg); }
-.terminal-event small { display:block; margin-top:7px; color:#aab4c5; font:11px/1.4 var(--font-sans); }
+.terminal-event small { display:block; margin-top:var(--space-sm); color:#aab4c5; font:11px/1.4 var(--font-sans); }
 .terminal-event-state { color:var(--content-tertiary); }
 .terminal-cancel { margin-left:var(--space-sm); }
-.terminal-exit-code { margin-left:8px; color:var(--content-tertiary); }
+.terminal-exit-code { margin-left:var(--space-sm); color:var(--content-tertiary); }
 .terminal-title { min-width:0; }
-.terminal-rename { box-sizing:border-box; width:min(320px, 45vw); height:var(--control-height-sm); padding:5px 8px; border:1px solid var(--input-border); border-radius:var(--input-radius); outline:none; background:var(--input-bg); color:var(--input-fg); font:inherit; line-height:calc(var(--control-height-sm) - 2px); transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
-.terminal-input input { min-width:0; flex:1; border:1px solid var(--input-border); border-radius:var(--input-radius); outline:none; background:var(--input-bg); color:var(--input-fg); padding:8px 10px; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.terminal-rename { box-sizing:border-box; width:min(320px, 45vw); height:var(--control-height-sm); padding:var(--space-xs) var(--space-sm); border:1px solid var(--input-border); border-radius:var(--input-radius); outline:none; background:var(--input-bg); color:var(--input-fg); font:inherit; line-height:calc(var(--control-height-sm) - 2px); transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.terminal-input input { min-width:0; flex:1; border:1px solid var(--input-border); border-radius:var(--input-radius); outline:none; background:var(--input-bg); color:var(--input-fg); padding:var(--space-sm) var(--space-sm); font:12px ui-monospace,SFMono-Regular,Menlo,monospace; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .terminal-rename:focus,
 .terminal-input input:focus { background:var(--input-bg-focus); border-color:var(--input-border-focus); }
 .terminal-input input::placeholder { color:var(--input-placeholder); opacity:1; }

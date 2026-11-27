@@ -1,3 +1,4 @@
+import { readCanvasContactRefs } from './canvas-contact-ref.js'
 import { sql, type Kysely, type Selectable, type Transaction } from 'kysely'
 import { dataContext } from '../contracts/index.js'
 import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
@@ -12,7 +13,10 @@ function parseObject(value: unknown) { if (typeof value === 'string') { try { va
 export function canvasItemSnapshot(row: Selectable<MindCanvasItemTable>) { return { id: Number(row.id), canvas_id: Number(row.canvas_id), node_id: Number(row.node_id), x: Number(row.x), y: Number(row.y), w: row.w === null ? null : Number(row.w), h: row.h === null ? null : Number(row.h), z: Number(row.z), collapsed: Boolean(row.collapsed), data_json: row.data_json, deleted_at: row.deleted_at === null ? null : iso(row.deleted_at) } }
 export async function canvasItemResponse(tx: Transaction<Database>, owner: string, item: Selectable<MindCanvasItemTable>, node: Selectable<MindNodeTable>) {
   const event = node.ref_type === 'event' && node.ref_id !== null ? (await sql<{ date: string; time: string | null; end_time: string | null; description: string | null }>`SELECT date, time, end_time, description FROM calendar_events WHERE id=${node.ref_id} AND user_id=${owner} AND deleted_at IS NULL LIMIT 1`.execute(tx)).rows[0] : undefined
-  return { id: Number(item.id), canvasId: Number(item.canvas_id), nodeId: Number(item.node_id), x: Number(item.x), y: Number(item.y), w: item.w === null ? null : Number(item.w), h: item.h === null ? null : Number(item.h), z: Number(item.z), collapsed: Boolean(item.collapsed), data: parseObject(item.data_json), refData: event ? { date: event.date, time: event.time, endTime: event.end_time, description: event.description } : null,
+  const contact = node.ref_type === 'client' && node.ref_id !== null
+    ? (await readCanvasContactRefs(tx, owner, [Number(node.ref_id)])).get(Number(node.ref_id))
+    : undefined
+  return { id: Number(item.id), canvasId: Number(item.canvas_id), nodeId: Number(item.node_id), x: Number(item.x), y: Number(item.y), w: item.w === null ? null : Number(item.w), h: item.h === null ? null : Number(item.h), z: Number(item.z), collapsed: Boolean(item.collapsed), data: parseObject(item.data_json), refData: event ? { date: event.date, time: event.time, endTime: event.end_time, description: event.description } : contact ?? null,
     node: { id: Number(node.id), kind: node.kind, title: node.title, contentMd: node.content_md ?? '', color: node.color, capturedAt: iso(node.captured_at), version: Number(node.version), createdAt: iso(node.created_at), updatedAt: iso(node.updated_at), deletedAt: node.deleted_at === null ? null : iso(node.deleted_at), refType: node.ref_type, refId: node.ref_id === null ? null : Number(node.ref_id), refSnapshot: node.ref_snapshot === null ? null : parseObject(node.ref_snapshot) }, createdAt: iso(item.created_at), updatedAt: iso(item.updated_at) }
 }
 /** 锁定画布以串行化条目添加和恢复，并将 Undo 纳入同一事务。 */

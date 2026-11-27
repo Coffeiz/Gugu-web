@@ -44,7 +44,7 @@ export function createSqliteAgentRunStore<C>(
     now?: () => number
     onSubagentDeliveryCommitted?(parent: RunIdentity): void | Promise<void>
     applyPreparedContext?: (tx: Transaction<Database>, identity: RunIdentity, context: C) => Promise<void>
-    persistPrivateContext?: (tx: Transaction<Database>, identity: RunIdentity, next: RunCheckpoint<C>, previous: RunCheckpoint<C> | null) => Promise<void>
+    persistPrivateContext?: (tx: Transaction<Database>, identity: RunIdentity, next: RunCheckpoint<C>, previous: RunCheckpoint<C> | null) => Promise<void | boolean>
     writeHistory: (tx: Transaction<Database>, identity: RunIdentity, history: NonNullable<RunCommit<C>['history']>, checkpoint: RunCheckpoint<C>) => Promise<void>
   },
 ): RunStore<C> & Required<Pick<RunStore<C>, 'isSubagentPending'>> & { readEventsAfter(identity: RunIdentity, sequence: number): Promise<readonly RunEvent[]> } {
@@ -166,15 +166,16 @@ export function createSqliteAgentRunStore<C>(
         if (terminal && !await deliveries.commitTerminal(tx, identity, terminal.parent, terminal.outcome))
           throw new RunStoreRejected('conflict')
         await appendEvents(tx, identity, change.events)
+        let retainContinuation = false
         if (options.applyPreparedContext || options.persistPrivateContext) {
           const previous = decode(identity, current)
           if (previous.context === null && checkpoint.context !== null)
             await options.applyPreparedContext?.(tx, identity, checkpoint.context)
-          await options.persistPrivateContext?.(tx, identity, checkpoint, previous)
+          retainContinuation = await options.persistPrivateContext?.(tx, identity, checkpoint, previous) === true
         }
         if (change.history !== null) await options.writeHistory(tx, identity, change.history, checkpoint)
         if (terminalRunStates.has(checkpoint.status)) {
-          await sql`DELETE FROM desktop_agent_continuations
+          if (!retainContinuation) await sql`DELETE FROM desktop_agent_continuations
             WHERE user_id=${owner} AND session_id=${session} AND run_id=${run}`.execute(tx)
           await sql`UPDATE conversation_sessions SET active_run_id=NULL,execution_state='idle'
             WHERE id=${session} AND user_id=${owner} AND active_run_id=${run}`.execute(tx)

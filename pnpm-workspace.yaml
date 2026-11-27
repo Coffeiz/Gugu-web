@@ -1,5 +1,7 @@
 packages:
+  - "packages/scheduler"
   - "packages/core"
+  - "packages/email"
   - "packages/auth"
   - "packages/users"
   - "packages/desktop-contracts"
@@ -29,6 +31,7 @@ allowBuilds:
   vue-demi: true
 
 overrides:
+  '@tanstack/vue-virtual>@tanstack/virtual-core': 3.19.2
   '@vitest/mocker': 4.1.12
   brace-expansion@2: 2.1.7
   brace-expansion@5: 5.0.12

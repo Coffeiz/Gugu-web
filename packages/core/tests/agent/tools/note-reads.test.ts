@@ -8,8 +8,8 @@ import { dataContext } from '../../../src/contracts/index.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
 import { createAgentMindReader, extractMindReferences } from '../../../src/mind/note-read.js'
-import { createNoteReadTools } from '../../../src/agent/tools/note.js'
-import { createSearchToolsTool } from '../../../src/agent/tools/meta.js'
+import { createNoteReadTools } from '../../../src/agent/tools/note/index.js'
+import { createSearchToolsTool } from '../../../src/agent/tools/meta/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect, fixture } from '../run/fixtures.js'
 
@@ -89,6 +89,7 @@ it('引用解析按正文顺序去重，代码围栏/行内代码/转义不冒�
  const ref='[[project:１|真实]]'
  expect(extractMindReferences(ref+' '+ref+'\n'+tick+ref+tick+'\n~~~\n'+ref+'\n~~~\n\\[[file:2|转义]] \\\\[[event:3|真实]]')).toEqual([{type:'project',id:1},{type:'event',id:3}])
  expect(extractMindReferences(tick.repeat(4)+'\n[[file:1|示例]]\n'+tick.repeat(3)+'\n[[file:2|仍在围栏]]\n'+tick.repeat(4)+'\n[[file:3|真实]]')).toEqual([{type:'file',id:3}])
+ expect(extractMindReferences('[[skill:u7|技能]] [[skill:skill-demo|技能]] [[project:demo|无效]]')).toEqual([{type:'skill',id:'u7'},{type:'skill',id:'skill-demo'}])
 })
 it('权限和组开关先于SQL；查询后取消不发布正文，缺表报安全错误，不伪造空引用',async()=>{
  await registry.capabilities(identity());allowed=false

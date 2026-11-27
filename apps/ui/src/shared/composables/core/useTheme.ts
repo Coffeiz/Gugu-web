@@ -52,12 +52,16 @@ function resolve(value: ThemePreference): ResolvedTheme {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
-function apply() {
-  resolved.value = resolve(preference.value)
+function applyResolvedTheme(theme: ResolvedTheme) {
+  resolved.value = theme
   document.documentElement.dataset.theme = resolved.value
   document.documentElement.dataset.family = family.value
   document.documentElement.dataset.palette = palette.value
   document.documentElement.style.colorScheme = resolved.value
+}
+
+function apply() {
+  applyResolvedTheme(resolve(preference.value))
 }
 
 function watchSystem() {
@@ -78,13 +82,9 @@ function hydrate() {
 export function initializeTheme(forcedTheme?: ResolvedTheme, forcedFamily?: ThemeFamily, forcedPalette?: ThemePalette) {
   hydrate()
   if (forcedTheme) {
-    resolved.value = forcedTheme
     if (forcedFamily) family.value = forcedFamily
     if (forcedPalette) palette.value = normalizePalette(forcedPalette)
-    document.documentElement.dataset.theme = forcedTheme
-    document.documentElement.dataset.family = family.value
-    document.documentElement.dataset.palette = palette.value
-    document.documentElement.style.colorScheme = forcedTheme
+    applyResolvedTheme(forcedTheme)
     mediaQuery?.removeEventListener('change', apply)
     mediaQuery = null
     return

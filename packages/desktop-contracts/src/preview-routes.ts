@@ -10,6 +10,7 @@ export const workspacePreviewRoutes = [
     endpoint: '/__desktop-preview/calendar',
     methods: ['calendar', 'createCalendarEvent', 'updateCalendarEvent', 'deleteCalendarEvent', 'undoPreview', 'undoApply', 'undoRedo', 'receipt'],
   },
+  { endpoint: '/__desktop-preview/contacts', methods: ['clients', 'clientRelated', 'createClient', 'renameClient', 'deleteClient'] },
   { endpoint: '/__desktop-preview/schedules', methods: ['scheduleTask'] },
   {
     endpoint: '/__desktop-preview/projects',
@@ -31,11 +32,14 @@ export const filesPreviewRoute = { endpoint: '/__desktop-preview/files', methods
 
 export const resourcesPreviewRoute = { endpoint: '/__desktop-preview/resources', methods: ['resources'] } as const
 
+export const mailPreviewRoute = { endpoint: '/__desktop-preview/mail', methods: ['mail'] } as const
+
 export const desktopPreviewRoutes = [
   { endpoint: '/__desktop-preview/logs', methods: ['readLogs'] },
-  { endpoint: '/__desktop-preview/preferences', methods: ['appearance', 'updateAppearance', 'agentPreference', 'personalSmtp', 'remoteAccount', 'remoteLogin', 'remoteLogout', 'remoteByok', 'agentUsage', 'dataInventory', 'exportBusinessArchive', 'preflightBusinessArchive', 'applyBusinessArchive', 'clearAgentMemory', 'clearAgentAttachments'] },
+  { endpoint: '/__desktop-preview/preferences', methods: ['appearance', 'updateAppearance', 'onboarding', 'agentPreference', 'deviceInfo', 'remoteAccount', 'remoteLogin', 'remoteLogout', 'remoteByok', 'agentUsage', 'dataInventory', 'exportBusinessArchive', 'preflightBusinessArchive', 'applyBusinessArchive', 'clearAgentMemory', 'clearAgentAttachments'] },
   filesPreviewRoute,
   { endpoint: '/__desktop-preview/im', methods: ['telegramGateway', 'wechatPairing', 'feishuPairing', 'qqPairing'] },
   resourcesPreviewRoute,
+  mailPreviewRoute,
   ...workspacePreviewRoutes,
 ] as const satisfies readonly { endpoint: string; methods: readonly (keyof DesktopBridge)[] }[]

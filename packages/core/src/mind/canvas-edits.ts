@@ -1,3 +1,5 @@
+import { MindNoteContentError, replaceUniqueMindText } from './note-content.js'
+import { noteColorValue, type NoteColorKey } from './note-colors.js'
 import { createMindCanvasRelationCreate, type MindRelationCreateRuntime } from './relation-create.js'
 import { createSqlMindCanvasRelationCreateRuntime } from './relation-create-sql.js'
 import { recommendedCanvasSides } from './canvas-layout.js'
@@ -25,13 +27,20 @@ import type { CanvasItemUpdateRuntime } from './canvas-item-update.js'
 import type { MindCanvasItemRemoveRuntime } from './canvas-item-remove.js'
 
 export interface CanvasLayoutEdit { item_id: number; x?: number; y?: number; z?: number; collapsed?: boolean; width?: number; height?: number; position?: CanvasBatchOperation['position'] }
-export interface CanvasNoteEdit { node_id: number; title?: string; content?: string; color?: 'amber'|'coral'|'blue'|'teal' }
+export interface CanvasNoteEdit {
+  node_id: number
+  title?: string
+  content?: string
+  color?: NoteColorKey
+  expected_version?: number
+  find_replace?: { find: string; replace: string }
+}
 export interface CanvasBatchOperation {
   kind: 'create_note'|'add_node'|'update_item'|'remove_item'|'delete_note'|'connect'
   ref_type?: 'project'|'file'|'event'; ref_id?: number | string; node_id?: number
   item_id?: number; source_node_id?: number; target_node_id?: number
   source_side?: 'left'|'right'; target_side?: 'left'|'right'
-  title?: string; content?: string; color?: 'amber'|'coral'|'blue'|'teal'
+  title?: string; content?: string; color?: NoteColorKey
   x?: number; y?: number; width?: number; height?: number; z?: number; collapsed?: boolean
   position?: import('./canvas-layout.js').CanvasPosition
   [key:string]:unknown
@@ -114,8 +123,20 @@ async function updateNotes(ctx:EditContext,intent:Extract<CanvasEditIntent,{acti
     if(ctx.backend==='postgres')query=query.forUpdate()
     const before=await query.executeTakeFirst();ctx.signal.throwIfAborted()
     if(!before)throw new MindCanvasNoteMutationError('找不到这条画布便签',404)
-    const updated=await runtime.update(ctx.canonical,edit.node_id,{version:Number(before.version),
-      ...(edit.title===undefined?{}:{title:strip(edit.title)||'新便签'}),...(edit.content===undefined?{}:{contentMd:edit.content}),...(edit.color===undefined?{}:{color:edit.color})},ctx.context)
+    const version = Number(before.version)
+    if (edit.expected_version !== undefined && edit.expected_version !== version)
+      throw new MindCanvasNoteMutationError('画布便签版本已变化，请重新读取后再修改', 409)
+    let content = edit.content
+    if (edit.find_replace) {
+      try {
+        content = replaceUniqueMindText(before.content_md ?? '', edit.find_replace.find, edit.find_replace.replace)
+      } catch (error) {
+        if (error instanceof MindNoteContentError) throw new MindCanvasNoteMutationError(error.message, 422)
+        throw error
+      }
+    }
+    const updated=await runtime.update(ctx.canonical,edit.node_id,{version,
+      ...(edit.title===undefined?{}:{title:strip(edit.title)||'新便签'}),...(content===undefined?{}:{contentMd:content}),...(edit.color===undefined?{}:{color:noteColorValue(edit.color)})},ctx.context)
     ctx.signal.throwIfAborted()
     result.changed ||= updated.changed
     const row=await ctx.tx.selectFrom('mind_nodes').selectAll().where('id','=',edit.node_id).where('user_id','=',ctx.owner).executeTakeFirstOrThrow()

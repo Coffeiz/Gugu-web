@@ -6,11 +6,11 @@ import { dataContext } from '../../../src/contracts/index.js'
 import { recordForwardUndoOperation } from '../../../src/data/undo.js'
 import { databaseTime, projectRecord } from '../../../src/data/codec.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
-import { createProjectDeleteTool } from '../../../src/agent/tools/projects.js'
+import { createProjectDeleteTool } from '../../../src/agent/tools/projects/index.js'
 import { createConfirmationGate, type ConfirmationIntent } from '../../../src/agent/tools/confirmation.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { InteractionResolution } from '../../../src/agent/models.js'
-import type { ProjectDeleteRuntime } from '../../../src/agent/tools/projects.js'
+import type { ProjectDeleteRuntime } from '../../../src/agent/tools/projects/index.js'
 
 it('批删在确认后共享一个事务和 Undo；级联目标变动时回滚，已提交的调用只重放结果', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-agent-project-delete-'))

@@ -1,9 +1,30 @@
 import { createHash } from 'node:crypto'
 import { sql, type Kysely, type Transaction } from 'kysely'
 import { dataContext } from '../../contracts/index.js'
+import { utc } from '../../shared/timestamps.js'
 import type { RagDocument } from './contracts.js'
 
-type Existing = { id:number; source_id:string; document_version:string; chunk_index:number; deleted_at:unknown }
+type Projection = {
+ scope_type: string; scope_id: string; platform: string; bot_id: string; group_id: string
+ document_id: string; parent_document_id: string; chunk_count: number; title: string; summary: string
+ content: string; content_hash: string; metadata_json: string; source_updated_at: string | null
+}
+type Existing = Projection & { id:number; source_id:string; document_version:string; chunk_index:number; deleted_at:unknown }
+
+function sameProjection(row: Existing, projection: Projection, backend: 'postgres' | 'sqlite'): boolean {
+ if (row.deleted_at !== null) return false
+ for (const field of Object.keys(projection) as (keyof Projection)[]) {
+  if (field === 'source_updated_at' && backend === 'postgres' && projection.source_updated_at !== null) {
+   try {
+    if (row.source_updated_at !== utc(projection.source_updated_at)) return false
+   } catch {
+    // 交给数据库处理其接受的其他日期格式。
+    return false
+   }
+  } else if (row[field] !== projection[field]) return false
+ }
+ return true
+}
 export type RagIndexWriteFence = { before(tx:Transaction<any>):Promise<void>; after(tx:Transaction<any>):Promise<void> }
 const key = (source:string, version:string, chunk:number) => JSON.stringify([source,version,chunk])
 
@@ -36,19 +57,35 @@ export function createSqlRagPersistentIndexWriter(db:Kysely<any>,backend:'postgr
    }
    if(!stamp)throw new Error('RAG 索引时间无效')
    const whereSource=sourceId===null?sql``:sql`AND source_id=${sourceId}`
-   const result=await sql<Existing>`SELECT id,source_id,document_version,chunk_index,deleted_at FROM knowledge_index_entries WHERE owner_user_id=${owner} AND source_type=${sourceType} ${whereSource}`.execute(trx)
+   const sourceUpdatedAt=backend==='postgres'
+    ? sql`replace(to_char(source_updated_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS.US'),'.000000','') || '+00:00'`
+    : sql`source_updated_at`
+   const result=await sql<Existing>`SELECT id,source_id,document_version,chunk_index,deleted_at,
+    scope_type,scope_id,platform,bot_id,group_id,document_id,parent_document_id,chunk_count,title,summary,
+    CASE WHEN deleted_at IS NULL THEN content ELSE '' END AS content,content_hash,
+    CASE WHEN deleted_at IS NULL THEN CAST(metadata_json AS TEXT) ELSE '' END AS metadata_json,
+    ${sourceUpdatedAt} AS source_updated_at
+    FROM knowledge_index_entries WHERE owner_user_id=${owner} AND source_type=${sourceType} ${whereSource}`.execute(trx)
    const existing=new Map(result.rows.map(row=>[key(row.source_id,row.document_version,Number(row.chunk_index)),row]))
    let inserted=0,updated=0,deleted=0
    for(const doc of documents){
     signal?.throwIfAborted()
     const row=existing.get(key(doc.source_id!,doc.document_version!,doc.chunk_index!)),content=doc.content??''
-    const hash=createHash('sha256').update(content.trim(),'utf8').digest('hex'),metadata=JSON.stringify(doc.metadata??{})
-    const values={scope:doc.scope_type,scopeId:doc.scope_id||'',platform:doc.platform||'',bot:doc.bot_id||'',group:doc.group_id||'',parent:doc.parent_id!,count:doc.chunk_count!,title:doc.title||'',summary:doc.summary||'',content,hash,metadata,updatedAt:doc.updated_at&&Number.isFinite(Date.parse(doc.updated_at))?doc.updated_at:null}
+    const projection: Projection = {
+     scope_type:doc.scope_type,scope_id:doc.scope_id||'',platform:doc.platform||'',bot_id:doc.bot_id||'',group_id:doc.group_id||'',
+     document_id:doc.parent_id!,parent_document_id:doc.parent_id!,chunk_count:doc.chunk_count!,title:doc.title||'',summary:doc.summary||'',
+     content,content_hash:createHash('sha256').update(content.trim(),'utf8').digest('hex'),metadata_json:JSON.stringify(doc.metadata??{}),
+     source_updated_at:doc.updated_at&&Number.isFinite(Date.parse(doc.updated_at))?doc.updated_at:null,
+    }
     if(row){
-     await sql`UPDATE knowledge_index_entries SET scope_type=${values.scope},scope_id=${values.scopeId},platform=${values.platform},bot_id=${values.bot},group_id=${values.group},document_id=${values.parent},parent_document_id=${values.parent},chunk_count=${values.count},title=${values.title},summary=${values.summary},content=${values.content},content_hash=${values.hash},metadata_json=${values.metadata},source_updated_at=${values.updatedAt},deleted_at=NULL,indexed_at=${stamp} WHERE id=${row.id} AND owner_user_id=${owner}`.execute(trx)
+     // 相同投影不推进索引水位，也不触发快照失效。
+     if(sameProjection(row,projection,backend))continue
+     await trx.updateTable('knowledge_index_entries').set({...projection,deleted_at:null,indexed_at:stamp})
+      .where('id','=',row.id).where('owner_user_id','=',owner).execute()
      updated++
     }else{
-     await sql`INSERT INTO knowledge_index_entries(owner_user_id,source_type,source_id,scope_type,scope_id,platform,bot_id,group_id,document_id,parent_document_id,document_version,chunk_index,chunk_count,title,summary,content,content_hash,metadata_json,source_updated_at,indexed_at,deleted_at) VALUES(${owner},${sourceType},${doc.source_id},${values.scope},${values.scopeId},${values.platform},${values.bot},${values.group},${values.parent},${values.parent},${doc.document_version},${doc.chunk_index},${values.count},${values.title},${values.summary},${values.content},${values.hash},${values.metadata},${values.updatedAt},${stamp},NULL)`.execute(trx)
+     await trx.insertInto('knowledge_index_entries').values({...projection,owner_user_id:owner,source_type:sourceType,
+      source_id:doc.source_id!,document_version:doc.document_version!,chunk_index:doc.chunk_index!,indexed_at:stamp,deleted_at:null}).execute()
      inserted++
     }
    }

@@ -74,12 +74,16 @@ it('桌面运行被 Core 确认后立即发送 Web SSE 的 session_id 事件', a
 
 it('桌面 /workspace 命令通过 Core 绑定当前会话并投影完成消息', async () => {
   const directoryId = 'desktop:11111111-1111-4111-8111-111111111111'
+  const createdAt = '2026-01-01T00:00:00.000Z'
+  const persisted = [
+    { id: 43, role: 'user', text: '/workspace bind 合成目录', createdAt, clientMessageId: 'workspace-client' },
+    { id: 44, role: 'assistant', text: '已将当前会话绑定到工作区「合成目录」。', createdAt },
+  ]
   const request = vi.fn(async <T,>(method: string, params?: Record<string, unknown>): Promise<T> => {
     if (method === 'agent.sessions.setWorkspace') return { workspace: {
       workspace_id: directoryId, workspace_name: '合成目录',
     } } as T
-    if (method === 'agent.sessions.append') return { userMessageId: 43 } as T
-    if (method === 'agent.sessions.messages') return [] as T
+    if (method === 'agent.sessions.append') return { userMessageId: 43, messages: persisted } as T
     throw new Error(`unexpected request ${method} ${JSON.stringify(params)}`)
   })
   const model = { resolveRunModelSelection: vi.fn() } as unknown as ReturnType<typeof createDesktopAgentModelService>
@@ -87,9 +91,10 @@ it('桌面 /workspace 命令通过 Core 绑定当前会话并投影完成消息'
   const events: unknown[] = []
   const operationId = '00000000-0000-4000-8000-000000000004'
 
-  await handlers[DESKTOP_CHANNELS.agentSessions]({ action: 'send', id: 7, text: '/workspace bind 合成目录',
+  const result = await handlers[DESKTOP_CHANNELS.agentSessions]({ action: 'send', id: 7, text: '/workspace bind 合成目录',
     operationId, clientMessageId: 'workspace-client', stream: true }, event => events.push(event))
 
+  expect(result).toEqual(persisted)
   expect(request).toHaveBeenCalledWith('agent.sessions.setWorkspace', { id: 7, action: 'bind', directoryId: '合成目录' })
   expect(request).toHaveBeenCalledWith('agent.sessions.append', {
     id: 7, text: '/workspace bind 合成目录', reply: '已将当前会话绑定到工作区「合成目录」。', clientId: 'workspace-client',

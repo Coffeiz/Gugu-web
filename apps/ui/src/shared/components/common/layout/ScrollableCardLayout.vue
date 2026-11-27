@@ -1,6 +1,6 @@
 <template>
   <div class="scrollable-card-layout">
-    <PageToolbar v-if="actionLabel || slots.actions" class="scrollable-card-layout__toolbar desktop-page-toolbar">
+    <PageToolbar v-if="actionLabel || slots.actions" class="scrollable-card-layout__toolbar">
       <slot name="actions">
         <ActionButton class="page-toolbar__action" fit @click="$emit('action')">
           <Icon name="action.add" :size="14" />{{ actionLabel }}
@@ -8,9 +8,9 @@
       </slot>
     </PageToolbar>
     <div class="scrollable-card-layout__panel" :class="[panelClass, { 'glass-card': actionLabel || slots.actions }]">
-      <slot name="notice" />
       <div class="scrollable-card-layout__viewport scroll-surface scroll-surface--compact"
         :class="{ 'has-empty': slots.empty }">
+        <slot name="notice" />
         <div v-if="slots.empty" class="scrollable-card-layout__first-use"><slot name="empty" /></div>
         <slot v-else />
       </div>
@@ -40,9 +40,7 @@ const slots = useSlots()
 }
 
 .scrollable-card-layout__toolbar {
-  min-height: var(--topbar-height);
   justify-content: flex-start;
-  padding: var(--space-xs) var(--space-lg);
   margin-bottom: var(--space-md);
 }
 
@@ -54,21 +52,11 @@ const slots = useSlots()
   min-width: 0;
 }
 
-.scrollable-card-layout__panel.glass-card {
-  padding-inline: var(--space-lg);
-}
-
-.scrollable-card-layout__panel.glass-card > .scrollable-card-layout__viewport {
-  padding-block: var(--space-lg);
-}
-
 .scrollable-card-layout__viewport {
-  --scrollbar-overlay-right-offset: 8px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  margin: 0 -8px;
-  padding: 32px 8px 38px;
+  padding: var(--page-content-inset);
 }
 
 .scrollable-card-layout__viewport.has-empty {
@@ -88,7 +76,7 @@ const slots = useSlots()
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-md);
   color: var(--content-secondary);
 }
 

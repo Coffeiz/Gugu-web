@@ -27,7 +27,7 @@
 
       <p v-if="error" class="telegram-token-error" role="alert">{{ error }}</p>
 
-      <div class="telegram-token-actions">
+      <div class="telegram-token-actions app-card-actions">
         <ActionButton variant="secondary" fit :disabled="busy" @click="emit('close')">
           {{ t('common.actions.cancel') }}
         </ActionButton>
@@ -70,7 +70,7 @@ function submit() {
 </script>
 
 <style scoped>
-.telegram-token-dialog { display:flex; flex-direction:column; gap:var(--space-lg); padding:var(--space-xl); }
+.telegram-token-dialog { display:flex; flex-direction:column; gap:var(--space-lg); --card-actions-inset: var(--space-xl); padding: var(--space-xl) var(--card-actions-inset) 0; }
 .telegram-token-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-md); }
 .telegram-token-heading h2 { margin:0; color:var(--content-primary); font-size:var(--font-size-lg); font-weight:var(--font-weight-semibold); }
 .telegram-token-heading p { margin:var(--space-xs) 0 0; color:var(--content-secondary); font-size:var(--font-size-sm); line-height:var(--line-height-body); }

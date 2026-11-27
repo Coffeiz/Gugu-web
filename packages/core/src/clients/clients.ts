@@ -1,15 +1,19 @@
-import type { Fields } from '../contracts/index.js'
+import type { ClientRecord, ClientSummary, Fields } from '../contracts/index.js'
 import { invalid, length, object, onlyFields, strip } from '../shared/values.js'
+
+export function clientSummary({ id, name, email, phone, address, notes }: ClientRecord): ClientSummary {
+  return { id, name, email, phone, address, notes }
+}
 
 export function prepareClientFields(fields: Fields, creating = false): Fields {
   object(fields)
-  onlyFields(fields, ['name', 'contact', 'email', 'phone', 'notes'])
+  onlyFields(fields, ['name', 'email', 'phone', 'address', 'notes'])
   if (creating && !('name' in fields)) invalid('联系人名称不能为空')
   const limits: Record<string, number | null> = {
     name: 200,
-    contact: 200,
     email: 300,
     phone: 50,
+    address: 500,
     notes: null,
   }
   for (const [key, value] of Object.entries(fields)) {

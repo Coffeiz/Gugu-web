@@ -55,8 +55,9 @@ function position() {
   if (props.centered || props.position) {
     const width = popupRef.value?.offsetWidth ?? 0
     const height = popupRef.value?.offsetHeight ?? 0
-    const x = props.centered ? (window.innerWidth - width) / 2 : props.position!.x
-    const y = props.centered ? (window.innerHeight - height) / 2 : props.position!.y
+    const abovePoint = !props.centered && props.placement === 'top'
+    const x = props.centered ? (window.innerWidth - width) / 2 : props.position!.x - (abovePoint ? width / 2 : 0)
+    const y = props.centered ? (window.innerHeight - height) / 2 : props.position!.y - (abovePoint ? height + 8 : 0)
     const left = Math.max(6, Math.min(x, window.innerWidth - width - 6))
     const top = Math.max(6, Math.min(y, window.innerHeight - height - 6))
     popupStyle.value = { ...popupStyle.value, minWidth: undefined, ...props.style, left: `${left}px`, top: `${top}px`, zIndex: popupZ.value || nextZ() }
@@ -89,6 +90,7 @@ function observePopupSize() {
   if (!popupRef.value || typeof ResizeObserver === 'undefined') return
   resizeObserver = new ResizeObserver(() => refresh())
   resizeObserver.observe(popupRef.value)
+  if (props.anchor) resizeObserver.observe(props.anchor)
 }
 watch(() => props.style, value => {
   const next = { ...popupStyle.value, ...value }
@@ -100,6 +102,7 @@ watch(() => props.style, value => {
 watch(() => [props.anchor, props.position, props.placement, props.centered], () => {
   if (props.show) refresh()
 })
+watch(() => props.anchor, () => { if (props.show) void nextTick(observePopupSize) })
 watch(() => props.show, value => {
   unregister?.(); unregister = value ? registerPopover(setPopupZ) : null
   if (value) {

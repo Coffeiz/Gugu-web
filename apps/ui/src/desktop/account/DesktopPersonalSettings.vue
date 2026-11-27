@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import DesktopLogs from './DesktopLogs.vue'
+import DesktopUpdatePane from './DesktopUpdatePane.vue'
 import DesktopAuxiliaryModels from './DesktopAuxiliaryModels.vue'
 import ProfileModal from '@/components/common/profile/ProfileModal.vue'
+import ProfileDevicePane from '@/components/common/profile/ProfileDevicePane.vue'
 import { hasDesktopAgentModelBridge, hasDesktopAuxiliaryModelBridge, requestDesktopAgentModel } from './agent-model-transport'
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { hasDesktopTelegramGateway, requestDesktopTelegram, type DesktopTelegramSnapshot } from '@desktop/bridge/bridge'
+import { callDesktopBridge, hasDesktopTelegramGateway, requestDesktopTelegram, type DesktopTelegramSnapshot } from '@desktop/bridge/bridge'
 import DesktopTelegramGateway from '../im/connect/platforms/telegram/DesktopTelegramGateway.vue'
 import DesktopAgentModel from './DesktopAgentModel.vue'
+import DesktopFileOpenSettings from './DesktopFileOpenSettings.vue'
 import DesktopWorkspaceSettings from './DesktopWorkspaceSettings.vue'
 import RemoteAccountPane from './index.vue'
 import { desktopImSettingsAdapter } from '../im/connect/adapter'
@@ -16,6 +19,7 @@ defineProps<{ show: boolean; connected: boolean; initialNav: 'info' | 'prefs'; r
 defineEmits<{ close: [] }>()
 
 const { t } = useI18n()
+const loadDesktopDevice = () => callDesktopBridge(bridge => bridge.deviceInfo())
 const missingModel = ref(false)
 const telegramSnapshot = ref<DesktopTelegramSnapshot>()
 const connectTelegram = hasDesktopTelegramGateway() ? async (token: string) => {
@@ -31,11 +35,13 @@ onMounted(async () => {
 
 <template>
   <ProfileModal desktop :desktop-im-adapter="desktopImSettingsAdapter" :connect-telegram="connectTelegram" :show="show" :initial-nav="initialNav" @close="$emit('close')" :refresh-imported-data="refreshImportedData">
+    <template #device-info><ProfileDevicePane :load-desktop-device="loadDesktopDevice" /></template>
     <template #local-status>
+      <DesktopUpdatePane />
       <div class="pm-sep"></div>
       <section class="pm-section">
-        <h3 class="pm-section-label">本地服务</h3>
-        <p class="pm-field-hint" role="status">{{ connected ? 'Core 已连接，数据保存在当前设备。' : '正在连接本地服务。' }}</p>
+        <h3 class="pm-section-label">{{ $t('pageUi.localService') }}</h3>
+        <p class="pm-field-hint" role="status">{{ connected ? $t('pageUi.coreConnectedHint') : $t('pageUi.coreConnecting') }}</p>
       </section>
     </template>
     <template #telegram-status="{ setConfigured }">
@@ -49,6 +55,7 @@ onMounted(async () => {
       <div v-if="hasDesktopAgentModelBridge() && hasDesktopAuxiliaryModelBridge()" class="pm-sep" aria-hidden="true"></div>
       <DesktopAuxiliaryModels />
     </template>
+    <template #desktop-file-settings><DesktopFileOpenSettings /></template>
     <template #desktop-workspaces><DesktopWorkspaceSettings /></template>
     <template #desktop-logs><DesktopLogs /></template>
     <template #remote><RemoteAccountPane /></template>

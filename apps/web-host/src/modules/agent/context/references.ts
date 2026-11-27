@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { formatAgentReferenceBlock } from '@gugu/core/agent'
+import { formatAgentReferenceBlock, selectionReferenceFields } from '@gugu/core/agent'
 import { CoreError } from '@gugu/core'
+import { readFileSkillReference } from '@gugu/core/skills'
 import { readProjectObjectLocation } from '../../files/paths.js'
 import { createWorkspaceFileReads, type FileDirectory } from '../../workspaces/files.js'
 import type { PoolClient } from 'pg'
@@ -46,11 +47,20 @@ export async function resolveAgentChatReferences(client: Pick<PoolClient, 'query
       try {
         const file = await createWorkspaceFileReads(client, storageRoot).reference(owner, directory, relativePath, identity, kind)
         blocks.push(formatAgentReferenceBlock({ kind, id: key }, { 名称: file.label, 相对路径: relativePath,
+          ...(kind === 'file' ? selectionReferenceFields(ref.selection) : {}),
           链接: 'gugu://open-object/' + kind + '/' + file.location.value }, file.location))
       } catch (error) {
         if (!(error instanceof CoreError) || error.code !== 'not_found') throw error
         blocks.push(formatAgentReferenceBlock({ kind, id: key }, { 名称: typeof ref.label === 'string' ? ref.label : undefined, 状态: '引用已失效或当前环境无法读取' }))
       }
+      continue
+    }
+    if (kind === 'skill' && typeof raw === 'string' && /^[a-z0-9]/u.test(raw) && storageRoot) {
+      const skill = await readFileSkillReference(storageRoot, owner, raw)
+      if (skill) blocks.push(formatAgentReferenceBlock({ kind: 'skill', id: skill.id }, {
+        名称: skill.name, 状态: skill.enabled ? '已启用' : '已停用', 简介: skill.description,
+        目录: `/skills/${skill.storage_source}/${skill.id}`,
+      }))
       continue
     }
     if (kind === 'mcp') {
@@ -69,22 +79,21 @@ export async function resolveAgentChatReferences(client: Pick<PoolClient, 'query
       }))
       continue
     }
-    if (typeof kind !== 'string' || !['project','event','canvas_note','conversation','skill','scheduled_task'].includes(kind)) continue
-    const skillId = kind === 'skill' && typeof raw === 'string' && /^U[1-9]\d{0,15}$/.test(raw) ? raw : null
-    if (!skillId && !(typeof raw === 'number' && Number.isInteger(raw) || typeof raw === 'string' && /^\s*\+?\d+\s*$/.test(raw))) continue
+    if (typeof kind !== 'string' || !['project','client','event','canvas_note','conversation','scheduled_task'].includes(kind)) continue
+    if (!(typeof raw === 'number' && Number.isInteger(raw) || typeof raw === 'string' && /^\s*\+?\d+\s*$/.test(raw))) continue
     const id = Number(raw)
-    if (!skillId && (!Number.isSafeInteger(id) || id < 1)) continue
+    if ((!Number.isSafeInteger(id) || id < 1)) continue
     let row: Record<string, any> | undefined
     if (kind === 'conversation') row = (await client.query('SELECT m.id,m.content,s.id AS session_id,s.title FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id WHERE m.id=$1 AND s.user_id=$2', [id, owner])).rows[0]
     else {
       const queries: Record<string, string> = {
+        client: 'SELECT name,email,phone,address,notes FROM clients WHERE id=$1 AND user_id=$2',
         project: 'SELECT id,name,status,contact_name,progress,current_stage,summary,start_date,deadline FROM projects WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL',
         event: 'SELECT id,title,date,time,description FROM calendar_events WHERE id=$1 AND user_id=$2',
-        canvas_note: "SELECT id,title,content_plain FROM mind_nodes WHERE id=$1 AND user_id=$2 AND kind='canvas_note' AND deleted_at IS NULL",
-        skill: `SELECT skill_id,name,enabled,description_short FROM user_skills WHERE ${skillId ? 'skill_id' : 'id'}=$1 AND owner_id=$2`,
+        canvas_note: "SELECT id,title,content_plain,kind FROM mind_nodes WHERE id=$1 AND user_id=$2 AND kind IN ('note','canvas_note') AND deleted_at IS NULL",
         scheduled_task: 'SELECT id,name,enabled,cron,payload FROM scheduled_tasks WHERE id=$1 AND user_id=$2',
       }
-      row = (await client.query(queries[kind]!, [skillId ?? id, owner])).rows[0]
+      row = (await client.query(queries[kind]!, [id, owner])).rows[0]
     }
     if (!row) continue
     if (kind === 'project') {
@@ -96,17 +105,18 @@ export async function resolveAgentChatReferences(client: Pick<PoolClient, 'query
         开始日期: row.start_date ?? undefined, 截止日期: row.deadline ?? undefined,
       }, location))
     }
+    else if (kind === 'client') blocks.push(formatAgentReferenceBlock({ kind: 'client', id }, {
+      名称: row.name, 邮箱: row.email, 电话: row.phone, 地址: row.address, 备注: String(row.notes ?? '').slice(0, 500),
+    }))
     else if (kind === 'event') blocks.push(formatAgentReferenceBlock({ kind: 'event', id: id }, {
       标题: row.title, 日期: row.date, 时间: fallback(row.time, '全天'), 描述: fallback(row.description, '无'),
     }))
     else if (kind === 'canvas_note') blocks.push(formatAgentReferenceBlock({ kind: 'canvas_note', id: id }, {
-      标题: fallback(row.title, '无标题'), 正文: clip(row.content_plain, 900),
+      对象类别: row.kind, 标题: fallback(row.title, '无标题'), 正文: ref.selection ? undefined : clip(row.content_plain, 900),
+      ...selectionReferenceFields(ref.selection),
     }))
     else if (kind === 'conversation') blocks.push(formatAgentReferenceBlock({ kind: 'conversation', id: id }, {
       会话ID: row.session_id, 标题: row.title, 消息内容: clip(row.content, 900),
-    }))
-    else if (kind === 'skill') blocks.push(formatAgentReferenceBlock({ kind: 'skill', id: row.skill_id }, {
-      名称: row.name, 状态: row.enabled ? '已启用' : '已停用', 简介: fallback(row.description_short, '无'),
     }))
     else if (kind === 'scheduled_task') blocks.push(formatAgentReferenceBlock({ kind: 'scheduled_task', id: id }, {
       名称: row.name, 状态: row.enabled ? '已启用' : '已停用', 计划: row.cron, 任务指令: clip(row.payload, 300),

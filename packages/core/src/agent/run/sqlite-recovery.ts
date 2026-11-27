@@ -246,12 +246,15 @@ export async function settleExclusiveSqliteAgentRuns(db: Kysely<Database>, path:
       const sealedTools = displayTimeline.filter((item, index) => item !== previous.displayTimeline[index])
       const queued = new Set(previous.displayTimeline.filter(item => item.kind === 'tool'
         && item.roundId === roundId && item.toolStatus === 'queued').map(item => item.toolCallId))
-      const remoteStatusUnknown = previous.remoteStatusUnknown || previous.phase !== 'tools' || recovered.size === 0
+      const remoteStatusUnknown = previous.remoteStatusUnknown === true
+        || Boolean(previous.unpersistedToolResult)
         || [...inflight.keys()].some(id => !recovered.has(id) && !queued.has(id))
         || displayTimeline.some(item => item.kind === 'tool' && item.toolStatus === 'unknown')
       const status = remoteStatusUnknown ? 'unknown' : 'failed'
       const message = remoteStatusUnknown ? '上次桌面运行已中断，远端执行结果无法确认'
-        : '上次桌面运行已中断，已恢复工具结果。'
+        : previous.phase === 'provider' ? '本次回复中断，可能不完整。'
+          : recovered.size ? '上次桌面运行已中断，已恢复工具结果。'
+            : '本次运行已中断。'
 
       const event: RunEvent = { id: randomUUID(), identity, sequence, round: previous.round, type: 'final',
         payload: { status, errorCode, text: message, remoteStatusUnknown, sealedTools } }

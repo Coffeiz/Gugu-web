@@ -1,8 +1,8 @@
 import { it,expect,vi } from 'vitest'
-import { createLinkButtonsTools, createWebLinkButtonDeliveryPort } from '../../../src/agent/tools/link-buttons.js'
+import { createLinkButtonsTools, createWebLinkButtonDeliveryPort } from '../../../src/agent/tools/im/link-buttons.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 it('链接按钮整组校验、可信身份、撤权及未知投递恢复',async()=>{
- const deliver=vi.fn(async(_input:Parameters<import('../../../src/agent/tools/link-buttons.js').LinkButtonDeliveryPort['deliver']>[0])=>({kind:'completed' as const,successful:true,mutated:true,value:{status:'sent',delivery:'native',button_count:1}}))
+ const deliver=vi.fn(async(_input:Parameters<import('../../../src/agent/tools/im/link-buttons.js').LinkButtonDeliveryPort['deliver']>[0])=>({kind:'completed' as const,successful:true,mutated:true,value:{status:'sent',delivery:'native',button_count:1}}))
  const reconcile=vi.fn(async()=>({kind:'unknown' as const}))
  let allowed=true
  const registry=createToolRegistry({tools:createLinkButtonsTools({deliver,reconcile}),authorize:async()=>allowed})
@@ -44,7 +44,7 @@ it('Web 按钮恢复重建相同 artifact，非 Web 身份不能伪造投递',as
 it('IM 投递使用真实持久收据防止重发，未知投递和改参不能冒充成功',async()=>{
  const {mkdtemp,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
  const {initializeSqlite,openSqliteRuntime}=await import('../../../src/data/sqlite.js')
- const {createDurableImLinkButtonDeliveryPort}=await import('../../../src/agent/tools/link-buttons.js')
+ const {createDurableImLinkButtonDeliveryPort}=await import('../../../src/agent/tools/im/link-buttons.js')
  const folder=await mkdtemp(join(tmpdir(),'gugu-link-buttons-'))
  try{
   await initializeSqlite(join(folder,'core.db'))

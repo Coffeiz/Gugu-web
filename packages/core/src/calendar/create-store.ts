@@ -4,7 +4,7 @@ import { dataContext } from '../contracts/index.js'
 import { recordForwardUndoOperation } from '../data/undo.js'
 import { databaseTime, nowUtc, utc, type Clock } from '../data/codec.js'
 import type { Database } from '../data/schema.js'
-import { enqueueScheduledTaskRagIndex } from '../scheduled-tasks/rag-index-job.js'
+import { enqueueScheduledTaskRagIndex } from '../agent/rag/scheduled-task-index-job.js'
 import { CalendarEventIdempotencyUniqueViolation, type EventCreatePublication, type EventCreateStore, type EventCreateTransaction } from './application/event-create.js'
 import type { EventCreateReminderRecord, PreparedEventReminder } from './application/event-create.js'
 

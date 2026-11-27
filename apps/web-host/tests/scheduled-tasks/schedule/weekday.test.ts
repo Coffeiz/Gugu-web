@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { crontabWeekdayToApscheduler } from '../../../src/modules/scheduled-tasks/schedule/cron.js'
+import { crontabWeekdayToApscheduler } from '@gugu/scheduler'
 
 test('标准 crontab 的数字星期与名称映射到相同星期', () => {
   assert.deepEqual(

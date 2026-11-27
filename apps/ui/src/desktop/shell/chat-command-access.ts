@@ -7,7 +7,7 @@ import { requestDesktopAgentSessions } from './agent-session-transport'
 import { cancelDesktopChatSession, getDesktopRunState } from './agent-chat'
 
 const workspaceDescription = '查看、绑定、解除或删除工作区'
-const workspaceHelp = '/workspace list　列出可绑定工作区\n/workspace show　查看当前绑定\n/workspace bind <序号或名称>　绑定指定工作区\n/workspace unlink　解除当前会话绑定\n/workspace delete <ID> [confirm]　删除工作区登记\n/workspace status　查看沙箱权限状态'
+const workspaceHelp = '/workspace list　列出可绑定工作区\n/workspace show　查看当前绑定\n/workspace bind <序号或名称>　绑定指定工作区\n/workspace personal　切回个人文件\n/workspace delete <ID> [confirm]　删除工作区登记\n/workspace status　查看沙箱权限状态'
 
 const availableCommands: readonly string[] = ['auto', 'status', 'stop', 'memory', 'forget', 'new', 'help', 'goal', 'compact', 'workspace']
 

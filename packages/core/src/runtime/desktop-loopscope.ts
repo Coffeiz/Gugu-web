@@ -14,14 +14,20 @@ export function createDesktopLoopScope(env: Readonly<NodeJS.ProcessEnv>, db: Kys
     const trace = createLoopScopeTrace({
       endpoint: env.LOOPSCOPE_ENDPOINT?.trim() || defaultLoopScopeEndpoint,
       source: 'desktop',
-      async resolveSessionTitle(sessionId) {
+      async resolveSessionMetadata(sessionId) {
         const id = Number(sessionId)
         if (!Number.isSafeInteger(id) || id <= 0 || String(id) !== sessionId) return undefined
         const owner = ownerId.replaceAll('-', '')
-        const result = await sql<{ title: string | null }>`
-          SELECT title FROM conversation_sessions WHERE id = ${id} AND user_id = ${owner}
+        const result = await sql<{ title: string | null; platform: string | null }>`
+          SELECT s.title, im.platform FROM conversation_sessions s
+          LEFT JOIN desktop_im_sessions im ON im.session_id = s.id AND im.owner_id = s.user_id
+          WHERE s.id = ${id} AND s.user_id = ${owner}
         `.execute(db)
-        return result.rows[0]?.title?.trim() || undefined
+        const session = result.rows[0]
+        if (!session) return undefined
+        const platform = session.platform
+        return { title: session.title?.trim() || undefined,
+          imPlatform: platform && ['feishu', 'qq', 'wechat', 'telegram'].includes(platform) ? platform : undefined }
       },
       transport,
     })

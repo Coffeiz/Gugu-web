@@ -61,6 +61,6 @@ export function createPostgresCurrentTurnReader(pool: Pick<Pool, 'query'>, messa
 }
 
 /** 不提供业务源或附件读取的空实现；缺失端口时不能装配生产上下文。 */
-export function createWebAgentSourceLoader(pool: Pick<Pool, 'query' | 'connect'>, ports: Omit<ContextSourcePorts, 'readSnapshot' | 'historyReader'>, observation?: AgentObservationPort) {
-  return createCanonicalSourceLoader({ ...ports, readSnapshot: createPostgresSnapshotReader(pool), historyReader: withAgentHistoryReferences(pool, createPostgresCanonicalHistoryReader(pool)) }, observation)
+export function createWebAgentSourceLoader(pool: Pick<Pool, 'query' | 'connect'>, ports: Omit<ContextSourcePorts, 'readSnapshot' | 'historyReader'>, observation?: AgentObservationPort, storageRoot?: string) {
+  return createCanonicalSourceLoader({ ...ports, readSnapshot: createPostgresSnapshotReader(pool), historyReader: withAgentHistoryReferences(pool, createPostgresCanonicalHistoryReader(pool), storageRoot) }, observation)
 }

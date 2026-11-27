@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createProjectTool } from '../../../src/agent/tools/projects.js'
-import type { ProjectCreatePort } from '../../../src/agent/tools/projects.js'
+import { createProjectTool } from '../../../src/agent/tools/projects/index.js'
+import type { ProjectCreatePort } from '../../../src/agent/tools/projects/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { ToolScope } from '../../../src/agent/tools/contracts.js'
 import { PROJECT_COLOR_PRESETS } from '../../../src/projects/colors.js'

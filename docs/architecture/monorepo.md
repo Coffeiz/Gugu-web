@@ -12,7 +12,7 @@
 | `packages/core/` | 项目、文件、笔记、日程、会话等业务用例，以及 Agent Runtime |
 | `packages/auth/` | 登录、会话状态校验和撤销流程，远程登录客户端与协议契约 |
 | `packages/users/` | 资料字段校验与归一化，资料和头像服务契约 |
-| `packages/database/` | 共享表类型、SQLite/PG 驱动或迁移入口、结构检查与持久化约束 |
+| `packages/database/` | 目标职责为 Kysely 装配、共享表类型、引擎原语和迁移 |
 | `packages/gateway/` | IM 协议适配、消息归一化及两端可复用的收发逻辑 |
 | `packages/desktop-contracts/` | Desktop 窗口与能力桥接契约 |
 | `packages/fs/`、`packages/sandbox/` | 文件系统操作与沙箱执行基础能力 |
@@ -54,7 +54,25 @@ Auth 负责凭据验证、登录和会话撤销。Users 负责显示名、头像
 
 - **Agent Runtime** 管理上下文默认组装、工具执行、Run 生命周期、checkpoint 和恢复。IM、问候、定时、反思等场景只组装各自需要的差异。见 [Agent 目录约定](../../packages/core/src/agent/README.md) 和 [场景约定](../../packages/core/src/agent/scenes/README.md)。
 - **IM Gateway** 管理平台连接与消息交付。Core 决定消息是否进入 Agent、绑定哪个会话和允许哪些工具。目标是 Web 与 Desktop 共用消息 API 和去重、领取、回执语义，现有宿主仍各有部分持久化和投递接线。
-- **Database** 当前集中管理表结构、迁移和部分数据库基础能力，业务 SQL 仍分布在 Core 和宿主。目标是先为 IM 提供共享持久化端口，由 Gateway 定义消息语义，Database 用原子写入、唯一约束和租约条件实现。Web 与 Desktop 使用独立数据库时，账号连接归属需要单独协调。见 [数据库迁移与结构约定](../../packages/database/README.md)。
+- **Database** 当前提供表类型、引擎迁移、SQLite 驱动和部分事务原语。两端使用 Database 工厂装配 Kysely。IM 收件仓储分别位于 Web Host IM Gateway 与 Core IM 模块。
+
+### 数据库目标架构
+
+```mermaid
+flowchart TB
+  W["Web Host"] -->|"注入 PostgreSQL 实例与可信身份"| L["Core · Gateway · Auth · Users"]
+  D["Desktop Host"] -->|"注入 SQLite 实例与可信身份"| L
+  L --> R["领域仓储<br/>权限、幂等、Run 与投递状态、事务边界"]
+  R -->|"Kysely 类型化读写与事务"| B["@gugu/database<br/>实例装配、表类型、引擎原语"]
+  B --> PG[("PostgreSQL")]
+  B --> SQ[("SQLite")]
+  M["共同逻辑迁移清单<br/>共享迁移主体与引擎专用步骤"] --> PG
+  M --> SQ
+```
+
+Database 管理物理表和数据库约束。领域定义 IR、字段语义和业务事务。例如 Core 在一次事务内保存消息和登记 Run，Gateway 定义 IM 收件与确认，Auth 和 Users 保留各自的领域仓储。普通查询直接使用 Kysely。跨引擎差异通过薄适配处理，例如 PostgreSQL 行锁与 SQLite 写事务。
+
+两端独立升级各自数据库。目标是每项共享变更登记一次，普通 DDL 用一份 Kysely 实现，确有差异的步骤在同一个逻辑迁移内按引擎提供。现有迁移继续负责历史基线。见 [Database 包](../../packages/database/README.md) 和 [实施计划](database-implementation.md)。
 
 ## 模型调用与可观测性
 

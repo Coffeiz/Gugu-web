@@ -6,7 +6,7 @@ import { sql } from 'kysely'
 import { beforeEach,afterEach,it,expect,vi,type Mock } from 'vitest'
 import { initializeSqlite,openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { SqlDataRuntime } from '../../../src/data/runtime.js'
-import { createCanvasEditPort,createCanvasPlacementTools,createCanvasRelationTools } from '../../../src/agent/tools/canvas.js'
+import { createCanvasEditPort,createCanvasPlacementTools,createCanvasRelationTools } from '../../../src/agent/tools/canvas/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect,fixture } from '../run/fixtures.js'
 let core:SqlDataRuntime,folder:string,owner:string,other:string,allowed:boolean
@@ -27,7 +27,7 @@ afterEach(async()=>{await core?.close();await rm(folder,{recursive:true,force:tr
 it('便签默认值、viewport/near/auto世界坐标与批量顺序，正文和尺寸真实持久化',async()=>{
  expect(await send('canvas_create_note',{canvas_id:1,title:' 题目 ',content:'# 正文',width:300,position:{anchor:'viewport_center'}})).toMatchObject({successful:true,value:{created:true,node:{kind:'canvas_note',title:'题目',position:{x:90,y:115},size:{w:300,h:null},preview:'正文'}}})
  expect(await send('canvas_create_note',{canvas_id:1,notes:[{position:{anchor:'near_node',near_node_id:1,offset_x:10,offset_y:5}},{title:'\ufeff 保留'}]},'batch')).toMatchObject({successful:true,value:{count:2,results:[{node:{position:{x:550,y:120},title:'新便签'}},{node:{position:{x:920,y:120},title:'\ufeff 保留'}}]}})
- const nodes=await rows('mind_nodes');expect(nodes).toHaveLength(3);expect(nodes[0]).toMatchObject({content_md:'# 正文',content_plain:'正文',kind:'canvas_note',color:'amber',version:1})
+ const nodes=await rows('mind_nodes');expect(nodes).toHaveLength(3);expect(nodes[0]).toMatchObject({content_md:'# 正文',content_plain:'正文',kind:'canvas_note',color:'project:amber',version:1})
  expect(nodes.every(row=>row.kind==='canvas_note')).toBe(true)
 })
 it('非法坐标不回落自动布局；后项失败、越权与Undo失败不留节点/视图/收据',async()=>{

@@ -109,7 +109,7 @@ export function useMindRefActions() {
     }
   }
 
-  async function openMindRef(refType: string, refId: number | string, options: { revealUnsupportedFile?: boolean } = {}) {
+  async function openMindRef(refType: string, refId: number | string, options: { revealUnsupportedFile?: boolean; preferPreview?: boolean } = {}) {
     if (refType === 'project' && openProjectReference) {
       const id = Number(refId)
       if (!Number.isSafeInteger(id) || id < 1) return false
@@ -131,7 +131,7 @@ export function useMindRefActions() {
       const filename = file.relativePath.split('/').at(-1)!
       const dot = filename.lastIndexOf('.')
       const ext = dot > 0 ? filename.slice(dot + 1) : ''
-      const useSystem = fileOpenAccess && shouldOpenFileInSystem(fileOpenAccess.getOpenPreference(), ext)
+      const useSystem = !options.preferPreview && fileOpenAccess && shouldOpenFileInSystem(fileOpenAccess.getOpenPreference(), ext, undefined, { audioPlayerAvailable: true })
       if (useSystem && fileOpenAccess.canOpenInSystem(file)) await fileOpenAccess.openInSystem(file)
       else if ((!useSystem || options.revealUnsupportedFile) && isPreviewable(ext)) previewStore.open({ displayName: dot > 0 ? filename.slice(0, dot) : filename, ext, workspaceFile: file })
       else if (options.revealUnsupportedFile) {
@@ -142,8 +142,18 @@ export function useMindRefActions() {
       return true
     }
     if (refType === 'canvas_note') {
+      const id = Number(refId)
+      if (!Number.isSafeInteger(id) || id < 1) return false
       try {
-        const location = await mindApi.canvasNoteLocation(Number(refId))
+        const note = await mindApi.getNote(id).catch(error => {
+          if (!isNotFound(error)) throw error
+          return null
+        })
+        if (note?.kind === 'note') {
+          await router.push({ path: '/notes', query: { object_id: String(id) } })
+          return true
+        }
+        const location = await mindApi.canvasNoteLocation(id)
         uiStore.pendingCanvasTarget = { canvasId: location.canvasId, nodeId: Number(refId) }
         await router.push('/canvases')
         return true
@@ -164,6 +174,12 @@ export function useMindRefActions() {
     }
     if (refType === 'scheduled_task') {
       await router.push({ path: '/schedules', query: { task: String(refId) } })
+      return true
+    }
+    if (refType === 'client') {
+      const id = Number(refId)
+      if (!Number.isSafeInteger(id) || id < 1 || !router.hasRoute('contacts')) return false
+      await router.push({ path: '/contacts', query: { object_id: String(id) } })
       return true
     }
     if (refType === 'folder') return openFolder(refId)

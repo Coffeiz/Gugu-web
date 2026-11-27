@@ -1,12 +1,21 @@
+import { dataContext } from '../../../packages/core/src/contracts/index.js'
+import { createDesktopChatAttachmentStore } from '../../../packages/core/src/agent/attachments/desktop-store.js'
+import { desktopFiles } from '../src/main/files/ipc.js'
+import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
+import { createUserSkillBundle, listUserSkillBundles } from '../../../packages/core/src/agent/skills/bundle-store.js'
 import { loadSqliteAgentRunSecret } from '../../../packages/core/src/agent/run/sqlite-secret.js'
 import { desktopFileReferenceKey } from '../../../packages/core/src/agent/sessions/desktop-references.js'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import { createDesktopContinuationStore } from '../../../packages/core/src/runtime/desktop-continuation.js'
+import { anthropicRequest } from '../../../packages/core/src/agent/providers/anthropic/driver.js'
+import { prepareAnthropicCache } from '../../../packages/core/src/agent/providers/cache.js'
+import type { JsonObject } from '../../../packages/core/src/agent/providers/contracts.js'
+import { minimaxPolicy } from '../../../packages/core/src/agent/providers/minimax/policy.js'
 import { createServer, type Server } from 'node:http'
 import { createHash, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sql } from '../../../packages/core/node_modules/kysely/dist/index.js'
@@ -17,7 +26,7 @@ import { resolveImActor } from '../../../packages/core/src/im/access.js'
 import { createDesktopLoopScope } from '../../../packages/core/dist/runtime/desktop-loopscope.js'
 import { createDesktopProjectUndoAdapter } from '../../../packages/core/src/runtime/desktop-project-undo.js'
 import { createRuntimeUndoTransactionPort, createUndoStateMachine } from '../../../packages/core/src/undo/state-machine.js'
-import { desktopScheduleImConnection, type DesktopScheduleImTarget } from '../../../packages/core/src/scheduled-tasks/desktop-im.js'
+import { desktopScheduleImConnection, type DesktopScheduleImTarget } from '../../../packages/core/src/runtime/desktop-schedules/desktop-im.js'
 import { createDesktopMemoryFiles } from '../../../packages/core/src/agent/memory/desktop-files.js'
 import { readSqliteAgentMemory } from '../../../packages/core/src/agent/memory/sqlite.js'
 import { createSqlAgentPendingQueue } from '../../../packages/core/src/agent/sessions/pending-queue.js'
@@ -36,6 +45,180 @@ import { createKyselyPreferenceDocumentStore } from '../../../packages/core/src/
 describe('Desktop Agent Run 真实本机 Provider 接线', () => {
   const cleanups: Array<() => Promise<void>> = []
   afterEach(async () => { await Promise.all(cleanups.splice(0).map(cleanup => cleanup())) })
+
+  it('桌面 Agent 发现文件技能并向模型提供目录和正文', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-skill-run-'))
+    const path = join(directory, 'core.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    const skill = await createUserSkillBundle(directory, ownerId, 'sample', '---\nname: 合成技能\ndescription: 整理资料\n---\n合成技能正文')
+    const requests: Record<string, unknown>[] = []
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      requests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      const call = requests.length === 1
+      const delta = call ? { tool_calls: [{ index: 0, id: 'skill-call', type: 'function',
+        function: { name: 'use_skill', arguments: JSON.stringify({ id: 'sample' }) } }] } : { content: '完成' }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: call ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`)
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('合成 Provider 未监听')
+    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async method => {
+      if (method === 'agent.tools.policy') return { disabledTools: [] }
+      if (method === 'agent.log.append') return null
+      if (method === 'agent.im.snapshot') return { feishu: false, qq: false, wechat: false, telegram: false }
+      if (method === 'agent.files.overview') return { total: 0, folders: [], files: [], partial: false }
+      if (method.endsWith('.available')) return false
+      throw new Error('未预期的宿主请求')
+    })
+    cleanups.push(async () => { await runs.close(); await runtime.close(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }) })
+    const session = await runtime.db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '技能验证'))
+    const read = createDesktopAgentEventReader(runtime.db, path, ownerId)
+    const { run_id: runId } = await runs.start(session.id, '使用合成技能', 'synthetic-skill', {
+      provider: 'local', api_format: 'openai', base_url: `http://127.0.0.1:${address.port}/v1`,
+      api_key: '', model: 'synthetic', context_tokens: 256_000, max_tokens: 512, web_search_enabled: false,
+    })
+    await expect.poll(async () => (await read(session.id, runId, 0)).status, { timeout: 8_000 }).toBe('completed')
+    expect(JSON.stringify(requests[0])).toContain('合成技能')
+    expect(JSON.stringify(requests[0])).toContain(skill.path)
+    expect(JSON.stringify(requests[1])).toContain('合成技能正文')
+  })
+
+  it('桌面 Agent 创建文件技能并接入桌面撤销', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-skill-write-'))
+    const path = join(directory, 'core.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    await mkdir(join(directory, ownerId))
+    const service = desktopFiles(join(directory, ownerId), { async save() { return undefined }, reveal() {}, async open() { return '' },
+      async pickDirectory() { return undefined }, async trash(target) { await rm(target, { recursive: true }) } })
+    const requests: Record<string, unknown>[] = []
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      if (!body.stream) { response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ choices: [{ message: { content: '标题' }, finish_reason: 'stop' }] })); return }
+      requests.push(body)
+      const call = requests.length === 1
+      const delta = call ? { tool_calls: [{ index: 0, id: 'create-skill', type: 'function', function: { name: 'create_skill',
+        arguments: JSON.stringify({ skill_name: '合成技能', description_short: '整理资料', body: '技能正文', related_tools: [], managed_by: 'assistant' }) } }] } : { content: '完成' }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: call ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`)
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('合成 Provider 未监听')
+    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async (method, params, signal) => {
+      if (method === 'agent.files.acquireSkillLock') return service.acquireAgentSkillLock(params.operationId, signal!)
+      if (method === 'agent.files.releaseSkillLock') return service.releaseAgentSkillLock(params.operationId)
+      if (method === 'agent.files.recordSkillHistory') return service.agentRecordSkillHistory(params)
+      if (method === 'agent.tools.policy') return { disabledTools: [] }
+      if (method === 'agent.log.append') return null
+      if (method === 'agent.im.snapshot') return { feishu: false, qq: false, wechat: false, telegram: false }
+      if (method === 'agent.files.overview') return { total: 0, folders: [], files: [], partial: false }
+      if (method.endsWith('.available')) return false
+      throw new Error('未预期的宿主请求')
+    })
+    cleanups.push(async () => { await runs.close(); await runtime.close(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }) })
+    const session = await runtime.db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '技能验证'))
+    const read = createDesktopAgentEventReader(runtime.db, path, ownerId)
+    const { run_id: runId } = await runs.start(session.id, '创建技能', 'synthetic-write-skill', {
+      provider: 'local', api_format: 'openai', base_url: `http://127.0.0.1:${address.port}/v1`,
+      api_key: '', model: 'synthetic', context_tokens: 256_000, max_tokens: 512, web_search_enabled: false,
+    })
+    await expect.poll(async () => (await read(session.id, runId, 0)).status, { timeout: 8_000 }).toBe('completed')
+    const skills = await listUserSkillBundles(directory, ownerId)
+    expect(skills.skills).toMatchObject([{ name: '合成技能', body: '技能正文', managed_by: 'assistant' }])
+    expect(await service.handlers[DESKTOP_CHANNELS.files]!({ action: 'undo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+    expect((await listUserSkillBundles(directory, ownerId)).skills).toEqual([])
+    expect(await service.handlers[DESKTOP_CHANNELS.files]!({ action: 'redo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+    expect((await listUserSkillBundles(directory, ownerId)).skills).toHaveLength(1)
+  })
+
+  it('图片随本机和 QQ 首轮请求原生发送，后续轮次历史不带图片数据', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-inline-image-'))
+    const path = join(directory, 'core.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    const streams: Array<{ messages: unknown[] }> = []
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      if (!body.stream) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ choices: [{ message: { content: '合成标题' }, finish_reason: 'stop' }] }))
+        return
+      }
+      streams.push(body)
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end('data: {"choices":[{"delta":{"content":"已收到"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('合成 Provider 未监听')
+    const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async method => {
+      if (method === 'agent.tools.policy') return { disabledTools: [] }
+      if (method === 'agent.im.snapshot') return { feishu: false, qq: false, wechat: false, telegram: false }
+      if (method === 'agent.files.overview') return { total: 0, folders: [], files: [], partial: false }
+      if (method.endsWith('.available') || method === 'agent.log.append') return false
+      throw new Error('未预期的宿主请求')
+    }, undefined, undefined)
+    cleanups.push(async () => {
+      await runs.close()
+      await runtime.close()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await rm(directory, { recursive: true, force: true })
+    })
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l2sAAAAASUVORK5CYII=', 'base64')
+    const id = randomUUID().replaceAll('-', '')
+    const attachmentDirectory = join(directory, 'agent-attachments')
+    await mkdir(attachmentDirectory)
+    await writeFile(join(attachmentDirectory, id), png)
+    await createDesktopChatAttachmentStore(runtime.db).stage(ownerId, {
+      attachId: id, name: '合成图片', ext: 'png', mime: 'image/png', size: png.length, voice: false,
+    })
+    const session = await runtime.db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '合成图片'))
+    const read = createDesktopAgentEventReader(runtime.db, path, ownerId)
+    const config = { provider: 'local', api_format: 'openai', base_url: `http://127.0.0.1:${address.port}/v1`,
+      api_key: '', model: 'synthetic', image: true, max_tokens: 512, web_search_enabled: false }
+    const first = await runs.start(session.id, '看看这张图', 'synthetic-inline-image', config, undefined, false, undefined, [id])
+    await expect.poll(async () => (await read(session.id, first.run_id, 0)).status, { timeout: 8_000 }).toBe('completed')
+    expect(JSON.stringify(streams[0]?.messages)).toContain('data:image/png;base64,')
+    const second = await runs.start(session.id, '继续', 'synthetic-inline-next', config)
+    await expect.poll(async () => (await read(session.id, second.run_id, 0)).status, { timeout: 8_000 }).toBe('completed')
+    expect(JSON.stringify(streams[1]?.messages)).not.toContain('data:image/png;base64,')
+
+    const connection = { platform: 'qq' as const, connectionId: 'b'.repeat(64) }
+    const qqId = randomUUID().replaceAll('-', '')
+    await writeFile(join(attachmentDirectory, qqId), png)
+    await admitDesktopImEvent(runtime.db, ownerId, {
+      ...connection, eventKey: 'synthetic-qq-picture', sealedEvent: 'AQ==',
+      attachments: [{ attachId: qqId, name: '群聊图片', ext: 'png', mime: 'image/png', size: png.length, voice: false }],
+    })
+    const qq = await prepareDesktopImEvent(runtime.db, ownerId, { ...connection, chatType: 'group', ownerPlatformUserId: 'synthetic-owner' })
+    if (!qq) throw new Error('合成 QQ 收件未准备')
+    const group = await runs.start(qq.sessionId, '看看群里的图', qq.clientId, config, undefined, false, undefined, [qqId], [],
+      undefined, undefined, { id: 'synthetic-member', name: '小北' })
+    await expect.poll(async () => (await read(qq.sessionId, group.run_id, 0)).status, { timeout: 8_000 }).toBe('completed')
+    expect(JSON.stringify(streams[2]?.messages)).toContain('data:image/png;base64,')
+    expect(JSON.stringify(streams[2]?.messages)).toContain('看看群里的图')
+
+    const fallbackId = randomUUID().replaceAll('-', '')
+    await writeFile(join(attachmentDirectory, fallbackId), png)
+    await createDesktopChatAttachmentStore(runtime.db).stage(ownerId, {
+      attachId: fallbackId, name: '合成回退图片', ext: 'png', mime: 'image/png', size: png.length, voice: false,
+    })
+    const fallback = await runs.start(session.id, '继续看图', 'synthetic-no-vision', { ...config, image: false },
+      undefined, false, undefined, [fallbackId])
+    await expect.poll(async () => (await read(session.id, fallback.run_id, 0)).status, { timeout: 8_000 }).toBe('completed')
+    const fallbackMessages = JSON.stringify(streams[3]?.messages)
+    expect(fallbackMessages).toContain(`可用 view_image 查看（attach_id：${fallbackId}）`)
+    expect(fallbackMessages).not.toContain('data:image/png;base64,')
+  }, 30_000)
 
   it('remember 写入后下一个 Run 保持固定前缀，快照过期后加载新记忆', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-memory-prefix-'))
@@ -205,7 +388,7 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     expect(JSON.stringify(page.events)).toContain('收尾测试')
   })
 
-  it('桌面定时指令调用默认模型并使用任务工具授权，不写入会话历史', async () => {
+  it('桌面定时任务复用主 Agent 工具目录与宿主 Shell，不写入会话历史', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-scheduled-run-'))
     const path = join(directory, 'core.db')
     await initializeSqlite(path)
@@ -213,30 +396,40 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     const ownerKey = ownerId.replaceAll('-', '')
     await sql`INSERT INTO desktop_agent_memory(user_id,target,body)
       VALUES(${ownerKey},'profile',${JSON.stringify([{ text: '合成画像' }])})`.execute(runtime.db)
-    await createDesktopAppearanceService(createKyselyPreferenceDocumentStore(runtime.db, 'sqlite'))
-      .update(ownerId, { locale: 'en-US' })
+    const preferences = createKyselyPreferenceDocumentStore(runtime.db, 'sqlite')
+    await createDesktopAppearanceService(preferences).update(ownerId, { locale: 'en-US', automaticModeEnabled: true })
     const memoryRoot = join(directory, 'memory')
     await mkdir(memoryRoot)
     const disk = createDesktopMemoryFiles(runtime.db, memoryRoot, ownerId)
     let groupMemoryEnabled = true
     let imEnabled = true
+    let disabledTools: string[] = []
     const sent: unknown[] = []
     const requests: Record<string, unknown>[] = []
+    let shellArgs: { command: string; cwd: string; timeout: number; max_output_chars: number; scope: 'system' } | undefined
     const server = createServer(async (request, response) => {
+      if (request.url === '/shell-probe') { response.end('合成联网成功'); return }
+      if (request.url === '/shell-risk-probe') { response.end("printf '合成命令已执行'"); return }
       const chunks = []
       for await (const chunk of request) chunks.push(chunk)
       requests.push(JSON.parse(Buffer.concat(chunks).toString()))
+      const shellCall = shellArgs
+      shellArgs = undefined
       const call = requests.length === 1
-      const delta = call ? { tool_calls: [{ index: 0, id: 'synthetic-time', type: 'function',
-        function: { name: 'get_current_time', arguments: '{}' } }] } : { content: '定时任务已读取当前时间' }
+      const delta = shellCall ? { tool_calls: [{ index: 0, id: 'synthetic-scheduled-shell', type: 'function',
+        function: { name: 'shell', arguments: JSON.stringify(shellCall) } }] } : call ? { tool_calls: [{ index: 0, id: 'synthetic-create-contact', type: 'function',
+        function: { name: 'create_contact', arguments: '{"name":"合成定时联系人"}' } },
+        { index: 1, id: 'synthetic-discover', type: 'function',
+          function: { name: 'search_tools', arguments: '{"names":["create_contact","shell"]}' } }] } : { content: requests.length === 2 ? '定时任务已创建联系人' : '定时任务已读取当前时间' }
       response.writeHead(200, { 'content-type': 'text/event-stream' })
-      response.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: call ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`)
+      response.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: call || shellCall ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`)
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
     if (!address || typeof address === 'string') throw new Error('合成本机 Provider 未监听')
     const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async (method: string, params) => {
-      if (method === 'agent.tools.policy') return { disabledTools: [] }
+      if (method === 'agent.search.deep_research.available' || method === 'agent.search.similar_image_search.available') return false
+      if (method === 'agent.tools.policy') return { disabledTools }
       if (method === 'agent.memory.resolveEmbedding') return null
       if (method === 'agent.im.snapshot') return { feishu: false, qq: false, wechat: false, telegram: true }
       if (method === 'agent.schedules.im.authorize') return imEnabled ? { groupMemoryEnabled } : null
@@ -254,11 +447,11 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
       await rm(directory, { recursive: true, force: true })
     })
     const result = await runs.runScheduledInstruction({
-      id: '1', ownerId, name: '合成定时任务', payload: '读出当前时间', executionMode: 'instruction',
+      id: '1', ownerId, name: '合成定时任务', payload: '创建测试联系人', executionMode: 'instruction',
       channels: ['web'], deliveryTargets: {}, authorizedTools: [], emailAttachmentFilePaths: [],
       workspaceId: null, filesystemGrantId: null,
     }, true, async () => {})
-    expect(result).toEqual({ status: 'success', text: '定时任务已读取当前时间' })
+    expect(result).toEqual({ status: 'success', text: '定时任务已创建联系人' })
     expect(requests).toHaveLength(2)
     expect(requests[0]?.model).toBe('synthetic-scheduled')
     const prompt = JSON.stringify(requests[0]?.messages)
@@ -266,9 +459,15 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     expect(prompt).toContain('当前用户界面语言为「English」')
     expect(prompt).toContain('Telegram：已连')
     const offered = (requests[0]?.tools as Array<{ function: { name: string } }>).map(tool => tool.function.name)
-    expect(offered).toContain('get_current_time')
-    expect(offered).not.toContain('shell')
-    expect(requests[1]?.messages).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'tool', tool_call_id: 'synthetic-time' })]))
+    expect(offered).toEqual(expect.arrayContaining(['get_current_time', 'get_upcoming', 'list_scheduled_tasks', 'note_search', 'canvas_list', 'http_get', 'global_search', 'create_contact', 'search_tools']))
+    expect(offered).toContain('shell')
+    expect(requests[1]?.messages).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'tool', tool_call_id: 'synthetic-create-contact' })]))
+    const discovery = (requests[1]?.messages as Array<{ tool_call_id?: string; content?: string }>)
+      .find(message => message.tool_call_id === 'synthetic-discover')
+    expect(discovery?.content).toContain('create_contact')
+    expect(discovery?.content).toContain('shell')
+    expect(await runtime.transaction(dataContext(ownerId), data => data.clients.list()))
+      .toEqual([expect.objectContaining({ name: '合成定时联系人' })])
     expect((await sql`SELECT id FROM conversation_sessions`.execute(runtime.db)).rows).toEqual([])
 
     const group: DesktopScheduleImTarget = { platform: 'qq', botId: 'synthetic-bot',
@@ -279,8 +478,7 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
       VALUES(${ownerKey},'qq',${desktopScheduleImConnection(group)},${session.id})`.execute(runtime.db)
     await disk.writeImScope({ owner_user_id: ownerId, platform: 'qq', bot_id: group.botId,
       scope_type: 'group', scope_id: group.recipient }, 'summary.json', JSON.stringify({ text: '合成群概要' }))
-    const copiedPrivate: DesktopScheduleImTarget = { platform: 'feishu', botId: 'synthetic-feishu-bot',
-      boundUserId: 'ou_synthetic-owner', chatType: 'c2c', recipient: 'ou_synthetic-owner' }
+    const copiedPrivate: DesktopScheduleImTarget = { platform: 'feishu', chatType: 'c2c' }
     const runGroup = () => runs.runScheduledInstruction({
       id: '2', ownerId, name: '合成群任务', payload: '汇报群事务', executionMode: 'instruction',
       channels: ['qq', 'feishu', 'web'], deliveryTargets: { qq: group, feishu: copiedPrivate }, authorizedTools: [], emailAttachmentFilePaths: [],
@@ -289,6 +487,7 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     }, true, async () => {})
     expect((await runGroup()).status).toBe('success')
     expect(sent).toEqual([group, copiedPrivate].map(target => ({ target, text: '定时任务已读取当前时间' })))
+    expect(JSON.stringify(requests.at(-1)?.tools)).not.toMatch(/create_contact|http_get|note_search|canvas_list/u)
     const groupPrompt = JSON.stringify(requests.at(-1)?.messages)
     expect(groupPrompt).toContain('合成群概要')
     expect(groupPrompt).not.toContain('合成画像')
@@ -297,7 +496,8 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     expect((await runGroup()).status).toBe('success')
     expect(JSON.stringify(requests.at(-1)?.messages)).not.toContain('合成群概要')
     expect(JSON.stringify(requests.at(-1)?.tools)).not.toContain('search_memory')
-    const privateTarget: DesktopScheduleImTarget = { ...group, chatType: 'c2c', recipient: group.boundUserId }
+    disabledTools = ['http_get']
+    const privateTarget: DesktopScheduleImTarget = { platform: 'qq', chatType: 'c2c' }
     expect((await runs.runScheduledInstruction({
       id: '3', ownerId, name: '合成私聊任务', payload: '汇报个人事务',
       channels: ['qq'], deliveryTargets: { qq: privateTarget }, authorizedTools: [], emailAttachmentFilePaths: [],
@@ -305,8 +505,32 @@ describe('Desktop Agent Run 真实本机 Provider 接线', () => {
     }, true, async () => {})).status).toBe('success')
     expect(JSON.stringify(requests.at(-1)?.messages)).toContain('合成画像')
     expect(sent.at(-1)).toMatchObject({ target: privateTarget })
+    expect(JSON.stringify(requests.at(-1)?.tools)).not.toContain('http_get')
+    const shellTask = {
+      id: '41', ownerId, name: '合成联网任务', payload: '执行已确认的联网操作',
+      channels: ['web'], deliveryTargets: {}, authorizedTools: [], emailAttachmentFilePaths: [],
+      workspaceId: null, filesystemGrantId: null,
+    }
+    await sql`INSERT INTO scheduled_tasks(id,user_id,name,payload,cron,schedule_kind,channels,enabled,created_at,updated_at)
+      VALUES(41,${ownerKey},${shellTask.name},${shellTask.payload},'*','cron','web',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`.execute(runtime.db)
+    const input = { command: `curl -fsS http://127.0.0.1:${address.port}/shell-probe`,
+      cwd: await realpath(directory), timeout: 5, max_output_chars: 200, scope: 'system' as const }
+    shellArgs = input
+    expect((await runs.runScheduledInstruction(shellTask, true, async () => {})).status).toBe('success')
+    const shellReply = (requests.at(-1)?.messages as Array<{ tool_call_id?: string; content?: string }>)
+      .find(message => message.tool_call_id === 'synthetic-scheduled-shell')
+    expect(JSON.stringify(shellReply?.content)).toContain('合成联网成功')
+    expect(JSON.stringify(shellReply?.content)).toContain('退出码')
+    expect((await runs.runScheduledInstruction(shellTask, true, async () => {})).status).toBe('success')
+    expect(JSON.stringify(requests.at(-1)?.tools)).toContain('"name":"shell"')
+    await createDesktopAppearanceService(preferences).update(ownerId, { automaticModeEnabled: false })
+    shellArgs = { ...input, command: `curl -fsS http://127.0.0.1:${address.port}/shell-risk-probe | sh` }
+    expect((await runs.runScheduledInstruction(shellTask, true, async () => {})).status).toBe('success')
+    const unrestrictedShell = (requests.at(-1)?.messages as Array<{ tool_call_id?: string; content?: string }>)
+      .find(message => message.tool_call_id === 'synthetic-scheduled-shell')
+    expect(JSON.stringify(unrestrictedShell?.content)).toContain('合成命令已执行')
     imEnabled = false
-    await expect(runGroup()).rejects.toMatchObject({ code: 'conflict' })
+    await expect(runGroup()).resolves.toMatchObject({ status: 'failed' })
     expect(sent).toHaveLength(5)
   })
 
@@ -441,14 +665,14 @@ data: [DONE]
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
     if (!address || typeof address === 'string') throw new Error('合成 Provider 与 Collector 未监听')
-    expect(createDesktopLoopScope({ LOOPSCOPE_ENDPOINT: 'http://invalid.example' })).toBeUndefined()
-    expect(createDesktopLoopScope({ LOOPSCOPE_ENABLED: 'true', LOOPSCOPE_ENDPOINT: 'file:///invalid' })).toBeUndefined()
+    expect(createDesktopLoopScope({ LOOPSCOPE_ENDPOINT: 'http://invalid.example' }, runtime.db, ownerId)).toBeUndefined()
+    expect(createDesktopLoopScope({ LOOPSCOPE_ENABLED: 'true', LOOPSCOPE_ENDPOINT: 'file:///invalid' }, runtime.db, ownerId)).toBeUndefined()
     const loopScope = createDesktopLoopScope({
       LOOPSCOPE_ENABLED: 'true', LOOPSCOPE_ENDPOINT: `http://127.0.0.1:${address.port}`,
-    })
+    }, runtime.db, ownerId)
     const hostCalls: string[] = []
-    const privateTarget: DesktopScheduleImTarget = { platform: 'qq', botId: 'synthetic-bot',
-      boundUserId: 'synthetic-owner', recipient: 'synthetic-owner', chatType: 'c2c' }
+    const privateTarget = { platform: 'qq', botId: 'synthetic-bot',
+      boundUserId: 'synthetic-owner', recipient: 'synthetic-owner', chatType: 'c2c' } as const
     let privateBound = true
     const runs = createDesktopAgentRuns(runtime, path, ownerId, () => {}, async (method, params) => {
       hostCalls.push(method)
@@ -493,6 +717,7 @@ data: [DONE]
     const trace = traces.find(trace => trace.status === 'success')!
     expect(trace).toMatchObject({
       session_key: `gugu:desktop:${session.id}`, trace_id: runId, source: 'desktop',
+      attributes: { im_platform: 'qq' },
       output: { text: '测试群回复' },
     })
     const spans = trace.spans as Array<{ kind: string; input: unknown; attributes: { request_timings?: Array<{ firstVisibleTokenMs?: number }> } }>
@@ -936,12 +1161,21 @@ data: [DONE]
   })
 })
 
-it('续接状态随检查点加密提交，重启后按原身份读取并在运行终结时删除', async () => {
+it.each(['无模型', 'Anthropic', 'Responses'] as const)('桌面私有续接按原 Run 恢复，%s 按协议处理终态', async protocol => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-desktop-continuation-'))
   const path = join(directory, 'core.db')
   const secret = 'synthetic-run-key'
   const reference = 'provider:reference'
-  const value = { round: 2, areaDigest: 'area', value: { state_kind: 'synthetic-provider-private-state' } }
+  const replay = protocol === '无模型' ? undefined : { configuration: 'synthetic-config' }
+  const thinking = { type: 'thinking', thinking: 'synthetic-provider-private-state', signature: 'synthetic-signature' }
+  const tool = { type: 'tool_use', id: 'sibling', name: 'lookup', input: {} }
+  const responsesState = { state_kind: 'openai_responses_reasoning',
+    reasoning_items: [{ type: 'reasoning', status: 'completed', encrypted_content: 'synthetic-provider-private-state' }] }
+  const value = { round: 2, areaDigest: 'area', value: protocol === 'Responses' ? responsesState : {
+    state_kind: 'anthropic_thinking_blocks', provider: 'minimax',
+    payload: { history_thinking_by_tool_id: { call: [thinking] },
+      history_response_blocks_by_tool_id: { sibling: [thinking, tool] } },
+  } }
   try {
     await initializeSqlite(path)
     const first = await openSqliteRuntime(path)
@@ -951,7 +1185,7 @@ it('续接状态随检查点加密提交，重启后按原身份读取并在运�
         const session = await db.transaction().execute(tx => createDesktopAgentSession(tx, first.ownerId, '合成会话'))
         const { identity } = await createSqliteAgentAdmission(db).prepare(first.ownerId, { session_id: session.id, message: '合成请求' })
         const scope = { identity, modelIdentity: 'model', accessScopeHash: 'scope' }
-        const continuation = createDesktopContinuationStore(db, secret)
+        const continuation = createDesktopContinuationStore(db, secret, replay)
         const leases = createSqliteAgentRunLeasePort(db)
         const lease = (await leases.acquire(identity))!
         const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, {
@@ -978,18 +1212,56 @@ it('续接状态随检查点加密提交，重启后按原身份读取并在运�
     const second = await openSqliteRuntime(path)
     try {
       const { db } = second.runtime
-      const continuation = createDesktopContinuationStore(db, secret)
+      const continuation = createDesktopContinuationStore(db, secret, replay)
       expect(await continuation.store.read(scope, reference)).toEqual(value)
       expect(await continuation.store.read(scope, 'provider:uncommitted')).toBeNull()
       expect(await continuation.store.read({ ...scope, identity: { ...identity, runId: 'another-run' } }, reference)).toBeNull()
       expect(await continuation.store.read({ ...scope, modelIdentity: 'other' }, reference)).toBeNull()
       expect(await continuation.store.read({ ...scope, accessScopeHash: 'revoked' }, reference)).toBeNull()
-      const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, { async writeHistory() {} })
+      const store = createSqliteAgentRunStore<CanonicalRunContext>(db, secret, {
+        async writeHistory() {}, persistPrivateContext: continuation.persist,
+      })
       const lease = (await createSqliteAgentRunLeasePort(db).acquire(identity))!
       await store.commit({ identity, lease, expectedVersion: 1,
         checkpoint: { ...checkpoint, version: 2, status: 'completed', phase: 'idle' },
         events: [], interactionReceipt: null, history: null })
-      expect(await continuation.store.read(scope, reference)).toBeNull()
+      const next = { ...checkpoint.context!, identity: { ...identity, runId: 'next-run' } }
+      const continuationState = await continuation.readPrevious(next)
+      if (protocol === 'Responses') {
+        expect(continuationState).toEqual(responsesState)
+        expect(await continuation.readPrevious({ ...next, accessScopeHash: 'different' })).toBeNull()
+        return
+      }
+      const enabled = protocol === 'Anthropic'
+      const requestHistory: JsonObject[] = [
+        { role: 'user', content: [{ type: 'text', text: '合成问题' }] },
+        { role: 'assistant', content: [tool] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: tool.id, content: '合成结果' }] },
+      ]
+      const config = { provider: 'minimax', model: 'MiniMax-M3.1-Flash', api_format: 'anthropic' } as const
+      const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+      const previous = prepareAnthropicCache([requestHistory[0]!, { role: 'assistant', content: [thinking, tool] },
+        requestHistory[2]!], minimaxPolicy, config, digest, 3)
+      const request = anthropicRequest({
+        config, policy: minimaxPolicy, history: [...requestHistory, { role: 'assistant', content: '合成回复' },
+          { role: 'user', content: '合成追问' }], purpose: 'chat', tools: [], system: '固定前缀',
+        signal: new AbortController().signal, continuation: continuationState,
+        scope: { ...next.identity, round: 1, modelIdentity: next.modelIdentity, accessScopeHash: next.accessScopeHash },
+      }, true)
+      const messages = request.body.messages as JsonObject[]
+      const current = prepareAnthropicCache(messages, minimaxPolicy, config, digest, messages.length, previous.anchor, undefined, true)
+      expect(messages[1]?.content).toEqual(enabled ? [thinking, tool] : [tool])
+      expect(current.anchor.carried_prefix_digest).toBe(enabled ? previous.anchor.latest_prefix_digest : undefined)
+      if (enabled) {
+        expect(await continuation.readPrevious(next)).toMatchObject({ state_kind: 'anthropic_thinking_blocks',
+          payload: { history_thinking_by_tool_id: { call: [thinking] } } })
+        expect(await continuation.readPrevious(next)).not.toHaveProperty('payload.history_response_blocks_by_tool_id')
+        expect(await continuation.readPrevious({ ...next, accessScopeHash: 'different' })).toBeNull()
+        expect(await createDesktopContinuationStore(db, secret, { ...replay, configuration: 'different' }).readPrevious(next)).toBeNull()
+      } else {
+        expect(await continuation.store.read(scope, reference)).toBeNull()
+        expect(await continuation.readPrevious(next)).toBeNull()
+      }
     } finally { await second.runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

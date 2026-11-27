@@ -4,7 +4,7 @@ import type { MindNoteReadResponse } from './note-create.js'
 const toUtcIsoWithOffset = (value: unknown) => new Date(utc(value instanceof Date ? value.toISOString() : value).replace(' ', 'T')).toISOString().replace(/Z$/, '+00:00')
 async function runBestEffort(operation: string, work: () => Promise<unknown>, report: (operation: string, error?: unknown) => void): Promise<void> { try { await work() } catch (error) { const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : undefined; try { report(operation, code) } catch { /* 诊断失败不影响已提交操作。 */ } } }
 
-export type MindReferenceType = 'project' | 'file' | 'event'
+export type MindReferenceType = 'project' | 'file' | 'event' | 'client'
 
 export interface MindReferenceNodeSnapshot {
   id: number | string
@@ -77,7 +77,7 @@ function object(value: unknown): Record<string, unknown> {
 }
 
 function referenceType(value: unknown): MindReferenceType {
-  if (value === 'project' || value === 'file' || value === 'event') return value
+  if (value === 'project' || value === 'file' || value === 'event' || value === 'client') return value
   throw new MindRefNodeCreateError(422, '不支持的引用类型')
 }
 

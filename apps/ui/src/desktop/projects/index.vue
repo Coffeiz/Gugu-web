@@ -11,10 +11,10 @@ const uiStore = useUiStore()
 </script>
 
 <template>
-  <section class="desktop-projects-page" aria-label="项目看板">
+  <section class="desktop-projects-page" :aria-label="$t('pageUi.projectBoard')">
     <ProjectsPage>
       <template #toolbar="{ openArchived, openDeleted }">
-        <PageToolbar class="desktop-page-toolbar" role="group" aria-label="项目工具栏">
+        <PageToolbar role="group" :aria-label="$t('pageUi.projectToolbar')">
           <ActionButton class="page-toolbar__action" fit @click="uiStore.openNewProject = true">
             <Icon name="action.add" :size="14" />{{ t('common.actions.createProject') }}
           </ActionButton>

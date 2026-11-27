@@ -419,7 +419,7 @@ export const useMindStore = defineStore('mind', () => {
     return item
   }
 
-  async function addRefToCanvas(canvasId: number, refType: 'project' | 'event', refId: number, x: number, y: number) {
+  async function addRefToCanvas(canvasId: number, refType: 'project' | 'event' | 'client', refId: number, x: number, y: number) {
     const node = await mindApi.createRefNode(refType, refId)
     return addNoteToCanvas(canvasId, node, x, y)
   }

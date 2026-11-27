@@ -2,7 +2,7 @@ import { projectAgentSessionGoal } from '@gugu/core/agent'
 import { replacePlatformMentionIds } from '@gugu/core/agent/context/messages'
 import type { Pool } from 'pg'
 import type { RunCheckpoint } from '@gugu/core/agent'
-import { projectAgentMessageBodiesWithMentions, projectAgentTimelineEvents, type AgentInteractionHistoryWindow, type AgentMessageProjectionRow } from '@gugu/core/agent-sessions'
+import { projectAgentHistoryPage, projectAgentMessageBodiesWithMentions, projectAgentTimelineEvents, type AgentInteractionHistoryWindow, type AgentMessageProjectionRow } from '@gugu/core/agent-sessions'
 import { loadGroupMentionNames } from './mentions.js'
 import { readActiveSessionFilesystemGrant } from '../sandbox/authorization.js'
 
@@ -209,7 +209,8 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
          LIMIT $${params.length}`,
         params,
       )
-      const messages = forward ? fetched.rows : [...fetched.rows].reverse()
+      const history = projectAgentHistoryPage(fetched.rows, forward ? 'asc' : 'desc', message => message.id)
+      const messages = history.messages
       let hasMore = false
       let hasNewer = false
       if (messages.length) {
@@ -326,8 +327,8 @@ export function createAgentMessageHistory(pool: Pool, runtime: AgentMessageHisto
           limit,
           hasMore,
           hasNewer,
-          oldestId: messages[0]?.id ?? null,
-          newestId: messages.at(-1)?.id ?? null,
+          oldestId: history.oldestId,
+          newestId: history.newestId,
         },
       }
     },

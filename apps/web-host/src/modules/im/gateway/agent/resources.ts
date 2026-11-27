@@ -1,3 +1,4 @@
+import { describeAskUserPrompt, imAskUserPolicy } from '@gugu/core/agent'
 import { createImSendFileTool } from '@gugu/core/tools'
 import { createPostgresFileReadOperations } from '../../../files/browse.js'
 import { createImFileTools } from './files.js'
@@ -64,7 +65,7 @@ import { createImRuntimeBindingStore } from './store.js'
 import type { createImVoiceSelection } from '../media/config.js'
 import { createImVoiceRuntime } from '../media/voice.js'
 import { createImVideoRuntime } from '../media/video-runtime.js'
-import { createImImageProcessor } from '../media/image.js'
+import { createImImageProcessor } from '@gugu/gateway/media'
 import { createImVoiceTranscriptStore } from '../media/transcripts.js'
 import type { createImVoiceCache } from '../media/cache.js'
 export { createImProductionReflectionBindings, createImProductionHistory } from '../memory/bindings.js'
@@ -264,7 +265,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
           groupOwnerMemoryEnabled: row.group_owner_memory_enabled }
       } })
     let registry: ImAgentReconstructionResources['toolRegistry'] | undefined
-    const skills = await createImProductionSkills({ pool: options.pool, identity, actor, loadOwnerContext: selection.contextPolicy.loadOwnerContext,
+    const skills = await createImProductionSkills({ pool: options.pool, storageRoot: options.storageRoot, identity, actor, loadOwnerContext: selection.contextPolicy.loadOwnerContext,
       authorize: () => options.access.authorizeDelivery(actor, bot),
       availableTools: async () => new Set((await registry?.capabilities(identity) ?? []).map(tool => tool.name)) })
     const services = await createImAgentContextServices({ pool: options.pool, storageRoot: options.storageRoot, promptRoot: options.promptRoot,
@@ -352,6 +353,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
         canvases: createSqlMindCanvasReader(options.core.db, 'postgres'),
       } : {}),
       ...ownerTools?.tools,
+      askUser: { ...imAskUserPolicy, authorization: async () => 'disabled' },
       ...(actor.platform !== 'wechat' ? { sendFile: createImSendFileTool(createImFileTools({
         ...options, identity, actor, scope, messageIds, payload: route.payload,
         files: createPostgresFileReadOperations(options.pool, options.storageRoot),
@@ -435,7 +437,8 @@ export function createImProductionResources(options: ImProductionResourcesOption
         if (reasoning) await reasoning.checkpointHook(client, id, next, previous)
         else if (next.context?.continuationRef) throw unavailable()
       } },
-      source: services.source, builder: services.builder, materialize: materializer.materialize, toolRegistry: readyRegistry, ragContext, executor,
+      source: { ...services.source, ...(imOwnerPrivate(actor) && selection.contextPolicy.loadOwnerContext ? { skillDataRoot: options.storageRoot } : {}) },
+      builder: services.builder, materialize: materializer.materialize, toolRegistry: readyRegistry, ragContext, executor,
       ...delivery,
       preparation: { configuration, capabilities: {
         workspaceSupported: false,
@@ -451,10 +454,9 @@ export function createImProductionResources(options: ImProductionResourcesOption
         const frozen = { identity: { ownerId: identity.ownerId, sessionId: identity.sessionId, provider: policy.name,
           // modelIdentity含Run与随机nonce；跨Run状态必须绑定可信配置/凭据/权限版本的稳定scope。
           apiFormat: protocol, model: selected.config.model, configDigest: digest(selection.contextScopeKey),
-          reasoningConfigDigest: digest([selected.config.thinking ?? null, selected.config.reasoning_effort ?? null, selected.config.reasoning_persistence]) },
+          reasoningConfigDigest: digest([selected.config.thinking ?? null, selected.config.reasoning_effort ?? null]) },
           runId: identity.runId, modelIdentity: selection.modelIdentity, accessScopeHash: selected.accessScopeHash, expectedVersion: 0 }
         reasoning = createProviderReasoningPersistence({ pool: options.pool, secretKey: options.secretKey, provider, binding: frozen,
-          mode: selected.config.reasoning_persistence === 'continuation' ? 'continuation' : 'off',
           authorize: async signal => { signal?.throwIfAborted(); return authorizeCurrent() } })
         commitContinuation = (client, context) => reasoning!.commitSuccess(client, context)
         const projection = await provider.summaryProjection(identity, selection.modelIdentity)
@@ -502,11 +504,8 @@ export function createImProductionResources(options: ImProductionResourcesOption
           if (!ownerTools?.describe || !same(target, identity) || !await authorizeTool(identity, request.toolCall.name)) throw unavailable()
           return ownerTools.describe(client, target, request)
         }
-        if (request.kind !== 'question' || request.toolCall.name !== 'ask_user' || !await authorizeTool(identity, 'ask_user')) throw unavailable()
-        const args = request.toolCall.input as { kind: string; title: string; body: string; options?: Array<{ id: string; label: string }> }
-        if (!['question', 'choice'].includes(args.kind)) throw unavailable()
-        return { kind: args.kind as 'question' | 'choice', title: args.title, body: args.body, allowTextInput: true,
-          options: (args.options ?? []).map(option => ({ ...option, actionType: 'choice' })), context: {} }
+        if (request.kind !== 'question' || request.toolCall.name !== 'ask_user' || !await authorizeTool(target, 'ask_user')) throw unavailable()
+        return describeAskUserPrompt(request.toolCall.input, imAskUserPolicy)
       } },
     }
   }

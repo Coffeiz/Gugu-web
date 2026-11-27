@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createScheduledTask, updateScheduledTask } from '../../src/scheduled-tasks/task-write.js'
+import { createScheduledTask, updateScheduledTask } from '@gugu/scheduler/tasks'
 
 describe('定时任务写入用例', () => {
   it('活动提醒重复提交返回原任务且只在首次提交后发布', async () => {

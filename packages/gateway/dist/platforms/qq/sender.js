@@ -439,3 +439,14 @@ export function createQqSender(options) {
     };
     return sender;
 }
+/** 主动通知没有入站消息 ID，只使用普通消息的发送路径。 */
+export function createQqProactiveSender(options) {
+    async function unexpectedSequence() {
+        throw new Error('QQ 主动通知不使用回复或流式序号');
+    }
+    const sender = createQqSender({
+        ...options,
+        sequences: { nextPassive: unexpectedSequence, nextStream: unexpectedSequence },
+    });
+    return (target, text, signal, authorize) => sender.text(target, text, signal, authorize);
+}

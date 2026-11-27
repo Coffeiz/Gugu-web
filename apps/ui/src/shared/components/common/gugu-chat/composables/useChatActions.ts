@@ -133,6 +133,15 @@ export function useChatActions(options: {
     if (!a) return
     e.preventDefault()
     const href = a.getAttribute('href') || ''
+    const libraryLink = /^gugu:\/\/resolve-library-link\/([^/?#]{1,50000})$/u.exec(href)
+    if (libraryLink) {
+      try {
+        const target = await pathFiles.resolveLibraryLink?.(decodeURIComponent(libraryLink[1]!))
+        if (!target || !await openMindRef(target.kind, target.id, { revealUnsupportedFile: true }))
+          showAppNotice(i18n.global.t('mindUi.referenceMissing'))
+      } catch (error) { showAppError(errorMessage(error)) }
+      return
+    }
     if (href.startsWith('gugu://download-file/')) {
       const reference = href.slice('gugu://download-file/'.length)
       const file = decodeMindFileReference(reference)
@@ -170,10 +179,10 @@ export function useChatActions(options: {
       await options.router.push('/canvases')
       return
     }
-    const mObject = href.match(/^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task)\/(\d+)$/i)
+    const mObject = href.match(/^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task|client)\/(\d+)$/i)
     if (mObject) options.onOpenObject(mObject[1].toLowerCase(), Number(mObject[2]))
-    const mSkill = href.match(/^gugu:\/\/open-skill\/(U[1-9][0-9]*)$/i)
-    if (mSkill) options.onOpenSkill(mSkill[1].toUpperCase())
+    const mSkill = href.match(/^gugu:\/\/open-skill\/(U[1-9][0-9]*|[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)$/u)
+    if (mSkill) options.onOpenSkill(mSkill[1])
   }
 
   return { refreshAfterTools, onChatActionClick }

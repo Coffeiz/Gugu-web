@@ -49,6 +49,6 @@ async function reveal() {
 <template>
   <FloatPreviewWindow v-if="preview" :win="preview" native-window :hide-native-reveal="hideReveal" :native-state="windowState" @close="close" @reveal="reveal"
     @toggle-fullscreen="toggleWindow('fullscreen')" @toggle-pin="toggleWindow('pin')" />
-  <p v-else-if="failed" role="alert">无法打开文件预览</p>
+  <p v-else-if="failed" role="alert">{{ $t('pageUi.previewFailed') }}</p>
   <AppToast />
 </template>

@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import type { DesktopOnboardingState } from '@gugu/core/desktop'
+import { setOnboardingGuideState } from '@/composables/onboarding/useOnboardingGuide'
 import { desktopData } from '@desktop/bridge/bridge'
 
 const { t } = useI18n()
@@ -28,6 +29,17 @@ async function checkSandbox() {
   }
 }
 
+async function reopenGuide() {
+  try {
+    const state = await desktopData.onboarding(undefined, true)
+    onboarding.value = state
+    setOnboardingGuideState(state.guide)
+  } catch {
+    onboarding.value = null
+    onboardingStatus.value = '无法重新打开引导'
+  }
+}
+
 onMounted(async () => {
   void checkSandbox()
   try {
@@ -44,16 +56,16 @@ onMounted(async () => {
     <header class="dev-workspace-header">
       <div>
         <h1>{{ t('navigation.devTools') }}</h1>
-        <span class="core-status">{{ connected ? 'Core 已连接' : 'Core 未连接' }}</span>
+        <span class="core-status">{{ connected ? $t('pageUi.coreConnected') : $t('pageUi.coreDisconnected') }}</span>
       </div>
-      <ActionButton fit variant="secondary" :disabled="busy" @click="$emit('refresh')">刷新本地数据</ActionButton>
+      <ActionButton fit variant="secondary" :disabled="busy" @click="$emit('refresh')">{{ $t('pageUi.refreshLocal') }}</ActionButton>
     </header>
 
     <div class="dev-tool-grid">
       <section class="dev-tool" aria-labelledby="desktop-sandbox">
-        <h2 id="desktop-sandbox">执行隔离</h2>
+        <h2 id="desktop-sandbox">{{ $t('pageUi.sandbox') }}</h2>
         <p role="status">{{ sandboxStatus }}</p>
-        <ActionButton fit variant="secondary" :disabled="checkingSandbox" @click="checkSandbox">重新检测</ActionButton>
+        <ActionButton fit variant="secondary" :disabled="checkingSandbox" @click="checkSandbox">{{ $t('pageUi.checkAgain') }}</ActionButton>
       </section>
       <section class="dev-tool" aria-labelledby="desktop-loopscope">
         <h2 id="desktop-loopscope">{{ t('devHome.tools.loopScope.label') }}</h2>
@@ -63,17 +75,18 @@ onMounted(async () => {
         </ActionButton>
       </section>
       <section class="dev-tool" aria-labelledby="desktop-onboarding">
-        <h2 id="desktop-onboarding">新手引导状态</h2>
+        <h2 id="desktop-onboarding">{{ $t('pageUi.onboardingStatus') }}</h2>
+        <ActionButton fit @click="reopenGuide">{{ $t('pageUi.reopenOnboarding') }}</ActionButton>
         <p v-if="!onboarding">{{ onboardingStatus }}</p>
-        <p v-else-if="!onboarding.guide.enabled">当前未启用引导。</p>
-        <p v-else-if="onboarding.guide.completed_at">引导已完成。</p>
-        <p v-else-if="onboarding.guide.dismissed">引导已暂时关闭。</p>
-        <p v-else>引导进行中：{{ onboarding.guide.current_step }} · 已完成 {{ onboarding.guide.completed_steps.length }} 步。</p>
+        <p v-else-if="!onboarding.guide.enabled">{{ $t('pageUi.onboardingDisabled') }}</p>
+        <p v-else-if="onboarding.guide.completed_at">{{ $t('pageUi.onboardingComplete') }}</p>
+        <p v-else-if="onboarding.guide.dismissed">{{ $t('pageUi.onboardingDismissed') }}</p>
+        <p v-else>{{ $t('pageUi.onboardingProgress', { step: onboarding.guide.current_step, count: onboarding.guide.completed_steps.length }) }}</p>
       </section>
       <section class="dev-tool" aria-labelledby="desktop-appearance">
-        <h2 id="desktop-appearance">外观</h2>
-        <p>Mono · 深浅色跟随系统</p>
-        <ActionButton fit variant="secondary" @click="$emit('openAppearance')">打开偏好设置</ActionButton>
+        <h2 id="desktop-appearance">{{ $t('pageUi.appearance') }}</h2>
+        <p>{{ $t('pageUi.monoAppearance') }}</p>
+        <ActionButton fit variant="secondary" @click="$emit('openAppearance')">{{ $t('pageUi.openPreferences') }}</ActionButton>
       </section>
     </div>
   </div>
@@ -83,7 +96,7 @@ onMounted(async () => {
 .dev-workspace {
   max-width: 960px;
   margin-inline: auto;
-  padding: clamp(4px, 2vw, 24px);
+  padding: var(--page-content-inset);
 }
 .dev-workspace-header {
   display: flex;

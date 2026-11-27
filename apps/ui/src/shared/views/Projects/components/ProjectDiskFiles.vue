@@ -61,7 +61,7 @@ const navigation = useFolderNavigation<PathFileEntry & { id: string }>({})
 const { folderStack } = navigation
 const reload = ref(0)
 const projectRoot = `project:${props.projectId}` as const
-const directoryId = ref<typeof projectRoot | `desktop:${string}` | number>(projectRoot)
+const directoryId = ref<typeof projectRoot | 'personal' | `desktop:${string}` | number>(projectRoot)
 const target = computed(() => ({
   directoryId: directoryId.value, relativePath: folderStack.value.at(-1)?.relativePath ?? '',
 }))

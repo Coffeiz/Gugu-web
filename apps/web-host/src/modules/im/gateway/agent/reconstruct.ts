@@ -58,7 +58,7 @@ export interface ImAgentReconstructionResources extends Omit<WebAgentReconstruct
     services: ProviderContextFactoryInput['services']
     createContext(runtime: Parameters<ProviderContextFactoryInput['createContext']>[0]): Omit<ProviderFactoryContext, 'load'> | Promise<Omit<ProviderFactoryContext, 'load'>>
   }
-  source: Omit<ContextSourcePorts, 'readSnapshot' | 'historyReader' | 'currentTurn' | 'select' | 'digest' | 'nextId' | 'builder'>
+  source: Omit<ContextSourcePorts, 'readSnapshot' | 'historyReader' | 'currentTurn' | 'select' | 'digest' | 'nextId' | 'builder'> & { skillDataRoot?: string }
   builder: Omit<AgentContextBuilderPorts, 'dynamic'> & { now(): number }
   sender: ImRunDeliveryPorts<CanonicalRunContext>['sender']
   showIntermediateReplies?: boolean
@@ -190,7 +190,7 @@ export function createImAgentReconstructor(options: ImAgentReconstructorOptions)
           if (!sameIdentity(target, id) || !await authorizeCurrent()) throw new Error('IM 运行授权已变更')
           return selection
         }, currentTurn: createPostgresCurrentTurnReader(options.pool, String(lease.input.userMessageId), resources.materialize),
-      })
+      }, undefined, resources.source.skillDataRoot)
       const configured = resources.preparation.configuration
       const load: CanonicalContextPorts['load'] = async (identity, signal) => {
         try {

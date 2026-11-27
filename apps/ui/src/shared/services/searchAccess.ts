@@ -14,7 +14,7 @@ export interface SearchItem {
 export interface SearchGroup { type: 'project' | 'file' | 'folder' | 'event' | 'client' | 'conversation' | 'note' | 'canvas_note' | 'skill' | 'mcp' | 'scheduled_task'; label: string; items: SearchItem[] }
 
 export interface SearchAccess {
-  query(queries: string[], signal?: AbortSignal): Promise<{ total: number; partial?: boolean; groups: SearchGroup[] }>
+  query(queries: string[], signal?: AbortSignal, expansion?: number): Promise<{ total: number; partial?: boolean; groups: SearchGroup[] }>
   queryNotes(query: string, signal?: AbortSignal): Promise<{
     groups: Array<{ type: string; items: Array<{ id: number | string }> }>
   }>

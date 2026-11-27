@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { createHash } from 'node:crypto'
 import { consumeInteractionText } from '@gugu/core/agent'
 import type { ImPreflightScope } from '@gugu/gateway'
-import { createImTextChoiceConsumer, type ScopedImTextPrompt } from '../../../../src/modules/im/gateway/interactions/preflight.js'
+import { createImTextChoiceConsumer, type ScopedImTextPrompt } from '@gugu/gateway'
 import { consumeInteractionAction, type InteractionPromptRecord, type InteractionActionRecord,
   type InteractionConsumeTransaction } from '@gugu/core/agent/interactions/consume-action'
 import type { AgentInteractionRespondService } from '../../../../src/modules/agent/interactions/respond.js'
@@ -86,4 +86,23 @@ test('作用域内已有消费事件收据时静默消费重放，不重复提�
   }, authorize: async () => { throw new Error('不应再次消费') } })
   assert.deepEqual(await consume(scope, '1', signal), { status: 'replay' })
   assert.equal(f.stats().commits, 0)
+})
+
+test('同一 Gateway 流程兼容服务端事务与桌面 Run 回复端口', async () => {
+  for (const adapter of ['web', 'desktop'] as const) {
+    const f = fixture()
+    f.prompt.schema.custom_input_active = true
+    const consume = createImTextChoiceConsumer({
+      ...(adapter === 'web' ? { service: f.service } : {
+        async consumeText(prompt: ScopedImTextPrompt, text: string, caller: ImPreflightScope) {
+          assert.equal(prompt.runId, 'synthetic-run')
+          return f.service.resumeText!(caller.ownerId, prompt.promptId, text, caller.eventId)
+        },
+      }),
+      find: async () => [{ ...f.projected, runId: 'synthetic-run', customInputActive: true }],
+      authorize: async () => true,
+    })
+    assert.deepEqual(await consume(scope, '合成文字回答', signal), { status: 'selected', text: '合成文字回答' })
+    assert.equal(f.stats().resumes, 1)
+  }
 })

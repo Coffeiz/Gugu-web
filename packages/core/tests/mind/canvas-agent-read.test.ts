@@ -13,7 +13,7 @@ it('真实 SQLite 注册器分页不截断总数且隔离 owner、软删和项�
   const { Kysely, SqliteDialect } = await import('kysely')
   const { tablesSql } = await import('../../src/data/schema.js')
   const { createSqlMindCanvasReader } = await import('../../src/mind/canvas-read.js')
-  const { createCanvasReadTools } = await import('../../src/agent/tools/canvas.js')
+  const { createCanvasReadTools } = await import('../../src/agent/tools/canvas/index.js')
   const { createToolRegistry } = await import('../../src/agent/tools/registry.js')
   const connection = new SQLite(':memory:')
   const schema = tablesSql('sqlite')

@@ -1,9 +1,12 @@
+import { consumeDesktopImText } from '../interactions/text.js'
 import { rm } from 'node:fs/promises'
 import { writeDesktopAgentAttachment } from '../../../agent/attachments.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type { safeStorage } from 'electron'
 import { imAdmissionKeys, receiveMessage, rollbackImMedia, type ImConnectionIdentity, type ImConversationScope, type ImReceivedMessage } from '@gugu/gateway'
 import type { IpcHost } from '../../../ipc/types.js'
+import type { createDesktopAgentModelService } from '../../../agent/model.js'
+import { parseImControlCommand } from '@gugu/core/im/shortcut'
 import { DesktopError } from '../../../core-host.js'
 
 export function desktopImEventKey({ scope, eventId }: { scope: ImConversationScope; eventId: string }): string {
@@ -20,18 +23,23 @@ export interface DesktopImEnvelope {
   pendingAskResume?: boolean
 }
 
-export type DesktopImFile = { name: string; ext: string; mime: string; voice: boolean; transcript?: string; sourceIndex?: number; bytes: Uint8Array }
+export type DesktopImFile = { name: string; ext: string; mime: string; voice: boolean; transcript?: string; quoted?: boolean; sourceIndex?: number; bytes: Uint8Array }
 
 export function createDesktopImInbox(host: IpcHost, encryption: Pick<typeof safeStorage, 'isAsyncEncryptionAvailable' | 'encryptStringAsync'>,
-  dataDirectory?: string) {
+  dataDirectory?: string, model?: Pick<ReturnType<typeof createDesktopAgentModelService>, 'resolveRunModel'>) {
   return async (connection: ImConnectionIdentity, connectionId: string, event: ImReceivedMessage, replyContext?: string,
     media?: { files: DesktopImFile[]; sourceMessageId?: string; recordOnly?: boolean; ownerPlatformUserId?: string;
       sourceAttentionKind?: string; authorize(): Promise<boolean>; onAccepted?(ids: readonly string[]): Promise<void> }): Promise<boolean> => {
     const receipt = await receiveMessage(connection, event, {
       async recordInbound(event) {
+        const eventKey = desktopImEventKey(event)
+        if (model && event.scope.chatType === 'c2c' && !media?.recordOnly && !media?.files.length && event.text.trim() && !parseImControlCommand(event.text.trim())) {
+          if (media && !await media.authorize()) return { status: 'ignored' }
+          const answer = await consumeDesktopImText(host, model, event, connectionId, eventKey, media?.authorize ?? (async () => true))
+          if (answer) return { status: answer.status === 'replay' ? 'duplicate' : 'recorded' }
+        }
         if (!media?.recordOnly && !await encryption.isAsyncEncryptionAvailable())
           throw new DesktopError('credential_store', '无法加密本机 IM 收件')
-        const eventKey = desktopImEventKey(event)
         const attachments = media?.files.map(({ bytes, ...file }) => ({
           ...file, attachId: randomUUID().replaceAll('-', ''), size: bytes.byteLength,
         }))

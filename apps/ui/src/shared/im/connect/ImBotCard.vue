@@ -18,7 +18,7 @@ const { t } = useI18n()
         <span v-if="status" class="pm-field-hint" role="status">{{ status }}</span>
       </div>
       <span class="pm-switch-wrap">
-        <ToggleSwitch size="sm" :model-value="enabled" :disabled="busy"
+        <ToggleSwitch :model-value="enabled" :disabled="busy"
           :aria-label="t(enabled ? 'profileImUi.disableBot' : 'profileImUi.enableBot')"
           @update:model-value="$emit('toggle', $event)" />
         <span class="pm-switch-label" :class="{ on: enabled }">{{ t(enabled ? 'profileImUi.enabled' : 'profileImUi.disabled') }}</span>

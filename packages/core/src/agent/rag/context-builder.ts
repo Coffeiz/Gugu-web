@@ -1,15 +1,12 @@
 import { createHash } from 'node:crypto'
 import type { SqlDataRuntime } from '../../data/runtime.js'
 import type { CanonicalMessage, HistoryIdentity, PersistedHistoryRow, RagContext, RunIdentity } from '../models.js'
-import { configureRagJieba } from './tokenizer.js'
-import { getAgentRagJieba } from './node-jieba.js'
+import { automaticRagSources, prepareAutomaticRagCorpus } from './automatic-corpus.js'
 import { createSqlRagPersistentIndexReader } from './persistent-index.js'
-import { createRagDocumentTermCache } from './lexical-index.js'
 import { createScopedRagSearch, type ScopedRagVectors } from './scoped-search.js'
 import type { RagSearchScope } from './contracts.js'
 
 const ownerScope: RagSearchScope = { scope_type: 'owner', scope_id: '' }
-const sourceTypes = ['memory', 'project', 'calendar', 'scheduled_task', 'conversation', 'canvas', 'knowledge', 'note'] as const
 
 function contentHash(value: string): string {
   return createHash('sha256').update(value.trim()).digest('hex')
@@ -32,7 +29,6 @@ function historyRagHashes(history: readonly PersistedHistoryRow[]): string[] {
   return [...hashes]
 }
 
-const documentTermsByDatabase = new WeakMap<SqlDataRuntime['db'], ReturnType<typeof createRagDocumentTermCache>>()
 
 /**
  * Shared automatic owner RAG for Web Host and Desktop. Hosts bind authorization,
@@ -49,9 +45,8 @@ export function createAgentRagContextBuilder(options: {
   }) | null>
   conversationMessageTime?(identity: HistoryIdentity, timestamp: string, signal?: AbortSignal): Promise<string>
 }) {
-  configureRagJieba(getAgentRagJieba())
   const bound = Object.freeze({ ...options.identity })
-  const index = createSqlRagPersistentIndexReader(options.core.db, options.core.backend)
+  const index = createSqlRagPersistentIndexReader(options.core.db, options.core.backend, { cacheSqliteOwner: true })
 
   return async (input: HistoryIdentity & {
     query: string
@@ -65,38 +60,43 @@ export function createAgentRagContextBuilder(options: {
     const query = input.query.trim()
     if (!query) return empty('empty_query')
     try {
+      const bindingStarted = performance.now()
       if (!await options.enabled(bound, signal)) return empty('disabled')
       signal?.throwIfAborted()
       if (!await options.authorize(bound, ownerScope, signal)) return empty('no_eligible_scope')
       signal?.throwIfAborted()
 
-      let documentTerms = documentTermsByDatabase.get(options.core.db)
-      if (!documentTerms) {
-        documentTerms = createRagDocumentTermCache()
-        documentTermsByDatabase.set(options.core.db, documentTerms)
-      }
+      const corpus = prepareAutomaticRagCorpus({
+        db: options.core.db, index, ownerId: bound.ownerId, scopes: [ownerScope],
+      })
+      if (!corpus.ready) return corpus.context
 
+      const vectorSetupStarted = performance.now()
       const vectors = await options.vectors?.(bound.ownerId, signal) ?? null
+      const vectorSetupFinished = performance.now()
       signal?.throwIfAborted()
       const search = createScopedRagSearch({
-        index, documentTerms,
+        index, lexicalCorpus: corpus.lexicalCorpus,
         authorize: async (owner, scope, authSignal) => owner.toLowerCase() === bound.ownerId.toLowerCase()
           && scope.scope_type === 'owner' && (scope.scope_id ?? '') === ''
           && await options.authorize(bound, scope, authSignal),
         ...(vectors ? { vectors } : {}),
       })
       const beforeMessageId = input.beforeMessageId === null ? undefined : Number(input.beforeMessageId)
+      let vectorCloseMs = 0
       const result = await (async () => {
         try {
           return await search(bound.ownerId, ownerScope, query, {
-            sourceTypes,
+            sourceTypes: automaticRagSources,
             limit: 5,
             selectionMode: 'confidence',
             excludeContentHashes: historyRagHashes(input.history),
             ...(beforeMessageId !== undefined ? { beforeMessageId } : {}),
           }, signal)
         } finally {
+          const closeStarted = performance.now()
           await vectors?.close?.()
+          vectorCloseMs = performance.now() - closeStarted
         }
       })()
       signal?.throwIfAborted()
@@ -106,6 +106,12 @@ export function createAgentRagContextBuilder(options: {
         scope_type: 'owner',
         vector_doc_count: result.vectorDocCount,
         ...result.diagnostics,
+        stage_ms: {
+          ...result.diagnostics.stage_ms,
+          context_binding_ms: Math.round(vectorSetupStarted - bindingStarted),
+          vector_setup_ms: Math.round(vectorSetupFinished - vectorSetupStarted),
+          vector_close_ms: Math.round(vectorCloseMs),
+        },
         rank_details: result.results.map((item, index) => ({
           rank: index + 1,
           source_type: item.document.source_type,

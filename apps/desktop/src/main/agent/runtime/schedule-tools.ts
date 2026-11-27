@@ -3,13 +3,13 @@ import type { Database } from '#core-source/data/schema.js'
 import type { SqlDataRuntime } from '#core-source/data/runtime.js'
 import type { RunIdentity } from '#core-source/agent/models.js'
 import { stableJson } from '#core-source/agent/context/history/canonical-history.js'
-import { createListScheduledTasksTool, createScheduledTaskWriteTools } from '#core-source/agent/tools/scheduled-tasks.js'
+import { createListScheduledTasksTool, createScheduledTaskWriteTools } from '#core-source/agent/tools/scheduled-tasks/index.js'
 import type { createSqliteToolConfirmation } from '#core-source/agent/interactions/sqlite-confirmation.js'
 import { desktopImGroupRunEvent } from '#core-source/im/desktop-inbox.js'
-import { desktopScheduleImDeliveryTargets, desktopScheduleImPlatforms, desktopScheduleImTarget, ownsDesktopScheduleImTarget, readDesktopScheduleImTargets, type DesktopScheduleImPlatform, type DesktopScheduleImTarget } from '#core-source/scheduled-tasks/desktop-im.js'
-import { desktopScheduledTasks } from '#core-source/scheduled-tasks/desktop.js'
-import { ScheduledTaskReferenceError } from '#core-source/scheduled-tasks/task-write.js'
-import type { createScheduledTaskQueries } from '#core-source/scheduled-tasks/task-list.js'
+import { desktopScheduleImDeliveryTargets, desktopScheduleImPlatforms, desktopScheduleImTarget, desktopSchedulePrivateBinding, readDesktopScheduleImTargets, type DesktopScheduleImPlatform, type DesktopScheduleImTarget } from '#core-source/runtime/desktop-schedules/desktop-im.js'
+import { desktopScheduledTasks } from '#core-source/runtime/desktop-schedules/desktop.js'
+import { ScheduledTaskReferenceError } from '@gugu/scheduler/tasks'
+import type { createScheduledTaskQueries } from '#core-source/tasks/task-list.js'
 import type { createDesktopScheduledImContext } from '../../schedules/context.js'
 import { desktopGroupMemoryContext } from './im-memory-context.js'
 
@@ -26,15 +26,14 @@ export function createDesktopScheduleTools(options: {
 }) {
   const { core, ownerId, imPlatform, hasImSession, groupChat, hostRequest, currentScheduledIm, scheduledTasks, authorizeWrite } = options
   const { db } = core
-  async function privateScheduleImTarget(platform: DesktopScheduleImPlatform, identity: RunIdentity, signal?: AbortSignal,
-    database: Kysely<Database> = db) {
-    const target = desktopScheduleImTarget.safeParse(await hostRequest('agent.schedules.im.privateTarget', { platform }, signal))
-    return target.success && await ownsDesktopScheduleImTarget<Database>(database, identity.ownerId, target.data) ? target.data : null
+  async function privateScheduleImTarget(platform: DesktopScheduleImPlatform, identity: RunIdentity, signal?: AbortSignal) {
+    const target = desktopSchedulePrivateBinding.safeParse(await hostRequest('agent.schedules.im.privateTarget', { platform }, signal))
+    return target.success && identity.ownerId === ownerId && target.data.platform === platform ? target.data : null
   }
   async function scheduleImTarget(identity: RunIdentity, signal?: AbortSignal, database: Kysely<Database> = db) {
     const platform = imPlatform
     if (platform !== 'qq' && platform !== 'feishu' && platform !== 'telegram' && platform !== 'wechat') return null
-    if (!groupChat) return privateScheduleImTarget(platform, identity, signal, database)
+    if (!groupChat) return privateScheduleImTarget(platform, identity, signal)
     const receipt = await desktopImGroupRunEvent(database, identity)
     if (!receipt) return null
     const scope = desktopGroupMemoryContext(await hostRequest('agent.im.readGroupMemoryContext', { ...receipt, ownerId }, signal), ownerId)
@@ -65,16 +64,16 @@ export function createDesktopScheduleTools(options: {
     if (!channels.length) return {}
     const targets: DesktopScheduleImTarget[] = []
     for (const platform of channels) {
-      const target = bound?.platform === platform ? bound : await privateScheduleImTarget(platform, identity, signal, database)
-      if (!target || !await currentScheduledIm(target, signal, database))
+      const target = bound?.platform === platform ? bound : await privateScheduleImTarget(platform, identity, signal)
+      const destination = target?.chatType === 'c2c' ? { platform, chatType: 'c2c' as const } : target
+      if (!destination || !await currentScheduledIm(destination, signal, database))
         throw new ScheduledTaskReferenceError('当前 IM 投递目标已失效')
-      targets.push(target)
+      targets.push(destination)
     }
     return { channels: [...channels, ...(channelList?.includes('web') ? ['web'] : [])],
       delivery_targets: desktopScheduleImDeliveryTargets(targets) }
   }
   const scheduleWrites = core.receipts ? createScheduledTaskWriteTools(core, {
-    reminderOnly: !hasImSession,
     supportedChannels: ['web', ...desktopScheduleImPlatforms],
     capabilities: { workspaceSupported: false, filesystemAuthorizationEnabled: false },
     async authorize(tx, identity, input, signal) {
@@ -97,14 +96,11 @@ export function createDesktopScheduleTools(options: {
     },
     async create(tx, owner, input) {
       const { fields, targets } = writeScheduleTarget(input)
-      return (await desktopScheduledTasks<Database>(tx, owner).create({ execution_mode: targets.length ? 'instruction' : 'reminder', ...fields }, null, targets)).id
+      return (await desktopScheduledTasks<Database>(tx, owner).create({ execution_mode: 'instruction', ...fields }, null, targets)).id
     },
     async update(tx, owner, id, patch) {
       const { fields, targets } = writeScheduleTarget(patch)
-      const tasks = desktopScheduledTasks<Database>(tx, owner)
-      if (!hasImSession && (fields.execution_mode ?? (await tasks.get(id)).execution_mode) !== 'reminder')
-        throw new ScheduledTaskReferenceError('桌面端请使用提醒模式 execution_mode=reminder')
-      await tasks.update(id, fields, null, targets)
+      await desktopScheduledTasks<Database>(tx, owner).update(id, fields, null, targets)
     },
     async publish() {},
   }) : []

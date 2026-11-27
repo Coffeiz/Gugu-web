@@ -34,7 +34,7 @@
   </div>
 
   <div v-if="!groups.length" class="tl-empty">
-    {{ filtered ? '没有匹配的笔记' : '还没有记录，在下面记一条试试～' }}
+    {{ filtered ? $t('pageUi.noNotesMatch') : $t('pageUi.noNotes') }}
   </div>
 </template>
 

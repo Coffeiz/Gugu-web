@@ -29,7 +29,7 @@ defineEmits<{ 'update:modelValue': [value: string] }>()
 <style scoped>
 .interface-type-select { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
 .interface-type-select > label { color:var(--content-secondary); font-size:11px; font-weight:600; }
-.interface-type-options { display:flex; width:100%; gap:1px; }
+.interface-type-options { display:flex; width:100%; gap: var(--option-gap); }
 .interface-type-option { flex:1 1 0; min-width:0; min-height:var(--control-md); box-sizing:border-box; padding:6px 10px; border:1px solid var(--choice-chip-border); border-radius:0; background:var(--choice-chip-bg); color:var(--choice-chip-fg); font:500 12px var(--font-sans); cursor:pointer; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
 .interface-type-option:first-child { border-radius:9px 0 0 9px; }
 .interface-type-option:last-child { border-radius:0 9px 9px 0; }

@@ -1,7 +1,7 @@
 import { createRemoteByokClient, RemoteByokError } from '@gugu/core/byok/client'
 import { byokCommand, byokTarget } from '@gugu/core/byok/contracts'
 import { bindRemoteSession, createRemoteAuthClient, RemoteAuthError } from '@gugu/auth/client'
-import { remoteLoginInputSchema, type RemoteAccountState, type RemoteLoginInput } from '@gugu/auth/contracts'
+import { remoteLoginInputSchema, type RemoteAccountState, type RemoteLoginInput, type RemoteSession, type RemoteUser } from '@gugu/auth/contracts'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import { DesktopError } from '../core-host.js'
 import type { createRemoteSessionStore } from './store.js'
@@ -10,6 +10,7 @@ export function createRemoteAccountHandlers(
   store: ReturnType<typeof createRemoteSessionStore>,
   client = createRemoteAuthClient(),
   byok = createRemoteByokClient(bindRemoteSession()),
+  getDeviceId?: () => Promise<string>,
 ) {
   // 登录切换、恢复和退出一次只执行一个，避免旧请求清掉新会话。
   let tail: Promise<unknown> = Promise.resolve()
@@ -17,6 +18,16 @@ export function createRemoteAccountHandlers(
     const result = tail.then(operation)
     tail = result.catch(() => {})
     return result
+  }
+
+  async function connected(session: RemoteSession, user: RemoteUser): Promise<RemoteAccountState> {
+    const state = { state: 'connected' as const, origin: session.origin, user }
+    if (session.provider !== 'official-saas') return state
+    try {
+      return { ...state, provider: session.provider, projects: await client.saasProjects(session) }
+    } catch {
+      return { ...state, provider: session.provider, projectsUnavailable: true }
+    }
   }
 
   return {
@@ -41,7 +52,7 @@ export function createRemoteAccountHandlers(
       if (!session) return { state: 'signed-out' }
       try {
         const user = await client.restore(session)
-        return { state: 'connected', origin: session.origin, user }
+        return connected(session, user)
       } catch (error) {
         if (error instanceof RemoteAuthError && error.code === 'session_expired') {
           await store.clear()
@@ -56,6 +67,8 @@ export function createRemoteAccountHandlers(
       return login(input.data)
     },
     [DESKTOP_CHANNELS.remoteLogout]: (): Promise<RemoteAccountState> => run(async () => {
+      const session = await store.read()
+      if (session?.provider === 'official-saas') await client.logoutSaas(session)
       await store.clear()
       return { state: 'signed-out' }
     }),
@@ -64,9 +77,9 @@ export function createRemoteAccountHandlers(
   function login(input: RemoteLoginInput): Promise<RemoteAccountState> {
     return run(async () => {
       try {
-        const { session, user } = await client.login(input)
+        const { session, user } = await client.login(input, await getDeviceId?.())
         await store.write(session)
-        return { state: 'connected', origin: session.origin, user }
+        return connected(session, user)
       } catch (error) {
         if (error instanceof RemoteAuthError) throw new DesktopError(error.code, error.message)
         throw error

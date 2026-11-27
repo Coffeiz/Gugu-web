@@ -10,18 +10,23 @@ import { operationsHandlers } from './operations.js'
 import type { IpcHost, IpcHandlers } from '../ipc/types.js'
 
 export function workspaceHandlers(host: IpcHost, diagnostics: () => Promise<unknown>,
-  searchFiles?: (queries: readonly string[]) => Promise<Pick<DesktopSearchResult, 'groups' | 'partial'>>,
+  searchFiles?: (queries: readonly string[], mode?: 'OR' | 'AND', perType?: number, signal?: AbortSignal, maxEntries?: number) => Promise<Pick<DesktopSearchResult, 'groups' | 'partial'> & { truncated?: boolean }>,
   resolveFileReference?: (id: string) => Promise<string | null>,
 ): IpcHandlers {
   return {
-    ...(searchFiles ? { [DESKTOP_CHANNELS.search]: async (value: unknown) => {
+    ...(searchFiles ? { [DESKTOP_CHANNELS.search]: async (value: unknown, expansion: unknown = 0) => {
+      if (typeof expansion !== 'number' || !Number.isSafeInteger(expansion) || expansion < 0
+        || !Number.isSafeInteger(10_000 * (expansion + 1)))
+        throw new DesktopError('invalid_request', '搜索扩展次数无效')
       if (!Array.isArray(value) || value.length > 8 || value.some(term => typeof term !== 'string' || [...term].length > 64))
         throw new DesktopError('invalid_request', '搜索关键词无效')
       const queries = value.map((term: string) => term.trim()).filter(Boolean)
+      const perType = 6 * (expansion + 1)
       const [business, files] = await Promise.all([
-        host.request<DesktopSearchResult>('desktop.search', { queries }), searchFiles(queries),
+        host.request<DesktopSearchResult>('desktop.search', { queries }),
+        expansion ? searchFiles(queries, 'OR', perType, undefined, 10_000 * (expansion + 1)) : searchFiles(queries),
       ])
-      return { ...business, partial: files.partial, total: business.total + files.groups.reduce((sum, group) => sum + group.items.length, 0),
+      return { ...business, partial: files.partial || files.truncated, total: business.total + files.groups.reduce((sum, group) => sum + group.items.length, 0),
         groups: [...business.groups, ...files.groups] }
     } } : {}),
     ...systemHandlers(host),

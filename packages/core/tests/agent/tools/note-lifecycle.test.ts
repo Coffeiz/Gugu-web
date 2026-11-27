@@ -6,7 +6,7 @@ import { sql } from 'kysely'
 import { beforeEach,afterEach,it,expect,vi,type Mock } from 'vitest'
 import { initializeSqlite,openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { SqlDataRuntime } from '../../../src/data/runtime.js'
-import { createNoteLifecyclePort,createNoteLifecycleTools } from '../../../src/agent/tools/note.js'
+import { createNoteLifecyclePort,createNoteLifecycleTools } from '../../../src/agent/tools/note/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect,fixture } from '../run/fixtures.js'
 let core:SqlDataRuntime,folder:string,owner:string,other:string,allowed:boolean

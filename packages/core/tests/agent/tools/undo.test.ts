@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
-import { createUndoLastActionTool } from '../../../src/agent/tools/undo.js'
-import type { UndoLastActionPort } from '../../../src/agent/tools/undo.js'
+import { createUndoLastActionTool } from '../../../src/agent/tools/undo/index.js'
+import type { UndoLastActionPort } from '../../../src/agent/tools/undo/index.js'
 
 describe('undo_last_action tool', () => {
   it('通过真实 ToolRegistry 使用可信 Run 上下文并返回 Host 撤销结果', async () => {

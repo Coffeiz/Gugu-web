@@ -215,7 +215,7 @@ export class FeishuPresentation {
         return this.elements().flatMap(element => element.tag === 'markdown' ? [String(element.content ?? '')]
             : element.tag === 'collapsible_panel' && Array.isArray(element.elements) ? element.elements.map(child => child && typeof child === 'object' ? String(child.content ?? '') : '') : []).filter(Boolean).join('\n\n');
     }
-    label(event) { return clip(this.policy.sanitize((event.label?.trim() || resolveImToolLabel(event.name, event.display, undefined, this.policy.locale)).replace(/\s+/g, ' ')), 80); }
+    label(event) { return clip(this.policy.sanitize(resolveImToolLabel(event.name, event.display, event.label, this.policy.locale).replace(/\s+/g, ' ')), 80); }
     detail(value) {
         if (typeof value === 'string') {
             try {

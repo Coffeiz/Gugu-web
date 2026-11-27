@@ -23,6 +23,7 @@ export async function buildDesktopAgentRuntime() {
   })
   const source = readFileSync(outfile, 'utf8')
   const require = createRequire(resolve(core, 'package.json'))
+  const desktopRequire = createRequire(resolve(desktop, 'package.json'))
   const modules = new Map([...source.matchAll(/(?:from\s*|import\s*)['"]([^.'"/][^'"]*)['"]/gu)]
     .map(match => match[1])
     .filter(name => !name.startsWith('node:'))
@@ -30,7 +31,7 @@ export async function buildDesktopAgentRuntime() {
   const nodeModules = resolve(desktop, '.tools/agent/node_modules')
   mkdirSync(nodeModules, { recursive: true })
   for (const [name, specifier] of modules) {
-    const resolved = require.resolve(specifier)
+    const resolved = (name === '@gugu/gateway' ? desktopRequire : require).resolve(specifier)
     let directory = dirname(resolved)
     while (directory !== dirname(directory)) {
       const packagePath = resolve(directory, 'package.json')

@@ -5,9 +5,8 @@
         v-for="rel in visibleRelations"
         :key="rel.id"
         class="rel-group"
-        :style="rel.opacity != null ? { opacity: rel.opacity } : undefined"
         @pointerdown.stop
-        @click.stop="removeByClick(rel.id)"
+        @click.stop="emit('remove', rel.id)"
       >
         <path class="rel-hit" :d="rel.d" fill="none" />
         <path class="rel-visible" :d="rel.d" fill="none" />
@@ -145,93 +144,20 @@ function resolveSides(relation: MindRelation, src: MindCanvasItem, dst: MindCanv
   return sides
 }
 
-// 卡片被移出画布时，关系数据会和卡片同时摘掉；保留旧关系快照 320ms，跟着代理淡出。
-const departingRelations = ref<{
-  relation: MindRelation
-  src: MindCanvasItem
-  dst: MindCanvasItem
-  since: number
-}[]>([])
-const immediateDepartures = new Set<number>()
-let departingRaf = 0
-
-function pruneAnchorSideCache() {
-  const retained = new Set([
-    ...props.relations.map(relation => relation.id),
-    ...departingRelations.value.map(entry => entry.relation.id),
-  ])
+// 关系随卡片从画布移除，不保留独立的退场快照。
+watch(() => props.relations, relations => {
+  const retained = new Set(relations.map(relation => relation.id))
   for (const id of anchorSideCache.keys()) {
     if (!retained.has(id)) anchorSideCache.delete(id)
   }
-}
-
-const DEPARTING_FADE_MS = 320
-function pumpDepartingFrames() {
-  renderTick.value++
-  const now = performance.now()
-  const next = departingRelations.value.filter(({ since }) => now - since < DEPARTING_FADE_MS)
-  if (next.length !== departingRelations.value.length) departingRelations.value = next
-  pruneAnchorSideCache()
-  if (departingRelations.value.length) departingRaf = requestAnimationFrame(pumpDepartingFrames)
-  else departingRaf = 0
-}
-onBeforeUnmount(() => {
-  if (departingRaf) cancelAnimationFrame(departingRaf)
 })
-
-function removeByClick(id: number) {
-  immediateDepartures.add(id)
-  emit('remove', id)
-}
-
-watch(
-  [() => props.relations, () => props.items],
-  ([nextRelations], [prevRelations, prevItems]) => {
-    if (nextRelations.length === 0 && props.items.length === 0) {
-      departingRelations.value = []
-      immediateDepartures.clear()
-      anchorSideCache.clear()
-      return
-    }
-    const nextIds = new Set(nextRelations.map(relation => relation.id))
-    const removed = prevRelations.filter(relation => !nextIds.has(relation.id))
-    const departing = removed.filter((relation) => {
-      const immediate = immediateDepartures.delete(relation.id)
-      return !immediate
-    })
-    if (!departing.length) {
-      pruneAnchorSideCache()
-      return
-    }
-    const prevItemByNodeId = new Map(prevItems.map(item => [item.nodeId, item]))
-    const additions = departing
-      .map((relation) => {
-        const src = prevItemByNodeId.get(relation.srcNodeId)
-        const dst = prevItemByNodeId.get(relation.dstNodeId)
-        return src && dst ? { relation, src, dst, since: performance.now() } : null
-      })
-      .filter((value): value is {
-        relation: MindRelation
-        src: MindCanvasItem
-        dst: MindCanvasItem
-        since: number
-      } => value != null)
-    if (!additions.length) {
-      pruneAnchorSideCache()
-      return
-    }
-    departingRelations.value = [...departingRelations.value, ...additions]
-    pruneAnchorSideCache()
-    if (!departingRaf) departingRaf = requestAnimationFrame(pumpDepartingFrames)
-  },
-)
 
 const visibleRelations = computed(() => {
   void renderTick.value
   void props.visualFrame
 
   const liveIds = new Set<number>()
-  const live = props.relations.flatMap((relation) => {
+  return props.relations.flatMap((relation) => {
     if (liveIds.has(relation.id)) return []
     const src = itemByNodeId.value.get(relation.srcNodeId)
     const dst = itemByNodeId.value.get(relation.dstNodeId)
@@ -243,26 +169,9 @@ const visibleRelations = computed(() => {
     return [{
       id: relation.id,
       d: relationCurvePath(from, sides.srcSide, to, sides.dstSide),
-      opacity: undefined as number | undefined,
     }]
   })
 
-  const now = performance.now()
-  const departing = departingRelations.value.flatMap(({ relation, src, dst, since }) => {
-    if (liveIds.has(relation.id)) return []
-    const sides = resolveSides(relation, src, dst)
-    const from = anchorFor(src, sides.srcSide, props.landingPositions.get(src.nodeId))
-    const to = anchorFor(dst, sides.dstSide, props.landingPositions.get(dst.nodeId))
-    const opacity = Math.max(0, 1 - (now - since) / DEPARTING_FADE_MS)
-    return [{
-      id: relation.id,
-      d: relationCurvePath(from, sides.srcSide, to, sides.dstSide),
-      opacity,
-    }]
-  })
-
-  const result = [...live, ...departing]
-  return result
 })
 
 // draft 与落定关系共用 relationCurvePath；未吸附目标时只临时估算目标侧。

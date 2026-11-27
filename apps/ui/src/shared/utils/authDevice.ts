@@ -12,7 +12,7 @@ function createDeviceId(): string {
   return `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
-/** 匿名认证请求共享的持久设备标识，只用于限流分桶。 */
+/** 当前浏览器配置的持久标识，供个人设置和认证请求使用。 */
 export function getAuthDeviceId(): string {
   if (typeof window === 'undefined') return ''
   try {

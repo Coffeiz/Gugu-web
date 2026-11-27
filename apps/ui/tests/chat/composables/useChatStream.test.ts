@@ -364,6 +364,25 @@ describe('useChatStream 展示事件与生命周期', () => {
     expect(options.messages.value.map(message => [message.toolCallId, message.toolStatus, message.toolDurationMs])).toEqual([['a', 'error', 20], ['b', 'success', 12]])
   })
 
+  it('续接时历史工具保留在时间线，但只有实时工具进入打字状态', async () => {
+    const historyLabel = '合成历史工具'
+    const liveLabel = '合成实时工具'
+    const tool = (id: string, order: number, label: string) => item(id, 'tool', order, {
+      toolName: 'shell', toolCallId: id, toolStatus: 'running', toolLabelOverride: label,
+    })
+    const options = createOptions([])
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      { type: 'display_event', replayed: true, item: tool('past', 1, historyLabel) },
+      { type: 'display_event', item: tool('live', 2, liveLabel) },
+      { type: 'done' },
+    ])))
+    await useChatStream(options).resumeStream(42)
+    expect(options.messages.value.map(message => [message.toolCallId, message._replayedTool]))
+      .toEqual([['past', true], ['live', false]])
+    expect(options.setStatus).not.toHaveBeenCalledWith({ kind: 'text', label: historyLabel })
+    expect(options.setStatus).toHaveBeenCalledWith({ kind: 'text', label: liveLabel })
+  })
+
   it('工具事件状态和刷新后的卡片都使用管理员覆盖标签', async () => {
     const label = '正在核对已有项目'
     const tool = item('custom-tool', 'tool', 1, { toolName: 'list_projects', toolCallId: 'projects',

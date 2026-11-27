@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createSkillRegistry } from '../../../src/agent/skills/registry.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
-import { createUseSkillTool } from '../../../src/agent/tools/meta.js'
+import { createUseSkillTool } from '../../../src/agent/tools/meta/index.js'
 import { collect, fixture } from '../run/fixtures.js'
 import type { ToolScope } from '../../../src/agent/tools/contracts.js'
 
@@ -92,4 +92,25 @@ it('关联 Schema 只加入当前 Run 授权目录匹配项，撤权后不会再
   expect(JSON.stringify(result)).not.toContain('mcp_revoked')
   authorized = false
   expect(await f.registry.tools.dispatch(call, scope)).not.toHaveProperty('canonicalEvents')
+})
+
+it('目录技能通过真实 use_skill 入口加载，随后以摘要去重', async () => {
+  const id = 'example-skill'
+  const skills = createSkillRegistry({
+    authorize: async candidate => candidate.ownerId === identity.ownerId,
+    skills: [{ id, name: '示例技能', description: '示例用途', source: 'user',
+      path: '/skills/example-skill', load: async () => ({ content: '技能正文', contentDigest: 'digest' }) }],
+  })
+  const registry = createToolRegistry({ authorize: async () => true, tools: [createUseSkillTool({ skills,
+    origin: async () => ({ source: 'user', ownerFingerprint: 'owner-fingerprint' }),
+  })] })
+  const scope: ToolScope = { identity, roundId: 'round', signal: new AbortController().signal, resolution: null,
+    execute: async () => { throw new Error('不得执行命令') } }
+  const call = { id: 'call', name: 'use_skill', input: { id } }
+  expect(await registry.tools.dispatch(call, scope)).toMatchObject({ successful: true, value: {
+    skill_id: id, path: '/skills/example-skill', content: '技能正文', _capability_usage: { source: 'user', id },
+  } })
+  expect(await registry.tools.dispatch(call, { ...scope, loadedSkills: {
+    [id]: { digest: 'digest', source: 'user', ownerFingerprint: 'owner-fingerprint' },
+  } })).toMatchObject({ successful: true, value: { already_loaded: true, path: '/skills/example-skill' } })
 })

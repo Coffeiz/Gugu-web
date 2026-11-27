@@ -321,7 +321,7 @@ onMounted(() => {
 /* 抽屉标题和返回按钮中心距左右边缘各 25px，与 50px 顶栏的垂直中心对齐。 */
 .cd-expanded-nav { position: absolute; inset: 0; display: flex; align-items: center; width: 100%; box-sizing: border-box; padding: 0 7px 0 25px; }
 .cd-compact-nav { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-evenly; width: 100%; height: calc(var(--canvas-toolbar-height) * 2); pointer-events: auto; }
-.cd-toggle { flex-shrink: 0; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: none; color: var(--text-secondary); cursor: pointer; transition: background .18s ease, color .18s ease; }
+.cd-toggle { flex-shrink: 0; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: none; color: var(--text-secondary); cursor: pointer; }
 /* 收起态仍占用两个控件的位置。 */
 .cd-compact-nav.is-loading .cd-toggle { position: relative; }
 .cd-compact-nav.is-loading .cd-toggle :deep(svg) { visibility: hidden; }

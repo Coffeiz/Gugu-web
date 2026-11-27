@@ -463,7 +463,7 @@ packages/
 ├── core/        业务服务与 Agent Runtime
 ├── auth/        登录、会话验证和撤销
 ├── users/       用户资料接口
-├── database/    数据结构、迁移与持久化基础
+├── database/    Kysely 基础、表结构与数据库迁移
 ├── gateway/     IM 消息接入与交付
 └── …            桌面契约、文件系统、沙箱、日志、图表与 Trace
 loopscope/        Agent Trace 采集和查看
@@ -472,6 +472,10 @@ docs/             产品、架构、运维与开发文档
 ```
 
 Web UI 通过 HTTP/SSE 调用 Web Host，Desktop UI 通过 Electron IPC 调用本地能力。两端复用 Core 业务 API，由各自的宿主提供可信身份、存储和运行环境。同进程使用包的公开入口，跨进程使用明确的协议契约。
+
+目标架构以 Kysely 作为统一的类型化表访问接口。Database 提供数据库实例装配、表类型、通用事务能力和迁移。Core、Gateway、Auth 与 Users 各自拥有仓储、业务事务和状态规则。Web Host 注入 PostgreSQL，Desktop 注入 SQLite。
+
+[Database 包](packages/database/README.md) ｜ [数据库基础层实施计划](docs/architecture/database-implementation.md)
 
 [完整仓库设计](docs/architecture/monorepo.md) ｜ [账号架构与 API](docs/architecture/account-api.md) ｜ [Auth 包](packages/auth/README.md) ｜ [Users 包](packages/users/README.md)
 

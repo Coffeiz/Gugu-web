@@ -1,3 +1,4 @@
+import { projectEmailCompose } from './email-compose.js'
 /** 交互存储端口授权并读取选项后，统一生成前端事件。 */
 export function projectAgentInteraction(input: {
   runId: string
@@ -22,6 +23,10 @@ export function projectAgentInteraction(input: {
     type: 'interaction_required' as const, prompt_id: prompt.id, session_id: prompt.session_id, core_run_id: runId,
     kind: prompt.kind, title: prompt.title, body: prompt.body,
     tool_call_id: typeof context.tool_call_id === 'string' ? context.tool_call_id : null,
+    ...(Array.isArray(schema.questions) ? { questions: schema.questions,
+      question_index: Array.isArray(schema.question_progress) ? schema.question_progress.length : 0,
+      question_answers: resolved.answers } : {}),
+    email_compose: projectEmailCompose(context, resolved),
     task_paused: prompt.kind === 'confirm',
     options: active ? options : readResolvedChoiceOptions(prompt.kind, schema),
     secret_fields: Array.isArray(schema.secret_fields) ? schema.secret_fields : [],

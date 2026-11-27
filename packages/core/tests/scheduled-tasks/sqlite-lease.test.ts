@@ -1,12 +1,12 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { Kysely, SqliteDialect } from 'kysely'
 import SQLite from 'better-sqlite3'
 import { expect, it } from 'vitest'
-import { createSqliteTaskLease } from '../../src/scheduled-tasks/sqlite-lease.js'
+import { createSqliteTaskLease } from '@gugu/database/scheduled-tasks'
 
 const exec = promisify(execFile)
 it('SQLite 文件的独立进程竞争租约，过期旧 owner 无法续租或释放新租约', async () => {
@@ -18,12 +18,11 @@ it('SQLite 文件的独立进程竞争租约，过期旧 owner 无法续租或�
   native.exec('CREATE TABLE scheduled_task_leases(task_id TEXT PRIMARY KEY,lease_owner TEXT NOT NULL,expires_at_ms INTEGER NOT NULL)')
   const db = new Kysely<{}>({ dialect: new SqliteDialect({ database: native }) })
   try {
-    const source = resolve('src/scheduled-tasks/sqlite-lease.ts')
-    const child = `import { Kysely, SqliteDialect } from 'kysely'; import SQLite from 'better-sqlite3'; import { pathToFileURL } from 'node:url';
-      const [path, source, owner] = process.argv.slice(1); const { createSqliteTaskLease } = await import(pathToFileURL(source));
+    const child = `import { Kysely, SqliteDialect } from 'kysely'; import SQLite from 'better-sqlite3'; import { createSqliteTaskLease } from '@gugu/database/scheduled-tasks';
+      const [path, owner] = process.argv.slice(1);
       const raw = new SQLite(path); raw.pragma('busy_timeout = 5000'); const db = new Kysely({dialect: new SqliteDialect({database: raw})});
       try { process.stdout.write(String(await createSqliteTaskLease(db, () => 1000).acquire('task', owner, 100))); } finally { await db.destroy(); }`
-    const claims = await Promise.all(['a', 'b'].map(owner => exec(process.execPath, ['--input-type=module', '-e', child, path, source, owner])))
+    const claims = await Promise.all(['a', 'b'].map(owner => exec(process.execPath, ['--input-type=module', '-e', child, path, owner])))
     expect(claims.map(result => result.stdout).sort()).toEqual(['false', 'true'])
     const winner = claims[0]!.stdout === 'true' ? 'a' : 'b'
     const other = winner === 'a' ? 'b' : 'a'

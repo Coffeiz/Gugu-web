@@ -42,6 +42,7 @@ export interface ToolRegistryOptions {
   readonly maxConcurrency?: number
   /** 定时执行等已预先确认的工具，执行器必须在持久认领时再次校验授权。 */
   readonly preauthorizedDestructiveTool?: ToolDefinition
+  readonly preauthorizedDestructiveTools?: readonly ToolDefinition[]
   /** 显式装配且自行核验、消费持久确认的危险工具。 */
   readonly confirmationGatedDestructiveTool?: ToolDefinition
   readonly confirmationGatedDestructiveTools?: readonly ToolDefinition[]

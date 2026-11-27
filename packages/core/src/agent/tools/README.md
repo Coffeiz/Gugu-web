@@ -2,39 +2,44 @@
 
 本目录对应旧 Python `agent/tools/`，只承载工具定义、输入契约和执行适配。按领域组织工具组，不按单个工具名称持续新增模块。注册表和 Schema 存在不代表业务或生产接入完成。
 
-## 领域模块
+## 工具组
 
-| 模块 | 职责 |
+| 工具组 | 契约与字段 |
 | --- | --- |
-| `projects.ts`、`projects/` | 项目查询、创建和修改工具集中定义；目录仅放创建/修改端口与共享目标解析；阶段和待办工具同属此组，共用CAS/Undo/持久收据。 |
-| `clients.ts` | 联系人领域工具。 |
-| `conversations.ts` | 历史对话工具组；正文由 owner 限定读取服务提供，搜索依赖可信 RAG 与会话定位端口。 |
-| `knowledge.ts` | 知识读取工具组；ID 精确读取由 Host owner FS 端口提供，关键词查询只接受 Host 授权范围并查询持久 BM25 索引。 |
-| `files.ts` | 文件读取、附件保存与列表、网页预览及文件和文件夹软删除。按 owner 文件 ID、已登记逻辑路径或附件 ID 限定访问。正文读取保留单项与批次上限，文档正文复用 Core 受限提取器。通用文件操作由已授权的 Shell 提供。 |
-| `canvas.ts` | 画布工具组；列表、分页快照、已有节点/可放置资源搜索、卡片定位、创建/引用放置、有序批处理、确认后画布/便签/关系删除、连接/端点及布局/视图移除/便签正文编辑；计数/视图/独立关系审计委托共享Mind读取，不在读取时改线。 |
-| `note.ts` | Mind笔记搜索、详情、软删、恢复与撤销工具组；来源节点、一跳关系和正文引用由共享Mind读取聚合。 |
-| `calendar.ts` | 日历工具组，活动和提醒聚合委托共享日历服务；事件删除复用共享软删/Undo事务及可信确认门。 |
-| `workspaces.ts` | 工作区声明查询/创建/更新、解绑及顶层目录删除工具组；创建复用 Host 的项目/文件夹声明和顶层目录服务（Agent 创建收据待补），更新借用同一事务完成显示名同步、完整owner结果与持久调用收据，不改变物理目录段；解绑保留父资源，顶层目录删除绑定全量影响快照、持久确认与删除结果收据。 |
-| `undo.ts` | 撤销工具组；目标由 Host 按可信 `agent:{sessionId}:{runId}` 上下文选择，模型不能提交 operation ID；Host 固定目标并写持久选择/结果收据，恢复时只对同一操作调用现有 Node Undo 状态机。 |
-| `overview.ts` | 近期待办、总览等跨领域只读聚合。 |
-| `trash.ts` | 回收站查询、恢复和 `permanent_delete` 工具组；全清必须由用户确认，Host 按 owner 复核快照并创建持久 purge job，Node Worker 分批执行。 |
-| `scheduled-tasks.ts` | 定时任务领域工具；群任务的 `group_context_search` 与 `search_memory` 由相邻调度装配按当前任务和已绑定群范围启用，私有记忆及跨群检索不向无当前 IM 发送者的后台 Run 开放。 |
-| `global-search.ts` | 站内全局搜索工具组，委托共享搜索服务。 |
-| `search.ts` | 外部搜索工具组。原生搜索使用可信模型绑定的厂商 Schema，深度研究及相似图依赖 Host 提供配置、用量及资源读取能力。 |
-| `web.ts` | 公网正文读取与文件下载。省略落点时使用可信会话绑定或用户默认工作区，显式目标按文件库归属校验。Host 在打开公网流之前验证落点和容量，在导入事务中复核。 |
-| `time.ts` | 时间工具组及共用可信时钟投影。 |
-| `skill-management.ts` | 技能管理工具组。列表包含停用项，正文由独立加载链读取。创建和更新复用共享管理器，在当前 Run 的持久收据事务中校验授权。删除需要可信持久确认。 |
-| `mcp-management.ts` | MCP 配置安全投影、连接检测、带持久收据的启停与更新，以及持久确认创建和删除。新增或更新 Header 凭据槽位时，Host 在同一事务建立私密表单意图。确认后清空槽位会清除已保存凭据。 |
-| `link-buttons.ts` | 链接按钮校验、Web artifact 及 IM 持久投递收据；生产 Host 和具体渠道能力须显式装配。 |
-| `meta.ts` | Skill正文加载、当前授权工具Schema发现及普通澄清交互；`ask_user` 只公布 Node 已实现的 choice/question，沙箱授权走可信 Host 端口；不实现通用表单、Skill持久化管理或第二套执行器。 |
+| 日历 | [calendar](./calendar/README.md) |
+| 画布 | [canvas](./canvas/README.md) |
+| 联系人 | [clients](./clients/README.md) |
+| 历史对话 | [conversations](./conversations/README.md) |
+| 邮件 | [email](./email/README.md) |
+| 文件与附件 | [files](./files/README.md) |
+| 站内搜索 | [global-search](./global-search/README.md) |
+| 即时通讯 | [im](./im/README.md) |
+| 知识 | [knowledge](./knowledge/README.md) |
+| MCP 管理 | [mcp-management](./mcp-management/README.md) |
+| 记忆 | [memory](./memory/README.md) |
+| 元工具 | [meta](./meta/README.md) |
+| 笔记 | [note](./note/README.md) |
+| 总览 | [overview](./overview/README.md) |
+| 项目 | [projects](./projects/README.md) |
+| 定时任务 | [scheduled-tasks](./scheduled-tasks/README.md) |
+| 联网搜索 | [search](./search/README.md) |
+| Shell | [shell](./shell/README.md) |
+| 技能管理 | [skill-management](./skill-management/README.md) |
+| 子 Agent | [subagent](./subagent/README.md) |
+| 时间 | [time](./time/README.md) |
+| 撤销 | [undo](./undo/README.md) |
+| 网页读取与下载 | [web](./web/README.md) |
+| 工作区 | [workspaces](./workspaces/README.md) |
 
-迁移日历、笔记、画布、知识、记忆、工作区等工具时，对应建立一个领域模块；同组的定义和执行适配放在该模块。领域内部只有独立资源边界、事务/生命周期或多个调用方共用的稳定逻辑才拆辅助文件。未实现的领域不建立空模块占位。
+每组以 `index.ts` 为入口。小组可直接定义工具，涉及独立端口、事务或共享解析时再拆文件。每组 README 记录工具名、输入字段、返回形状、授权、确认、宿主依赖和失败语义。以注册器暴露的 Schema 和实际校验为准。
+
+磁盘回收站由 Web Host 注入，包含 `list_trash`、`delete_item`、`restore_file`、`restore_folder` 和 `permanent_delete`，见 [回收站工具定义](../../../../../apps/web-host/src/modules/agent/tools/trash/disk.ts)。
 
 ## 注册与配置
 
 `contracts.ts` 定义 `ToolDefinition`、`ToolGroupDefinition` 和可信调用范围；`registry.ts` 提供 `registerGroup`、`register`、`configure`，并实现现有运行循环的 `ToolPort.plan/dispatch/reconcile`。Host 工厂按 `clients`、`projects`、`overview` 等领域调用组注册，调用方可用 `configure({ groups: { overview: false } })` 禁用整组，也可单独禁用工具。
 
-`permissions.ts`、`confirmation.ts` 处理权限投影与确认绑定；`definition-schema.ts`、`normalize-input.ts`、`input-errors.ts`、`search-tools.ts` 以及日期辅助处理共用输入契约。这些是基础设施，不包含领域查询。公共出口为 `index.ts`，不保留旧文件路径的转发层。
+`registry.ts`、`confirmation.ts` 处理权限投影与确认绑定；`definition-schema.ts`、`normalize-input.ts`、`input-errors.ts`、`meta/search-tools.ts` 以及日期辅助处理共用输入契约。这些是基础设施，不包含领域查询。公共出口为 `index.ts`，不保留旧文件路径的转发层。
 
 工具组对应 Python `BaseSkill` 的领域注册概念，和 `agent/skills/` 中按需加载 Markdown 正文的 Prompt Skill 相互独立。正文、description、前端参数不能建立权限。
 

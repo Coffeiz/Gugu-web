@@ -7,7 +7,7 @@
         <input v-model="draft.name" class="form-input" :aria-label="t('adminLlmUi.presetName')" :placeholder="t('llmExtraUi.modelNamePlaceholder')" />
       </div>
       <SpeechModelFields :draft="draft" v-model:api-key="draft.api_key" :keep-key="!!draft.has_api_key" :load-models="loadModels" />
-      <div class="modal-actions">
+      <div class="modal-actions app-card-actions">
         <span class="save-hint" :class="{ error: !!error }" role="status">{{ error || message }}</span>
         <button type="button" class="btn-ghost" :disabled="testing || saving || !canSave" @click="$emit('test')">{{ t(testing ? 'agent.testing' : 'agent.test') }}</button>
         <button type="button" class="btn-ghost" :disabled="saving" @click="$emit('close')">{{ t('adminLlmUi.cancel') }}</button>

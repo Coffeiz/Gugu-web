@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import CalendarSkeleton from '@/views/Calendar/components/CalendarSkeleton.vue'
+import MailRouteSkeleton from '@/views/Mail/MailRouteSkeleton.vue'
 import TerminalSkeleton from '@/views/Terminals/components/TerminalSkeleton.vue'
 import ProjectsSkeleton from '@/views/Projects/components/ProjectsSkeleton.vue'
 import ScrollableCardLayout from '@/components/common/layout/ScrollableCardLayout.vue'
@@ -44,6 +45,7 @@ const { t } = useI18n()
         <SkeletonBlock v-for="control in 2" :key="control" class="canvas-route-control" />
       </div>
     </div>
+    <MailRouteSkeleton v-else-if="routeName === 'mail'" aria-hidden="true" />
     <TerminalSkeleton v-else-if="routeName === 'Terminals'" aria-hidden="true" />
     <ScrollableCardLayout v-else-if="['Schedules', 'Skills', 'SkillsHome', 'SkillsMcp'].includes(routeName ?? '')"
       class="card-route" aria-hidden="true">
@@ -77,13 +79,14 @@ const { t } = useI18n()
 .workspace-route-skeleton { height: 100%; }
 .calendar-route, .panel-route { display: flex; flex-direction: column; gap: var(--space-md); height: 100%; }
 .route-toolbar {
+  gap: var(--space-xs);
   box-sizing: border-box;
   flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 52px;
-  padding: 0 16px;
+  min-height: calc(var(--toolbar-compact-control-height) + 2 * var(--toolbar-inset) + 2px);
+  padding: var(--toolbar-inset);
 }
 .calendar-route-body {
   flex: 1;
@@ -93,8 +96,8 @@ const { t } = useI18n()
   gap: var(--space-md);
 }
 .route-calendar-grid { position: relative; min-width: 0; overflow: hidden; }
-.route-panel { flex: 1; min-width: 0; min-height: 0; display: grid; align-content: start; gap: 16px; padding: 16px; overflow: hidden; }
-.projects-route { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; height: calc(100vh - 152px); }
+.route-panel { flex: 1; min-width: 0; min-height: 0; display: grid; align-content: start; gap: var(--space-lg); padding: var(--page-content-inset); overflow: hidden; }
+.projects-route { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-lg); height: calc(100vh - 152px); }
 .notes-route {
   box-sizing: border-box;
   display: grid;
@@ -102,7 +105,7 @@ const { t } = useI18n()
   grid-template-rows: auto minmax(0, 1fr);
   gap: var(--space-md);
   height: 100%;
-  padding: 0 24px 22px;
+  padding: 0 var(--space-xl) var(--space-xl);
 }
 .notes-route > .route-toolbar { grid-column: 1 / -1; }
 .notes-route > .note-detail-skeleton { grid-column: 2; }
@@ -112,6 +115,7 @@ const { t } = useI18n()
   box-sizing: border-box;
   display: flex;
   align-items: center;
+  gap: var(--space-xs);
   justify-content: space-evenly;
   border-radius: var(--radius-pill);
 }
@@ -119,8 +123,8 @@ const { t } = useI18n()
   left: calc(50% + var(--sidebar-width) / 2);
   bottom: var(--floating-edge);
   transform: translateX(-50%);
-  width: 259px;
-  height: var(--canvas-toolbar-height);
+  width: calc(243px + 2 * var(--space-sm) + 2px);
+  height: calc(var(--control-md) + 2 * var(--space-sm) + 2px);
 }
 .canvas-route-drawer {
   right: var(--floating-edge);
@@ -131,8 +135,8 @@ const { t } = useI18n()
   flex-direction: column;
 }
 .card-route { height: 100%; }
-.route-skill-group { display: grid; gap: 12px; }
-.route-skill-group + .route-skill-group { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--content-divider); }
+.route-skill-group { display: grid; gap: var(--space-md); }
+.route-skill-group + .route-skill-group { margin-top: var(--space-lg); padding-top: var(--space-lg); border-top: 1px solid var(--content-divider); }
 .is-desktop { position: relative; width: 100%; }
 .is-desktop .notes-route { padding: 0; }
 .is-desktop .canvas-route {

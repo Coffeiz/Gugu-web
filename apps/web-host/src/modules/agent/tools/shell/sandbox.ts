@@ -42,7 +42,9 @@ export function createWebAgentShell(options: {
     const isolatedWorkspace = !system && scope.resolution === null && initial.isolatedWorkspace
       && isIsolatedWorkspaceWrite(input.command, input.cwd, initial.isolatedWorkspace)
       ? initial.isolatedWorkspace : null
-    const decision = evaluateSandboxShell(input.command, initial.facts, { isolatedWorkspaceWrite: isolatedWorkspace !== null })
+    const trash = !system && parseShellTrash(input.command)
+    const facts = trash ? { ...initial.facts, userDangerousEnabled: true } : initial.facts
+    const decision = evaluateSandboxShell(input.command, facts, { isolatedWorkspaceWrite: isolatedWorkspace !== null })
     if (!decision.allowed) return rejected(decision.reason)
     // 独立目录由 workspaceTarget 派生，保留部署前已签发确认的摘要格式。
     const confirmationSnapshot = ({ isolatedWorkspace: _isolatedWorkspace, automaticModeEnabled: _automaticModeEnabled, ...snapshot }: Snapshot) => stableJson(snapshot)
@@ -67,7 +69,7 @@ export function createWebAgentShell(options: {
       const snapshot = {
         targetIds: { workspace_id: initial.workspaceId === null ? [] : [initial.workspaceId] },
         targetsDigest: digest(initial.workspaceTarget), versionsDigest: digest(snapshotKey),
-        displaySummary: `${system ? '允许此会话在未来 30 分钟以 Web Host 服务账号执行宿主机命令' : parseShellTrash(input.command) ? '将授权路径移入回收站（可恢复）' : '在沙箱内执行命令'}：${Array.from(input.command).slice(0, 240).join('')}`,
+        displaySummary: `${system ? '允许此会话在未来 30 分钟以 Web Host 服务账号执行宿主机命令' : trash ? '将授权路径移入回收站（可恢复）' : '在沙箱内执行命令'}：${Array.from(input.command).slice(0, 240).join('')}${input.description ? `\n操作说明：${input.description}` : ''}`,
       }
       if (mode === 'request') {
         const prepared = await options.confirmation.gate.prepare(call, scope, argsDigest, snapshot)

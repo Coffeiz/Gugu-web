@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { createUndoStateMachine, UndoAdapterConflict, UndoAdapterUnsupported, UndoError as CoreUndoError, type UndoAdapterContext, type UndoTransactionPort } from '@gugu/core/undo'
 import { createFileUndoAdapter } from '@gugu/core/undo/file-adapter'
+import { createSkillPackageUndoAdapter, type SkillPackageUndoStorage } from '@gugu/core/skills'
 import { UndoError } from './routes.js'
 import { createCalendarUndoAdapter } from '@gugu/core/calendar'
 import { MindUndoConflict, MindUndoUnsupported } from './errors.js'
@@ -58,7 +59,7 @@ async function mapped<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 /** 仅用于隔离验收；调用方须提供正式 PostgreSQL 事务端口和项目存储。 */
-export function createHostCoreUndoOperations(pool: Pick<Pool, 'query' | 'connect'>, port: UndoTransactionPort, publish: (owner: string, event: Record<string, unknown>) => Promise<void>, storage?: ProjectUndoStorage, fileStorage?: FileUndoStorage) {
+export function createHostCoreUndoOperations(pool: Pick<Pool, 'query' | 'connect'>, port: UndoTransactionPort, publish: (owner: string, event: Record<string, unknown>) => Promise<void>, storage?: ProjectUndoStorage, fileStorage?: FileUndoStorage, skillStorage?: SkillPackageUndoStorage) {
   if (port.backend !== 'postgres' && storage) throw new Error('项目 Undo Host 适配器需要 PostgreSQL 事务')
   const previewEngine = createUndoStateMachine(port, publish)
   return {
@@ -84,6 +85,7 @@ export function createHostCoreUndoOperations(pool: Pick<Pool, 'query' | 'connect
           if ((await lockClient.query('SELECT id FROM project_undo_journals LIMIT 1')).rowCount) throw new UndoError('undo.recovery_required', '项目撤销文件恢复尚未完成，请稍后重试', 503)
         }
         const adapters = {
+          ...(skillStorage ? { skills: createSkillPackageUndoAdapter(skillStorage, rollbacks, finalizers, port.backend) } : {}),
           ...(port.backend === 'postgres' ? {
             calendar: createCalendarUndoAdapter(port.backend),
             ...(storage ? { projects: { apply: ({ tx, owner, row, mode }: UndoAdapterContext) => mapped(() => withUndoTransactionClient(tx, client => applyProjectUndo(client, owner, operation(row), mode, storage, rollbacks, (from, to) => appendProjectUndoMove(lockClient!, journalId!, { from, to })))) } } : {}),

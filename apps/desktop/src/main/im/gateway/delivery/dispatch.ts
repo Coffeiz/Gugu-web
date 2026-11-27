@@ -4,7 +4,7 @@ import type { DesktopImMediaRoute } from './attachments.js'
 import { createHash } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { safeStorage } from 'electron'
-import { formatImToolReceipt, replyToImMemoryCommand, readImAddressedCommand, createImRequestedReply, parseImReceivedMessage, type ImConnectionIdentity, type ImInboundConsumption, type ImReceivedMessage } from '@gugu/gateway'
+import { deliverImPrompt, projectImChoiceButtons, formatImToolReceipt, replyToImMemoryCommand, readImAddressedCommand, createImRequestedReply, parseImReceivedMessage, type ImConnectionIdentity, type ImInboundConsumption, type ImReceivedMessage } from '@gugu/gateway'
 import { redactToolError, type RunEvent } from '@gugu/core/agent'
 import { immediateImCommandReply, normalizeImWorkspaceArgument, runImAutomaticModeCommand, runImForgetCommand } from '@gugu/core/im/shortcut'
 import { agentCommandMenu, desktopWorkspaceReply, parseAgentGoalArgument, parseDesktopWorkspaceCommand } from '@gugu/core/agent/commands/menu'
@@ -78,13 +78,19 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
     let projection: { runId: string; sessionId: number; cursor: number; messages: Map<string, string>; sentRound?: { text: string; outcome: Outcome }; finalText?: string; prompt?: Prompt; stream?: DesktopImStream; streamOutcome?: Outcome; streamFinal?: boolean } | undefined
     let change = 0
     let pendingWake: AbortController | undefined
-    const unsubscribe = host.onAgentRunChanged?.((sessionId, runId) => {
-      if (projection?.sessionId !== sessionId || projection.runId !== runId) return
+    function wakeDispatch() {
       change++
       pendingWake?.abort()
+    }
+    const unsubscribeInbox = host.onImInboxChanged?.((platform, id) => {
+      if (platform === scope.platform && id === connectionId) wakeDispatch()
+    })
+    const unsubscribe = host.onAgentRunChanged?.((sessionId, runId) => {
+      if (projection?.sessionId === sessionId && (runId === undefined || projection.runId === runId)) wakeDispatch()
     })
     let lastFailure: string | undefined
     let retryDelay = 1_000
+    let consecutivePrepareBusy = 0
     let rpcMethod: string | undefined
     const callRpc: IpcHost['request'] = async (method, params) => {
       try {
@@ -113,10 +119,12 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
         const observed = change
         let keepTyping = false
         let retryRequired = false
+        let inboxIdle = false
         try {
           rpcMethod = undefined
           if (!await options.authorize()) return
           const item = await inbox.claimInbound()
+          inboxIdle = !item
           if (item) {
             const { result } = await encryption.decryptStringAsync(Buffer.from(item.sealedEvent, 'base64'))
             let envelope: DesktopImEnvelope | undefined
@@ -367,10 +375,12 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                   current.sentRound = { text: entry.text, outcome: outcome ?? 'unknown' }
                 }
                 if (entry.type === 'im_final_text' && typeof entry.text === 'string') current.finalText = entry.text
-                if (entry.type === 'interaction_required' && entry.task_paused === true && entry.resolved !== true
+                if (entry.type === 'interaction_required' && entry.resolved !== true
                   && Array.isArray(entry.secret_fields) && !entry.secret_fields.length
-                  && typeof entry.prompt_id === 'number' && Array.isArray(entry.options) && entry.options.length)
-                  current.prompt = entry as unknown as Prompt
+                  && typeof entry.prompt_id === 'number' && Array.isArray(entry.options)) {
+                  const prompt = projectImChoiceButtons(entry as unknown as Prompt, true)
+                  if (prompt) current.prompt = prompt
+                }
                 if (entry.type !== 'display_event' || !entry.item || typeof entry.item !== 'object') continue
                 const message = entry.item as { kind?: string; eventId?: string; text?: string
                   toolName?: string; toolLabelOverride?: string; toolStatus?: string; toolDurationMs?: number }
@@ -397,11 +407,13 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             const prompt = current.prompt
             if (status === 'waiting' && prompt && options.sendPrompt && options.userId) {
               const request = { ...target, promptId: prompt.prompt_id }
-              if (await callRpc<boolean>('im.inbox.prompt', { ...request, action: 'begin' })) {
-                let messageId: string | null = null
-                try { if (await options.authorize()) messageId = await options.sendPrompt(prompt, options.userId) }
-                finally { await callRpc('im.inbox.prompt', { ...request, action: 'settle', messageId }) }
-              }
+              await deliverImPrompt<string | null>({
+                reserve: () => callRpc<boolean>('im.inbox.prompt', { ...request, action: 'begin' }),
+                authorize: options.authorize,
+                send: () => options.sendPrompt!(prompt, options.userId!),
+                async settle(messageId) { await callRpc('im.inbox.prompt', { ...request, action: 'settle', messageId }) },
+                rejected: null,
+              })
               current.prompt = undefined
             }
             if (['completed', 'failed', 'startup_failed', 'cancelled', 'unknown'].includes(status)) {
@@ -429,8 +441,11 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
           retryRequired = true
           if (!signal.aborted) {
             const errorCode = error instanceof DesktopError ? error.code : 'internal_error'
+            const prepareBusy = rpcMethod === 'im.inbox.prepare' && errorCode === 'busy'
+            consecutivePrepareBusy = prepareBusy ? consecutivePrepareBusy + 1 : 0
             const signature = JSON.stringify([rpcMethod, errorCode])
-            if (signature !== lastFailure) {
+            // 保留持续争用告警，短暂背压按正常补读流程恢复。
+            if ((!prepareBusy || consecutivePrepareBusy >= 3) && signature !== lastFailure) {
               report?.(errorCode === 'model_unavailable' ? 'im_model_unavailable' : 'dispatch_unavailable', error, rpcMethod)
               lastFailure = signature
             }
@@ -439,6 +454,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
         } finally {
           if (!retryRequired) {
             lastFailure = undefined
+            consecutivePrepareBusy = 0
             retryDelay = 1_000
           }
           if (!keepTyping || signal.aborted) await stopTyping()
@@ -447,8 +463,14 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
         const wake = new AbortController()
         if (!retryRequired) pendingWake = wake
         try {
-          // 通知只唤醒读取。定时补读覆盖漏通知和未关联运行的入站消息。
-          await delay(retryDelay, undefined, { signal: AbortSignal.any([signal, wake.signal]) }).catch(() => {})
+          const waitSignal = AbortSignal.any([signal, wake.signal])
+          if (!retryRequired && unsubscribeInbox && unsubscribe) {
+            if (!waitSignal.aborted) await new Promise<void>(resolve => {
+              waitSignal.addEventListener('abort', () => resolve(), { once: true })
+            })
+          } else {
+            await delay(inboxIdle ? 3_000 : retryDelay, undefined, { signal: waitSignal }).catch(() => {})
+          }
           if (retryRequired) retryDelay = Math.min(30_000, retryDelay * 2)
         } finally {
           pendingWake = undefined
@@ -457,6 +479,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
     } finally {
       if (unregister) unregister()
       unsubscribe?.()
+      unsubscribeInbox?.()
       await projection?.stream?.close()
       await stopTyping()
     }

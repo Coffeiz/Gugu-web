@@ -1,3 +1,4 @@
+import { startScheduledTaskRefresh, notifyScheduledTaskWorker } from './scheduled-worker.js'
 import { createWebProjectWorkspaceSelection } from '../modules/workspaces/project-links.js'
 import { hasProjectExpiryJournalSchema, purgeDeletedProject } from '../modules/projects/lifecycle/expiry.js'
 import { DEFAULT_LLM_CONTEXT_TOKENS, DEFAULT_LLM_OUTPUT_TOKENS } from '@gugu/core/contracts'
@@ -41,7 +42,7 @@ import { createRedisListReader } from '../adapters/cache/redis-events.js'
 import { createAdminEmbeddingRebuildStatusReader } from '../modules/admin/embedding.js'
 import { createDataExportDownloader, requireExportReadyForTicket } from '@gugu/core/data-portability/download-export'
 import { createPortableArtifactOpener, createLocalDataImportStagingRemover, createLocalDataImportPreflightStorage } from '../modules/data-portability/archive.js'
-import { createTaskFilesystemAuthorization } from '@gugu/core/scheduled-task-filesystem-authorize'
+import { createTaskFilesystemAuthorization } from '@gugu/core/workspaces/task-filesystem-authorize'
 import { createTaskAuthorizationEnabledReader } from '../modules/scheduled-tasks/access.js'
 import { createRedisFilesystemAuthorizationMetric } from '../adapters/cache/redis-events.js'
 import { createVoicePresetFileMutations } from '../modules/admin/voice.js'
@@ -104,14 +105,14 @@ import { createPostgresAgentAttachmentUploadOperations, createPostgresChatAttach
 import { createRedisLegacyChatAttachmentCleaner } from '../adapters/cache/redis-events.js'
 import { openLocalFile, removeLocalTree, UnsafeLocalPathError } from '@gugu/fs/node'
 import { createPostgresRedisBindingCodeIssuer } from '../modules/im/connect/code.js'
-import { createTaskFilesystemRevoker } from '@gugu/core/scheduled-task-filesystem-revoke'
+import { createTaskFilesystemRevoker } from '@gugu/core/workspaces/task-filesystem-revoke'
 import {
   createPostgresTaskWrites,
   type TaskWriteOptions,
   createPostgresTaskResolver,
   createPostgresTaskExternal,
 } from '../modules/scheduled-tasks/store.js'
-import { validateTaskCron } from '../modules/scheduled-tasks/schedule/cron.js'
+import { validateTaskCron } from '@gugu/scheduler'
 import { createRedisFilesystemRevokeMetric } from '../adapters/cache/redis-events.js'
 import { createRedisEmailDeliveryMetric } from '../adapters/cache/redis-events.js'
 import { createNotificationBroadcaster } from '@gugu/core/notifications/broadcast'
@@ -149,7 +150,7 @@ import { createTelegramConnector, createTelegramConnectHostOptions } from '../mo
 import { createRedisUserBotReachCleaner } from '../adapters/cache/redis-events.js'
 import { createRedisAccountAttachmentCleaner } from '../adapters/cache/redis-events.js'
 import { createPostgresAccountDeleter, createPostgresAccountPasswordVerifier, createPostgresAdminAccountDeleter } from '../modules/auth/account/delete-store.js'
-import { createPostgresProfileUpdateStore } from '../modules/auth/account/profile-store.js'
+import { createPostgresProfileUpdateStore } from '@gugu/users/postgres'
 import { encryptEncryptedString, decryptEncryptedString } from '../adapters/security/encrypted-string.js'
 import { createPortabilityJobReader } from '@gugu/core/data-portability/read-jobs'
 import { createPostgresUserBotsReader } from '../modules/im/bots.js'
@@ -170,12 +171,10 @@ import { createRedisAdminEmbeddingRebuildState } from '../modules/admin/embeddin
 import { createAdminIndexRebuildRuntime } from '../modules/admin/index-rebuild.js'
 import { createRedisAdminIndexRebuildState } from '../modules/admin/index-rebuild.js'
 import { createStorageLiveTotals } from '../modules/admin/storage.js'
-import { createUserSkillDeletion } from '@gugu/core/agent/skills/user-delete'
-import { createUserSkillLister } from '@gugu/core/agent/skills/user-list'
-import { createUserSkillManager } from '@gugu/core/agent/skills/user-management'
+import { migrateWebSkillOwners } from '../modules/skills/migrate.js'
 import { createAgentToolRegistry, filterConfiguredWebAgentTools } from '../modules/agent/tools/registry.js'
 import { createCapabilityCatalog } from '@gugu/core/agent/capabilities'
-import { createBuiltinSkillDefinitions, mergeSkillToolCatalog } from '@gugu/core/skills'
+import { createBuiltinSkillDefinitions, createClawHubDownload, createClawHubPreview, createClawHubSearchWithTransport, createClawHubTrendingWithTransport, listUserSkillBundles, mergeSkillToolCatalog } from '@gugu/core/skills'
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 import { createSkillToolCatalog, createRegisteredUserSkillToolNameReader } from '../modules/skills/tools.js'
 import { createSafeEgressSettingsReader } from '../modules/admin/network.js'
@@ -213,7 +212,6 @@ import { createPostgresPreferencesStore } from '../modules/preferences/persisten
 import { createKyselyOnboardingStore, createOnboardingReseeder, createRegistrationSeeder } from '@gugu/core/onboarding'
 import { createPostgresRegistrationSeedOperations } from '../modules/onboarding/seed.js'
 import { createPostgresOnboardingReseedOperations } from '../modules/onboarding/reseed.js'
-import { createOnboardingSurpriseMp3Reader } from '../modules/onboarding/assets.js'
 import { createRedisRegistrationCodeStore } from '../modules/auth/registration/codes.js'
 import { createPostgresRegistrationOperations } from '../modules/auth/registration/store.js'
 import { createPostgresPasswordResetStore } from '../modules/auth/password-reset.js'
@@ -227,13 +225,18 @@ import { createPostgresMindReferenceSuggestionPorts } from '../modules/mind/refe
 import { createMindReferenceSuggester } from '@gugu/core/mind'
 import { createSqlMindCanvasReader, createSqlMindNoteReader } from '@gugu/core/mind'
 import { createHostCoreUndoOperations } from '../modules/undo/service.js'
+import { createLocalSkillUndoStorage } from '../modules/skills/undo-storage.js'
+import { createWebClawHubInstaller, createWebSkillPackageCommitter } from '../modules/skills/clawhub-install.js'
+import { createUserSkillDocument, createFileSkillSearchSource } from '@gugu/core/skills'
+import { randomUUID as skillUUID } from 'node:crypto'
+import { createWebFileSkillUpdater } from '../modules/skills/file-update.js'
+import { createWebFileSkillDeleter } from '../modules/skills/file-delete.js'
 import { createLocalFileUndoStorage } from '../modules/files/storage/undo.js'
 import { createRuntimeUndoTransactionPort } from '@gugu/core/undo'
-import { createScheduledTaskDeleter } from '@gugu/core/scheduled-task-delete'
-import { createKyselyScheduledTaskDeleteRuntime } from '@gugu/core/scheduled-task-delete-data'
-import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/scheduled-task-list'
+import { createScheduledTaskDeleter, createScheduledTaskTestNotifier } from '@gugu/scheduler/tasks'
+import { createKyselyScheduledTaskDeleteRuntime } from '@gugu/core/tasks/delete-data'
+import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/tasks/list'
 import { createScheduledTaskDeliveryTargets } from '../modules/scheduled-tasks/delivery/targets.js'
-import { createScheduledTaskTestNotifier } from '@gugu/core/scheduled-task-test-notify'
 import { createPostgresScheduledTaskResultDelivery, createPostgresScheduledTaskTestDelivery } from '../modules/scheduled-tasks/delivery/results.js'
 import { createScheduledImPushHistory } from '../modules/scheduled-tasks/delivery/history.js'
 import { createWebScheduledAttachmentResources } from '../modules/scheduled-tasks/delivery/files.js'
@@ -257,7 +260,7 @@ import { createTrackOperations } from '../modules/site/track.js'
 import { createFeedbackNotifier, createFeedbackService, createFeedbackSubmission, createKyselyFeedbackOperations } from '@gugu/core/feedback'
 import { runBestEffort } from '../shared/best-effort.js'
 import { createWebPush } from '../modules/notifications/push.js'
-import { revokeUserSessions } from '../modules/auth/session/revoke.js'
+import { revokeUserSessions } from '@gugu/auth/postgres'
 import { createKyselyProjectCreateRuntime } from '@gugu/core/project-create-data'
 import { createProjectCreator } from '@gugu/core/project-create'
 import {
@@ -405,8 +408,9 @@ export async function createWebUiApp(
     clearOwner(ownerId: string, remove: () => Promise<unknown>): Promise<void>
     removeSession(ownerId: string, sessionId: number, ports: AgentSessionDeletePorts, legacy: () => Promise<boolean>): Promise<boolean>
   },
-): Promise<{ app: ReturnType<typeof createApp>; startWorkers(): Promise<void>
+): Promise<{ app: ReturnType<typeof createApp>; startWorkers(): Promise<void>; startScheduledWorkers(): Promise<void>
   runAgent: ReturnType<typeof createSerialWorker>; loopScopeTrace: ReturnType<typeof createWebLoopScopeTrace>; agentRunLog: import('@gugu/core/agent').AgentRunLogPort; imOwnerTools: Awaited<ReturnType<typeof createAgentServices>>['imOwnerTools']; registerImSubagentParentBinder: Awaited<ReturnType<typeof createAgentServices>>['registerImSubagentParentBinder']; imMcpDirectory: ReturnType<typeof createMcpSkillToolDirectory>; imFilesystemAuthorization: ReturnType<typeof createAgentSessionFilesystemAuthorization> }> {
+  await migrateWebSkillOwners(core, config.storageLocalPath)
   const publisher = redisEvents ?? noRedisEvents
   const byokMasterKeys: Readonly<Record<string, string>> = await readConfiguredByokMasterKeys(env).catch(() => Object.freeze({}))
   const fileDeletes = createPostgresFileDeleteOperations(pool, {
@@ -482,14 +486,7 @@ export async function createWebUiApp(
     const [builtins, dynamic] = await Promise.all([builtinSkillTools(owner), mcpSkillTools(owner)])
     return mergeSkillToolCatalog(builtins, dynamic)
   }
-  const userSkillManager = createUserSkillManager(core.db, 'postgres', {
-    knownTools: createRegisteredUserSkillToolNameReader({
-      registry: skillToolRegistry,
-      mcp: mcpSkillTools,
-    }),
-    digest: text => createHash('sha256').update(text).digest('hex').slice(0, 16),
-    publish: async ownerId => publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }),
-  })
+  const userSkillKnownTools = createRegisteredUserSkillToolNameReader({ registry: skillToolRegistry, mcp: mcpSkillTools })
   const accountDeleter = createPostgresAccountDeleter(
     pool,
     config.storageLocalPath,
@@ -507,13 +504,16 @@ export async function createWebUiApp(
     mindCanvasNoteMutations, mindCanvasItemUpdate, mindCanvasItemRemove, mindCanvasItemAdd,
     mindGlobalRelationDelete, mindCanvasRelationCreate, mindCanvasRelationDelete, mindRefNodeCreator, publishCanvasChanged,
   } = createMindServices(core, publisher, createMindFileReferenceResolver(pool, config.storageLocalPath))
-  const postgresSearchSources = createPostgresGlobalSearchSources(pool)
+  const postgresSearchSources = [
+    ...createPostgresGlobalSearchSources(pool),
+    createFileSkillSearchSource(config.storageLocalPath),
+  ]
   const globalSearch = createGlobalSearchOperations(postgresSearchSources)
   const webSearch = process.platform === 'linux' ? createGlobalSearchOperations([
     ...postgresSearchSources,
     ...createDiskFileSearchSources(pool, config.storageLocalPath),
   ]) : globalSearch
-  const mindReferencePorts = createPostgresMindReferenceSuggestionPorts(pool)
+  const mindReferencePorts = createPostgresMindReferenceSuggestionPorts(pool, config.storageLocalPath)
   const diskFileReferences = process.platform === 'linux' ? createMindFileReferences(pool, config.storageLocalPath, true) : undefined
   const pathReferenceSuggester = createMindReferenceSuggester({
     ...mindReferencePorts, globalSearch, matchingFileReferences: diskFileReferences,
@@ -684,10 +684,10 @@ export async function createWebUiApp(
     applySeed: createPostgresRegistrationSeedOperations(pool, {
       storageRoot: config.storageLocalPath,
     }),
-    surpriseMp3: createOnboardingSurpriseMp3Reader(),
     onFailure() { console.error('gugu-webui onboarding seed failed') },
   })
-  const onboardingReseed = createOnboardingReseeder(createKyselyOnboardingStore(core.db, 'postgres'), {
+  const onboarding = createKyselyOnboardingStore(core.db, 'postgres')
+  const onboardingReseed = createOnboardingReseeder(onboarding, {
     ...createPostgresOnboardingReseedOperations(pool, config.storageLocalPath),
     seed: seedRegistration,
   })
@@ -889,13 +889,13 @@ export async function createWebUiApp(
     projectCreateRuntime,
     publishProjectMutation, projectUpdateRuntime, publishCanvasChanged, scheduledNotifyImPlatforms,
     workspaceCreate, workspaceDirectories,
-    userSkillManager, globalSearch: webSearch, resolveEmbeddingSettings, createEmbeddingTransport,
+    userSkillKnownTools, globalSearch: webSearch, resolveEmbeddingSettings, createEmbeddingTransport,
     publishCalendarCreate, publishCalendarMutation, loopScopeTrace, readStateLabelOverrides,
     // 调度依赖在 Agent 初始化后装配，工具执行时才读取。
     get scheduledAttachments() { return scheduledAttachments },
     get downloadAttachment() { return downloadAttachment },
     get scheduledTaskWriteOptions() { return scheduledTaskWriteOptions },
-    scheduledWorkers: () => ({ once: Boolean(scheduledOnceWorker), repeating: Boolean(scheduledRepeatingWorker) }),
+    scheduledWorkers: () => ({ once: onceWorkerEnabled, repeating: repeatingWorkerEnabled }),
     refreshScheduledWorkers,
   })
   const downloadAttachment = createAttachmentDownloader(core.db, {
@@ -1004,21 +1004,31 @@ export async function createWebUiApp(
       await publisher.publishResourceChanged({ ownerId, resource: 'scheduled_tasks', operation: 'refresh' })
     },
   }) : undefined
-  const onceWorkerEnabled = booleanSetting(env.GUGU_WEBUI_ONCE_TASK_WORKER_ENABLED, undefined, false)
+  const schedulerMode = env.GUGU_WEBUI_SCHEDULER_MODE
+  const externalScheduler = schedulerMode === 'external'
+  const schedulerOnly = schedulerMode === 'worker'
+  const onceWorkerEnabled = booleanSetting(env.GUGU_WEBUI_ONCE_TASK_WORKER_ENABLED, undefined, schedulerOnly || externalScheduler)
   if (onceWorkerEnabled && !scheduledRunNow) throw new Error('一次性任务 Worker 需要 Redis')
-  const scheduledOnceWorker = onceWorkerEnabled ? scheduledRunNow?.createOnceWorker() : undefined
-  const repeatingWorkerEnabled = booleanSetting(env.GUGU_WEBUI_REPEATING_TASK_WORKER_ENABLED, undefined, false)
+  const scheduledOnceWorker = onceWorkerEnabled && !externalScheduler ? scheduledRunNow?.createOnceWorker() : undefined
+  const repeatingWorkerEnabled = booleanSetting(env.GUGU_WEBUI_REPEATING_TASK_WORKER_ENABLED, undefined, schedulerOnly || externalScheduler)
   if (repeatingWorkerEnabled && !scheduledRunNow) throw new Error('周期任务 Worker 需要 Redis')
-  const scheduledRepeatingWorker = repeatingWorkerEnabled ? scheduledRunNow?.createRepeatingWorker() : undefined
-  const projectExpiryWorkerEnabled = booleanSetting(env.GUGU_WEBUI_PROJECT_EXPIRY_WORKER_ENABLED, undefined, false)
+  const scheduledRepeatingWorker = repeatingWorkerEnabled && !externalScheduler ? scheduledRunNow?.createRepeatingWorker() : undefined
+  if (schedulerOnly && !scheduledOnceWorker && !scheduledRepeatingWorker) throw new Error('独立调度进程至少需要启用一种任务')
+  if (externalScheduler && !config.redisUrl) throw new Error('外部调度进程需要 Redis')
+  let stopScheduledRefresh: (() => Promise<void>) | undefined
+  const projectExpiryWorkerEnabled = !schedulerOnly && booleanSetting(env.GUGU_WEBUI_PROJECT_EXPIRY_WORKER_ENABLED, undefined, false)
   const projectPurgeAvailable = Boolean(projectJournalPool && await hasProjectExpiryJournalSchema(pool))
   if (projectExpiryWorkerEnabled && !projectPurgeAvailable) throw new Error('项目过期清理 Worker 需要已迁移的 PostgreSQL 项目日志结构')
   const backgroundWorkers = createWebWorkers({
     config, pool, core, projectJournalPool,
     projectExpiryWorkerEnabled, projectPurgeAvailable, canRebuildAgentMemoryIndex, ownerReflectionWork, scheduledRepeatingWorker, scheduledOnceWorker,
   })
-  async function refreshScheduledWorkers() {
+  async function refreshLocalScheduledWorkers() {
     await Promise.all([scheduledOnceWorker?.refresh(), scheduledRepeatingWorker?.refresh()])
+  }
+  async function refreshScheduledWorkers() {
+    if (externalScheduler && config.redisUrl) await notifyScheduledTaskWorker(config.redisUrl)
+    else await refreshLocalScheduledWorkers()
   }
   const scheduledTaskWriteOptions: TaskWriteOptions = {
     validateCron: validateTaskCron,
@@ -1098,7 +1108,7 @@ export async function createWebUiApp(
       personalityPreferenceAvailable: config.personalityPreferenceEnabled,
       bumpContextRevision: (ownerId, resource) => publisher.bumpContextRevision(ownerId, resource),
     }),
-    onboarding: createKyselyOnboardingStore(core.db, 'postgres'),
+    onboarding,
     onboardingReseed,
     feedback,
     adminFeedback: feedback,
@@ -1112,7 +1122,10 @@ export async function createWebUiApp(
         return registrationCodeStore.verify(email, code)
       },
       registerUser: registrationOperations.registerUser,
-      seedUser(user, locale) { return seedRegistration(user.id, locale) },
+      async seedUser(user, locale) {
+        await onboarding.updateGuide(user.id, { enabled: true })
+        await seedRegistration(user.id, locale)
+      },
       tokenExpiresMinutes: config.accessTokenExpiresMinutes,
     },
     registrationCode: {
@@ -1234,7 +1247,7 @@ export async function createWebUiApp(
         ownerId, resource: String(event.resource), operation: String(event.operation),
         origin: String(event.origin), entityIds: event.entity_ids as Array<number | string>,
       })
-    }, { trash: projectTrashStorage, renameDirectory: projectDirectoryRenamer }, createLocalFileUndoStorage(config.storageLocalPath)),
+    }, { trash: projectTrashStorage, renameDirectory: projectDirectoryRenamer }, createLocalFileUndoStorage(config.storageLocalPath), createLocalSkillUndoStorage(config.storageLocalPath)),
     deleteScheduledTask: createScheduledTaskDeleter(createKyselyScheduledTaskDeleteRuntime(core.db, 'postgres', async (ownerId, id, origin) => {
       await publisher.publishResourceChanged({ ownerId, resource: 'scheduled_tasks', operation: 'delete', entityId: id, origin })
     })),
@@ -1834,9 +1847,36 @@ export async function createWebUiApp(
       run: createDesktopRemoteSimilarImageExecutor(desktopRemoteSearch),
       available: createDesktopRemoteSearchAvailability(desktopRemoteSearch, 'similarImageSearch'),
     },
-    userSkillDelete: { remove: createUserSkillDeletion(core.db, 'postgres', async ownerId => { await publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }) }) },
-    userSkillList: { list: createUserSkillLister(core.db, 'postgres'), tools: userSkillTools },
-    userSkillWrite: { manager: userSkillManager },
+    userSkillList: {
+      async list(ownerId) {
+        return (await listUserSkillBundles(config.storageLocalPath, ownerId)).skills
+      },
+      tools: userSkillTools,
+      previewClawHub: (reference, signal) => attachmentEgress.withTransport(signal,
+        transport => createClawHubPreview(transport)(reference, signal)),
+      searchClawHub: (query, signal) => attachmentEgress.withTransport(signal,
+        transport => createClawHubSearchWithTransport(transport)(query, signal)),
+      trendingClawHub: signal => attachmentEgress.withTransport(signal,
+        transport => createClawHubTrendingWithTransport(transport)(signal)),
+      async createFileSkill(ownerId, fields, context, signal) {
+        const tools = await userSkillTools(ownerId)
+        const source = createUserSkillDocument(fields, new Set(tools.map(tool => tool.name)))
+        return createWebSkillPackageCommitter({ pool, dataRoot: config.storageLocalPath,
+          publish: owner => publisher.publishResourceChanged({ ownerId: owner, resource: 'skills', operation: 'refresh' }),
+        })(ownerId, `skill-${skillUUID()}`, new Map([['SKILL.md', Buffer.from(source)]]), context, signal)
+      },
+      installClawHub: createWebClawHubInstaller({ pool, dataRoot: config.storageLocalPath,
+        download: (reference, signal) => attachmentEgress.withTransport(signal,
+          transport => createClawHubDownload(transport)(reference, signal)),
+        publish: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }),
+      }),
+      updateFileSkill: createWebFileSkillUpdater({ pool, dataRoot: config.storageLocalPath,
+        publish: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }),
+      }),
+      deleteFileSkill: createWebFileSkillDeleter({ pool, dataRoot: config.storageLocalPath,
+        publish: ownerId => publisher.publishResourceChanged({ ownerId, resource: 'skills', operation: 'refresh' }),
+      }),
+    },
     accountDelete: {
       verifyPassword: createPostgresAccountPasswordVerifier(pool),
       remove: accountDeleter,
@@ -1851,7 +1891,11 @@ export async function createWebUiApp(
     if (webPush) await shutdownStep(runtimeLog, 'web_push', () => webPush.close())
     if (accountMemoryCleanup) await shutdownStep(runtimeLog, 'account_memory', () => accountMemoryCleanup.close())
     try {
-      await shutdownStep(runtimeLog, 'workers', () => backgroundWorkers.stop())
+      await shutdownStep(runtimeLog, 'workers', async () => {
+        if (!schedulerOnly) return backgroundWorkers.stop()
+        try { await stopScheduledRefresh?.() }
+        finally { await Promise.all([scheduledOnceWorker?.stop(), scheduledRepeatingWorker?.stop()]) }
+      })
     } finally {
       if (scheduledRunNow) await shutdownStep(runtimeLog, 'scheduled_runs', () => scheduledRunNow.drain())
       await shutdownStep(runtimeLog, 'mcp', () => mcpRuntime.close())
@@ -1866,7 +1910,14 @@ export async function createWebUiApp(
       ]))
     }
   })
-  return { app, runAgent, loopScopeTrace, agentRunLog, imOwnerTools, registerImSubagentParentBinder, imMcpDirectory: mcpSkillTools, imFilesystemAuthorization: agentFilesystemAuthorization, async startWorkers() {
+  return { app, runAgent, loopScopeTrace, agentRunLog, imOwnerTools, registerImSubagentParentBinder, imMcpDirectory: mcpSkillTools, imFilesystemAuthorization: agentFilesystemAuthorization,
+    async startScheduledWorkers() {
+      if (!schedulerOnly || !config.redisUrl) throw new Error('未启用独立调度进程')
+      stopScheduledRefresh = await startScheduledTaskRefresh(config.redisUrl, refreshLocalScheduledWorkers)
+      await scheduledRepeatingWorker?.start()
+      scheduledOnceWorker?.start()
+    },
+    async startWorkers() {
     await agentRunLifecycle?.start()
     await backgroundWorkers.start()
     webPush?.start()

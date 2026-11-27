@@ -145,6 +145,19 @@ export function invalidInputResult(tool: PreparedToolDefinition, input: unknown,
     next_action: missing.length ? `请补齐必填字段：${missing.join('、')}。如果当前对话没有提供且无法可靠推断，请先向用户询问，不要提交空参数重试。` : '请根据 issues 修正参数后再调用；不要重复提交相同参数，也不要猜测用户未提供的值。',
   }
   const repair = hints(schema, issues, input)
+  if (tool.name === 'ask_user' && object(input) && (input.kind === 'questions' || Object.hasOwn(input, 'questions'))) {
+    const properties = object(schema.properties) ? schema.properties : {}
+    if (!Object.hasOwn(properties, 'questions')) {
+      repair.push('当前入口每次只能问一道题。请移除 questions，使用 kind: question 或 kind: choice，并填写该题的 title 和 body。')
+      payload.next_action = '请改为逐题询问，收到本题回答后再问下一题。'
+    } else {
+      if (input.kind !== 'questions') repair.push('使用 questions 数组时，将根级 kind 改为 questions（复数）。')
+      repair.push('多题调用的根级只接受 kind、title 和 questions。title 是整组问题的简短标题，可以根据题目概括。')
+      if (issues.some(item => item.path === 'body' || item.path === 'options' || item.path === 'selection_mode'))
+        repair.push('将适用的说明、选项或多选设置放到对应的 questions 元素内。')
+      payload.next_action = '请按 issues 和 schema_hints 修正后重试。整组标题可以直接根据题目拟定。'
+    }
+  }
   if (tool.name === 'create_project' && issues.some(item => item.path.split('.')[0] === 'stages')) {
     repair.push('stages 使用名称数组 ["开发","上线"]，或对象数组 [{"label":"开发","todos":["接口"]}]；重排现有阶段可带 key。', '请使用扁平数组，不要嵌套数组或继续添加 item/block 包装；保留全部待处理项。')
     payload.next_action = '请按 schema_hints 重建报错数组后再调用；不要重复提交相同参数。'

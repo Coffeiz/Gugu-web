@@ -7,10 +7,10 @@ import { sql } from 'kysely'
 import { dataContext } from '../../src/contracts/index.js'
 import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
 import type { Database } from '../../src/data/schema.js'
-import { desktopScheduleImConnection, desktopScheduleImReminderVersion, type DesktopScheduleImTarget } from '../../src/scheduled-tasks/desktop-im.js'
-import { readDesktopScheduledGroups } from '../../src/scheduled-tasks/desktop-group-targets.js'
+import { desktopScheduleImConnection, desktopScheduleImReminderVersion, type DesktopScheduleImTarget } from '../../src/runtime/desktop-schedules/desktop-im.js'
+import { readDesktopScheduledGroups } from '../../src/runtime/desktop-schedules/desktop-group-targets.js'
 import { admitDesktopImEvent, prepareDesktopImEvent } from '../../src/im/desktop-inbox.js'
-import { desktopScheduledTasks } from '../../src/scheduled-tasks/desktop.js'
+import { desktopScheduledTasks } from '../../src/runtime/desktop-schedules/desktop.js'
 
 it('桌面定时提醒使用同一 SQLite 事务写入，且一次性提醒只认领一次', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gugu-local-schedules-'))

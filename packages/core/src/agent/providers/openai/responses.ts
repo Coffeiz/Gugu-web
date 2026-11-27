@@ -1,3 +1,4 @@
+import { supportsCrossRunProviderReasoning } from '../cross-run-reasoning.js'
 import { isContextOverflowError } from '../../context/budget.js'
 import { observe } from '../values.js'
 import type { CanonicalMessage, Json, ProviderEvent, ToolCall } from '../../models.js'
@@ -123,7 +124,7 @@ function requestBody(input: ProviderInvocation, deps: ProviderDriverDependencies
   const store = input.policy.responsesStore(input.config)
   if (store !== undefined) body.store = store
   if (input.policy.responsesPromptCacheKey(input.config)) body.prompt_cache_key = input.promptCacheKey || `gugu-${deps.digest({ model: input.config.model, base_instructions: base || instructions, tool_state_digest: deps.digest(tools) }).slice(0, 32)}`
-  if (input.purpose === 'chat' && input.config.reasoning_persistence === 'continuation' && input.policy.responsesPromptCacheKey(input.config)) body.include = ['reasoning.encrypted_content']
+  if (input.purpose === 'chat' && supportsCrossRunProviderReasoning('responses', input.scope.sessionId) && input.policy.responsesPromptCacheKey(input.config)) body.include = ['reasoning.encrypted_content']
   if (input.outputMode === 'json' && !input.hasHistory) {
     const format = record(input.policy.structuredOutput(input.config).response_format)
     if (format.type === 'json_object') body.text = { format: { type: 'json_object' } }
@@ -183,7 +184,7 @@ async function* stream(input: ProviderInvocation, deps: ProviderDriverDependenci
   })
   const reasoning = ordered.filter(item => item.type === 'reasoning' && (item.status === undefined || item.status === null || item.status === 'completed'))
   yield { type: 'complete', text: output, calls, finishReason: status, incompleteReason: incomplete, requiresTools: calls.length > 0,
-    ...(input.config.reasoning_persistence === 'continuation' && reasoning.length ? { continuation: { state_kind: 'openai_responses_reasoning', reasoning_items: clone(reasoning) } } : {}) }
+    ...(input.purpose === 'chat' && supportsCrossRunProviderReasoning('responses', input.scope.sessionId) && reasoning.length ? { continuation: { state_kind: 'openai_responses_reasoning', reasoning_items: clone(reasoning) } } : {}) }
 }
 
 export const responsesDriver: ProtocolDriver = {
@@ -194,7 +195,7 @@ export const responsesDriver: ProtocolDriver = {
     const media = policy.responsesInputCapabilities(config)
     const history = renderOpenaiHistory(messages, options, { image: media.image, audio: false, video: false, caption: '工具返回了以下图片，请结合工具文字结果继续处理。' }), systems = history.filter(row => row.role === 'system')
     const items = responsesInput(history, media, options.digest)
-    return [...systems, ...(config.reasoning_persistence === 'continuation' && options.continuation ? insertResponsesReasoning(items, options.continuation) : items)]
+    return [...systems, ...(options.continuation ? insertResponsesReasoning(items, options.continuation) : items)]
   },
   stream,
   async complete(input, deps) {

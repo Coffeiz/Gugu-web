@@ -5,29 +5,37 @@
   "engines": {
     "node": ">=26.13.0 <27"
   },
+  "exports": {
+    "./scheduler-worker": "./dist/startup/server.js"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "prebuild": "corepack pnpm@10.15.0 --filter @gugu/auth build && corepack pnpm@10.15.0 --filter @gugu/users build && corepack pnpm@10.15.0 --filter @gugu/search build && corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/gateway build && corepack pnpm@10.15.0 --filter @gugu/fs build && corepack pnpm@10.15.0 --filter @gugu/charts build",
+    "prebuild": "corepack pnpm@10.15.0 --filter @gugu/database build && corepack pnpm@10.15.0 --filter @gugu/auth build && corepack pnpm@10.15.0 --filter @gugu/users build && corepack pnpm@10.15.0 --filter @gugu/search build && corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/gateway build && corepack pnpm@10.15.0 --filter @gugu/fs build && corepack pnpm@10.15.0 --filter @gugu/charts build",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "migrate": "node dist/migrate.js",
-    "pretest": "corepack pnpm@10.15.0 --filter @gugu/auth build && corepack pnpm@10.15.0 --filter @gugu/users build && corepack pnpm@10.15.0 --filter @gugu/search build && corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/gateway build && corepack pnpm@10.15.0 --filter @gugu/fs build && corepack pnpm@10.15.0 --filter @gugu/charts build",
+    "pretest": "corepack pnpm@10.15.0 --filter @gugu/database build && corepack pnpm@10.15.0 --filter @gugu/auth build && corepack pnpm@10.15.0 --filter @gugu/users build && corepack pnpm@10.15.0 --filter @gugu/search build && corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/gateway build && corepack pnpm@10.15.0 --filter @gugu/fs build && corepack pnpm@10.15.0 --filter @gugu/charts build",
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
-    "pretypecheck": "corepack pnpm@10.15.0 --filter @gugu/auth build && corepack pnpm@10.15.0 --filter @gugu/users build && corepack pnpm@10.15.0 --filter @gugu/search build && corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/gateway build && corepack pnpm@10.15.0 --filter @gugu/fs build && corepack pnpm@10.15.0 --filter @gugu/charts build",
+    "pretypecheck": "corepack pnpm@10.15.0 --filter @gugu/database build && corepack pnpm@10.15.0 --filter @gugu/auth build && corepack pnpm@10.15.0 --filter @gugu/users build && corepack pnpm@10.15.0 --filter @gugu/search build && corepack pnpm@10.15.0 --filter @gugu/core build && corepack pnpm@10.15.0 --filter @gugu/gateway build && corepack pnpm@10.15.0 --filter @gugu/fs build && corepack pnpm@10.15.0 --filter @gugu/charts build",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@gugu/auth": "workspace:*",
-    "@gugu/users": "workspace:*",
-    "@gugu/database": "workspace:*",
-    "@gugu/charts": "workspace:*",
     "@fastify/multipart": "10.1.4",
     "@fastify/static": "10.1.5",
+    "@gugu/auth": "workspace:*",
+    "@gugu/charts": "workspace:*",
     "@gugu/core": "workspace:*",
+    "@gugu/database": "workspace:*",
+    "@gugu/email": "workspace:*",
     "@gugu/fs": "workspace:*",
-    "@gugu/search": "workspace:*",
     "@gugu/gateway": "workspace:*",
     "@gugu/log": "workspace:*",
+    "@gugu/loopscope": "workspace:*",
+    "@gugu/sandbox": "workspace:*",
+    "@gugu/scheduler": "workspace:*",
+    "@gugu/search": "workspace:*",
+    "@gugu/users": "workspace:*",
+    "@larksuiteoapi/node-sdk": "1.76.0",
     "@modelcontextprotocol/client": "2.4.0",
     "@napi-rs/canvas": "1.0.13",
     "@node-rs/jieba": "2.0.1",
@@ -38,27 +46,24 @@
     "kysely": "0.29.8",
     "mime-types": "2.1.35",
     "nodemailer": "10.5.0",
-    "pinyin-pro": "3.29.5",
     "pg": "8.23.1",
+    "pinyin-pro": "3.29.5",
+    "silk-wasm": "3.7.1",
     "tar": "7.5.23",
     "unzipper": "0.12.5",
     "web-push": "^4.0.0",
-    "zod": "4.6.7",
-    "@gugu/loopscope": "workspace:*",
-    "@gugu/sandbox": "workspace:*",
-    "silk-wasm": "3.7.1",
     "ws": "8.22.0",
-    "@larksuiteoapi/node-sdk": "1.76.0"
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
     "@types/node": "26.6.6",
     "@types/nodemailer": "8.0.2",
     "@types/pg": "8.23.1",
     "@types/web-push": "^3.6.4",
-    "tsx": "4.19.4",
-    "typescript": "6.0.3",
-    "@types/better-sqlite3": "9.6.0",
     "@types/ws": "8.18.2",
-    "better-sqlite3": "13.2.0"
+    "better-sqlite3": "13.2.0",
+    "tsx": "4.19.4",
+    "typescript": "6.0.3"
   }
 }

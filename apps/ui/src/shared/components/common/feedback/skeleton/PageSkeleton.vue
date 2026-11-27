@@ -27,19 +27,19 @@ const { t } = useI18n()
 
 <style scoped>
 .page-skeleton { align-content: start; }
-.page-skeleton--grid, .page-skeleton--list { display: grid; gap: 12px; }
+.page-skeleton--grid, .page-skeleton--list { display: grid; gap: var(--space-md); }
 .page-skeleton--grid { grid-template-columns: repeat(auto-fit, minmax(min(112px, 100%), 1fr)); }
 .skeleton-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   min-width: 0;
-  padding: 12px;
+  padding: var(--space-md);
   border: 1px solid var(--content-divider);
   border-radius: var(--card-radius);
 }
 .page-skeleton--grid .skeleton-item { flex-direction: column; justify-content: center; min-height: 106px; }
-.card-collection--files .skeleton-item { position: relative; flex-direction: column; justify-content: center; min-height: 122px; }
+.card-collection--files .skeleton-item { position: relative; flex-direction: column; justify-content: center; min-height: 122px; padding: var(--space-md); }
 .card-collection--files .skeleton-icon { --skeleton-width: 42px; --skeleton-height: 42px; }
 .card-collection--files .skeleton-lines { justify-items: center; }
 :is(.card-collection--skills, .card-collection--mcp, .card-collection--schedules) .skeleton-item {
@@ -47,12 +47,12 @@ const { t } = useI18n()
   align-items: stretch;
   justify-content: space-between;
   min-height: 112px;
-  padding: 13px 15px;
+  padding: var(--space-md);
 }
 .card-collection--schedules .skeleton-item { min-height: 154px; }
-.card-collection--mcp .skeleton-item { break-inside: avoid; margin-bottom: 12px; }
+.card-collection--mcp .skeleton-item { break-inside: avoid; margin-bottom: var(--space-xs); }
 .skeleton-card-body { --skeleton-height: 24px; }
 .skeleton-card-action { --skeleton-height: 10px; --skeleton-width: 52px; align-self: end; }
-.skeleton-lines { display: grid; gap: 8px; width: 100%; }
+.skeleton-lines { display: grid; gap: var(--space-sm); width: 100%; }
 .skeleton-icon { --skeleton-width: 28px; --skeleton-height: 28px; flex: none; }
 </style>

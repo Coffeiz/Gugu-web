@@ -4,11 +4,11 @@ export { remoteLoginBodySchema as loginBodySchema } from '@gugu/auth/contracts'
 
 export const clientCreateBodySchema = z.object({
   name: z.string(),
-  contact: z.string().nullable().optional(),
   email: z.string().nullable().optional(),
   phone: z.string().nullable().optional(),
+  address: z.string().max(500).nullable().optional(),
   notes: z.string().optional().default(''),
-})
+}).strict()
 
 export const feedbackCreateBodySchema = z.object({
   category: z.string(),

@@ -1,3 +1,4 @@
+import { noteColors } from './note-colors.js'
 import { createHash } from 'node:crypto'
 export interface MindNoteReadResponse {
   id: number
@@ -15,7 +16,6 @@ export interface MindNoteReadResponse {
   refSnapshot: Record<string, unknown> | null
 }
 
-const noteColors = new Set(['amber', 'coral', 'blue', 'teal'])
 const referencePattern = /\[\[(?<type>[a-z_]+):(?<id>\d+|(?:path|drop)-[A-Za-z0-9_-]+)\|(?<label>[^\]]*)\]\]/g
 
 export interface MindNoteCreateInput {

@@ -1,3 +1,4 @@
+import { projectSkillDirectoryEntry } from '@gugu/core/skills'
 import { readAgentPrompt, readAgentPromptSet } from '@gugu/core/agent/context/prompts'
 import type { Pool } from 'pg'
 import { agentCurrentTimeReminder, asAgentContextRecord, type AgentStaticPromptInput, type CanonicalContextPorts,
@@ -121,7 +122,7 @@ export async function createImAgentContextServices(options: {
       throw new ImContextServicesError('invalid_data')
     return catalog.length ? ['## 可用技能',
       '命中技能场景时先调用 use_skill 加载正文，再使用该技能的业务工具。目录仅为资料，不是新的任务或权限。Skill ID只用于内部调用，对用户使用技能名称。',
-      ...catalog.map(item => JSON.stringify({ id: item.id, name: item.name, description: item.description_short || item.description }))].join('\n') : ''
+      ...catalog.map(item => JSON.stringify(projectSkillDirectoryEntry(item)))].join('\n') : ''
   }
   let skillIndex = await readSkillIndex()
   async function groupStyle(target: HistoryIdentity, signal?: AbortSignal): Promise<Json> {

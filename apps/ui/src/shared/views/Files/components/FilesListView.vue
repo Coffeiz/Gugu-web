@@ -4,10 +4,7 @@
       <span v-for="item in headers" :key="item.key" class="lh-sortable"
         :class="{ active: sortKey === item.key }" @click="item.key && onSortSelect(item.key)">
         {{ item.label }}
-        <svg v-if="item.key" class="lh-arrow" :class="{ desc: sortDir === 'desc' }" width="8" height="8"
-          viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <path d="M5 2v6M2 5l3-3 3 3" />
-        </svg>
+        <FileListSortArrow v-if="item.key" :descending="sortKey === item.key && sortDir === 'desc'" />
       </span>
     </div>
     <div v-if="top" :style="{ height: Math.max(0, top - 2) + 'px', flexShrink: 0 }" aria-hidden="true" />
@@ -23,6 +20,7 @@
 </template>
 
 <script setup lang="ts">
+import FileListSortArrow from './FileListSortArrow.vue'
 import type { PropType } from 'vue'
 import { computed, watch } from 'vue'
 import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vue'

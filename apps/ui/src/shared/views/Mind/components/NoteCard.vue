@@ -1,7 +1,7 @@
 <template>
   <div ref="cardRef" class="note-card"
-       :class="{ editing, 'search-highlight': highlight, 'nc-edit-pending': editing && !editReady, 'canvas-mode': canvasMode, 'hover-card-fx': canvasMode && !editing, connecting, 'connection-target': !!connectionTargetSide, ['tint-' + (note.color || '')]: !!note.color }"
-       :style="{ height: canvasMode && canvasHeight != null ? `${canvasHeight}px` : cardHeight }"
+       :class="{ editing, 'search-highlight': highlight, 'nc-edit-pending': editing && !editReady, 'canvas-mode': canvasMode, 'hover-card-fx': canvasMode && !editing, connecting, 'connection-target': !!connectionTargetSide, 'palette-tint': !!noteAccent }"
+       :style="{ '--note-palette-accent': noteAccent, height: canvasMode && canvasHeight != null ? `${canvasHeight}px` : cardHeight }"
        @mouseenter="isHovering = true" @mouseleave="isHovering = false" @wheel.stop>
     <!-- 编辑态：跟只读态一样按区域分标题区/正文区（不是靠"标题"文字样式段落类型），
          就地展开（跨两列由父级 grid-column 控制）；自动保存，主要退出方式是点卡外面
@@ -22,7 +22,7 @@
            @pointerdown.stop：画布贴纸场景下这张卡的根节点是可拖拽的（见 NoteSticker.vue），
            在编辑器里点字/选字/点工具栏不该被外层拖拽阈值判定拦截——列表页没有拖拽，加这个
            不影响原有行为。 -->
-      <NoteEditor ref="bodyEditorRef" v-model="draftBody" :autofocus="pendingFocus === null"
+      <NoteEditor :selection-source="note.id > 0 ? { id: note.id, label: title || String(note.id), revision: note.updatedAt, version: note.version } : undefined" ref="bodyEditorRef" v-model="draftBody" :autofocus="pendingFocus === null"
                   :float-toolbar="canvasMode" :edit-ready="editReady"
                   @submit="finishEditing" @pointerdown.stop @wheel.stop>
         <template #foot-actions>
@@ -60,6 +60,7 @@
         </button>
         </template>
       </CardAffordances>
+      <SelectionToolbar v-if="bodyMd && note.id > 0" :read="readPreviewSelection" />
       <div v-if="bodyMd" ref="bodyRef" class="nc-body md-preview" :class="{ clamped: clamped && !expanded }"
            @click="onBodyClick" v-mind-preview="previewHtml"></div>
       <button v-if="clamped && !canvasMode" class="nc-expand" @pointerdown.stop @click.stop="expanded = !expanded">
@@ -79,6 +80,9 @@
 </template>
 
 <script setup lang="ts">
+import SelectionToolbar from '@/components/common/selection/SelectionToolbar.vue'
+import { readRenderedSelection } from '@/components/common/selection/selectionDraft'
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PhCheck, PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
@@ -86,6 +90,7 @@ import { combineTitleBody, mdToPreviewHtml, splitMindTitleBody } from '@/composa
 import { useMindRefActions } from '@/composables/mind/useMindRefActions'
 import type { MindNote } from '@/services/api'
 import CardAffordances from '@/components/common/mind/CardAffordances.vue'
+import { notePaletteAccent } from '@/utils/projectColors'
 import ColorSwatches from './ColorSwatches.vue'
 import NoteEditor from './NoteEditor.vue'
 import { vMindPreview } from '../directives/mindPreview'
@@ -131,6 +136,8 @@ const props = defineProps<{
   connectionTargetSide?: 'left' | 'right' | null
   runtimeHoverSuppressed?: boolean
 }>()
+
+const noteAccent = computed(() => notePaletteAccent(props.note.color))
 
 const emit = defineEmits<{
   (e: 'edit'): void
@@ -427,6 +434,15 @@ function onBodyClick(e: MouseEvent) {
 // 画布便签（NoteSticker.vue）复用这个组件本体做展示/编辑，拖拽克隆需要这张卡真实的根
 // DOM（不是外面包着的绝对定位壳），量高度上报给 RelationLayer 的连线锚点也是同一份——
 // 跟 ProjectCard.vue/FileCard.vue 的 defineExpose({ rootEl }) 同一个用途。
+function readPreviewSelection() {
+  const { id, version } = props.note
+  const snapshot = readRenderedSelection(bodyRef.value)
+  if (id <= 0 || !snapshot) return null
+  const label = title.value || String(id)
+  return { ...snapshot, location: label, version,
+    resolve: () => ({ type: 'canvas_note' as const, id, label }) }
+}
+
 defineExpose({ rootEl: cardRef })
 </script>
 
@@ -520,38 +536,7 @@ defineExpose({ rootEl: cardRef })
 }
 .nc-title-input::placeholder { color: var(--text-secondary); opacity: 0.5; font-weight: 400; }
 
-/* 可选颜色：整卡淡染（便签纸语言），不做左侧色条（那是管理系统语言）。"Caribbean" 配色，
-   亮色高饱和度（青绿/蓝/珊瑚橙/黄，见 ColorSwatches.vue 的色点原色），淡染到卡片背景上的
-   透明度比色点本身低不少——原色直接铺满整卡会盖过正文文字的可读性，这里只取一层够看得出
-   颜色、又不抢内容的淡染。 */
-/* 颜色调过四轮：8:2 白 → 反馈"再亮一点"退到 6:4 → 反馈"再白一点"到 75:25 → 又反馈
-   "再白一点淡一点"，现在定在白:色约 85:15（目前最淡的一档），色相仍跟 ColorSwatches.vue
-   的色点原色一致（橙/红/蓝/青），只是掺白比例调得更柔和。 */
-/* 曾经列表态用半透明 0.6 alpha 叠加淡染、画布态用同一份白:色混合比例但不透光——结果是
-   同一个颜色选项在两处看起来"略微不一样"：半透明色块叠在时间流每日玻璃底板（.tl-col 的
-   --glass-bg）之上，实际合成出来的颜色会被底板+页面背景那一层影响，跟画布态直接铺色的
-   纯色不是同一个视觉结果。用户反馈"用便签的颜色"——这里改成跟画布态完全相同的不透明色值，
-   不再区分列表态/画布态，两处颜色现在是同一份数值、同一个观感。没上色的默认笔记不受影响，
-   仍然是 .note-card 基础声明的半透明纸色（rgba(255,255,255,0.56)）。 */
-.note-card.tint-amber { background: rgb(255,246,231); }
-.note-card.tint-coral { background: rgb(255,236,233); }
-.note-card.tint-blue  { background: rgb(224,239,251); }
-.note-card.tint-teal  { background: rgb(229,248,250); }
-
-/* 画布模式：材质换成不透明的纸感（NoteSticker.vue 原来的纸色 rgba(255,252,238,.92)，
-   这里再提高到接近全不透明）——只有"没上色"的默认纸色区分列表态/画布态，上面那组自定义
-   颜色两边已经统一成同一份不透明数值。
-   ⚠️ 但 .canvas-mode 这条 selector 是两个类（.note-card.canvas-mode），跟上面 .tint-* 也是
-   两个类（.note-card.tint-amber）特异度相同——一张画布便签同时挂着 canvas-mode 和 tint-amber
-   两个类时，两条规则打平，谁赢看谁在样式表里排得靠后：这条排在 .tint-* 后面，会赢，把刚选
-   的颜色重新盖回纸色，画布便签的静止态（没在拖）就只会显示纸色、看不出选的颜色——只有拖起来
-   那一刻的克隆体会由 runtime 复制样式。这里必须补一份三个类
-   的 .canvas-mode.tint-* 稳赢，不能只留这条两个类的默认纸色声明。 */
 .note-card.canvas-mode { background: rgba(255,252,238,0.97); min-height: 0; }
-.note-card.canvas-mode.tint-amber { background: rgb(255,246,231); }
-.note-card.canvas-mode.tint-coral { background: rgb(255,236,233); }
-.note-card.canvas-mode.tint-blue  { background: rgb(224,239,251); }
-.note-card.canvas-mode.tint-teal  { background: rgb(229,248,250); }
 /* 画布模式下改回 visible——.note-card 平时 overflow:hidden（裁掉溢出圆角的正文/标题内容），
    但连接点（CardAffordances.vue）现在渲染在这张卡自己的子树里、圆点位置故意摆在卡片边缘外侧
    （见 CardAffordances.vue 的 .conn-dot-left/right），会被这份 hidden 整个

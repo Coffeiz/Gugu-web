@@ -46,9 +46,19 @@ function toolFieldSignature(parameters: Json | undefined): string {
 }
 
 export function createAgentToolBrief(preferences: unknown, tools: readonly PreparedToolDefinition[], userSkills: readonly Json[] = []): CapabilityCatalog {
+  const fileSkills = userSkills.flatMap(value => {
+    const item = record(value)
+    if (!item || typeof item.id !== 'string' || typeof item.name !== 'string'
+      || typeof item.description !== 'string' || typeof item.path !== 'string' || item.enabled === false) return []
+    return [{ id: item.id, name: item.name, description: item.description, path: item.path }]
+  })
+  const skillCatalog = fileSkills.length
+    ? ['## 可用文件技能', '根据用途选择技能，使用 use_skill 读取正文。目录包含技能的配套文件。',
+      ...fileSkills.map(item => JSON.stringify(item))].join('\n')
+    : ''
   const { toolInjectionMode } = normalizePreferenceResponse(readPreferenceDocument(preferences),
     { replyStyle: null, personality: null, groupPersonality: null }, false)
-  if (toolInjectionMode !== 'description') return { metadataOnly: true, toolCatalog: '', skillCatalog: '', userSkills }
+  if (toolInjectionMode !== 'description') return { metadataOnly: true, toolCatalog: '', skillCatalog, userSkills }
 
   const hasSearch = tools.some(tool => tool.name === 'search_tools')
   const brief = tools.filter(tool => tool.name !== 'choose_no_reply').map(tool => {
@@ -62,7 +72,7 @@ export function createAgentToolBrief(preferences: unknown, tools: readonly Prepa
     return `- \`${tool.name}\`：${tool.description_short}${fields ? `；字段：${fields}` : ''}`
   })
   return {
-    fixedAdapter: true, metadataOnly: false, skillCatalog: '', userSkills,
+    fixedAdapter: true, metadataOnly: false, skillCatalog, userSkills,
     toolCatalog: [
       '## 当前可用工具简介',
       '逐字使用当前目录的工具名，通过 call_tool 传入 tool_name 和 arguments。已有当前版本的 Schema 时直接复用。',

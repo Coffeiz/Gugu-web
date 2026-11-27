@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto'
 import {setTimeout as delay} from 'node:timers/promises'
 import {Pool} from 'pg'
 import {createPostgresRuntime} from '@gugu/core/data'
-import {createTaskFilesystemAuthorization} from '@gugu/core/scheduled-task-filesystem-authorize'
+import {createTaskFilesystemAuthorization} from '@gugu/core/workspaces/task-filesystem-authorize'
 import {createFilesystemAuthorizationConfirmationStore} from '../../../src/modules/agent/sandbox/confirmations.js'
 import {createRedisFilesystemAuthorizationCommands} from '../../../src/adapters/cache/redis-events.js'
 const databaseUrl=process.env.GUGU_WEBUI_TEST_DATABASE_URL,redisUrl=process.env.GUGU_WEBUI_TEST_REDIS_URL

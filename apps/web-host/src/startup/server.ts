@@ -10,14 +10,13 @@ import { createAdminSearchTestOperations } from '../modules/admin/search.js'
 import { resolveAdminUpdateMode } from '../modules/admin/runtime.js'
 import { createMcpRuntime } from '../modules/mcp/runtime.js'
 import { Pool } from 'pg'
-import { createPostgresRuntime, type SqlDataRuntime } from '@gugu/core/data'
+import { SqlDataRuntime } from '@gugu/core/data'
+import { openPostgresKysely } from '@gugu/database/postgres/kysely'
 import { createApp } from '../app.js'
 import { loadConfig } from '../config.js'
 import { resolveConfigOverridePath } from '../adapters/config/config-override-file.js'
 import { hasProjectDeleteJournalSchema } from '../modules/undo/journal.js'
-import { PostgresMigrationError } from '@gugu/database/postgres'
-import { checkRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
-import { checkSearchUsageMigration } from '@gugu/database/postgres/migrations/0010_search_usage'
+import { checkPostgresBaseline, PostgresMigrationError } from '@gugu/database/postgres'
 import { migrateWebAgentPrompts, webAgentPromptRoot } from '../modules/agent/context/prompts.js'
 import { hasProjectExpiryJournalSchema } from '../modules/projects/lifecycle/expiry.js'
 import { createRedisEventPublisher } from '../adapters/cache/redis-events.js'
@@ -37,8 +36,22 @@ async function listen(app: ReturnType<typeof createApp>, host: string, port: num
 }
 
 export async function startServer(env: NodeJS.ProcessEnv = process.env) {
+  const schedulerMode = env.GUGU_WEBUI_SCHEDULER_MODE ?? 'inline'
+  if (schedulerMode !== 'inline' && schedulerMode !== 'external')
+    throw new Error('Web Host 调度运行模式无效')
+  return startHost(env, false)
+}
+
+/** 在调用方进程内启动独立调度运行时，由调用方管理生命周期。 */
+export async function startScheduledTaskWorker(env: NodeJS.ProcessEnv = process.env): Promise<{ close(): Promise<void> }> {
+  const { close } = await startHost({ ...env, GUGU_WEBUI_SCHEDULER_MODE: 'worker' }, true)
+  return { close }
+}
+
+async function startHost(env: NodeJS.ProcessEnv, schedulerOnly: boolean) {
   const configOverridePath = resolveConfigOverridePath(env)
   const config = loadConfig(env, configOverridePath)
+  if (schedulerOnly && !config.redisUrl) throw new Error('独立调度进程需要 Redis')
   const promptRoot = webAgentPromptRoot(config.storageLocalPath)
   await migrateWebAgentPrompts(promptRoot)
   const report = createWebRuntimeLog(config.logFile)
@@ -48,8 +61,11 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   const redisEvents = config.redisUrl ? createRedisEventPublisher(config.redisUrl) : undefined
   let core: SqlDataRuntime
   try {
-    core = await createPostgresRuntime({ url: config.databaseUrl, maxConnections: config.postgresPoolMax })
+    core = new SqlDataRuntime(openPostgresKysely(await import('pg'), {
+      url: config.databaseUrl, maxConnections: config.postgresPoolMax,
+    }), 'postgres')
   } catch (error) {
+    if (schedulerOnly) { await pool.end(); throw error }
     // 保留 Admin 登录和配置入口，让用户可以修正数据库连接；业务 API 仍由未就绪状态阻断。
     const app = createApp({
       appName: config.appName,
@@ -111,11 +127,11 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   let imDeliveryPool: Pool | undefined
   let web: Awaited<ReturnType<typeof createWebUiApp>>
   try {
-    searchUsageSchemaApplied = await checkFeatureMigration('host.search_usage_unavailable', checkSearchUsageMigration)
+    searchUsageSchemaApplied = await checkFeatureMigration('host.search_usage_unavailable', checkPostgresBaseline)
     // 日志跨事务持有会话锁，使用独立连接池，避免占用本次确认仍需使用的业务连接。
     if (process.platform === 'linux' && core.receipts && await hasProjectDeleteJournalSchema(pool))
       projectJournalPool = createPool(config, 2)
-    if (booleanSetting(env.GUGU_WEBUI_PROJECT_EXPIRY_WORKER_ENABLED, undefined, false)
+    if (!schedulerOnly && booleanSetting(env.GUGU_WEBUI_PROJECT_EXPIRY_WORKER_ENABLED, undefined, false)
       && (!projectJournalPool || !await hasProjectExpiryJournalSchema(pool)))
       throw new Error('项目过期清理 Worker 需要已迁移的项目日志结构')
     web = await createWebUiApp(config, pool, core, redisEvents, env, () => canRebuildAgentMemoryIndex,
@@ -137,50 +153,56 @@ export async function startServer(env: NodeJS.ProcessEnv = process.env) {
   }
   const app = web.app
   drainHttpConnections(app)
-  canRebuildAgentMemoryIndex = await checkFeatureMigration('host.rag_unavailable', checkRagIndexMigration)
+  canRebuildAgentMemoryIndex = await checkFeatureMigration('host.rag_unavailable', checkPostgresBaseline)
   try {
-    if (ownership.runtime === 'node') imDeliveryPool = createPool(config, 4)
-    const gateway = createNodeImHostRuntime({ pool, deliveryPool: imDeliveryPool ?? pool, core, redisUrl: config.redisUrl,
-      secretKey: config.secretKey, storageRoot: config.storageLocalPath, configOverridePath, environment: env,
-      promptRoot, publicAppUrl: config.publicAppUrl, ownership, mcpRuntime: sharedMcp, imOwnerTools: web.imOwnerTools, registerImSubagentParentBinder: web.registerImSubagentParentBinder, mcpDirectory: web.imMcpDirectory,
-      filesystemAuthorization: web.imFilesystemAuthorization,
-      automaticModeEnabled: config.workspaceRuntimeSettings.automaticModeEnabled,
-      runAgent: web.runAgent, observation: web.loopScopeTrace?.forSource('im'), log: web.agentRunLog,
-      diagnose(code, error) {
-        if (code === 'im_rag_timeout') gatewayLog('gateway.rag_timeout', { error })
-        else if (code === 'im_rag_late_completion') gatewayLog('gateway.rag_late_completion', { error })
-        else gatewayLog('gateway.degraded', { code, error })
-      },
-    })
-    imRuntime = gateway
-    app.get('/health/im', async (_request, reply) => {
-      const health = gateway.health()
-      const supervisor = health.supervisor as { configuration?: string; notifications?: string; cleanupUnknown?: number; retrying?: number } | null
-      const ready = health.status === 'disabled' || health.status === 'running'
-        && Object.values(health.loops).every(state => state === 'running')
-        && supervisor?.configuration === 'ready' && supervisor.notifications === 'connected'
-        && supervisor.cleanupUnknown === 0 && supervisor.retrying === 0
-      return ready ? health : reply.code(503).send(health)
-    })
-    app.addHook('onClose', async () => {
+    if (schedulerOnly) {
+      await app.ready()
+      await web.startScheduledWorkers()
+      console.info('独立定时任务 Worker 已启动')
+    } else {
+      if (ownership.runtime === 'node') imDeliveryPool = createPool(config, 4)
+      const gateway = createNodeImHostRuntime({ pool, deliveryPool: imDeliveryPool ?? pool, core, redisUrl: config.redisUrl,
+        secretKey: config.secretKey, storageRoot: config.storageLocalPath, configOverridePath, environment: env,
+        promptRoot, publicAppUrl: config.publicAppUrl, ownership, mcpRuntime: sharedMcp, imOwnerTools: web.imOwnerTools, registerImSubagentParentBinder: web.registerImSubagentParentBinder, mcpDirectory: web.imMcpDirectory,
+        filesystemAuthorization: web.imFilesystemAuthorization,
+        automaticModeEnabled: config.workspaceRuntimeSettings.automaticModeEnabled,
+        runAgent: web.runAgent, observation: web.loopScopeTrace?.forSource('im'), log: web.agentRunLog,
+        diagnose(code, error) {
+          if (code === 'im_rag_timeout') gatewayLog('gateway.rag_timeout', { error })
+          else if (code === 'im_rag_late_completion') gatewayLog('gateway.rag_late_completion', { error })
+          else gatewayLog('gateway.degraded', { code, error })
+        },
+      })
+      imRuntime = gateway
+      app.get('/health/im', async (_request, reply) => {
+        const health = gateway.health()
+        const supervisor = health.supervisor as { configuration?: string; notifications?: string; cleanupUnknown?: number; retrying?: number } | null
+        const ready = health.status === 'disabled' || health.status === 'running'
+          && Object.values(health.loops).every(state => state === 'running')
+          && supervisor?.configuration === 'ready' && supervisor.notifications === 'connected'
+          && supervisor.cleanupUnknown === 0 && supervisor.retrying === 0
+        return ready ? health : reply.code(503).send(health)
+      })
+      app.addHook('onClose', async () => {
+        try {
+          await shutdownStep(report, 'gateway', () => gateway.stop())
+          if (ownership.runtime === 'node') gatewayLog('gateway.stopped')
+        } catch (error) {
+          gatewayLog('gateway.stop_failed', { error })
+          throw error
+        }
+      })
       try {
-        await shutdownStep(report, 'gateway', () => gateway.stop())
-        if (ownership.runtime === 'node') gatewayLog('gateway.stopped')
+        await gateway.start()
+        if (gateway.health().status === 'running') gatewayLog('gateway.started')
       } catch (error) {
-        gatewayLog('gateway.stop_failed', { error })
+        gatewayLog('gateway.start_failed', { error })
         throw error
       }
-    })
-    try {
-      await gateway.start()
-      if (gateway.health().status === 'running') gatewayLog('gateway.started')
-    } catch (error) {
-      gatewayLog('gateway.start_failed', { error })
-      throw error
+      await listen(app, config.host, config.port)
+      await web.startWorkers()
+      report('host.started', { pid: process.pid })
     }
-    await listen(app, config.host, config.port)
-    await web.startWorkers()
-    report('host.started', { pid: process.pid })
   } catch (error) {
     diagLog('host.start_failed', error)
     await app.close().catch(() => undefined)

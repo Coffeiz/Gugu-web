@@ -1,4 +1,4 @@
-import type { ScheduledTaskLease } from '@gugu/core/scheduled-task-runner'
+import type { ScheduledTaskLease } from '@gugu/scheduler'
 
 export interface ScheduledTaskRedisCommands {
   set(key: string, value: string, ...options: string[]): Promise<unknown>

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
 import { databaseTime } from '../../src/data/codec.js'
 import { tablesSql } from '../../src/data/schema.js'
-import { createKyselyScheduledTaskReader, createScheduledTaskQueries, projectScheduledTaskForAgent } from '../../src/scheduled-tasks/task-list.js'
+import { createKyselyScheduledTaskReader, createScheduledTaskQueries, projectScheduledTaskForAgent } from '../../src/tasks/task-list.js'
 
 const url = process.env.GUGU_CORE_TEST_POSTGRES_URL
 describe.each(['sqlite', 'postgres'] as const)('定时任务列表 %s', backend => {
@@ -22,7 +22,10 @@ describe.each(['sqlite', 'postgres'] as const)('定时任务列表 %s', backend 
     const opened = path ? await openSqliteRuntime(path) : undefined
     const db = opened?.runtime.db ?? new Kysely<{}>({ dialect: new PostgresDialect({ pool: new Pool({ connectionString: url, options: `-c search_path=${schema}` }) }) })
     try {
-      if (backend === 'postgres') await sql.raw(tablesSql('postgres').scheduledTasks).execute(db)
+      if (backend === 'postgres') {
+        await sql.raw(tablesSql('postgres').scheduledTasks).execute(db)
+        await sql`ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'instruction'`.execute(db)
+      }
       const owner = opened?.ownerId ?? randomUUID(), other = randomUUID()
       const stored = backend === 'sqlite' ? owner.replaceAll('-', '') : owner
       const time = databaseTime('2026-01-01T12:34:56.123456Z', backend)

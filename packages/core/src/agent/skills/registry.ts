@@ -16,7 +16,7 @@ function plainRecord(value: unknown): value is Record<string, unknown> {
 
 function metadata(definition: SkillMetadata): SkillMetadata {
   const result: Record<string, unknown> = { id: definition.id, name: definition.name, description: definition.description }
-  for (const key of ['key', 'description_short', 'description_long', 'category', 'emoji'] as const) {
+  for (const key of ['key', 'path', 'description_short', 'description_long', 'category', 'emoji'] as const) {
     if (definition[key] !== undefined) {
       if (typeof definition[key] !== 'string') throw new Error('技能元数据无效')
       result[key] = definition[key]

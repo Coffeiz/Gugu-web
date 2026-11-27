@@ -66,7 +66,8 @@ export function buildAgentStaticPrompt(input: AgentStaticPromptInput): string {
     : '## 当前文件工作区\n会话已绑定工作区：' + JSON.stringify(workspace.name)
       + '。未指定目标的文件操作优先使用此工作区，space=' + workspace.space
       + (workspace.projectId === undefined ? '' : '，project_id=' + workspace.projectId) + '。'
-  const prompt = [base, input.afterBasePrompt?.trim(), channel, fileScope, lang, persona, skills, input.policy.trim(), custom, input.skillIndex.trim()].filter(Boolean).join('\n\n---\n\n')
+  const fileDelivery = '交付文件或文件夹时，使用工具返回的可打开引用。若通过 Shell 创建且没有引用，使用 send_item，或使用 open_item 并设 reference_only=true，取得引用后再交付。引用不可用时如实说明；不要输出 file:// 链接。'
+  const prompt = [base, input.afterBasePrompt?.trim(), channel, fileScope, fileDelivery, lang, persona, skills, input.policy.trim(), custom, input.skillIndex.trim()].filter(Boolean).join('\n\n---\n\n')
   // 限制单条大小，避免用户偏好或技能内容长期占用过多内存。
   if (key.length <= 128 * 1024) {
     staticPrompts.set(key, prompt)

@@ -1,50 +1,42 @@
 import type { RunIdentity } from '@gugu/core/agent'
-import { createAgentCalendarReader, createKyselyCalendarAgentReadPort, createKyselyCalendarReadPort } from '@gugu/core/calendar'
 import type { SqlDataRuntime } from '@gugu/core/data'
-import { createScheduledTaskGroupMemoryAuthorizer, createScheduledTaskGroupScopeVerifier, createScheduledTaskRunToolPorts, allowsScheduledMcpTool } from '@gugu/core/scheduled-task-run-now'
-import { createKyselyScheduledTaskRunNowReader, hasScheduledEmailAuthorization, type ScheduledTaskExecutionPlan, createKyselyScheduledTaskExecutionReader } from '@gugu/core/scheduled-task-run-now-read'
-import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/scheduled-task-list'
-import { createAgentSkillRuntimePorts, createSkillMetadataReader, type BuiltinSkillDefinition } from '@gugu/core/skills'
-import { createUserSkillReader } from '@gugu/core/agent/skills/user-body'
-import { createClientTools, createListEventsTool, createListProjectsTool, createListScheduledTasksTool, createSkillManagementReadTools, createTimeTool, createUpcomingTool, createUseSkillTool, type AgentEmailAutomationClaim, type ToolDefinition } from '@gugu/core/tools'
+import { createScheduledTaskGroupMemoryAuthorizer, createScheduledTaskGroupScopeVerifier, createScheduledTaskRunToolPorts, createScheduledOwnerToolDefinitions, allowsScheduledMcpTool } from '@gugu/core/agent/scenes/task'
+import { createKyselyScheduledTaskRunNowReader, hasScheduledEmailAuthorization, type ScheduledTaskExecutionPlan, createKyselyScheduledTaskExecutionReader } from '@gugu/core/tasks/execution-read'
+import { createAgentSkillRuntimePorts, createBuiltinSkillMetadataReader, createFileSkillDefinitions, isUserSkillBundleEnabled, withFileSkillMetadata, type BuiltinSkillDefinition } from '@gugu/core/skills'
+import { createSkillManagementReadTools, createUseSkillTool, type AgentEmailAutomationClaim, type ToolDefinition } from '@gugu/core/tools'
 import { createMcpServerConfigLister } from '@gugu/core/mcp/server-list'
 import type { McpDirectoryTool } from '@gugu/core/mcp/tool-directory'
 import { createMcpAgentToolPorts } from '../../agent/tools/mcp/ports.js'
 import type { createMcpRuntime } from '../../mcp/runtime.js'
 
 type RunOptions = Pick<Parameters<typeof createScheduledTaskRunToolPorts>[0], 'identity' | 'assertLease'>
-  & { task: Pick<ScheduledTaskExecutionPlan, 'id' | 'ownerId' | 'workspaceId' | 'authorizedTools' | 'groupScope' | 'name' | 'payload'> }
+  & { task: Pick<ScheduledTaskExecutionPlan, 'id' | 'ownerId' | 'workspaceId' | 'authorizedTools' | 'groupScope' | 'name' | 'payload'> & Partial<Pick<ScheduledTaskExecutionPlan, 'channels'>> }
 
 export function createWebScheduledTaskToolResources(options: {
   core: SqlDataRuntime
   now(): Date
   timezone(identity: RunIdentity): Promise<string>
+  ownerResources?: Parameters<typeof createScheduledOwnerToolDefinitions>[2]
+  filterConfigured?(names: readonly string[]): readonly string[] | Promise<readonly string[]>
   mcp?: ScheduledMcpToolsOptions
   email?(claim: AgentEmailAutomationClaim, assertLease: RunOptions['assertLease']): ToolDefinition
-  skillCatalog?: { builtins: readonly BuiltinSkillDefinition[]; fingerprint(ownerId: string): string }
+  skillCatalog?: { builtins: readonly BuiltinSkillDefinition[]; fingerprint(ownerId: string): string; dataRoot?: string }
 }) {
   const { core, now, timezone } = options
   const { db, backend } = core
   const readOwned = createKyselyScheduledTaskRunNowReader(db, backend)
   const verifyGroup = createScheduledTaskGroupScopeVerifier(db, backend)
   const verifyGroupMemory = createScheduledTaskGroupMemoryAuthorizer(db, backend)
-  const calendar = createKyselyCalendarReadPort(db, backend)
-  const tasks = createScheduledTaskQueries(createKyselyScheduledTaskReader(db, backend),
-    () => ({ workspaceSupported: backend === 'postgres', filesystemAuthorizationEnabled: false }))
-  const definitions = [
-    createTimeTool({ now, timezone }),
-    createListEventsTool(createAgentCalendarReader(createKyselyCalendarAgentReadPort(db, backend))),
-    createUpcomingTool({ core, events: calendar, time: { now, timezone } }),
-    createListProjectsTool(core),
-    createListScheduledTasksTool({ list: (identity, signal) => tasks.agent(identity.ownerId, signal) }),
-    ...createClientTools(core).filter(tool => tool.effect === 'read'),
-  ]
+  const definitions = createScheduledOwnerToolDefinitions(core, { now, timezone }, options.ownerResources)
   const skillCatalog = options.skillCatalog
-  const skillMetadata = skillCatalog ? createSkillMetadataReader(db, backend, skillCatalog.builtins) : undefined
-  const readSkill = createUserSkillReader(db, backend)
+  const builtinSkillMetadata = skillCatalog ? createBuiltinSkillMetadataReader(skillCatalog.builtins) : undefined
+  const skillMetadata = skillCatalog?.dataRoot && builtinSkillMetadata ? withFileSkillMetadata({
+    dataRoot: skillCatalog.dataRoot, list: builtinSkillMetadata, mapPath: () => undefined,
+  }) : builtinSkillMetadata
   const bindMcp = options.mcp && createScheduledMcpToolResources(core, options.mcp, now)
   return async (run: RunOptions & {
     additionalReadTools?: readonly ToolDefinition[]
+    shell?: Parameters<typeof createScheduledTaskRunToolPorts>[0]['shell']
     sendFile?(isCurrent: () => Promise<boolean>): ToolDefinition
   }) => {
     const { task } = run
@@ -53,7 +45,7 @@ export function createWebScheduledTaskToolResources(options: {
       const current = await readOwned(ownerId, id)
       return current?.enabled === true && (current.scheduleKind === 'once' || current.endAt === null || current.endAt > now().getTime())
     }
-    const enabled = [...definitions, ...(run.additionalReadTools ?? [])]
+    const enabled = [...(run.additionalReadTools ?? [])]
     if ((skillCatalog && skillMetadata) || bindMcp) {
       if (run.identity.ownerId !== ownerId || run.identity.sessionId !== `scheduled-task:${id}`)
         throw new Error('定时任务工具身份不匹配')
@@ -61,8 +53,14 @@ export function createWebScheduledTaskToolResources(options: {
       if (!await isCurrent()) throw new Error('定时任务工具授权已失效')
     }
     if (skillCatalog && skillMetadata) {
+      const isFileSkillEnabled = skillCatalog.dataRoot
+        ? (owner: string, slug: string, source?: 'user' | 'clawhub') => isUserSkillBundleEnabled(skillCatalog.dataRoot!, owner, slug, source) : undefined
+      const fileSkills = skillCatalog.dataRoot && isFileSkillEnabled ? (await createFileSkillDefinitions({
+        dataRoot: skillCatalog.dataRoot, ownerId, mapPath: () => undefined,
+        isEnabled: isFileSkillEnabled,
+      })).definitions : []
       const skills = await createAgentSkillRuntimePorts({
-        ...skillCatalog, ownerId, listUser: skillMetadata, readUser: readSkill,
+        ...skillCatalog, ownerId, fileSkills, isFileSkillEnabled,
       })
       enabled.push(createUseSkillTool(skills), ...createSkillManagementReadTools(skillMetadata))
     }
@@ -79,8 +77,8 @@ export function createWebScheduledTaskToolResources(options: {
       isAuthorized: () => hasScheduledEmailAuthorization(db, backend, task, now().getTime()),
     } : undefined
     return createScheduledTaskRunToolPorts({
-      identity: run.identity, task, assertLease: run.assertLease, definitions: enabled, isCurrent,
-      email,
+      identity: run.identity, task, assertLease: run.assertLease, ownerDefinitions: definitions, definitions: enabled, isCurrent, filterConfigured: options.filterConfigured,
+      core, email, shell: run.shell,
       isGroupScopeCurrent: async () => Boolean(await verifyGroup(task)),
       isGroupMemoryCurrent: async () => Boolean(await verifyGroupMemory(task)),
       mcp: await bindMcp?.(task, run.identity),
@@ -101,11 +99,15 @@ export function createScheduledMcpToolResources(core: SqlDataRuntime, options: S
     const expected = Object.freeze({ ...identity })
     const { id, ownerId } = task
     const initial = [...task.authorizedTools]
+    const requiredTaskGrant = new Set<string>()
     let available: readonly McpDirectoryTool[]
     try {
       const [directory, servers] = await Promise.all([options.directory(ownerId), configs(ownerId)])
       const modes = new Map(servers.filter(row => row.enabled && row.transport === 'http').map(row => [row.id, row.confirm_mode]))
       available = directory.filter(tool => allowsScheduledMcpTool(initial, tool.name, modes.get(tool.server_id) ?? ''))
+      for (const tool of available) {
+        if (modes.get(tool.server_id) === 'confirm_all') requiredTaskGrant.add(tool.name)
+      }
     } catch {
       // 与 Python 一致，MCP 发现失败只移除此轮的远端能力。
       return undefined
@@ -130,7 +132,7 @@ export function createScheduledMcpToolResources(core: SqlDataRuntime, options: S
                 if (!('plan' in current) || !allowsScheduledMcpTool(initial, name, server.confirm_mode)) return false
                 const names = current.plan.authorizedTools
                 // 显式授权被撤销后不能在同一轮改走空列表的自动授权。
-                return (!initial.length || names.includes(name)) && allowsScheduledMcpTool(names, name, server.confirm_mode)
+                return (!requiredTaskGrant.has(name) || names.includes(name)) && allowsScheduledMcpTool(names, name, server.confirm_mode)
                   && await isCurrent(expected)
               })
             },

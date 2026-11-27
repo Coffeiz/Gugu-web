@@ -6,11 +6,11 @@ import { sql, type Transaction } from 'kysely'
 import { expect, it } from 'vitest'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
-import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '../../../src/scheduled-tasks/task-list.js'
-import { createListScheduledTasksTool, createScheduledTaskWriteTools } from '../../../src/agent/tools/scheduled-tasks.js'
+import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '../../../src/tasks/task-list.js'
+import { createListScheduledTasksTool, createScheduledTaskWriteTools } from '../../../src/agent/tools/scheduled-tasks/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
-import { normalizeSchedule, scheduleTimestamp } from '../../../src/scheduled-tasks/normalize-schedule.js'
-import type { ScheduledTaskCreateInput, ScheduledTaskPatch } from '../../../src/scheduled-tasks/task-write.js'
+import { normalizeSchedule, scheduleTimestamp } from '@gugu/scheduler'
+import type { ScheduledTaskCreateInput, ScheduledTaskPatch } from '@gugu/scheduler/tasks'
 
 it('真实注册器经正式SQLite只读定时任务，隔离owner和提醒并在撤权、取消时拒绝', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'gugu-agent-scheduled-'))

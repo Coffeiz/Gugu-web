@@ -7,7 +7,7 @@ import type { SqlDataRuntime } from '../../data/runtime.js'
 import { invalidateAgentKnowledgeRag, enqueueAgentRagRebuild, enqueueAgentRagRebuildInTransaction, invalidateAgentKnowledgeRagInTransaction } from '../rag/index.js'
 import type { ToolResult } from '../models.js'
 import type { ConfirmationClaimReference } from '../tools/confirmation.js'
-import type { KnowledgeWritePort, KnowledgeDeletePort } from '../tools/knowledge.js'
+import type { KnowledgeWritePort, KnowledgeDeletePort } from '../tools/knowledge/index.js'
 import { parseAgentKnowledgeEntry, serializeAgentKnowledgeEntry, type AgentKnowledgeEntry } from './entry.js'
 import type { AgentKnowledgeReadStore } from './overview.js'
 

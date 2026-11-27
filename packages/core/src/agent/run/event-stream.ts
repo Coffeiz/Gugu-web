@@ -56,7 +56,7 @@ export function createAgentRunEventStream(reader: AgentRunEventReader, wakeup: A
   if (!Number.isSafeInteger(pollMs) || pollMs < 1) throw new RangeError('Agent 事件轮询间隔无效')
   return {
     notify: identity => wakeup.notify(identity),
-    async open(identity: RunIdentity, afterSequence = 0, signal?: AbortSignal): Promise<AsyncIterable<RunEvent>> {
+    async open(identity: RunIdentity, afterSequence = 0, signal?: AbortSignal, onCaughtUp?: () => void): Promise<AsyncIterable<RunEvent>> {
       if (!Number.isSafeInteger(afterSequence) || afterSequence < 0) throw new RangeError('Agent 事件序号无效')
       const bound = { ...identity }
       return (async function* () {
@@ -77,6 +77,8 @@ export function createAgentRunEventStream(reader: AgentRunEventReader, wakeup: A
             }
             const state = await reader.readState(bound)
             if (state && state.sequence > sequence) continue
+            onCaughtUp?.()
+            onCaughtUp = undefined
             const reconstruction = reconstructionStatusEvent(bound, sequence, state?.status)
             if (reconstruction) {
               yield reconstruction

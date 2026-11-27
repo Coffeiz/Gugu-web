@@ -7,7 +7,7 @@ export { MIND_REF_RE } from '@/utils/mindReferences'
  *
  * **窄口径**（2026-07-10 定版，见 docs/product/思维面板/笔记页UI设计.md）：
  *   正文 / 标题（单级——薄卡片里多级标题没有意义）/ 待办 / 无序列表（平铺不嵌套）/ 对象引用
- * 不做图片块、`/` 菜单（`/` 已预留给呼唤咕咕）、表格、多级标题。
+ * 不做图片块、`/` 菜单（`/` 已预留给呼唤咕咕）、多级标题。
  * **加粗/斜体/删除线/行内代码/链接 2026-07-11 起支持**（行内标记，成本低、TipTap 原生
  * 支持，见「格式扩展」一节）：解析走简化版 Markdown（`**`/`*`/`~~`/`` ` ``/`[text](url)`），
  * 不认 `_..._` 下划线写法——笔记里下划线常见于 snake_case 变量名/文件名，会被误判成斜体。
@@ -26,6 +26,8 @@ export { MIND_REF_RE } from '@/utils/mindReferences'
  * UI 触发键是 `@`（原 `[[`，2026-07-10 改），只是触发键，写进存储的仍是 `[[...]]`。
  */
 import { Extension, Node, mergeAttributes } from '@tiptap/core'
+import { TableKit } from '@tiptap/extension-table'
+import { Lexer } from 'marked'
 import { Blockquote } from '@tiptap/extension-blockquote'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import ListItem from '@tiptap/extension-list-item'
@@ -76,6 +78,7 @@ export const MindRef = Node.create({
       refType: { default: 'project' },
       refId:   { default: 0 },
       label:   { default: '' },
+      selection: { default: null, rendered: false },
     }
   },
 
@@ -92,7 +95,9 @@ export const MindRef = Node.create({
       'data-ref-type': t,
       'data-ref-id': String(node.attrs.refId),
       class: 'mind-ref',
-      title: mindRefTypeLabel(t),
+      title: node.attrs.selection
+        ? [node.attrs.selection.location, node.attrs.selection.content].join('\n')
+        : mindRefTypeLabel(t),
     }),
       [`${SVG_NS} svg`, { viewBox: '0 0 256 256', width: '12', height: '12', fill: 'currentColor', class: 'mind-ref-icon' },
         [`${SVG_NS} path`, { d: MIND_REF_TYPE_ICON_PATH[t] ?? '' }]],
@@ -250,6 +255,18 @@ export function docToMarkdown(doc: MindDocNode | null | undefined): string {
       const code = (b.content ?? []).map(n => n.text ?? '').join('')
       const lang = b.attrs?.language ?? ''
       blockStr = '```' + lang + '\n' + code + '\n```'
+    } else if (b.type === 'table') {
+      const [header, ...rows] = b.content ?? []
+      if (!header?.content?.length) continue
+      const rowMd = (row: MindDocNode) => '| ' + (row.content ?? []).map(cell =>
+        (cell.content ?? []).map(paragraph => inlineToMd(paragraph.content)).join(' ')
+          .replace(/\r?\n/g, ' ').replace(/\|/g, '\\|'),
+      ).join(' | ') + ' |'
+      const divider = '| ' + header.content.map(cell => {
+        const align = cell.attrs?.align
+        return align === 'center' ? ':---:' : align === 'right' ? '---:' : align === 'left' ? ':---' : '---'
+      }).join(' | ') + ' |'
+      blockStr = [rowMd(header), divider, ...rows.map(rowMd)].join('\n')
     } else if (b.type === 'horizontalRule') {
       blockStr = '---'
     } else {
@@ -298,6 +315,17 @@ function block(type: string, text: string, attrs?: Record<string, any>): MindDoc
   return node
 }
 
+// 仅在表格分隔行出现时调用 GFM lexer，其余正文仍走笔记原有的块解析。
+function readTable(lines: string[], start: number) {
+  const divider = lines[start + 1]?.trim()
+  if (!divider || !lines[start]?.includes('|') || !/^\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?$/.test(divider)) return
+  let end = start + 2
+  while (lines[end]?.includes('|') && !/^\s*(?:```|>|#{1,6}\s|[-*+]\s|\d+\.\s)/.test(lines[end]!)) end++
+  const token = Lexer.lex(lines.slice(start, end).join('\n'), { gfm: true })[0]
+  if (token?.type !== 'table') return
+  return { table: token, end: start + token.raw.trimEnd().split('\n').length }
+}
+
 export function markdownToDoc(md: string | null | undefined): MindDocNode {
   const content: MindDocNode[] = []
   let tasks: MindDocNode[] = []
@@ -344,7 +372,9 @@ export function markdownToDoc(md: string | null | undefined): MindDocNode {
     codeLines = []
   }
 
-  for (const raw of (md ?? '').split('\n')) {
+  const lines = (md ?? '').split('\n')
+  for (let index = 0; index < lines.length; index++) {
+    const raw = lines[index]!
     if (inCode) {
       if (/^\s*```\s*$/.test(raw)) { flushGroups(); flushBlankRun(); pushCodeBlock(); inCode = false; continue }
       codeLines.push(raw)
@@ -357,6 +387,25 @@ export function markdownToDoc(md: string | null | undefined): MindDocNode {
 
     const fence = /^\s*```(\S*)\s*$/.exec(line)
     if (fence) { flushGroups(); inCode = true; codeLang = fence[1] || ''; continue }
+
+    const parsedTable = readTable(lines, index)
+    if (parsedTable) {
+      flushGroups()
+      const { table, end } = parsedTable
+      content.push({
+        type: 'table',
+        content: [table.header, ...table.rows].map((row, rowIndex) => ({
+          type: 'tableRow',
+          content: row.map((cell, column) => ({
+            type: rowIndex === 0 ? 'tableHeader' : 'tableCell',
+            attrs: { align: table.align[column] },
+            content: [block('paragraph', cell.text)],
+          })),
+        })),
+      })
+      index = end - 1
+      continue
+    }
 
     // 顺序敏感：`- [ ] x` 必须先于 `- x` 匹配，否则待办会被吃成普通列表
     const task = /^\s*-\s\[([ xX])\]\s?(.*)$/.exec(line)
@@ -544,7 +593,9 @@ export function mdToPreviewHtml(md: string | null | undefined): string {
     codeLines = []
   }
 
-  for (const raw of (md ?? '').split('\n')) {
+  const lines = (md ?? '').split('\n')
+  for (let index = 0; index < lines.length; index++) {
+    const raw = lines[index]!
     if (inCode) {
       if (/^\s*```\s*$/.test(raw)) { flushGroups(); flushBlankRun(); pushCodeBlock(); inCode = false; continue }
       codeLines.push(raw)
@@ -557,6 +608,19 @@ export function mdToPreviewHtml(md: string | null | undefined): string {
 
     const fence = /^\s*```(\S*)\s*$/.exec(line)
     if (fence) { flushGroups(); inCode = true; codeLang = fence[1] || ''; continue }
+
+    const parsedTable = readTable(lines, index)
+    if (parsedTable) {
+      flushGroups()
+      const { table, end } = parsedTable
+      const renderRow = (row: typeof table.header, tag: 'th' | 'td') => '<tr>' + row.map((cell, column) => {
+        const align = table.align[column]
+        return `<${tag}${align ? ` align="${align}"` : ''}>${inlineToHtml(cell.text)}</${tag}>`
+      }).join('') + '</tr>'
+      out.push(`<div class="mind-table-scroll" data-line-unit="${lineUnit++}"><table><thead>${renderRow(table.header, 'th')}</thead><tbody>${table.rows.map(row => renderRow(row, 'td')).join('')}</tbody></table></div>`)
+      index = end - 1
+      continue
+    }
 
     const task = /^\s*-\s\[([ xX])\]\s?(.*)$/.exec(line)
     if (task) {
@@ -662,7 +726,7 @@ const ScopedHistory = Extension.create({
 export function mindExtensions(placeholder = '写点什么…') {
   return [
     StarterKit.configure({
-      // 窄口径：多级标题/表格/图片仍不开。加粗/斜体/删除线/行内代码/链接 2026-07-11 起开
+      // 窄口径：多级标题和图片仍不开。加粗/斜体/删除线/行内代码/链接 2026-07-11 起开
       // （行内标记）；引用块/有序列表/分割线 2026-07-11 起开（块级元素，走「插入」二级
       // 菜单，见 NoteEditor.vue）。代码块单独关掉，用下面的 MindCodeBlock 换掉（要语法
       // 高亮 + 语言名标签，见 mind-content.css 和 CodeBlockView.vue）。
@@ -674,6 +738,7 @@ export function mindExtensions(placeholder = '写点什么…') {
       listItem: false,        // 用下面 BulletListItem 的自定义渲染（手绘圆点，对齐待办缩进）
       orderedList: { itemTypeName: 'orderedListItem' },   // 数字跟圆点不能共用一个节点渲染
     }),
+    TableKit.configure({ table: { renderWrapper: true } }),
     MindCodeBlock.configure({ lowlight }),
     MindBlockquote,
     BulletListItem,

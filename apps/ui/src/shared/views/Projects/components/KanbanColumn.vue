@@ -35,6 +35,7 @@
 </template>
 
 <script setup lang="ts">
+import { PROJECT_STATUS_COLORS } from '@/utils/projectColors'
 import { onUnmounted, ref, watch, type PropType } from 'vue'
 import { runtime } from '@/interaction/runtime'
 import Icon from '@/components/common/icons/Icon.vue'
@@ -75,46 +76,43 @@ onUnmounted(() => {
 // 否则源节点只是 visibility:hidden，仍占着列表布局的位置，兄弟卡片没法收位
 // （跟 gugu-interaction-runtime demo 的 KanbanBoard.vue 是同一套接线）。
 
-const colColors: Record<string, string> = { pending: '#d46b6b', active: '#c9943a' }
-const colColor  = colColors[props.column.key] ?? '#9e9fc4'
+const colColor  = PROJECT_STATUS_COLORS[props.column.key] ?? '#9e9fc4'
 
 </script>
 
 <style scoped>
 .column {
   display: flex; flex-direction: column;
-  padding: 12px 10px 0; gap: 8px;
+  padding: var(--page-content-inset) var(--page-content-inset) 0; gap: var(--space-sm);
   min-width: 0; min-height: 0;
   /* 卡片 hover 的外阴影需要越过列的边界绘制；纵向滚动仍由 .col-body 独占。 */
   overflow: visible;
 }
 .col-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 4px; flex-shrink: 0;
+  padding: 0 var(--space-xs); flex-shrink: 0;
 }
-.col-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.col-title { display: flex; align-items: center; gap: var(--space-sm); font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .col-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .col-count {
   font-size: 11px; font-weight: 700; color: var(--action-primary);
   background: var(--action-soft); border-radius: 20px;
-  padding: 1px 7px; min-width: 22px; text-align: center;
+  padding: var(--space-xs) var(--space-sm); min-width: 22px; text-align: center;
 }
 .col-body {
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex; flex-direction: column; gap: var(--space-sm);
   flex: 1; overflow-y: auto;
   overflow-anchor: none;
   min-width: 0; box-sizing: border-box;
   overflow-x: hidden;
-  /* scroll-surface reserves the gutter before overflow and the global scrollbar contract owns
-     width/track/safe inset. Cards therefore never change width when the thumb appears. */
-  /* 横向留出卡片 hover 阴影的安全区，避免滚动视口把阴影切到卡片边缘。 */
-  padding: 8px 10px;
-  margin-right: 0;
+  /* 滚动视口延伸到列边缘，等量内边距保留卡片原来的位置，并给阴影留出绘制空间。 */
+  margin-inline: calc(-1 * var(--page-content-inset));
+  padding: var(--space-sm) var(--page-content-inset) var(--page-content-inset);
 }
 .kanban-card-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-xs);
   width: 100%;
 }
 .kanban-card-list-move {
@@ -122,7 +120,7 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 }
 /* 跟文件库「上传文件」(.fc-upload) 同款：只换边框/文字/背景色，不带外阴影、不抬起 */
 .add-card {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
+  display: flex; align-items: center; justify-content: center; gap: var(--space-xs);
   width: 100%; flex-shrink: 0; min-height: 96px;
   background: var(--inline-action-bg);
   border: 1.5px dashed var(--inline-action-border);

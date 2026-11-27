@@ -179,7 +179,7 @@ const { startDrag } = useWindowDrag(posX, posY, (x, y) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px 6px 14px;
+  padding: var(--space-xs) var(--space-sm) var(--space-xs) var(--space-md);
   background: var(--surface-glass);
   border-bottom: 1px solid var(--panel-divider);
   cursor: grab;
@@ -189,14 +189,14 @@ const { startDrag } = useWindowDrag(posX, posY, (x, y) => {
 }
 .fp-info-title:active { cursor: grabbing; }
 .fp-info-body {
-  padding: 12px 14px;
+  padding: var(--popup-content-inset);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-sm);
   max-height: 70vh;
   overflow-y: auto;
 }
-.fp-info-row { display: flex; flex-direction: column; gap: 2px; }
+.fp-info-row { display: flex; flex-direction: column; gap: var(--space-xs); }
 .fp-info-label {
   font-size: 10px; font-weight: 600;
   color: var(--text-secondary); opacity: .6;

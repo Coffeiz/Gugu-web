@@ -27,7 +27,7 @@
             <span class="tool-event-caption">{{ t('chatUi.input') }}</span>
             <pre>{{ formatValue(msg.toolInput) }}</pre>
           </div>
-          <div v-if="msg.toolResult !== undefined" class="tool-event-section">
+          <div v-if="showResult" class="tool-event-section">
             <span class="tool-event-caption">
               {{ t('chatUi.result') }}
               <span v-if="resultDisplayTruncated" class="tool-event-limit">{{ t('chatUi.outputDisplayLimited', { count: OUTPUT_DISPLAY_LIMIT.toLocaleString() }) }}</span>
@@ -48,13 +48,16 @@ import FlipChevron from '@/components/common/controls/FlipChevron.vue'
 import { useDelayedSkeleton } from '@/composables/core/useDelayedSkeleton'
 import type { ChatMessage } from './chatTypes'
 import { agentApi } from '@/services/api'
-import { chatToolDetailsKey } from './chatPresentationAccess'
+import { chatHideSuccessfulShellResultKey, chatToolDetailsKey } from './chatPresentationAccess'
 import { formatToolDuration, toolHasNoMatches, toolActivityLabel } from './toolActivity'
 
 const { t, te } = useI18n()
 const readToolDetails = inject(chatToolDetailsKey, agentApi.getToolEventDetails)
 
 const props = defineProps<{ msg: ChatMessage; sessionId: number | null; expanded: boolean; subagentNames?: ReadonlyMap<string, string> }>()
+const hideSuccessfulShellResult = inject(chatHideSuccessfulShellResultKey, false)
+const showResult = computed(() => props.msg.toolResult !== undefined
+  && !(hideSuccessfulShellResult && props.msg.toolName === 'shell' && props.msg.toolStatus === 'success'))
 const emit = defineEmits<{ 'update:expanded': [expanded: boolean] }>()
 const detailsLoading = ref(false)
 const detailsError = ref(false)
@@ -245,11 +248,14 @@ function cleanupDetailTransition(element: Element) {
 <style scoped>
 .tool-detail-row { min-width: 0; }
 .tool-event-head {
-  display: grid; grid-template-columns: 7px minmax(0, 1fr) auto auto auto; align-items: center; gap: 7px;
-  width: 100%; min-height: 30px; border: 0; padding: 4px 10px;
-  background: transparent; color: inherit; text-align: left; cursor: pointer;
+  display: flex; align-items: center; gap: 7px;
+  box-sizing: border-box; inline-size: fit-content; max-inline-size: 100%;
+  min-height: 30px; border: 0; padding: 4px 10px;
+  background: transparent; color: inherit; text-align: start; cursor: pointer;
 }
 .tool-event-head:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.tool-event-state, .tool-event-duration, .tool-event-head :deep(.flip-chevron) { flex: none; }
+.tool-event-label, .tool-event-meta { min-inline-size: 0; }
 .tool-event-state { width: 6px; height: 6px; border-radius: var(--radius-pill); background: var(--content-tertiary); }
 .tool-event-state.is-running { background: var(--action-primary); }
 .tool-event-state.is-success { background: var(--status-success); }

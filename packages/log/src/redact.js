@@ -29,7 +29,8 @@ const counters = new Set([
 ])
 const flags = new Set(['retryable', 'outputStarted', 'requestStarted', 'protocolIncompatible', 'executed', 'mutated', 'contextOverflow', 'hasText', 'requiresTools', 'goalMode', 'applied'])
 const phases = new Set(['prepare', 'idle', 'provider', 'tools', 'decision'])
-const runErrors = new Set(['not_found', 'conflict', 'lease_lost', 'invalid_state', 'cancelled', 'persistence_unknown', 'model_unavailable', 'closed'])
+const runErrors = new Set(['not_found', 'conflict', 'lease_lost', 'invalid_state', 'cancelled', 'persistence_unknown', 'model_unavailable', 'closed',
+  'SQLITE_BUSY', 'SQLITE_BUSY_SNAPSHOT', 'SQLITE_LOCKED'])
 
 export function runFields(attributes) {
   return Object.fromEntries(Object.entries(attributes ?? {}).filter(([key, value]) =>
@@ -51,7 +52,7 @@ const imMediaErrors = new Set(['qq_media_address', 'qq_media_download', 'qq_medi
 
 export function failureCode(error) {
   const code = error instanceof Error ? error.code : null
-  return typeof code === 'string' && (runErrors.has(code) || imMediaErrors.has(code) || /^(?:\d{2}|P0|XX)[0-9A-Z]{3}$/.test(code))
+  return typeof code === 'string' && (runErrors.has(code) || enums.get('providerErrorCode').has(code) || imMediaErrors.has(code) || /^(?:\d{2}|P0|XX)[0-9A-Z]{3}$/.test(code))
     ? code : 'internal_error'
 }
 

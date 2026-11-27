@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { RunIdentity, Json, CanonicalRunPreparationPorts } from '@gugu/core/agent'
-import { createBuiltinSkillDefinitions, createSkillRegistry, type SkillDefinition, type SkillMetadata } from '@gugu/core/skills'
+import { createBuiltinSkillDefinitions, createFileSkillDefinitions, isUserSkillBundleEnabled, createSkillRegistry } from '@gugu/core/skills'
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 import type { ImActor } from '@gugu/core/im/access'
 import { imAllowsBuiltinSkill, imCanUseTool, imSkillToolsAvailable } from '@gugu/core/agent/scenes/im'
@@ -11,7 +11,7 @@ const same = (a: RunIdentity, b: RunIdentity) => a.ownerId === b.ownerId && a.se
 const failure = () => new Error('IM 技能资源不可用')
 /** 目录只读真实元数据；正文按需读取并在发布前重新核对启用状态和当前权限。 */
 export async function createImProductionSkills(options: {
-  pool: Pick<Pool, 'query'>; identity: RunIdentity; actor: ImActor; loadOwnerContext: boolean
+  pool: Pick<Pool, 'query'>; identity: RunIdentity; actor: ImActor; loadOwnerContext: boolean; storageRoot?: string
   authorize(): Promise<boolean>
   availableTools?(): Promise<ReadonlySet<string>>
 }) {
@@ -19,29 +19,14 @@ export async function createImProductionSkills(options: {
   const builtins = (await createBuiltinSkillDefinitions(createBundledSkillDocuments(), new AbortController().signal))
     .filter(skill => imAllowsBuiltinSkill(skill.key))
   const canRead = async (candidate: RunIdentity) => same(candidate, identity) && imCanUseTool(actor, 'use_skill') && await options.authorize()
-  async function userMetadata(): Promise<SkillMetadata[]> {
-    if (actor.chatType === 'group' || !options.loadOwnerContext || actor.role !== 'owner') return []
-    const rows = await options.pool.query(`SELECT skill_id,name,description_short,description_long,category,related_tools
-      FROM user_skills WHERE owner_id=$1 AND source='user' AND enabled IS TRUE ORDER BY skill_id`, [identity.ownerId])
-    return rows.rows.map(row => {
-      const related: unknown = typeof row.related_tools === 'string' ? JSON.parse(row.related_tools) : row.related_tools
-      if (!/^U[1-9]\d*$/.test(row.skill_id) || typeof row.name !== 'string' || typeof row.description_short !== 'string'
-        || !Array.isArray(related) || related.some(name => typeof name !== 'string')) throw failure()
-      return { id: row.skill_id, name: row.name, description: row.description_long || row.description_short,
-        description_short: row.description_short, category: row.category, related_tools: related as string[], source: 'user' }
-    })
-  }
   if (!await options.authorize()) throw failure()
-  const users = await userMetadata()
-  const definitions: SkillDefinition[] = [...builtins, ...users.map(meta => ({ ...meta, async load(candidate: RunIdentity, signal: AbortSignal) {
-    signal.throwIfAborted()
-    if (!await canRead(candidate)) throw failure()
-    const rows = await options.pool.query(`SELECT body,content_digest FROM user_skills
-      WHERE owner_id=$1 AND skill_id=$2 AND source='user' AND enabled IS TRUE`, [identity.ownerId, meta.id])
-    if (rows.rows.length !== 1 || typeof rows.rows[0].body !== 'string' || !rows.rows[0].content_digest || !await canRead(candidate)) throw failure()
-    return { content: rows.rows[0].body, contentDigest: String(rows.rows[0].content_digest) }
-  } }))]
-  const registry = createSkillRegistry({ skills: definitions, async authorize(candidate, id) {
+  const fileSkills = options.storageRoot && actor.chatType !== 'group' && actor.role === 'owner' && options.loadOwnerContext
+    ? (await createFileSkillDefinitions({ dataRoot: options.storageRoot, ownerId: identity.ownerId,
+      mapPath: (_path, slug, source = 'user') => `/skills/${source}/${slug}`,
+      isEnabled: (owner, slug, source) => isUserSkillBundleEnabled(options.storageRoot!, owner, slug, source),
+    })).definitions : []
+  const fileIds = new Set(fileSkills.map(skill => skill.id))
+  const registry = createSkillRegistry({ skills: [...builtins, ...fileSkills], async authorize(candidate, id) {
     if (!await canRead(candidate)) return false
     if (id.startsWith('S')) {
       if (!options.availableTools) return true
@@ -49,7 +34,9 @@ export async function createImProductionSkills(options: {
       const skill = builtins.find(item => item.id === id)
       return available.has('use_skill') && !!skill && imSkillToolsAvailable(skill, available)
     }
-    return (await userMetadata()).some(meta => meta.id === id)
+    if (fileIds.has(id)) return !!options.storageRoot && await isUserSkillBundleEnabled(options.storageRoot, identity.ownerId, id,
+      fileSkills.find(skill => skill.id === id)?.storage_source ?? 'user')
+    return false
   } })
   const tools = { skills: registry, async origin(candidate: RunIdentity, id: string, signal: AbortSignal) {
     signal.throwIfAborted()

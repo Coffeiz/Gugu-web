@@ -105,7 +105,6 @@
                 <span class="preset-meta-item">out {{ p.max_tokens ?? DEFAULT_LLM_OUTPUT_TOKENS }}</span>
                 <span class="preset-meta-item">ctx {{ p.context_tokens ?? DEFAULT_LLM_CONTEXT_TOKENS }}</span>
                                 <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><Icon name="admin.brain" size="xs" />{{ t('agent.thinking') }}</span>
-                <span v-if="p.reasoning_persistence === 'continuation'" class="preset-meta-item">{{ t('llmExtraUi.reasoningContinuation') }}</span>
                 <span v-if="p.image" class="preset-meta-item preset-meta-media"><Icon name="admin.eye" size="xs" />{{ t('agent.image') }}</span>
                 <span v-if="p.video" class="preset-meta-item preset-meta-media"><Icon name="admin.video" size="xs" />{{ t('agent.video') }}</span>
                 <span v-if="p.audio" class="preset-meta-item preset-meta-media"><Icon name="admin.microphone" size="xs" />{{ t('agent.audio') }}</span>

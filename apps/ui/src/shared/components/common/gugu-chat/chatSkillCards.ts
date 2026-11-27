@@ -9,11 +9,11 @@ import { objectCardLoading } from './chatObjectCards'
 export function useChatSkillCards(html: () => string, enabled: () => boolean) {
   const api = inject(skillAccessKey, null)?.api ?? userSkillsApi
   const { t } = useI18n()
-  const selector = 'a.chat-object-card[data-object-type="skill"][href^="gugu://open-skill/U"]'
+  const selector = 'a.chat-object-card[data-object-type="skill"][href^="gugu://open-skill/"]:not([href^="gugu://open-skill/S"])'
   const skills = shallowRef<Map<string, UserSkillItem> | null>()
   const root = computed(() => {
     const source = html()
-    if (!enabled() || !source.includes('href="gugu://open-skill/U')) return
+    if (!enabled() || !source.includes('href="gugu://open-skill/')) return
     const element = document.createElement('div')
     element.innerHTML = sanitizeChatHtml(source)
     return element

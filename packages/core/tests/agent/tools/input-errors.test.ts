@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { enrichToolError, invalidInputResult } from '../../../src/agent/tools/input-errors.js'
-import { createProjectTool } from '../../../src/agent/tools/projects.js'
+import { createProjectTool } from '../../../src/agent/tools/projects/index.js'
 import type { PreparedToolDefinition, ToolResult } from '../../../src/agent/models.js'
 function payload(result: ToolResult): Record<string, any> { if (result.kind !== 'completed') throw new Error('未完成'); return result.value as Record<string, any> }
 const tool: PreparedToolDefinition = { name: 'sample', schema: { type: 'function', function: { name: 'sample', parameters: { type: 'object', properties: { id: { type: 'integer' }, text: { type: 'string', minLength: 2, maxLength: 3 }, mode: { type: 'string', enum: ['one', 'two'] }, enabled: { type: 'boolean' } }, required: ['id'], additionalProperties: false } } } }

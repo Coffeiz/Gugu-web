@@ -1,3 +1,4 @@
+import { noteColors } from './note-colors.js'
 import { createHash } from 'node:crypto'
 import { mindNotePlainText, mindNoteTitleValidationError } from './note-create.js'
 import type { MindNoteReadResponse } from './note-create.js'
@@ -58,7 +59,6 @@ export class MindNoteMutationError extends Error {
   }
 }
 
-const noteColors = new Set(['amber', 'coral', 'blue', 'teal'])
 
 function payloadRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value))

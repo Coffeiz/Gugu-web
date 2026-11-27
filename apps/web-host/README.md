@@ -35,7 +35,7 @@ Web Host 需要能访问浏览器提供的公网推送服务。iOS 和 iPadOS �
 
 ## Docker Compose
 
-默认 Agent 提示词由 `@gugu/core` 的 `resources/prompts/` 随包发布。Web 对话、定时任务和 IM 维护优先读取文件存储根目录下的 `.agent-prompts/`，只有缺少覆盖文件时才读取 Core 默认值。管理员保存时只写覆盖目录。首次升级时，如果旧部署的 `assets/agent-prompts/` 仍可访问，会导入与默认值不同的内容，已有覆盖优先。容器替换前，可将自定义旧模板复制到持久化的 `.agent-prompts/` 并保持原文件名和子目录。注册引导音频仍位于 Web Host 的 `assets/onboarding/`。
+默认 Agent 提示词由 `@gugu/core` 的 `resources/prompts/` 随包发布。Web 对话、定时任务和 IM 维护优先读取文件存储根目录下的 `.agent-prompts/`，只有缺少覆盖文件时才读取 Core 默认值。管理员保存时只写覆盖目录。首次升级时，如果旧部署的 `assets/agent-prompts/` 仍可访问，会导入与默认值不同的内容，已有覆盖优先。容器替换前，可将自定义旧模板复制到持久化的 `.agent-prompts/` 并保持原文件名和子目录。
 
 运行配置默认位于 Web Host 包目录的 `config.override.json`，可用 `GUGU_CONFIG_OVERRIDE_FILE` 指定。Compose 使用持久卷中的文件。管理员保存需要部署预先提供合法的配置文件，首次配置可从空 JSON 对象开始。Web Host 默认追加写入包目录的 `logs/gugu.log`，部署可用 `GUGU_LOG_FILE` 指定固定路径。Compose 将日志放在持久卷的 `/data/logs/`。常规日志与同目录下仅供服务器运维查看的 `gugu-diag.log` 各按 10 MiB 轮转并保留最近 10 份归档。Debug 页可以分页和搜索常规归档。Agent Run 与 Desktop 共用 `@gugu/log` 的 JSONL 事件、字段白名单和诊断格式。Run 失败时，常规和诊断记录通过同一 Run 指纹关联。 Node Gateway 的常规事件写入 `gugu-gateway.log`，Sandbox 和宿主生命周期事件写入 `gugu.log`。同一运行故障的常规记录与私有诊断通过 `incident` 关联。迁移时可将旧日志复制到同目录，以 `gugu.log.history-<13 位毫秒时间戳>-<64 位十六进制唯一标识>` 命名，自动轮转会保留这些迁移归档。BYOK 优先使用显式主密钥或工作区外的 `CREDENTIALS_MASTER_KEY_FILE`。Linux Web Host 默认读取 `GUGU_DATA_DIR/.byok-master-key`，未配置数据目录时使用 `$XDG_STATE_HOME/gugu/.byok-master-key`，再默认到 `~/.local/state/gugu/.byok-master-key`。首次保存凭据时自动创建，迁移已有凭据时须把原主密钥放入默认路径或显式指定原文件。
 

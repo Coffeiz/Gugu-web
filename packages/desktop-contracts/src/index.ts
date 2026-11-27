@@ -6,3 +6,4 @@ export * from './application-menu.ts'
 export type { DesktopAccountBridge, DesktopBridge } from './account.ts'
 
 export const chatPanelContentGutter = 4
+export * from './update.ts'

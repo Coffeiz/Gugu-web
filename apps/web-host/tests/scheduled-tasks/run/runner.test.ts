@@ -5,7 +5,7 @@ import {
   type OnceTaskRepository,
   type ScheduledTaskLease,
   type ScheduledTaskRecord,
-} from '@gugu/core/scheduled-task-runner'
+} from '@gugu/scheduler'
 
 class MemoryTaskRepository implements OnceTaskRepository {
   readonly tasks = new Map<string, ScheduledTaskRecord>()

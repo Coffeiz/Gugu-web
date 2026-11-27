@@ -1,3 +1,5 @@
+import { canAcceptInteractionText } from '../agent/interactions/consume-text.js'
+import { createSqliteInboundStore } from './desktop-inbox-store.js'
 import { claimDesktopChatAttachments, stageDesktopChatAttachment, type DesktopChatAttachmentInput } from '../agent/attachments/desktop-store.js'
 import { IM_REFLECTION_IDLE_SECONDS, IM_REFLECTION_PASSIVE_THRESHOLD } from '../agent/memory/reflection/window.js'
 import { isAttentionSourceKind } from './attention/directive.js'
@@ -36,14 +38,9 @@ export async function admitDesktopImEvent(db: Kysely<Database>, ownerId: string,
     || attachments.some(input => !input || typeof input !== 'object' || Array.isArray(input))))
     throw new CoreError('invalid_request', '本机 IM 附件格式无效')
   return db.transaction().execute(async tx => {
-    const recorded = await sql`SELECT 1 FROM desktop_im_sessions im JOIN conversation_messages m ON m.session_id=im.session_id
-      WHERE im.owner_id=${owner} AND im.platform=${platform} AND im.connection_id=${connectionId}
-        AND m.client_message_id=${imClientId(platform, connectionId, eventKey)}`.execute(tx)
-    if (recorded.rows.length) return false
-    const inserted = await sql`INSERT INTO desktop_im_inbox (owner_id, platform, connection_id, event_key, sealed_event, received_at)
-      VALUES (${owner}, ${platform}, ${connectionId}, ${eventKey}, ${sealed}, ${new Date().toISOString()})
-      ON CONFLICT(owner_id, platform, connection_id, event_key) DO NOTHING RETURNING event_key`.execute(tx)
-    if (!inserted.rows.length) return false
+    const result = await createSqliteInboundStore(tx).recordInbound({ ownerId: owner, platform, connectionId, eventKey,
+      clientId: imClientId(platform, connectionId, eventKey), payload: sealed })
+    if (result.status !== 'queued') return false
     for (const input of attachments ?? []) {
       const file = input as DesktopChatAttachmentInput & { sourceIndex?: number }
       const sourceMessageId = fields.sourceMessageId
@@ -282,11 +279,10 @@ export function prepareDesktopImEvent(db: Kysely<Database>, ownerId: string, fie
   if (chatType !== 'c2c' && chatType !== 'group')
     throw new CoreError('invalid_request', '本机 IM 会话类型无效')
   return db.transaction().execute(async tx => {
-    const event = (await sql<{ event_key: string; sealed_event: Buffer; run_id: string | null; session_id: number | null }>`
-      SELECT event_key, sealed_event, run_id, session_id FROM desktop_im_inbox
-      WHERE owner_id=${owner} AND platform=${platform} AND connection_id=${connectionId}
-        AND state IN ('pending','running')
-      ORDER BY received_at, rowid LIMIT 1`.execute(tx)).rows[0]
+    const storage = createSqliteInboundStore(tx)
+    const scope = { ownerId: owner, platform, connectionId }
+    // 每个连接先续接已有 Run，避免较新的收件抢占原回复。
+    const event = await storage.resumeDelivery(scope) ?? await storage.claimInbound(scope)
     if (!event) return null
     const sessionId = await ensureDesktopImSession(tx, ownerId, owner, platform, connectionId, chatType, fields.ownerPlatformUserId)
     if (event.session_id !== null && event.session_id !== sessionId)
@@ -301,9 +297,7 @@ export function prepareDesktopImEvent(db: Kysely<Database>, ownerId: string, fie
         WHERE a.user_id=${owner} AND a.session_id=${sessionId} AND m.client_message_id=${clientId}`.execute(tx)).rows[0]
       if (admitted) {
         runId = admitted.run_id
-        await sql`UPDATE desktop_im_inbox SET session_id=${sessionId}, run_id=${runId}, state='running'
-          WHERE owner_id=${owner} AND platform=${platform} AND connection_id=${connectionId}
-            AND event_key=${event.event_key} AND state='pending'`.execute(tx)
+        await storage.settleInbound({ ownerId: owner, platform, connectionId, eventKey: event.event_key, sessionId, runId })
       }
     }
     return { sessionId, runId, eventKey: event.event_key,
@@ -419,8 +413,7 @@ export function updateDesktopImDelivery(db: Kysely<Database>, ownerId: string, f
           ON CONFLICT(owner_id,platform,connection_id,event_key,platform_message_id) DO NOTHING`.execute(tx)
       }
     }
-    await sql`UPDATE desktop_im_inbox SET state='completed' WHERE owner_id=${owner} AND platform=${platform}
-      AND connection_id=${connectionId} AND event_key=${eventKey} AND run_id=${runId}`.execute(tx)
+    await createSqliteInboundStore(tx).completeDelivery({ ownerId: owner, platform, connectionId, eventKey, runId })
     return true
   })
 }
@@ -430,6 +423,34 @@ export async function desktopImPrompt(db: Kysely<Database>, ownerId: string, fie
   const owner = ownerId.toLowerCase().replaceAll('-', '')
   const { platform, connectionId } = connectionScope(fields)
   const { action, promptId, messageId, eventKey, runId } = fields
+  if (action === 'lookup-text') {
+    if (typeof eventKey !== 'string' || !/^[a-f0-9]{64}$/u.test(eventKey)) return null
+    const { rows } = await sql<{ sessionId: number; runId: string; promptId: number; replayed: number; schema_json: string }>`
+      SELECT i.session_id AS sessionId, i.run_id AS runId, p.prompt_id AS promptId, q.schema_json,
+        CASE WHEN json_extract(q.schema_json,'$.desktop_text_event_id')=${eventKey} THEN 1 ELSE 0 END AS replayed
+      FROM desktop_im_prompts p
+      JOIN desktop_im_inbox i USING (owner_id,platform,connection_id,event_key)
+      JOIN interaction_prompts q ON q.id=p.prompt_id AND q.user_id=p.owner_id AND q.session_id=i.session_id
+      JOIN agent_run_checkpoints r ON r.user_id=i.owner_id AND r.session_id=i.session_id AND r.run_id=i.run_id
+      WHERE p.owner_id=${owner} AND p.platform=${platform} AND p.connection_id=${connectionId}
+        AND p.state='accepted' AND q.kind IN ('choice','question')
+        AND json_extract(q.schema_json,'$.source')='agent'
+        AND json_extract(q.schema_json,'$.context.tool_name')='ask_user'
+        AND json_extract(q.schema_json,'$.allow_text_input')=1
+        AND (json_extract(q.schema_json,'$.desktop_text_event_id')=${eventKey}
+          OR (i.state='running' AND r.status='waiting' AND q.status='active'
+            AND julianday(q.expires_at)>julianday('now')))
+      ORDER BY replayed DESC, p.prompt_id DESC`.execute(db)
+    for (const { schema_json, ...target } of rows) {
+      if (target.replayed) return target
+      const schema = JSON.parse(schema_json)
+      if (canAcceptInteractionText({
+        allowTextInput: true, customInputActive: schema.custom_input_active === true,
+        options: Array.isArray(schema.options) ? schema.options : [],
+      })) return target
+    }
+    return null
+  }
   if (typeof promptId !== 'number' || !Number.isSafeInteger(promptId) || promptId <= 0)
     throw new CoreError('invalid_request', '本机 IM 提示标识无效')
   if (action === 'lookup') {

@@ -67,8 +67,8 @@ export function useChatScheduleCards(html: () => string, enabled: () => boolean)
       details.className = 'chat-object-card-details'
       const time = runTime(task)
       if (time) details.append(objectCardFact(t('scheduleUi.cardRunTime'), time))
-      details.append(objectCardFact(t('scheduleUi.taskMode'),
-        t(task.execution_mode === 'instruction' ? 'scheduleUi.instructionMode' : 'scheduleUi.reminderMode')))
+      details.append(objectCardFact(t('scheduleUi.executionModeLabel'),
+        t(task.execution_mode === 'instruction' ? 'scheduleUi.taskMode' : 'scheduleUi.reminderMode')))
       card.append(details)
       card.querySelector('.chat-object-card-description')?.remove()
       if (typeof task.payload === 'string' && task.payload.trim()) {

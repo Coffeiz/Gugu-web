@@ -31,7 +31,6 @@ test('Vite→Node Host 注册用户并播种本地引导内容', {
   const seedFailures: unknown[] = []
   const seedRegistration = createRegistrationSeeder({
     applySeed: createPostgresRegistrationSeedOperations(pool, { storageRoot, }),
-    async surpriseMp3() { return null },
     onFailure(error) { seedFailures.push(error) },
   }, { now: () => new Date('2026-11-14T00:00:00.000Z'), random: () => 0 })
   const registration = createPostgresRegistrationOperations(pool, {

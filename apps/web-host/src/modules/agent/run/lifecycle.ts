@@ -94,7 +94,7 @@ export function createWebAgentRunLifecycle(options: {
           pin: options.pin,
           ttlSeconds: options.dispatchTtlSeconds,
         })
-        return { identity: { ownerId, sessionId: String(result.sessionId), runId }, userMessageId: result.userMessageId }
+        return { identity: { ownerId, sessionId: String(result.sessionId), runId: result.runId }, userMessageId: result.userMessageId, replay: 'replay' in result }
       },
       events,
       project: options.project,

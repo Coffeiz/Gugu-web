@@ -37,21 +37,20 @@ async function invalidate(client: PoolClient, identity: ReasoningIdentity, versi
 
 /** 必须处于调用方事务；失效时清空密文并递增版本，绝不返回私有内容到日志。 */
 export async function loadReasoningState(client: PoolClient, identity: ReasoningIdentity,
-  mode: 'off' | 'continuation', keyForVersion: (version: number) => string): Promise<{
+  keyForVersion: (version: number) => string): Promise<{
     version: number; value: unknown | null; stateKind: string | null; unavailableReason: string | null
   }> {
   valid(identity)
-  if (mode !== 'off' && mode !== 'continuation') throw new TypeError('推理状态策略无效')
   await owned(client, identity)
   const row = await read(client, identity)
-  if (!row) return { version: 0, value: null, stateKind: null, unavailableReason: mode === 'off' ? 'disabled' : null }
+  if (!row) return { version: 0, value: null, stateKind: null, unavailableReason: null }
   if (row.status !== 'active') return { version: row.version, value: null, stateKind: null, unavailableReason: 'state_invalidated' }
   const expiresAt = new Date(row.expires_at).getTime()
-  let reason = mode === 'off' ? 'disabled' : !Number.isFinite(expiresAt) ? 'state_corrupt' : expiresAt <= Date.now() ? 'expired'
+  let reason = !Number.isFinite(expiresAt) ? 'state_corrupt' : expiresAt <= Date.now() ? 'expired'
     : row.provider !== identity.provider ? 'provider_changed' : row.api_format !== identity.apiFormat ? 'api_format_changed'
       : row.model_id !== identity.model ? 'model_changed' : row.config_digest !== identity.configDigest ? 'config_changed'
         : row.reasoning_config_digest !== identity.reasoningConfigDigest ? 'reasoning_config_changed'
-          : row.reasoning_persistence !== mode ? 'mode_changed' : row.state_version !== 1 ? 'state_corrupt' : null
+          : row.reasoning_persistence !== 'continuation' ? 'mode_changed' : row.state_version !== 1 ? 'state_corrupt' : null
   let value: unknown = null
   if (!reason) {
     try {

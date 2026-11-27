@@ -1,5 +1,5 @@
-import { rankToolSearch } from '../../../src/agent/tools/search-tools.js'
-import { createSearchToolsTool } from '../../../src/agent/tools/meta.js'
+import { rankToolSearch } from '../../../src/agent/tools/meta/search-tools.js'
+import { createSearchToolsTool } from '../../../src/agent/tools/meta/index.js'
 import { expect, it, vi } from 'vitest'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { ToolDefinition } from '../../../src/agent/tools/contracts.js'
@@ -95,4 +95,16 @@ it('工具搜索分别优先返回普通笔记和画布便签的对应工具', a
   expect(rankToolSearch('搜索笔记', tools, 5)[0]?.name).toBe('note_search')
   expect(rankToolSearch('创建画布便签', tools, 5)[0]?.name).toBe('canvas_create_note')
   expect(rankToolSearch('搜索画布便签', tools, 5)[0]?.name).toBe('canvas_search')
+})
+
+it('文件技能目录按已授权快照提供名称、描述和可用路径', () => {
+  const brief = createAgentToolBrief({}, [], [
+    { id: 'demo', name: '合成技能', description: '处理资料', path: '/skills/demo' },
+    { id: 'off', name: '停用技能', description: '描述', path: '/skills/off', enabled: false },
+    { id: 'missing', name: '未映射技能', description: '描述' },
+  ])
+  expect(brief.skillCatalog).toContain('"id":"demo"')
+  expect(brief.skillCatalog).toContain('"path":"/skills/demo"')
+  expect(brief.skillCatalog).not.toContain('停用技能')
+  expect(brief.skillCatalog).not.toContain('未映射技能')
 })

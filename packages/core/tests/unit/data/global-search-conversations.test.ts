@@ -200,7 +200,7 @@ it('桌面独占句柄内查询复用同一连接，不另开数据库句柄', a
 
 it('共享历史正文工具使用正式 SQLite，按 owner 和最近顺序读取且不暴露结构化消息',async()=>{
  const {createSqlAgentConversationTextReader,createSqlAgentConversationSearchSources}=await import('../../../src/agent/sessions/data.js')
- const {createConversationReadTool,createConversationSearchTool}=await import('../../../src/agent/tools/conversations.js')
+ const {createConversationReadTool,createConversationSearchTool}=await import('../../../src/agent/tools/conversations/index.js')
  const {createToolRegistry}=await import('../../../src/agent/tools/registry.js')
  const dir=await mkdtemp(join(tmpdir(),'gugu-conversation-read-')),path=join(dir,'core.db')
  try{
@@ -250,10 +250,10 @@ it('共享历史正文工具使用正式 SQLite，按 owner 和最近顺序读�
 })
 
 it('历史搜索经可信端口保留旧版分词、会话去重与无法定位保护',async()=>{
- const {createConversationSearchTool}=await import('../../../src/agent/tools/conversations.js')
+ const {createConversationSearchTool}=await import('../../../src/agent/tools/conversations/index.js')
  const {createToolRegistry}=await import('../../../src/agent/tools/registry.js')
  const identity={ownerId:randomUUID(),sessionId:'9',runId:'run'},observed:{queries?:string[];mode?:string;limit?:number}={}
- let hits:Array<import('../../../src/agent/tools/conversations.js').ConversationSearchHit>=[
+ let hits:Array<import('../../../src/agent/tools/conversations/index.js').ConversationSearchHit>=[
   {session_id:'1',title:'合成会话',role:'user',text:'内容一',session_updated_at:'2026-01-02T03:04:00+08:00'},
   {session_id:'1',title:'重复',text:'内容二'},{message_id:8,source_id:'8',role:'assistant',text:'历史片段'},{session_id:'99',text:'不应显示的片段'}]
  const port={recent:async()=>[{session_id:1,title:'合成',summary:'',source:'web',updated_at:'2026-01-02 03:04'}],
@@ -601,14 +601,14 @@ it('迁入的词法索引支持版本化重建和增量更新，并隔离 owner 
  expect(found.results.map(item=>item.document?.source_id)).toEqual(['1'])
  expect(()=>index.search('owner-b','alpha',10,['conversation'],ownerScope)).toThrow('owner 不匹配')
  expect(()=>index.search('owner-a','alpha',10,['conversation'],{scope_type:'group'})).toThrow('范围不完整')
- expect(()=>index.patch('owner-a','wrong','r2',[],[])).toThrow('索引版本不匹配')
+ expect(()=>index.synchronize('owner-b','r2',[])).toThrow('owner 不匹配')
  const next=make('3','gamma delta',ownerScope)
- index.patch('owner-a','r1','r2',[next],[first.id])
+ index.synchronize('owner-a','r2',[next,group])
  expect(index.search('owner-a','alpha',10,['conversation'],ownerScope).results).toEqual([])
  expect(index.search('owner-a','gamma',10,['conversation'],ownerScope).results.map(item=>item.document?.source_id)).toEqual(['3'])
  expect(index.search('owner-a','alpha',10,['conversation'],groupScope).results.map(item=>item.document?.source_id)).toEqual(['2'])
  const replacement=make('3','omega',ownerScope)
- index.patch('owner-a','r2','r3',[next,replacement],[])
+ index.synchronize('owner-a','r3',[replacement,group])
  expect(index.search('owner-a','gamma',10,['conversation'],ownerScope).results).toEqual([])
  expect(index.search('owner-a','omega',10,['conversation'],ownerScope).results).toHaveLength(1)
  const invalid={...replacement,metadata:{bad:()=>0}} as unknown as typeof replacement
@@ -617,7 +617,7 @@ it('迁入的词法索引支持版本化重建和增量更新，并隔离 owner 
  expect(index.search('owner-a','omega',10,['conversation'],ownerScope).results).toHaveLength(1)
  const broken=make('4','测试分词失败',ownerScope)
  expect(()=>index.replace('owner-a','r4',[next,broken])).toThrow('分词失败')
- expect(()=>index.patch('owner-a','r3','r4',[broken],[replacement.id])).toThrow('分词失败')
+ expect(()=>index.synchronize('owner-a','r4',[broken,group])).toThrow('分词失败')
  expect(index.revision()).toBe('r3')
  expect(index.search('owner-a','omega',10,['conversation'],ownerScope).results).toHaveLength(1)
 })
@@ -663,12 +663,14 @@ it('持久 RAG 查询限制授权范围并在 embedding 中撤权时拒绝返回
    expect(JSON.stringify(result)).not.toContain('private')
    expect((await search(ownerId,scope,'alpha',{sourceTypes:['conversation'],limit:5,beforeMessageId:5})).results).toEqual([])
    expect((await search(ownerId,scope,'alpha',{sourceTypes:['conversation'],limit:5,beforeMessageId:6})).results).toHaveLength(1)
-   let vectorsRead=false
+   let vectorsRead=false, embedded=false
    const unavailableEmbedding=createScopedRagSearch({index:createSqlRagPersistentIndexReader(runtime.db,'sqlite'),authorize:async()=>true,
-    vectors:{version:'model-v1',source:async()=>{vectorsRead=true;return async()=>null},embed:async()=>[]}})
+    vectors:{version:'model-v1',source:async()=>{vectorsRead=true;return async()=>null},embed:async()=>{embedded=true;return []}}})
    const lexicalFallback=await unavailableEmbedding(ownerId,scope,'alpha',options)
    expect(lexicalFallback.fusion).toBe('bm25');expect(lexicalFallback.results.map(row=>row.document.content)).toEqual(['alpha first'])
-   expect(vectorsRead).toBe(false)
+   expect(vectorsRead).toBe(true)
+   expect(embedded).toBe(false)
+   expect(lexicalFallback.diagnostics.fallback_reason).toBe('no_matching_document_vectors')
    cancel=new AbortController();await expect(search(ownerId,scope,'alpha',options,cancel.signal)).rejects.toThrow();cancel=undefined
    revoke=true;await expect(search(ownerId,scope,'alpha',options)).rejects.toThrow('授权已撤销')
    await expect(search(ownerId,scope,'alpha',options)).rejects.toThrow('未授权')
@@ -792,7 +794,7 @@ it('持久索引来源替换和单文档更新保留墓碑、归属与可恢复�
 it('历史对话来源经过真实工具链搜索 baseline 前消息并隔离群聊与其他 owner',async()=>{
  const {createSqlRagConversationSource,createSqlRagConversationSearch}=await import('../../../src/agent/rag/conversation-source.js')
  const {createSqlAgentConversationSearchSources}=await import('../../../src/agent/sessions/data.js')
- const {createConversationSearchTool}=await import('../../../src/agent/tools/conversations.js')
+ const {createConversationSearchTool}=await import('../../../src/agent/tools/conversations/index.js')
  const {createToolRegistry}=await import('../../../src/agent/tools/registry.js')
  const dir=await mkdtemp(join(tmpdir(),'gugu-rag-history-')),path=join(dir,'core.db')
  try{
@@ -1021,7 +1023,7 @@ it('持久重建任务消费多个来源 ID，并在新 generation 出现时阻�
    await sql`UPDATE rag_index_jobs SET status='queued',generation=generation+1,pending_source_ids='["1"]',next_attempt_at=${now} WHERE source_type='note'`.execute(runtime.db)
    expect(await noteWorker()).toBe('ready')
    expect((await reader.snapshot(ownerId)).documents.some(item=>item.source_type==='note'&&item.source_id==='1')).toBe(false)
-   const {createKyselyScheduledTaskRagReader}=await import('../../../src/scheduled-tasks/task-list.js')
+   const {createKyselyScheduledTaskRagReader}=await import('../../../src/tasks/task-list.js')
    const {createScheduledTaskRagSource}=await import('../../../src/agent/rag/scheduled-task-source.js')
    await sql`INSERT INTO scheduled_tasks(id,user_id,event_id,name,payload,cron,schedule_kind,channels,enabled,created_at,updated_at) VALUES
     (1,${owner},NULL,'日常任务','合成指令','0 9 * * *','cron','',1,${now},${now}),

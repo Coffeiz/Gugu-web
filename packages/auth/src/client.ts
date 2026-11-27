@@ -25,7 +25,7 @@ export function remoteServerOrigin(server: string): string {
   throw new RemoteAuthError('invalid_request', '远程服务器需要 HTTPS。本机回环地址可使用 HTTP')
 }
 
-async function readJson(response: Response): Promise<unknown> {
+async function readJson(response: Response, maxBytes = 128 * 1024): Promise<unknown> {
   const reader = response.body?.getReader()
   if (!reader) throw new RemoteAuthError('invalid_response', '服务器返回了无效的登录数据')
   const decoder = new TextDecoder()
@@ -36,7 +36,7 @@ async function readJson(response: Response): Promise<unknown> {
       const next = await reader.read()
       if (next.done) break
       bytes += next.value.byteLength
-      if (bytes > 128 * 1024) throw new RemoteAuthError('invalid_response', '服务器返回的登录数据过大')
+      if (bytes > maxBytes) throw new RemoteAuthError('invalid_response', '服务器响应超过大小限制')
       text += decoder.decode(next.value, { stream: true })
     }
   } finally {
@@ -86,16 +86,16 @@ export function createRemoteAuthClient(request: typeof fetch = fetch) {
   }
 
   return {
-    async login(input: RemoteLoginInput): Promise<{ session: RemoteSession; user: RemoteUser }> {
+    async login(input: RemoteLoginInput, deviceId?: string): Promise<{ session: RemoteSession; user: RemoteUser }> {
       const parsed = remoteLoginInputSchema.safeParse(input)
       if (!parsed.success) throw new RemoteAuthError('invalid_request', '请填写服务器地址、账号和密码')
       const { provider, username, password, server } = parsed.data
-      if (provider !== 'self-hosted') throw new RemoteAuthError('unsupported', '官方 SaaS 登录尚未接入')
+      if (provider === 'official-saas' && !deviceId) throw new RemoteAuthError('invalid_request', '缺少本机设备标识')
       const origin = remoteServerOrigin(server)
       const body = await json(origin, 'login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Auth-Transport': 'bearer' },
-        body: JSON.stringify({ username, password }),
+        headers: { 'Content-Type': 'application/json', 'X-Auth-Transport': 'bearer', ...(deviceId ? { 'X-Device-ID': deviceId } : {}) },
+        body: JSON.stringify({ username, password, ...(provider === 'official-saas' ? { device_id: deviceId } : {}) }),
       })
       const result = remoteLoginResponseSchema.safeParse(body)
       if (!result.success || !result.data.access_token)
@@ -104,6 +104,45 @@ export function createRemoteAuthClient(request: typeof fetch = fetch) {
         provider, origin, accountId: result.data.user.id, token: result.data.access_token,
       }
       return { session, user: await restore(session) }
+    },
+    async saasProjects(session: RemoteSession) {
+      const send = bindRemoteSession(request)(session)
+      if (!send || session.provider !== 'official-saas') throw new RemoteAuthError('invalid_request', '需要 SaaS 会话')
+      const projects = new Map<string, { id: string; name: string; summary: string | null }>()
+      let cursor = '0'
+      for (let page = 0; page < 100; page++) {
+        const response = await send('/api/v1/sync/projects/pull?limit=20&cursor=' + encodeURIComponent(cursor), {
+          signal: AbortSignal.timeout(12_000),
+        })
+        if (!response.ok) {
+          await response.body?.cancel()
+          throw new RemoteAuthError('unavailable', '云端项目暂不可用')
+        }
+        const body = await readJson(response, 4 * 1024 * 1024) as { changes?: unknown; next_cursor?: unknown; has_more?: unknown } | null
+        if (!body || !Array.isArray(body.changes) || typeof body.has_more !== 'boolean')
+          throw new RemoteAuthError('invalid_response', '云端项目响应无效')
+        for (const change of body.changes) {
+          if (typeof change?.sync_id !== 'string') throw new RemoteAuthError('invalid_response', '云端项目标识无效')
+          if (change.operation === 'delete') projects.delete(change.sync_id)
+          else if (change.operation === 'upsert' && typeof change.data?.name === 'string') {
+            projects.set(change.sync_id, {
+              id: change.sync_id, name: change.data.name,
+              summary: typeof change.data.summary === 'string' ? change.data.summary : null,
+            })
+          } else throw new RemoteAuthError('invalid_response', '云端项目数据无效')
+        }
+        if (!body.has_more) return [...projects.values()]
+        if (typeof body.next_cursor !== 'string' || !/^\d{1,19}$/.test(body.next_cursor) ||
+          BigInt(body.next_cursor) <= BigInt(cursor)) throw new RemoteAuthError('invalid_response', '云端项目游标无效')
+        cursor = body.next_cursor
+      }
+      throw new RemoteAuthError('unavailable', '云端项目超过当前读取范围')
+    },
+    async logoutSaas(session: RemoteSession) {
+      const send = bindRemoteSession(request)(session)
+      if (!send || session.provider !== 'official-saas') throw new RemoteAuthError('invalid_request', '需要 SaaS 会话')
+      const response = await send('/api/v1/auth/logout', { method: 'POST', signal: AbortSignal.timeout(12_000) })
+      if (!response.ok && response.status !== 401) throw new RemoteAuthError('unavailable', '无法撤销 SaaS 会话，请重试')
     },
     restore,
   }

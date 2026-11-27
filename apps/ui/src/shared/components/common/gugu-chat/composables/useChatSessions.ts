@@ -1,5 +1,6 @@
 import { nextTick, computed, onScopeDispose, watch, type Ref } from 'vue'
 import { i18n } from '@/i18n'
+import { showAppError } from '@/composables/core/useAppToast'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { agentApi } from '@/services/api'
 import { accountBoundaryEpoch, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
@@ -76,7 +77,6 @@ export function useChatSessions(options: {
   drainPendingQueue: () => Promise<void>
   clearStatus: () => void
   setStatus: (item: { kind: 'text' | 'dots' | 'hide'; label?: string }) => void
-  thinkingItem: () => { kind: 'text' | 'dots' | 'hide'; label?: string }
   contextCompactingItem: () => { kind: 'text' | 'dots' | 'hide'; label?: string }
   scrollBottom: (force?: boolean) => Promise<void>
   captureScrollAnchor: () => SessionScrollAnchor | null | undefined
@@ -87,6 +87,7 @@ export function useChatSessions(options: {
   onHistoryLoaded?: (page: { hasMore?: boolean; hasNewer?: boolean; oldestId?: number | null }) => void
   getHistoryPage?: () => { hasMore?: boolean; hasNewer?: boolean; oldestId?: number | null }
   setSessionSettling: (value: boolean) => void
+  invalidateSessionList?: () => void
 }) {
   const { messages, mkid, sessionId, sessions } = options
 
@@ -96,6 +97,14 @@ export function useChatSessions(options: {
   const snapshotTtlMs = 5 * 60_000
   const maxSessionSnapshots = 4
   watch(accountBoundaryEpoch, () => sessionSnapshots.clear())
+
+  function disconnectViewStream() {
+    const controller = options.abortCtrl.value
+    options.abortCtrl.value = null
+    options.streaming.value = false
+    // 只断开当前视图的订阅，后端运行继续。
+    controller?.abort()
+  }
 
   function cacheSessionSnapshot(
     id: number,
@@ -239,7 +248,6 @@ export function useChatSessions(options: {
   )
   const currentSessionWorkspaceName = computed(() => {
     const session = sessions.value.find(s => s.id === sessionId.value)
-    if (session?.source && session.source !== 'web') return null
     if (sessionId.value && !session) return null
     return session?.workspaceName ?? i18n.global.t('filesUi.personalFiles')
   })
@@ -256,7 +264,16 @@ export function useChatSessions(options: {
     !sessionId.value ? false : Boolean(sessions.value.find(s => s.id === sessionId.value)?.filesystemAuthorizationEnabled)
   )
 
+  const pendingDeletes = new Map<number, number>()
+  const hiddenSessions = new Map<number, number>()
+  let loadingView: { id: number; generation: number } | undefined
+
+  function isSessionHidden(id: number) {
+    return hiddenSessions.get(id) === getAccountBoundaryEpoch()
+  }
+
   async function loadSession(id: number, force = false): Promise<SessionLoadOutcome> {
+    if (isSessionHidden(id)) return 'unavailable'
     // 刷新恢复时 sessionId 会先从 sessionStorage 恢复；即使 id 相同，消息内存仍是空的，
     // 必须继续请求历史。普通侧栏重复点击仍保持无操作。
     if (!force && id === sessionId.value) {
@@ -264,6 +281,7 @@ export function useChatSessions(options: {
       return sessionId.value === id ? 'loaded' : 'superseded'
     }
     const viewGeneration = options.bumpViewGeneration()
+    loadingView = { id, generation: viewGeneration }
     const accountEpoch = getAccountBoundaryEpoch()
     const previousSessionId = sessionId.value
     const previousMessages = messages.value
@@ -281,8 +299,7 @@ export function useChatSessions(options: {
     const cachedSnapshot = force ? null : getCachedSessionSnapshot(id)
     let loadingHistory = true
     options.setSessionSettling(true)
-    options.abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
-    options.streaming.value = false
+    disconnectViewStream()
     // 待发消息按 session_id 归属；切换只更改展示状态，恢复和排水时按目标会话筛选。
     // 先展示目标会话的稳定历史，运行和队列状态仍以本次读取结果为准。
     options.clearStatus()
@@ -294,12 +311,6 @@ export function useChatSessions(options: {
       options.onHistoryLoaded?.(cachedSnapshot.pagination)
     }
     try {
-      if (cachedSnapshot) {
-        await nextTick()
-        if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
-        await options.restoreScrollPosition(cachedSnapshot.scrollAnchor, false)
-        if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
-      }
       const platformHistory = options.historyAccess && !options.historyAccess.readFirstPage
         ? await readPlatformHistory(options.historyAccess, id, cachedSnapshot?.messages ?? [],
           () => viewGeneration === options.getViewGeneration() && accountEpoch === getAccountBoundaryEpoch())
@@ -315,14 +326,14 @@ export function useChatSessions(options: {
       const loadedSession = sessions.value.find(s => s.id === id)
       // 历史接口同时返回服务端生成快照；用它校准侧栏运行态，避免切回时保留
       // 切走前缓存的 isRunning。缓存只用于合并已加载的历史，不能覆盖服务端终态。
-      if (loadedSession && data.active === false) loadedSession.isRunning = false
+      if (loadedSession && typeof data.active === 'boolean') loadedSession.isRunning = data.active
       if (loadedSession && data.session?.workspaceName !== undefined) loadedSession.workspaceName = data.session.workspaceName
       if (loadedSession && data.session?.goalActive !== undefined) loadedSession.goalActive = Boolean(data.session.goalActive)
       if (loadedSession && data.session?.goalStatus !== undefined) loadedSession.goalStatus = data.session.goalStatus
       options.ownerPlatformUserId.value = data.session?.ownerPlatformUserId ?? null
       options.isGroupSession.value = data.session?.chatType === 'group'
-      if (data.active === true) options.setStatus(options.thinkingItem())
-      else options.clearStatus()   // 切会话先清掉上个会话残留的状态指示
+      // 历史恢复先清理旧提示，续接流时再决定是否显示生成状态。
+      options.clearStatus()
       // 历史首屏和增量刷新共用同一映射，防止同一持久化消息在不同加载路径获得不同身份键。
       const loadedTimelineMessages = (platformHistory?.pages ?? [data])
         .flatMap(page => mapSessionMessageDelta(page, mkid, options.resolveSpeaker))
@@ -346,9 +357,8 @@ export function useChatSessions(options: {
       // 从会话行状态恢复「正在整理上下文」提示，否则用户看到的就是静默卡死。
       const compacting = !shouldResume && data.executionState === 'baseline_updating'
       if (compacting) options.setStatus(options.contextCompactingItem())
-      // 补读会重新投影虚拟行。缓存首屏恢复过的阅读锚点，需要用合并后的行再校准一次。
-      if (cachedSnapshot?.scrollAnchor) await options.restoreScrollPosition(cachedSnapshot.scrollAnchor)
-      else if (!cachedSnapshot) await options.restoreScrollPosition(null, !shouldResume)
+      // 最终历史合并后只定位一次。没有阅读锚点时也必须按最终布局贴底。
+      await options.restoreScrollPosition(cachedSnapshot?.scrollAnchor ?? null, true)
       if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
       options.setSessionSettling(false)
       options.restorePendingQueue(id, Array.isArray(data.pendingQueue) ? data.pendingQueue : [])
@@ -378,6 +388,8 @@ export function useChatSessions(options: {
         options.ownerPlatformUserId.value = restoredSnapshot.ownerPlatformUserId
         options.isGroupSession.value = restoredSnapshot.isGroupSession
         options.onHistoryLoaded?.(restoredSnapshot.pagination)
+      } else if (sessionId.value === null && previousSessionId !== null) {
+        options.onHistoryReset?.()
       } else {
         messages.value = previousMessages
         sessionId.value = previousSessionId
@@ -387,11 +399,27 @@ export function useChatSessions(options: {
           options.onHistoryLoaded?.(sessionSnapshots.get(previousSessionId)?.pagination || {})
         }
       }
-      await options.restoreScrollPosition(restoredSnapshot ? restoredSnapshot.scrollAnchor : previousScrollAnchor ?? null)
+      await options.restoreScrollPosition(restoredSnapshot ? restoredSnapshot.scrollAnchor : sessionId.value === null ? null : previousScrollAnchor ?? null)
       if (viewGeneration !== options.getViewGeneration() || accountEpoch !== getAccountBoundaryEpoch()) return 'superseded'
       options.setSessionSettling(false)
       return loadingHistory && unavailable ? 'unavailable' : 'failed'
+    } finally {
+      if (loadingView?.generation === viewGeneration) loadingView = undefined
     }
+  }
+
+  function saveCurrentScrollPosition() {
+    const id = sessionId.value
+    const anchor = options.captureScrollAnchor()
+    if (id != null && anchor !== undefined) {
+      cacheSessionSnapshot(id, messages.value, options.getHistoryPage?.() || sessionSnapshots.get(id)?.pagination || {}, anchor)
+    }
+    return anchor
+  }
+
+  function currentScrollPosition() {
+    const id = sessionId.value
+    return id === null ? null : getCachedSessionSnapshot(id)?.scrollAnchor ?? null
   }
 
   async function newSession() {
@@ -406,8 +434,7 @@ export function useChatSessions(options: {
     options.onHistoryReset?.()
     options.bumpViewGeneration()
     options.setSessionSettling(false)
-    options.abortCtrl.value?.abort()
-    options.streaming.value = false
+    disconnectViewStream()
     options.clearPendingQueue(true)   // 新对话不继承任何会话的待发队列
     sessionId.value = null
     messages.value = []        // 大窗「新对话」是干净起手——不放默认问候（问候只在打开小窗时出现）
@@ -417,13 +444,12 @@ export function useChatSessions(options: {
     options.composerRef.value?.focus()
   }
 
-  const pendingDeletes = new Set<number>()
   async function deleteSession(id: number) {
     const target = sessions.value.find(session => session.id === id)
-    if (!target || pendingDeletes.has(id)) return
     const epoch = getAccountBoundaryEpoch()
+    if (!target || pendingDeletes.get(id) === epoch) return
     const { t } = i18n.global
-    pendingDeletes.add(id)
+    pendingDeletes.set(id, epoch)
     try {
       if (!await confirmDialog({
         title: t('chatUi.desktopDeleteTitle'),
@@ -431,19 +457,41 @@ export function useChatSessions(options: {
         confirmText: t('common.actions.delete'),
         tone: 'danger',
       })) return
-      if (epoch !== getAccountBoundaryEpoch() || !sessions.value.some(session => session.id === id)) return
-      if (options.historyAccess) await options.historyAccess.deleteSession(id)
-      else await agentApi.deleteSession(String(id))
-      if (epoch !== getAccountBoundaryEpoch()) return
-      sessionSnapshots.delete(id)
-      sessions.value = sessions.value.filter(s => s.id !== id)
-      if (sessionId.value === id) {
-        await newSession()
-        sessionSnapshots.delete(id)
+      const index = sessions.value.findIndex(session => session.id === id)
+      if (disposed || epoch !== getAccountBoundaryEpoch() || index < 0) return
+      const removed = sessions.value[index]
+      hiddenSessions.set(id, epoch)
+      sessions.value = sessions.value.filter(session => session.id !== id)
+
+      const loading = loadingView?.generation === options.getViewGeneration() ? loadingView : undefined
+      if (loading?.id === id || (sessionId.value === id && !loading)) {
+        void newSession()
+      } else if (sessionId.value === id) {
+        // 保留已发往其他会话的历史请求，只清除被删除的旧会话身份。
+        sessionId.value = null
+        options.ownerPlatformUserId.value = null
+        options.isGroupSession.value = false
       }
-    } catch {
+      try {
+        if (options.historyAccess) await options.historyAccess.deleteSession(id)
+        else await agentApi.deleteSession(String(id))
+        if (disposed || epoch !== getAccountBoundaryEpoch()) return
+        options.invalidateSessionList?.()
+        sessionSnapshots.delete(id)
+      } catch {
+        if (disposed || epoch !== getAccountBoundaryEpoch()) return
+        options.invalidateSessionList?.()
+        if (!sessions.value.some(session => session.id === id)) {
+          const restored = [...sessions.value]
+          restored.splice(index, 0, removed)
+          sessions.value = restored
+        }
+        showAppError(t('chatUi.desktopDeleteFailed'))
+      } finally {
+        if (hiddenSessions.get(id) === epoch) hiddenSessions.delete(id)
+      }
     } finally {
-      pendingDeletes.delete(id)
+      if (pendingDeletes.get(id) === epoch) pendingDeletes.delete(id)
     }
   }
 
@@ -465,6 +513,6 @@ export function useChatSessions(options: {
   return {
     webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
     currentSessionFilesystemAuthorized, currentSessionFilesystemAuthorizationEnabled,
-    loadSession, newSession, deleteSession, renameSession, refreshSessionMessages,
+    loadSession, newSession, deleteSession, renameSession, refreshSessionMessages, saveCurrentScrollPosition, currentScrollPosition, isSessionHidden,
   }
 }

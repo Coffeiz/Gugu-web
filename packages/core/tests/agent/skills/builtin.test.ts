@@ -89,22 +89,14 @@ describe('内置Skill文档到注册器', () => {
     let enabled = true
     let body = '用户正文 v1'
     const runtimeIdentity = { ...identity, ownerId: '可信owner' }
+    const fileSkills = [{ id: 'U1', name: '个人技能', description: '个人说明', path: '/trusted/skills/u1', async load() {
+      return { content: body, contentDigest: body.endsWith('v1') ? 'digest-v1' : 'digest-v2' }
+    } }]
     const runtime = await createAgentSkillRuntimePorts({
       ownerId: '可信owner',
       builtins,
-      async listUser(owner) {
-        expect(owner).toBe('可信owner')
-        return { skills: [
-          { id: 'U1', name: '个人技能', description_short: '个人说明', category: 'personal', related_tools: ['read_file'], enabled: true, source: 'user' },
-          { id: 'U2', name: '已停用', description_short: '停用项', category: 'personal', related_tools: [], enabled: false, source: 'user' },
-          { id: 'S3', name: '伪内置', description_short: '冲突项', category: 'personal', related_tools: [], enabled: true, source: 'user' },
-        ] }
-      },
-      async readUser(owner, id) {
-        return owner === '可信owner' && id === 'U1' && enabled
-          ? { id, name: '个人技能', body, contentDigest: body.endsWith('v1') ? 'digest-v1' : 'digest-v2' }
-          : null
-      },
+      fileSkills,
+      async isFileSkillEnabled(owner, id) { return owner === '可信owner' && id === 'U1' && enabled },
       fingerprint: owner => `owner:${owner}`,
     })
     expect((await runtime.skills.catalog(runtimeIdentity)).map(item => item.id)).toEqual(['S1', 'U1'])

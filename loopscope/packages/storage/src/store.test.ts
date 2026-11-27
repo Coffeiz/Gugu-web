@@ -26,6 +26,23 @@ test('TraceStore 后续快照纠正平台后，run 应出现在正确的会话�
   }
 })
 
+test('桌面 IM 平台随会话列表返回，保留已有桌面会话键和运行历史', () => {
+  const store = new TraceStore(':memory:')
+  const base = { source: 'desktop', status: 'success', started_at: 100, spans: [] }
+  try {
+    store.ingestRun({ ...base, id: 'old', session_key: 'gugu:desktop:42', external_session_id: '42' })
+    store.ingestRun({ ...base, id: 'new', session_key: 'gugu:desktop:42', external_session_id: '42',
+      started_at: 101, attributes: { im_platform: 'wechat' } })
+    store.ingestRun({ ...base, id: 'plain', session_key: 'gugu:desktop:43', external_session_id: '43' })
+    assert.deepEqual(store.listSessions().map(row => [row.session_key, row.source, row.im_platform, row.run_count]), [
+      ['gugu:desktop:42', 'desktop', 'wechat', 2],
+      ['gugu:desktop:43', 'desktop', undefined, 1],
+    ])
+  } finally {
+    store.close()
+  }
+})
+
 test('TraceStore 对重复 run 上报保持幂等并可读回 spans', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loopscope-storage-'))
   const store = new TraceStore(path.join(directory, 'loopscope.db'))

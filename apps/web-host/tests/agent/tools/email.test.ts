@@ -25,11 +25,8 @@ test('Web 邮件前置校验使用当前 owner 的地址和附件，缺自定义
     let reads = 0, prepared = 0
     const pool = { async query(query: string, args: unknown[]) {
       reads++
-      if (query.includes('FROM files')) {
-        assert.deepEqual(args, [identity.ownerId, [91]])
-        return { rows: [] }
-      }
       assert.equal(args[0], identity.ownerId)
+      if (query.includes('FROM projects') || query.includes('FROM workspace_directories')) return { rows: [] }
       return { rows: [{ owner_email: 'mock@example.com', smtp_host: null, preferences: {} }] }
     } } as never
     const gate = createConfirmationGate({
@@ -45,13 +42,14 @@ test('Web 邮件前置校验使用当前 owner 的地址和附件，缺自定义
       async inspect() { return null },
       async load() { return null },
     }, { action: 'send_email', purpose: 'action' })
-    const tool = createWebAgentEmailTool({
+    const emailOptions = {
       core: runtime, pool, secretKey: 'synthetic', storageRoot: directory,
       globalSmtp: { host: 'smtp.example.com', port: 465, user: 'sender@example.com', password: '', fromAddress: '', enabled: true, useSsl: true },
-      confirmation: { gate, async claim() { assert.fail('未确认不能认领') } },
       async send() { assert.fail('未确认不能发送') },
-    })
-    const registry = createToolRegistry({ tools: [tool], authorize: async candidate => candidate.ownerId === identity.ownerId })
+    }
+    const confirmation = { gate, async claim() { assert.fail('未确认不能认领') } }
+    const tool = createWebAgentEmailTool({ ...emailOptions, confirmation })
+    const registry = createToolRegistry({ confirmationGatedDestructiveTools: [tool], authorize: async candidate => candidate.ownerId === identity.ownerId })
     const scope = { identity, roundId: '1', signal: new AbortController().signal, resolution: null,
       async execute(): Promise<never> { throw new Error('不执行进程') } }
     const dispatch = (input: Record<string, unknown>) => registry.tools.dispatch({
@@ -60,12 +58,37 @@ test('Web 邮件前置校验使用当前 owner 的地址和附件，缺自定义
     const html = await dispatch({ format: 'html', html: '<p>正文</p>' })
     assert.equal(html.kind === 'completed' && html.successful, false)
     assert.equal(reads, 0)
-    const foreign = await dispatch({ to: 'mock@example.com', file_ids: [91] })
+    const foreign = await dispatch({ to: 'mock@example.com', file_paths: ['/workspace/其他账户/附件.txt'] })
     assert.equal(foreign.kind, 'completed')
-    assert.equal((foreign.value as { error: string }).error, '附件不存在、已删除或不属于当前用户')
+    assert.equal((foreign.value as { error: string }).error, '路径附件不存在或不可读取')
     assert.equal(prepared, 0)
     await dispatch({ format: 'plain' })
     assert.equal(prepared, 1)
+
+    const previews: unknown[] = []
+    const previewGate = createConfirmationGate({
+      now: () => 1,
+      authorize: async () => 'epoch',
+      async prepare(_binding, snapshot) {
+        previews.push(snapshot.emailCompose)
+        throw new Error('合成测试不创建交互')
+      },
+      async inspect() { return null },
+      async load() { return null },
+    }, { action: 'send_email', purpose: 'action' })
+    const previewTool = createWebAgentEmailTool({
+      ...emailOptions, confirmation: { ...confirmation, gate: previewGate },
+      showConfirmationAddresses: true, sanitizeHtml: sanitizeEmailHtml,
+    })
+    const previewRegistry = createToolRegistry({ confirmationGatedDestructiveTools: [previewTool], authorize: async () => true })
+    for (const format of ['html', 'template'] as const) {
+      await previewRegistry.tools.dispatch({ name: 'send_email', id: 'preview-' + format,
+        input: { body: '正文', subject: '主题', format, ...(format === 'html' ? { html: '<p><strong>原始正文</strong></p>' } : {}) },
+      }, scope)
+    }
+    assert.deepEqual(previews.map(value => (value as { format: string }).format), ['html', 'template'])
+    assert.match((previews[0] as { templateHtml: string }).templateHtml, /<strong>原始正文<\/strong>/u)
+    assert.match((previews[1] as { templateHtml: string }).templateHtml, /data:image\/png;base64,/u)
 
     let active = true
     const lease = {

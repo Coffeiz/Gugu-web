@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest'
-import {createImOwnerSessionBindTool,type ImOwnerSessionBindInput} from '../../../src/agent/tools/conversations.js'
+import {createImOwnerSessionBindTool,type ImOwnerSessionBindInput} from '../../../src/agent/tools/conversations/index.js'
 import {createToolRegistry} from '../../../src/agent/tools/registry.js'
 import {imCanUseTool} from '../../../src/agent/scenes/im/index.js'
 const identity={ownerId:'synthetic-owner',sessionId:'1',runId:'synthetic-run'},signal=new AbortController().signal

@@ -31,7 +31,7 @@
         class="session-row" :class="{ active: session.session_key === desktopSession?.session_key }"
         :disabled="sending" @click="selectDesktopSession(session)"
       >
-        <span class="source">{{ t('playground.desktopSource') }}</span>
+        <span class="source">{{ t(session.im_platform ? `playground.imSource.${session.im_platform}` : 'playground.desktopSource') }}</span>
         <span class="session-title">{{ session.title }}</span>
         <span class="sid">#{{ session.external_session_id }}</span>
       </button>
@@ -618,8 +618,15 @@ async function send() {
   scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight, behavior:'smooth' })
   try {
     let lastTool: ChatMessage | null = null
+    let runId: string | undefined
     const sid = await sendMessage(text, activeId.value, evt => {
-      if (evt.type === 'session_id') activeId.value = Number(evt.session_id)
+      if (evt.type === 'session_id') {
+        activeId.value = Number(evt.session_id)
+        if (typeof evt.run_id === 'string' && evt.run_id) {
+          runId = evt.run_id
+          ai.runId = runId
+        }
+      }
       else if (evt.type === 'token') {
         ai.content += evt.content ?? ''
         if (!ai.debugEvents?.some(x => x.label === 'Final response streaming')) {
@@ -641,6 +648,7 @@ async function send() {
         if (ai.content.trim()) {
           ai.pending = false
           ai = { id: `a-${Date.now()}-${Math.random()}`, role:'assistant', content:'', pending:true, debugEvents: [{ kind:'status', label:'Agent loop continues' }] }
+          ai.runId = runId
           messages.value.push(ai)
         }
       } else if (evt.type === 'error') {
@@ -651,14 +659,14 @@ async function send() {
     if (sid) activeId.value = sid
     ai.pending = false
     await refreshSessions()
-    const before = runs.value.length
-    for (let i = 0; i < 6; i += 1) {
-      await new Promise(r => setTimeout(r, 160))
-      await refreshRuns()
-      if (runs.value.length > before) break
+    if (runId) {
+      for (let i = 0; i < 6; i += 1) {
+        await new Promise(r => setTimeout(r, 160))
+        await refreshRuns()
+        if (runs.value.some(run => run.id === runId)) break
+      }
+      if (runs.value.some(run => run.id === runId)) void loadRunDetail(runId)
     }
-    ai.runId = runs.value[0]?.id
-    if (ai.runId) void loadRunDetail(ai.runId)
   } catch (e: any) {
     ai.pending = false
     error.value = e?.message ?? String(e)
@@ -666,16 +674,9 @@ async function send() {
     sending.value = false
   }
 }
-function assistantOrdinal(messageIndex: number) {
-  return messages.value.slice(0, messageIndex + 1).filter(m => m.role === 'assistant').length - 1
-}
 function runForAssistant(messageIndex: number) {
   const message = messages.value[messageIndex]
   if (message?.runId) return runDetails.value[message.runId] ?? runs.value.find(r => r.id === message.runId)
-  const assistantCount = messages.value.filter(m => m.role === 'assistant').length
-  const offset = Math.max(0, assistantCount - runs.value.length)
-  const ordinal = assistantOrdinal(messageIndex) - offset
-  return ordinal >= 0 ? runs.value[ordinal] : undefined
 }
 function spanCount(run: TraceRun | TraceRunSummary | undefined, kind: string) { return run?.spans?.filter(s => s.kind === kind).length ?? 0 }
 function fmtMs(v: number | null | undefined) { return v == null ? '—' : v >= 1000 ? `${(v/1000).toFixed(2)}s` : `${Math.round(v)}ms` }

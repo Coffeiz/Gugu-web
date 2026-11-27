@@ -1,7 +1,7 @@
 import { sql, type Kysely } from 'kysely'
 import { dataContext } from '../../contracts/index.js'
 import type { RunIdentity } from '../models.js'
-import type { AgentImToolPorts } from '../tools/im.js'
+import type { AgentImToolPorts } from '../tools/im/index.js'
 
 type GroupReads = Pick<NonNullable<AgentImToolPorts['group']>, 'speakers' | 'search'>
 type OwnerBinding = NonNullable<AgentImToolPorts['ownerSession']>

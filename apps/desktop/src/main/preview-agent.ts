@@ -1,4 +1,4 @@
-import { filesPreviewRoute, resourcesPreviewRoute, workspacePreviewRoutes, agentModelPreviewPath, agentSessionPreviewPath, previewAttachmentPath } from '@gugu/desktop-contracts'
+import { filesPreviewRoute, mailPreviewRoute, resourcesPreviewRoute, workspacePreviewRoutes, agentModelPreviewPath, agentSessionPreviewPath, previewAttachmentPath } from '@gugu/desktop-contracts'
 import { streamPreviewRunChanges } from './agent/preview-run-changes.js'
 import { createServer } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
@@ -9,18 +9,18 @@ import { handlePreviewAttachment } from './agent/preview-attachments.js'
 import { servePreviewFile } from './files/preview.js'
 import type { IpcHandlers } from './ipc/types.js'
 
-export async function startDesktopPreviewAgent(socket: string, secret: string, handlers: IpcHandlers, quitForReload?: () => void,
+export async function startDesktopPreviewAgent(socket: string, secret: string, handlers: IpcHandlers, quitForReload?: (ready: () => void, signal: AbortSignal) => Promise<void>,
   subscribeRunChanges?: Parameters<typeof streamPreviewRunChanges>[1],
-  reloadCore?: () => Promise<void>,
+  reloadCore?: (signal: AbortSignal) => Promise<void>,
   files?: Parameters<typeof servePreviewFile>[2],
   scheduledIm?: ReturnType<typeof import('./schedules/im.js').bindDesktopScheduledIm>,
 ) {
   const expected = Buffer.from(secret)
   const channels = new Map<string, ReadonlyMap<string, string>>([
     ['/__desktop-preview/im', new Map([['qqPairing', DESKTOP_CHANNELS.qqPairing], ['feishuPairing', DESKTOP_CHANNELS.feishuPairing], ['wechatPairing', DESKTOP_CHANNELS.wechatPairing], ['telegramGateway', DESKTOP_CHANNELS.telegramGateway]])],
-    ['/__desktop-preview/preferences', new Map([['appearance', DESKTOP_CHANNELS.appearance], ['updateAppearance', DESKTOP_CHANNELS.updateAppearance], ['agentPreference', DESKTOP_CHANNELS.agentPreference], ['personalSmtp', DESKTOP_CHANNELS.personalSmtp], ['remoteAccount', DESKTOP_CHANNELS.remoteAccount], ['remoteLogin', DESKTOP_CHANNELS.remoteLogin], ['remoteLogout', DESKTOP_CHANNELS.remoteLogout], ['remoteByok', DESKTOP_CHANNELS.remoteByok], ['agentUsage', DESKTOP_CHANNELS.agentUsage], ['dataInventory', DESKTOP_CHANNELS.dataInventory], ['exportBusinessArchive', DESKTOP_CHANNELS.exportBusinessArchive], ['preflightBusinessArchive', DESKTOP_CHANNELS.preflightBusinessArchive], ['applyBusinessArchive', DESKTOP_CHANNELS.applyBusinessArchive], ['clearAgentMemory', DESKTOP_CHANNELS.clearAgentMemory], ['clearAgentAttachments', DESKTOP_CHANNELS.clearAgentAttachments]])],
+    ['/__desktop-preview/preferences', new Map([['appearance', DESKTOP_CHANNELS.appearance], ['updateAppearance', DESKTOP_CHANNELS.updateAppearance], ['onboarding', DESKTOP_CHANNELS.onboarding], ['agentPreference', DESKTOP_CHANNELS.agentPreference], ['deviceInfo', DESKTOP_CHANNELS.deviceInfo], ['remoteAccount', DESKTOP_CHANNELS.remoteAccount], ['remoteLogin', DESKTOP_CHANNELS.remoteLogin], ['remoteLogout', DESKTOP_CHANNELS.remoteLogout], ['remoteByok', DESKTOP_CHANNELS.remoteByok], ['agentUsage', DESKTOP_CHANNELS.agentUsage], ['dataInventory', DESKTOP_CHANNELS.dataInventory], ['exportBusinessArchive', DESKTOP_CHANNELS.exportBusinessArchive], ['preflightBusinessArchive', DESKTOP_CHANNELS.preflightBusinessArchive], ['applyBusinessArchive', DESKTOP_CHANNELS.applyBusinessArchive], ['clearAgentMemory', DESKTOP_CHANNELS.clearAgentMemory], ['clearAgentAttachments', DESKTOP_CHANNELS.clearAgentAttachments]])],
     ['/__desktop-preview/logs', new Map([['readLogs', DESKTOP_CHANNELS.readLogs]])],
-    ...[filesPreviewRoute, resourcesPreviewRoute, ...workspacePreviewRoutes].map(({ endpoint, methods }) => [endpoint,
+    ...[filesPreviewRoute, mailPreviewRoute, resourcesPreviewRoute, ...workspacePreviewRoutes].map(({ endpoint, methods }) => [endpoint,
       new Map<string, string>(methods.map(method => [method, DESKTOP_CHANNELS[method]])),
     ] as const),
     [agentModelPreviewPath, new Map([['agentModel', DESKTOP_CHANNELS.agentModel], ['auxiliaryModel', DESKTOP_CHANNELS.auxiliaryModel]])],
@@ -43,13 +43,24 @@ export async function startDesktopPreviewAgent(socket: string, secret: string, h
       await servePreviewFile(req, res, files, fileContent ? 'content' : 'upload')
       return
     }
-    if (req.url === '/__desktop-preview/reload' && quitForReload) {
-      res.writeHead(202).end(quitForReload)
-      return
-    }
-    if (req.url === '/__desktop-preview/reload-core' && reloadCore) {
-      const reply = await desktopReply(true, reloadCore)
-      res.writeHead(reply.ok ? 204 : 503).end()
+    const quit = req.url === '/__desktop-preview/reload' ? quitForReload : undefined
+    const reload = req.url === '/__desktop-preview/reload-core' ? reloadCore : undefined
+    if (quit || reload) {
+      const controller = new AbortController()
+      const disconnect = () => controller.abort()
+      res.once('close', disconnect)
+      try {
+        const reply = await desktopReply(true, () => quit
+          ? quit(() => res.writeHead(202).end(), controller.signal)
+          : reload!(controller.signal))
+        if (!res.destroyed && !res.writableEnded) {
+          if (reply.ok) res.writeHead(204).end()
+          else res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+            .end(JSON.stringify({ code: reply.error.code }))
+        }
+      } finally {
+        res.off('close', disconnect)
+      }
       return
     }
     if (attachment) {

@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import {
-  RiFileExcel2Line, RiFilePdf2Line, RiFilePpt2Line, RiFileTextLine, RiFileWord2Line, RiGlobalLine,
+  RiBlenderLine, RiCss3Line, RiFileExcel2Line, RiFilePdf2Line, RiFilePpt2Line, RiFileWord2Line,
+  RiHtml5Line, RiJavaLine, RiJavascriptLine, RiMarkdownLine, RiPhpLine, RiReactjsLine, RiVuejsLine,
 } from '@remixicon/vue'
 import { fileListIcon, normalizeEditableExtension } from '@/utils/fileTypes'
 
 describe('文件列表图标', () => {
-  it('HTML 文件使用地球图标，其他代码文件继续使用代码图标', () => {
-    expect(fileListIcon('html')).toBe(RiGlobalLine)
-    expect(fileListIcon('HTM')).toBe(RiGlobalLine)
-    expect(fileListIcon('css')).not.toBe(RiGlobalLine)
+  it.each([
+    ['vue', RiVuejsLine], ['BLEND', RiBlenderLine],
+    ['html', RiHtml5Line], ['HTM', RiHtml5Line], ['css', RiCss3Line],
+    ['js', RiJavascriptLine], ['mjs', RiJavascriptLine], ['cjs', RiJavascriptLine],
+    ['php', RiPhpLine], ['java', RiJavaLine], ['tsx', RiReactjsLine],
+  ] as const)('%s 使用专属图标', (extension, icon) => {
+    expect(fileListIcon(extension)).toBe(icon)
   })
 
   it('Markdown 与 Office/PDF 文件使用对应的 Remix 文件图标', () => {
-    expect(fileListIcon('md')).toBe(RiFileTextLine)
+    expect(fileListIcon('md')).toBe(RiMarkdownLine)
     expect(fileListIcon('PDF')).toBe(RiFilePdf2Line)
     expect(fileListIcon('docx')).toBe(RiFileWord2Line)
     expect(fileListIcon('pptx')).toBe(RiFilePpt2Line)

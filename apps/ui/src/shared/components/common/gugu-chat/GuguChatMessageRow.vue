@@ -1,5 +1,5 @@
 <template>
-  <GuguChatInteraction v-if="msg.role === 'interaction'" :msg="msg" :answer-mode="interactionAnswerMode"
+  <GuguChatInteraction v-if="msg.role === 'interaction'" :msg="msg" :answer-mode="interactionAnswerMode" :email-tool="emailTool"
     @select="(selectedMsg, option) => $emit('interactionSelect', selectedMsg, option)"
     @text-submit="(selectedMsg, text) => $emit('interactionTextSubmit', selectedMsg, text)"
     @secret-submit="(selectedMsg, values) => $emit('secretSubmit', selectedMsg, values)"
@@ -35,7 +35,7 @@
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
   <div v-else-if="(!msg.subagentOutput || subagentExpanded) && (msg.text || msg.references?.length)" class="msg-bubble" :class="msg.role === 'member' ? 'md-body' : 'user-md'" @click="onBodyClick">
-    <MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(msg.text), msg.references)" :text="msg.text" chat render-math />
+    <MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(visibleUserText), msg.references)" :text="visibleUserText" chat render-math />
   </div>
   <div v-if="msg.role === 'user' && msg.runOutcome" class="msg-run-outcome" role="status">
     <span class="msg-run-outcome-label">
@@ -72,31 +72,27 @@
                 :aria-expanded="isTranscriptOpen(f)"
                 :aria-label="f.transcript_status === 'failed' ? t('chat.transcriptionFailed') : (isTranscriptOpen(f) ? t('chat.hideTranscription') : t('chat.showTranscription'))"
                 :title="f.transcript_status === 'failed' ? t('chat.transcriptionFailed') : (isTranscriptOpen(f) ? t('chat.hideTranscription') : t('chat.showTranscription'))">
-          {{ f.transcript_status === 'failed' ? '!' : (isTranscriptOpen(f) ? '−' : '文') }}
+          {{ f.transcript_status === 'failed' ? '!' : (isTranscriptOpen(f) ? '−' : $t('pageUi.transcript')) }}
         </button>
       </div>
     </div>
     <div v-if="f.transcript && isTranscriptOpen(f)" class="msg-voice-transcript">{{ f.transcript }}</div>
     <div v-else-if="f.transcript_status === 'empty' && isTranscriptOpen(f)" class="msg-voice-transcript">{{ t('chat.transcriptionEmpty') }}</div>
     </template>
-    <div v-else-if="f.qq_face" class="msg-face-image-wrap" @click="$emit('openFile', f)" :title="t('chat.viewEmoji')">
-      <img class="msg-face-image" v-lazy-face="f.file_path || f.attach_id" draggable="false" :alt="t('chat.viewEmoji')" />
-    </div>
+    <button v-else-if="f.qq_face || isImageFile(f)" type="button" class="msg-image-attachment"
+            :class="{ 'msg-image-attachment--sticker': f.qq_face }"
+            :aria-label="f.qq_face ? t('chat.viewEmoji') : attachmentName(f)" @click="$emit('openFile', f)">
+      <img v-if="f.qq_face || isAnimatedImageFile(f)" v-lazy-face="f.file_path || f.attach_id"
+           draggable="false" :alt="f.qq_face ? t('chat.viewEmoji') : attachmentName(f)" />
+      <img v-else-if="f._thumbUrl" :src="f._thumbUrl" draggable="false" :alt="attachmentName(f)" />
+      <img v-else v-lazy-thumb="f.file_path || f.attach_id" decoding="async" draggable="false" :alt="attachmentName(f)" />
+    </button>
     <div v-else class="chat-file-card-actions chat-attachment-card">
       <button type="button" class="chat-object-card" data-object-type="file"
               :title="canPreview(f) ? t('chat.preview') : t('chat.download')"
               @click="$emit('openFile', f)">
-        <span v-if="isImageFile(f)" class="chat-attachment-preview" aria-hidden="true">
-          <component :is="fileListIcon(f.ext)" :size="24" />
-          <img v-if="f._thumbUrl" :src="f._thumbUrl" draggable="false" alt=""
-               @load="($event.target as HTMLImageElement).classList.add('is-loaded')"
-               @error="($event.target as HTMLImageElement).classList.remove('is-loaded')" />
-          <img v-else v-lazy-thumb="f.file_path || f.attach_id" decoding="async" draggable="false" alt=""
-               @load="($event.target as HTMLImageElement).classList.add('is-loaded')"
-               @error="($event.target as HTMLImageElement).classList.remove('is-loaded')" />
-        </span>
         <span class="chat-object-file-identity">
-          <span v-if="!isImageFile(f)" class="chat-object-file-icon" :style="{ '--chat-file-icon-color': fileIconColor(f.ext) }" aria-hidden="true">
+          <span class="chat-object-file-icon" :style="{ '--chat-file-icon-color': fileIconColor(f.ext) }" aria-hidden="true">
             <component :is="fileListIcon(f.ext)" :size="20" />
           </span>
           <span class="chat-object-card-title">{{ attachmentName(f) }}</span>
@@ -130,6 +126,7 @@ import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { useI18n } from 'vue-i18n'
 import { computed, inject, ref } from 'vue'
+import { selectionMessageText } from '../selection/selectionDraft'
 import { translateAgentError } from '@/i18n'
 /**
  * 单条消息展示：只接收消息对象和展示回调，不直接读取全局 Store、不直接修改会话数组。
@@ -154,6 +151,7 @@ import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
 import { formatToolDuration } from './toolActivity'
 const props = defineProps<{
   msg: ChatMessage
+  emailTool?: { status: ChatMessage['toolStatus']; result: unknown }
   timestamp?: string
   sources?: readonly ChatSource[]
   sessionId: number | null
@@ -165,6 +163,7 @@ const props = defineProps<{
   voicePlayingId: string | null
   voiceBars: number[]
 }>()
+const visibleUserText = computed(() => selectionMessageText(props.msg.text ?? '', props.msg.references))
 const showCopy = computed(() => props.msg.role !== 'tool' && props.msg.role !== 'interaction' && Boolean(props.msg.text?.trim()))
 const { displayed, presenting } = useStreamText(() => ({
   key: `${props.sessionId}:${props.msg._syncKey ?? props.msg.id}`,

@@ -1,6 +1,6 @@
 import { dataContext } from '../../contracts/index.js'
 import type { SqlDataRuntime } from '../../data/runtime.js'
-import type { KnowledgeReadPort, KnowledgeSearchHit } from '../tools/knowledge.js'
+import type { KnowledgeReadPort, KnowledgeSearchHit } from '../tools/knowledge/index.js'
 import type { RunIdentity } from '../models.js'
 import { parseAgentKnowledgeRecord } from '../rag/knowledge-source.js'
 import { createScopedRagSearch } from '../rag/scoped-search.js'

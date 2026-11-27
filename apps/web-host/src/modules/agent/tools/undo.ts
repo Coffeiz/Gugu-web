@@ -29,7 +29,7 @@ export function createWebAgentUndoLastActionPort(options: WebAgentUndoLastAction
       return result.rowCount === 1
     },
     async apply(ownerId, contextId, operationId, resource) {
-      if (!['mind', 'calendar', 'scheduled_tasks', 'files', 'projects'].includes(resource))
+      if (!['mind', 'calendar', 'scheduled_tasks', 'files', 'projects', 'skills'].includes(resource))
         return { success: false, error: '最近操作类型尚无 Node 撤销处理器' }
       try {
         const outcome = await options.operations.apply(ownerId, contextId, operationId, 'undo')

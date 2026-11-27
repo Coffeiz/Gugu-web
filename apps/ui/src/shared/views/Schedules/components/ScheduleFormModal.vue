@@ -10,8 +10,8 @@
           <div v-if="!props.desktop" class="divider"></div>
 
           <div class="field reminder-field">
-            <span>{{ t(executionMode === 'reminder' ? 'schedules.reminder' : 'scheduleUi.instructionBody') }}</span>
-            <textarea v-model="form.payload" ref="payloadRef" rows="3" :placeholder="t(executionMode === 'reminder' ? 'scheduleUi.reminderExample' : 'scheduleUi.instructionBody')" :aria-label="t(executionMode === 'reminder' ? 'schedules.reminder' : 'scheduleUi.instructionBody')" @input="resizePayload"></textarea>
+            <span>{{ t(executionMode === 'reminder' ? 'schedules.reminder' : 'scheduleUi.taskDescription') }}</span>
+            <textarea v-model="form.payload" ref="payloadRef" rows="3" :placeholder="t(executionMode === 'reminder' ? 'scheduleUi.reminderExample' : 'scheduleUi.taskExample')" :aria-label="t(executionMode === 'reminder' ? 'schedules.reminder' : 'scheduleUi.taskDescription')" @input="resizePayload"></textarea>
           </div>
 
         </div>
@@ -139,7 +139,7 @@
       </div>
 
       <div v-if="formErr || props.externalError" class="form-err">{{ formErr || props.externalError }}</div>
-      <div class="modal-actions">
+      <div class="modal-actions app-card-actions">
         <ActionButton variant="secondary" @click="emit('close')">{{ t('schedules.cancel') }}</ActionButton>
         <ActionButton :disabled="props.busy" @click="submit">{{ props.task ? t('schedules.save') : t('schedules.createAction') }}</ActionButton>
       </div>
@@ -463,36 +463,36 @@ function submit() {
 /* 全套表面/边框/选中态消费语义 token（--input-* / --option-* / --action-*），与
    TimeInput.boxed、活动弹窗输入框同一契约，亮暗主题自动适配；
    亮色下这些 token 的原始值与旧硬编码（黑 10% 描边、白 72% 底、品牌紫渐变）几乎一致。 */
-.sched-modal { max-height: min(88vh, 820px); min-height: 0; box-sizing: border-box; display: flex; flex-direction: column; padding: 16px 18px; }
-.sched-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 22px; flex: 1 1 auto; min-height: 0; }
-.sched-column { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 6px 10px 12px 6px; }
-.sched-mode { margin-bottom: 11px; }
+.sched-modal { max-height: min(88vh, 820px); min-height: 0; box-sizing: border-box; display: flex; flex-direction: column; --card-actions-inset: var(--space-lg); padding: var(--space-lg) var(--card-actions-inset) 0; }
+.sched-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: var(--space-xl); flex: 1 1 auto; min-height: 0; }
+.sched-column { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: var(--space-xs) var(--space-sm) var(--space-md) var(--space-xs); }
+.sched-mode { margin-bottom: var(--space-md); }
 .sched-prompt-column { display: flex; flex-direction: column; }
-.divider { height: 1px; background: var(--divider-line); margin: 2px 0 10px; }
+.divider { height: 1px; background: var(--divider-line); margin: var(--space-xs) 0 var(--space-sm); }
 .divider-full { margin-left: 0; margin-right: 0; }
-.title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: 6px 11px; margin-bottom: 10px; border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s; }
+.title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: var(--space-xs) var(--space-md); margin-bottom: var(--space-sm); border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s; }
 .title-input::placeholder { color: var(--input-placeholder); font-weight: 700; }
 .title-input:hover { background: var(--input-bg-hover); border-color: var(--input-border-hover); }
 .title-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); }
-.field { display: block; margin-bottom: 11px; }
-.field > span { display: block; font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
-.field-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+.field { display: block; margin-bottom: var(--space-md); }
+.field > span { display: block; font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: var(--space-xs); }
+.field-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-sm); margin-bottom: var(--space-sm); }
 .field-heading > span { font-size: 12px; font-weight: 700; color: var(--text-secondary); }
   .field-heading small { color: var(--content-tertiary); font-size: 11px; text-align: right; }
-.workspace-select { display: block; width: 100%; margin-bottom: 7px; }
+.workspace-select { display: block; width: 100%; margin-bottom: var(--space-sm); }
 .workspace-select :deep(.asel-trigger) { width: 100%; box-sizing: border-box; }
-.authorization-field > small { display: block; margin-top: 5px; color: var(--content-tertiary); font-size: 11px; line-height: 1.45; }
-.authorization-field { padding: 9px 10px; border: 1px solid var(--option-border); border-radius: var(--radius-xs); background: var(--option-bg); }
+.authorization-field > small { display: block; margin-top: var(--space-xs); color: var(--content-tertiary); font-size: 11px; line-height: 1.45; }
+.authorization-field { padding: var(--space-sm) var(--space-sm); border: 1px solid var(--option-border); border-radius: var(--radius-xs); background: var(--option-bg); }
 .authorization-field :deep(.app-checkbox) { margin: 0; }
-.once-controls { display: grid; grid-template-columns: minmax(0, 1fr) 82px 24px; align-items: center; gap: 6px; }
+.once-controls { display: grid; grid-template-columns: minmax(0, 1fr) 82px 24px; align-items: center; gap: var(--space-xs); }
 .once-controls :deep(.dp-wrap), .once-controls :deep(.time-input) { min-width: 0; }
-.once-controls :deep(.dp-input) { min-width: 0; min-height: 34px; padding-left: 7px; padding-right: 7px; }
+.once-controls :deep(.dp-input) { min-width: 0; min-height: 34px; padding-left: var(--space-sm); padding-right: var(--space-sm); }
 .once-controls :deep(.dp-input span) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.boundary-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 7px; }
+.boundary-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: var(--space-sm); margin-top: var(--space-sm); }
 .boundary-label { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
-.boundary-controls { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 82px 24px; align-items: center; gap: 6px; }
+.boundary-controls { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 82px 24px; align-items: center; gap: var(--space-xs); }
 .boundary-controls :deep(.dp-wrap) { min-width: 0; }
-.boundary-controls :deep(.dp-input) { min-width: 0; min-height: 34px; padding-left: 7px; padding-right: 7px; }
+.boundary-controls :deep(.dp-input) { min-width: 0; min-height: 34px; padding-left: var(--space-sm); padding-right: var(--space-sm); }
 .boundary-controls :deep(.dp-input span) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .boundary-controls :deep(.time-input) { min-width: 0; }
 /* 面与前景跟 DateSpanPicker 的清除键（adoption/date-picker.css 的 .drp-clear）同源
@@ -502,46 +502,46 @@ function submit() {
    都对不齐。 */
 .boundary-clear { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: var(--option-bg); color: var(--content-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: color var(--hover-motion-control), background-color var(--hover-motion-control); }
 .boundary-clear:hover { background: var(--option-bg-hover); color: var(--content-primary); }
-.field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=number] { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--input-border); border-radius: var(--radius-xs); background: var(--input-bg); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+.field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=number] { width: 100%; box-sizing: border-box; padding: var(--space-sm) var(--space-md); border: 1px solid var(--input-border); border-radius: var(--radius-xs); background: var(--input-bg); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
 .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--input-border-focus); }
 .reminder-field { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .reminder-field textarea { flex: 1 1 auto; min-height: 96px; max-height: none; resize: none; line-height: 1.6; overflow-y: hidden; }
-.repeat-tabs { display: flex; gap: 6px; }
+.repeat-tabs { display: flex; gap: var(--option-gap); }
 .repeat-tab { flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-xs); border: 1px solid var(--option-border); background: var(--option-bg); font-size: 13px; font-family: var(--font-sans); color: var(--option-fg); cursor: pointer; transition: all 0.15s; text-align: center; }
 .repeat-tab:hover { border-color: var(--option-border-hover); }
 .repeat-tab.on { background: var(--action-primary-bg); color: var(--content-on-accent); border-color: transparent; }
-.weekly-days { display: flex; gap: 6px; margin-top: 8px; }
+.weekly-days { display: flex; gap: var(--option-gap); margin-top: var(--space-sm); }
 .weekly-days .repeat-tab { height: 30px; font-size: 12px; }
-.time-field input { height: 34px; padding-top: 8px; padding-bottom: 8px; text-align: center; line-height: normal; font-size: 13px; }
-.interval-presets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.time-field input { height: 34px; padding-top: var(--space-sm); padding-bottom: var(--space-sm); text-align: center; line-height: normal; font-size: 13px; }
+.interval-presets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--option-gap); margin-top: var(--space-sm); }
 .interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-xs); border: 1px solid var(--option-border); background: var(--option-bg); color: var(--option-fg); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
 .interval-preset:hover { border-color: var(--option-border-hover); }
 .interval-preset.on { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary-bg); }
-.chans { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+.chans { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: var(--option-gap); }
 .chans :deep(.app-checkbox) { min-width: 0; }
 .chans :deep(.app-checkbox__label) { min-width: 0; white-space: normal; flex-wrap: wrap; }
 .channel-unavailable-note { flex: 1 1 100%; min-width: 0; color: var(--content-tertiary); font-size: 10px; line-height: 1.3; }
 .im-delivery-field {
-  display: flex; flex-direction: column; gap: 4px; min-width: 0; margin-top: 8px;
+  display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; margin-top: var(--space-sm);
   color: var(--content-secondary); font-size: 12px; line-height: 1.45;
 }
 .im-delivery-field > span { display: block; min-width: 0; line-height: 1.45; }
 .im-delivery-field :deep(.select-popup) { display: block; }
 .im-delivery-field :deep(.select-popup-trigger) { width: 100%; box-sizing: border-box; }
 :global(.im-target-popup) { max-height: 260px; overflow-y: auto; }
-.form-err { color: var(--status-danger); font-size: 12px; margin-bottom: 10px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
+.form-err { color: var(--status-danger); font-size: 12px; margin-bottom: var(--space-sm); }
+.modal-actions { display: flex; justify-content: flex-end; gap: var(--space-md); align-items: center; margin-top: var(--space-xs); }
 .modal-actions > button { width: 64px; min-height: 34px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
 @media (max-width: 760px) {
-  .sched-form-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; overflow-y: auto; overscroll-behavior: contain; }
+  .sched-form-grid { grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); overflow-y: auto; overscroll-behavior: contain; }
   .sched-column { min-height: auto; overflow: visible; padding: 0; }
   .sched-prompt-column { display: block; }
 }
 @media (max-width: 460px) {
-  .sched-modal { padding: 12px; }
-  .boundary-row { grid-template-columns: 1fr; gap: 4px; }
+  .sched-modal { --card-actions-inset: var(--space-md); padding-block-start: var(--space-md); }
+  .boundary-row { grid-template-columns: 1fr; gap: var(--space-xs); }
   .boundary-controls { grid-template-columns: minmax(0, 1fr) 78px 24px; }
   .field-heading { display: block; }
-  .field-heading small { display: block; margin-top: 3px; text-align: left; }
+  .field-heading small { display: block; margin-top: var(--space-xs); text-align: left; }
 }
 </style>

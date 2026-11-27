@@ -43,7 +43,7 @@
             autocomplete="new-password" :disabled="loading" />
         </div>
 
-        <Checkbox v-model="form.emailSubscribed" class="subscribe-row" :disabled="loading">
+        <Checkbox v-if="!registerAdapter" v-model="form.emailSubscribed" class="subscribe-row" :disabled="loading">
           {{ t('subscriptionUi.subscribe') }}
         </Checkbox>
 
@@ -60,7 +60,7 @@
         {{ t('auth.hasAccount') }}
         <router-link to="/login">{{ t('auth.loginNow') }}</router-link>
       </div>
-      <div class="card-policy">
+      <div v-if="!registerAdapter" class="card-policy">
         {{ t('auth.readAndAgree') }}
         <router-link to="/privacy">{{ t('auth.privacy') }}</router-link>
       </div>
@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, reactive } from 'vue'
+import { inject, onBeforeUnmount, onMounted, ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AuthBrand from '@/components/common/auth/AuthBrand.vue'
@@ -83,6 +83,7 @@ import { fetchSiteConfig } from '@/services/api'
 import { useI18n } from 'vue-i18n'
 import { getRegistrationValidationError } from '@/utils/registrationValidation'
 
+const registerAdapter = inject<((username: string, email: string, password: string) => Promise<void>) | null>('gugu-register-adapter', null)
 const router  = useRouter()
 const auth    = useAuthStore()
 const form    = reactive({ username: '', email: '', password: '', confirmPassword: '', verificationCode: '', emailSubscribed: false })
@@ -92,7 +93,7 @@ const notice       = ref('')
 const codeSending  = ref(false)
 const codeCountdown = ref(0)
 const registrationVerificationEnabled = ref(false)
-const configLoading = ref(true)
+const configLoading = ref(!registerAdapter)
 const configError = ref(false)
 let countdownTimer: ReturnType<typeof setInterval> | undefined
 const { t } = useI18n()
@@ -142,7 +143,8 @@ async function handleRegister() {
   if (validationError) { error.value = t(`auth.${validationError}`); return }
   loading.value = true; error.value = ''
   try {
-    await auth.register(form.username, form.email, form.password, form.emailSubscribed, form.verificationCode || undefined)
+    if (registerAdapter) await registerAdapter(form.username.trim(), form.email.trim(), form.password)
+    else await auth.register(form.username, form.email, form.password, form.emailSubscribed, form.verificationCode || undefined)
     router.push('/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('auth.operationFailed')
@@ -151,7 +153,7 @@ async function handleRegister() {
   }
 }
 
-onMounted(() => { void loadRegistrationConfig() })
+onMounted(() => { if (!registerAdapter) void loadRegistrationConfig() })
 onBeforeUnmount(() => { if (countdownTimer) clearInterval(countdownTimer) })
 </script>
 

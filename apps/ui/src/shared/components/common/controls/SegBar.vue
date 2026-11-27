@@ -11,17 +11,19 @@
     </div>
   </div>
   <div v-else class="progress-bar">
-    <div class="progress-fill" :style="{ width: fallbackProgress + '%', background: project.color }"></div>
+    <div class="progress-fill" :style="{ width: fallbackProgress + '%', backgroundColor: projectAccent }"></div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onUnmounted, type PropType } from 'vue'
 import { useProjectStore } from '@/stores/projects'
+import { extractProjectAccent } from '@/utils/projectColors'
 import type { Project } from '@/types/project'
 
 const props = defineProps({ project: { type: Object as PropType<Project>, required: true } })
 const projectStore = useProjectStore()
+const projectAccent = computed(() => extractProjectAccent(props.project.color))
 
 const curIdx = computed(() =>
   props.project.stages.findIndex(s => s.key === props.project.currentStage)
@@ -47,10 +49,8 @@ function segFill(i: number) {
 }
 
 function segFillStyle(i: number) {
-  const n = props.project.stages.length
   const w = animFills.value ? animFills.value[i] : segFill(i)
-  const pos = n <= 1 ? '0%' : `${(i / (n - 1)) * 100}%`
-  return { width: w + '%', background: props.project.color, backgroundSize: `${n * 100}% 100%`, backgroundPosition: `${pos} 0%` }
+  return { width: w + '%', backgroundColor: projectAccent.value }
 }
 
 const animFills = ref<number[] | null>(null)

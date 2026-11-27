@@ -1,9 +1,7 @@
 import type { InjectionKey } from 'vue'
 import type { McpServerItem, mcpApi, userSkillsApi } from './api'
 
-type SkillsApi = Pick<typeof userSkillsApi, 'list' | 'tools'> & {
-  [Action in 'create' | 'update' | 'delete']: (...args: Parameters<typeof userSkillsApi[Action]>) => Promise<unknown>
-}
+type SkillsApi = Pick<typeof userSkillsApi, 'list' | 'tools' | 'searchClawHub' | 'trendingClawHub' | 'previewClawHub' | 'installClawHub' | 'createFileSkill' | 'updateFileSkill' | 'deleteFileSkill'>
 
 type McpApi = {
   list(): Promise<{ items: McpServerItem[]; max_servers: number | null }>

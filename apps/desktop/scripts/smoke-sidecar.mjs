@@ -43,7 +43,7 @@ try {
         env: { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' },
       },
     )
-    assert.equal(result.status, 0)
+    assert.equal(result.status, 0, result.error?.message || result.stderr || result.stdout)
     assert.equal(result.stderr, '')
     return result.stdout
       .trim()

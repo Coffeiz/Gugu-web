@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
-import { createKyselyScheduledFireReceipts } from '@gugu/core/scheduled-task-run-now'
+import { createKyselyScheduledFireReceipts } from '@gugu/core/tasks/schedule-storage'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 test('同一触发时间并发领取只允许一个执行者且其他 owner 不能完成', { skip: !url }, async () => {

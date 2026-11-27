@@ -1,6 +1,6 @@
 <template>
   <div ref="tableHost" class="md-table-host">
-    <div ref="root" class="md-view" :data-mermaid-ready="mermaidReady ? 'true' : 'false'" v-html="rendered" />
+    <div ref="root" class="md-view" :data-mermaid-ready="mermaidReady ? 'true' : 'false'" v-markdown-html="rendered" />
   </div>
 </template>
 
@@ -26,6 +26,7 @@ const props = defineProps({
   // 仅聊天消息显式开启，避免在全站通知和侧栏 Markdown 中改变渲染范围。
   renderMath: { type: Boolean, default: false },
   streamMotion: { type: Boolean, default: false },
+  preserveSmartBlocks: { type: Boolean, default: false },
 })
 const root = ref<HTMLElement | null>(null)
 const tableHost = ref<HTMLElement | null>(null)
@@ -62,7 +63,7 @@ function wrapMarkdownTables(): void {
 
 async function renderMermaidBlocks(): Promise<void> {
   const element = root.value
-  if (!element || props.streamMotion) return
+  if (!element) return
   const generation = ++renderGeneration
   mermaidReady.value = false
   try {
@@ -77,6 +78,45 @@ const rendered = computed(() =>
     ? (props.chat ? sanitizeChatHtml(props.html) : sanitizeHtml(props.html))
     : renderMarkdown(props.text))
 
+// 用上一份已消毒的 HTML 比较，保留图表、输入框和展开区域的实时 DOM 状态。
+let previousMarkup: HTMLTemplateElement | undefined
+function patchSmartChildren(live: Node, previous: Node, next: Node) {
+  const oldChildren = [...previous.childNodes]
+  const newChildren = [...next.childNodes]
+  const liveChildren = [...live.childNodes]
+  newChildren.forEach((child, index) => {
+    const old = oldChildren[index]
+    const current = liveChildren[index]
+    if (!current) { live.appendChild(child.cloneNode(true)); return }
+    if (old?.isEqualNode(child)) return
+    if (old instanceof HTMLElement && child instanceof HTMLElement && current instanceof HTMLElement
+      && child.matches('.chat-smart-layout-view, .chat-smart-layout, .chat-smart-section')
+      && old.cloneNode().isEqualNode(child.cloneNode())) {
+      patchSmartChildren(current, old, child)
+    } else live.replaceChild(child.cloneNode(true), current)
+  })
+  liveChildren.slice(newChildren.length).forEach(child => live.removeChild(child))
+}
+
+const vMarkdownHtml = {
+  mounted(element: HTMLElement, { value }: { value: string }) { updateMarkup(element, value) },
+  updated(element: HTMLElement, { value, oldValue }: { value: string; oldValue: string }) {
+    if (value !== oldValue) updateMarkup(element, value)
+  },
+}
+function updateMarkup(element: HTMLElement, value: string) {
+  if (!props.preserveSmartBlocks) {
+    element.innerHTML = value
+    previousMarkup = undefined
+    return
+  }
+  const next = document.createElement('template')
+  next.innerHTML = value
+  if (previousMarkup) patchSmartChildren(element, previousMarkup.content, next.content)
+  else element.replaceChildren(next.content.cloneNode(true))
+  previousMarkup = next
+}
+
 const updateStreamMotion = createMarkdownStreamMotion()
 watch(rendered, () => {
   wrapMarkdownTables()
@@ -87,8 +127,7 @@ watch(() => props.streamMotion, (active) => {
 }, { flush: 'post' })
 
 watch([rendered, locale, () => props.renderMath, () => props.streamMotion], async () => {
-  if (props.streamMotion) return
-  if (props.renderMath) await renderMarkdownMath(root.value, createMathLabels())
+  if (!props.streamMotion && props.renderMath) await renderMarkdownMath(root.value, createMathLabels())
   await renderMermaidBlocks()
 }, { flush: 'post' })
 

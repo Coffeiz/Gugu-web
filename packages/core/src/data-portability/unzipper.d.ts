@@ -9,5 +9,6 @@ declare module 'unzipper' {
       uncompressedSize: number
       stream(): import('node:stream').Readable
     }> }>
+    buffer(data: Buffer, options?: { tailSize: number }): ReturnType<typeof Open.file>
   }
 }

@@ -8,7 +8,7 @@ import { dataContext } from '../../../src/contracts/index.js'
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { createKyselyCalendarReadPort } from '../../../src/calendar/read-store.js'
-import { createUpcomingTool } from '../../../src/agent/tools/overview.js'
+import { createUpcomingTool } from '../../../src/agent/tools/overview/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect, fixture } from '../run/fixtures.js'
 

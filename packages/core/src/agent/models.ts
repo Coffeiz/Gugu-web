@@ -293,6 +293,10 @@ export interface CanonicalRunContext {
       model: string
       strategy: string
       baseline_digest: string
+      scope_digest?: string
+      baseline_prefix_digest?: string
+      latest_prefix_digest?: string
+      carried_prefix_digest?: string
     }
   } | null
   /** 待收尾的压缩候选；Data仅在history.outcome=success时按id同事务应用，失败/中断不推进摘要水位。 */
@@ -641,6 +645,7 @@ export interface DisplayItem {
   readonly toolCallId?: string
   readonly toolName?: string
   readonly toolLabelOverride?: string
+  readonly shellDescription?: string
   readonly shellActivity?: import('./shell-activity.js').ShellActivity
   readonly toolInput?: unknown
   readonly toolStatus?: string

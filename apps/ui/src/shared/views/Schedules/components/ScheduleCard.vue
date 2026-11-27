@@ -11,7 +11,7 @@
     </div>
     <span v-if="isEnded()" class="tc-status ended">{{ t('schedules.ended') }}</span>
     <div v-if="props.task.payload" class="tc-payload" :title="props.task.payload">{{ props.task.payload }}</div>
-    <div class="tc-foot">
+    <div class="tc-foot app-card-actions app-card-actions--compact">
       <span class="tc-last">{{ props.task.last_run_at ? t('schedules.previousRun', { time: fmtTime(props.task.last_run_at) }) : t('schedules.neverRun') }}</span>
       <span class="tc-acts">
         <button class="card-link-btn" :disabled="props.busy || isEnded() || (desktop && props.task.execution_mode !== 'instruction' && !props.task.channels?.length)" @click="$emit('run', props.task)">{{ t('schedules.testRun') }}</button>
@@ -87,22 +87,22 @@ function fmtDateTime(iso: string) {
   background: var(--file-card-bg); border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   box-shadow: var(--card-shadow);
-  padding: 13px 15px; display: flex; flex-direction: column; gap: 7px;
+  --card-actions-inset: var(--space-md); padding: var(--card-actions-inset) var(--card-actions-inset) 0; display: flex; flex-direction: column; gap: var(--space-sm);
   height: 100%; min-height: 154px; box-sizing: border-box;
   overflow: hidden;
   transition: var(--card-motion), box-shadow var(--motion-hover-card) ease, opacity var(--hover-motion-control);
 }
 .task-card:hover { box-shadow: var(--card-shadow-hover); }
 .task-card.off { opacity: 0.5; }
-.tc-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tc-top { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
 .tc-name { min-width: 0; font-size: 13px; line-height: 19px; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tc-when { font-size: 12px; color: var(--text-secondary); }
-.tc-window { display: grid; gap: 2px; min-height: 31px; font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
+.tc-window { display: grid; gap: var(--space-xs); min-height: 31px; font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
 .tc-window span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tc-status { align-self: flex-start; padding: 2px 7px; border-radius: 999px; font-size: 11px; }
+.tc-status { align-self: flex-start; padding: var(--space-xs) var(--space-sm); border-radius: 999px; font-size: 11px; }
 .tc-status.ended { color: var(--status-danger); background: color-mix(in srgb, var(--status-danger) 10%, transparent); }
-.tc-payload { font-size: 12px; color: var(--text-secondary); background: rgba(0,0,0,0.035); border-radius: 8px; padding: 6px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
+.tc-payload { font-size: 12px; color: var(--text-secondary); background: rgba(0,0,0,0.035); border-radius: 8px; padding: var(--space-sm) var(--space-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); margin-top: auto; }
 .tc-last { font-size: 11px; color: var(--text-secondary); opacity: 0.75; }
-.tc-acts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.tc-acts { display: flex; gap: var(--space-sm); flex-wrap: wrap; justify-content: flex-end; }
 </style>

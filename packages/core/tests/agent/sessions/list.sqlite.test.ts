@@ -30,17 +30,22 @@ test('SQLite 使用 runtime.db 并在缺表时失败关闭', async () => {
       const list = createSqlAgentSessionLister(db.db, 'sqlite', runtime)
       await assert.rejects(list(randomUUID()), (e: unknown) => e instanceof Error && 'code' in e && e.code === 'schema_upgrade_required')
       for (const statement of [
-        'CREATE TABLE workspaces(id integer primary key,name text,user_id text)',
+        'CREATE TABLE workspaces(id integer primary key,name text,user_id text,enabled integer NOT NULL DEFAULT 1)',
         'CREATE TABLE conversation_sessions(id integer primary key,user_id text,title text,source text,chat_type text,workspace_id integer,session_context text,updated_at text,created_at text)',
         'CREATE TABLE conversation_messages(id integer primary key,session_id integer,role text,content text,content_json text,files text,conversation_seq integer)',
         'CREATE TABLE filesystem_authorization_grants(user_id text,subject_type text,subject_id text,revoked_at text,expires_at text)',
       ]) await sql.raw(statement).execute(db.db)
       const owner = randomUUID(), key = owner.replaceAll('-', '')
-      await sql`INSERT INTO workspaces VALUES (1,'工作区',${key}),(2,'他人私有',${randomUUID().replaceAll('-', '')})`.execute(db.db)
+      await sql`INSERT INTO workspaces (id,name,user_id) VALUES (1,'工作区',${key}),(2,'他人私有',${randomUUID().replaceAll('-', '')})`.execute(db.db)
       await sql`INSERT INTO conversation_sessions VALUES (1,${key},'网页','web','private',1,'{"goal_mode":true,"goal_text":"目标","goal_status":"paused"}','2026-01-01 00:00:00.123456','2026-01-01 00:00:00.000000'),(2,${key},'IM','qq','group',NULL,NULL,'2026-01-02 00:00:00.000000','2026-01-01 00:00:00.000000'),(3,${key},'空来源','','private',2,NULL,'2026-01-03 00:00:00.000000','2026-01-01 00:00:00.000000')`.execute(db.db)
       await sql`INSERT INTO conversation_messages VALUES (1,1,'assistant','正文',NULL,NULL,1),(2,1,'assistant','',NULL,'[{"id":1}]',2),(3,1,'assistant','工具','null',NULL,3),(4,1,'assistant','',NULL,'[]',4)`.execute(db.db)
       await sql`INSERT INTO filesystem_authorization_grants VALUES (${key},'session','1',NULL,NULL),(${key},'session','2',NULL,'2000-01-01 00:00:00.000000')`.execute(db.db)
       await check(list, owner)
+      await sql`UPDATE conversation_sessions SET workspace_id=1 WHERE id=2`.execute(db.db)
+      const shellDisabled = createSqlAgentSessionLister(db.db, 'sqlite', { ...runtime, workspaceShellSupported: () => false })
+      assert.equal((await shellDisabled(owner)).find(row => row.id === 2)?.workspaceName, '工作区')
+      await sql`UPDATE workspaces SET enabled=0 WHERE id=1`.execute(db.db)
+      assert.equal((await shellDisabled(owner)).find(row => row.id === 2)?.workspaceName, null)
       for (let i = 0; i < 51; i++) {
         await sql`INSERT INTO conversation_sessions VALUES (${100 + i},${key},'网页','web','private',NULL,NULL,'2027-01-01 00:00:00.000000','2026-01-01 00:00:00.000000'),(${200 + i},${key},'IM','qq','group',NULL,NULL,'2027-01-01 00:00:00.000000','2026-01-01 00:00:00.000000')`.execute(db.db)
       }
@@ -59,7 +64,7 @@ test('SQLite 授权到期按 UTC 微秒严格比较并限制 owner', async () =>
     const db = { db: connection, close: () => connection.destroy() }
     try {
       for (const statement of [
-        'CREATE TABLE workspaces(id integer primary key,name text,user_id text)',
+        'CREATE TABLE workspaces(id integer primary key,name text,user_id text,enabled integer NOT NULL DEFAULT 1)',
         'CREATE TABLE conversation_sessions(id integer primary key,user_id text,title text,source text,chat_type text,workspace_id integer,session_context text,updated_at text,created_at text)',
         'CREATE TABLE conversation_messages(id integer primary key,session_id integer,role text,content text,content_json text,files text,conversation_seq integer)',
         'CREATE TABLE filesystem_authorization_grants(user_id text,subject_type text,subject_id text,revoked_at text,expires_at text)',

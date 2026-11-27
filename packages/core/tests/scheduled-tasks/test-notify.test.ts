@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { createScheduledTaskTestNotifier } from '../../src/scheduled-tasks/test-notify.js'
+import { createScheduledTaskTestNotifier } from '@gugu/scheduler/tasks'
 
 test('测试提醒过滤未知渠道、回退 Web 并按 Python 契约生成消息', async () => {
   const plans: unknown[] = []

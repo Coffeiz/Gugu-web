@@ -4,6 +4,7 @@ import { createApp, effectScope, h, nextTick, shallowRef } from 'vue'
 import { createPinia } from 'pinia'
 import { i18n } from '@/i18n'
 import { mindAccessKey } from '@/services/mindAccess'
+import { skillAccessKey } from '@/services/resourceAccess'
 import { webMindAccess } from '@web/mind/access'
 import { projectAccessKey } from '@/api/projects'
 import { pathFileAccessKey } from '@/services/pathFileAccess'
@@ -26,7 +27,7 @@ import { runtime } from '@/interaction/runtime'
 import { provideRuntime } from '@/interaction/runtime/vue'
 
 function mountComposer(catalog: ChatModelCatalog, references: ChatReference[] = [],
-  overrides: Partial<InstanceType<typeof GuguChatComposer>['$props']> = {}) {
+  overrides: Partial<InstanceType<typeof GuguChatComposer>['$props']> = {}, skillList?: () => Promise<unknown>) {
   const onReferenceClick = vi.fn()
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -49,9 +50,21 @@ function mountComposer(catalog: ChatModelCatalog, references: ChatReference[] = 
   app.provide(mindAccessKey, webMindAccess)
   app.provide(projectAccessKey, webProjectAccess)
   app.provide(chatModelCatalogKey, catalog)
+  if (skillList) app.provide(skillAccessKey, { api: { list: skillList } as never, configureWithChat: true })
   app.mount(host)
   return { app, host, composer, onReferenceClick }
 }
+
+it('聊天技能菜单使用当前宿主技能列表并只显示已启用技能', async () => {
+  const list = vi.fn(async () => ({ skills: [{ id: 'demo', name: '文件技能', enabled: true }, { id: 'off', name: '停用技能', enabled: false }] }))
+  const { app, host } = mountComposer(createWebChatModelCatalog(() => 42), [], {}, list)
+  try {
+    host.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.global.t('chat.addAttachment')}"]`)?.click()
+    await vi.waitFor(() => expect(list).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(document.body.textContent).toContain('文件技能'))
+    expect(document.body.textContent).not.toContain('停用技能')
+  } finally { app.unmount(); host.remove() }
+})
 
 it('后台运行时发送区可以中断，同时保留草稿的发送入口', () => {
   const onInterruptDetachedRun = vi.fn()
@@ -484,6 +497,13 @@ it('历史内置技能显示独立卡片，用户技能仍可打开', () => {
   expect(user?.getAttribute('href')).toBe('gugu://open-skill/U9')
 })
 
+it('文件技能链接保持目录标识并显示为可打开卡片', () => {
+  const host = document.createElement('div')
+  host.innerHTML = renderChatMd('gugu://open-skill/skill-demo-123\n\ngugu://open-skill/s9')
+  const cards = [...host.querySelectorAll('[data-object-type="skill"]')]
+  expect(cards.map(card => card.getAttribute('href'))).toEqual(['gugu://open-skill/skill-demo-123', 'gugu://open-skill/s9'])
+})
+
 it('聊天历史里的独立裸地址显示卡片，行内和代码内容保持原文', () => {
   const file = `path-${btoa(JSON.stringify({ directoryId: 'personal', relativePath: 'docs/example.pdf', identity: '1.2.3' })).replace(/=+$/, '')}`
   const project = 'gugu://open-object/project/2'
@@ -627,4 +647,14 @@ it('独立卡片消息隐藏时间戳，普通消息和含卡片的正文保留�
       app.unmount()
     }
   }
+})
+
+it('聊天中的本机文件链接转成应用内动作，浏览器不会直接导航到文件协议', () => {
+  const url = 'file:///workspace/example/report.md'
+  const content = document.createElement('template')
+  content.innerHTML = sanitizeChatHtml(renderChatMd(`已生成 [报告](${url})。`))
+  const link = content.content.querySelector('a')
+  expect(link?.textContent).toBe('报告')
+  expect(link?.getAttribute('href')).toBe('gugu://resolve-library-link/' + encodeURIComponent(url))
+  expect(link?.hasAttribute('target')).toBe(false)
 })

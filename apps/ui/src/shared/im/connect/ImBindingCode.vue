@@ -50,8 +50,8 @@ async function copy() {
   min-height: 30px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 3px 4px 3px 10px;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-xs) var(--space-xs) var(--space-sm);
   border: 1px solid var(--input-border);
   border-radius: var(--radius-xs);
   background: var(--surface-raised);
@@ -60,7 +60,7 @@ async function copy() {
 .pm-binding-code-command {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--space-xs);
   white-space: nowrap;
 }
 
@@ -85,8 +85,8 @@ async function copy() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 0 8px;
+  gap: var(--space-xs);
+  padding: 0 var(--space-sm);
   border: 1px solid var(--control-border);
   border-radius: var(--radius-compact);
   background: var(--control-bg);

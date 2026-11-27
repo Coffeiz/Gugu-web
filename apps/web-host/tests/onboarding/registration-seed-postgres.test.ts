@@ -50,7 +50,7 @@ function fakePool(options: {
       if (sql.includes('INSERT INTO projects')) { projectInserts++; return { rows: [{ id: 42 }] as unknown as Row[], rowCount: 1 } }
       if (sql.includes('INSERT INTO calendar_events')) { eventInserts++; return { rows: [], rowCount: 1 } as never }
       if (sql.startsWith('SELECT id,name,color')) return { rows: [{ id: 42, name: '从这里开始', color: null, year: '2026', month: '11' }] as unknown as Row[], rowCount: 1 }
-      if (sql.includes('SELECT 1 FROM files WHERE user_id=$1 AND storage_key=$2')) return { rows: [], rowCount: 0 } as never
+      if (sql.includes('SELECT 1 FROM files WHERE user_id=$1 AND path=$2')) return { rows: [], rowCount: 0 } as never
       if (sql.includes('INSERT INTO files')) {
         fileInserts++
         if (options.failOnFileInsert === fileInserts) throw new Error('synthetic file insert failure')
@@ -110,7 +110,7 @@ test('注册播种编排生成本地化计划并提交到 PostgreSQL 端口与 L
   try {
     const db = fakePool()
     const applySeed = createPostgresRegistrationSeedOperations(db.pool, { storageRoot: root })
-    const seed = createRegistrationSeeder({ applySeed, async surpriseMp3() { return null } }, {
+    const seed = createRegistrationSeeder({ applySeed }, {
       now: () => new Date(2026, 10, 14, 12), random: () => 0,
     })
     await seed('00000000-0000-4000-8000-000000000001', 'en-US')
@@ -150,28 +150,6 @@ test('已播种用户不重复创建任何记录', async () => {
       state: { seed: { seeded: true, project_id: 7, project_name: '旧项目' }, guide: { enabled: false } },
     })
     assert.deepEqual(await collectFiles(root), [])
-  } finally { await rm(root, { recursive: true, force: true }) }
-})
-
-test('可选惊喜 MP3 写入用户个人 Local 空间', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'gugu-seed-mp3-test-'))
-  const ownerId = '00000000-0000-4000-8000-000000000001'
-  try {
-    const db = fakePool()
-    const applySeed = createPostgresRegistrationSeedOperations(db.pool, { storageRoot: root })
-    const base = plan()
-    const withMp3: RegistrationSeedPlan = {
-      ...base,
-      files: [...base.files, {
-        space: 'personal', projectRef: null, displayName: 'synthetic-surprise',
-        ext: 'mp3', mimeType: 'audio/mpeg', data: Buffer.from('synthetic audio'),
-      }],
-    }
-    assert.equal(await applySeed(ownerId, withMp3), 'applied')
-    const files = await collectFiles(root)
-    const mp3 = files.find((file) => file.endsWith(path.join('个人文件', 'synthetic-surprise.mp3')))
-    assert.ok(mp3)
-    assert.equal(await readFile(mp3!, 'utf8'), 'synthetic audio')
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 

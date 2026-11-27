@@ -5,7 +5,7 @@
       <span class="pm-field-hint">{{ t(groupChatHint) }}</span>
     </div>
     <span class="pm-switch-wrap">
-      <ToggleSwitch size="sm" :model-value="groupChatEnabled" :aria-label="t('profileImUi.toggleGroupChat')"
+      <ToggleSwitch :model-value="groupChatEnabled" :aria-label="t('profileImUi.toggleGroupChat')"
         @update:model-value="emit('group-chat', $event)" />
       <span class="pm-switch-label" :class="{ on: groupChatEnabled }">{{ t(groupChatEnabled ? 'profileImUi.enabled' : 'profileImUi.disabled') }}</span>
     </span>
@@ -65,14 +65,14 @@
     <div class="pm-bot-group-row pm-bot-tools-row">
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.groupMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.groupMemoryHint') }}</span></div>
       <span class="pm-switch-wrap">
-        <ToggleSwitch size="sm" :model-value="groupMemoryEnabled" :aria-label="t('profileImUi.toggleGroupMemory')" @update:model-value="emit('group-memory', $event)" />
+        <ToggleSwitch :model-value="groupMemoryEnabled" :aria-label="t('profileImUi.toggleGroupMemory')" @update:model-value="emit('group-memory', $event)" />
         <span class="pm-switch-label" :class="{ on: groupMemoryEnabled }">{{ t(groupMemoryEnabled ? 'profileImUi.enabled' : 'profileImUi.disabled') }}</span>
       </span>
     </div>
     <div class="pm-bot-group-row pm-bot-tools-row">
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.memberMemory') }}</span><span class="pm-field-hint">{{ t('profileImUi.memberMemoryHint') }}</span></div>
       <span class="pm-switch-wrap">
-        <ToggleSwitch size="sm" :model-value="memberMemoryEnabled" :aria-label="t('profileImUi.toggleMemberMemory')" @update:model-value="emit('member-memory', $event)" />
+        <ToggleSwitch :model-value="memberMemoryEnabled" :aria-label="t('profileImUi.toggleMemberMemory')" @update:model-value="emit('member-memory', $event)" />
         <span class="pm-switch-label" :class="{ on: memberMemoryEnabled }">{{ t(memberMemoryEnabled ? 'profileImUi.enabled' : 'profileImUi.disabled') }}</span>
       </span>
     </div>
@@ -179,12 +179,12 @@ const toolOptions = [
 
 <style scoped>
 .pm-help-anchor { position: relative; }
-.pm-help-row { display: inline-flex; align-items: baseline; gap: 4px; }
+.pm-help-row { display: inline-flex; align-items: baseline; gap: var(--space-xs); }
 .pm-help-toggle {
   white-space: nowrap;
   background: none;
   border: none;
-  padding: 0 2px;
+  padding: 0 var(--space-xs);
   margin: 0;
   cursor: pointer;
   font-size: 12px;
@@ -205,8 +205,8 @@ const toolOptions = [
 .pm-help-toggle:focus { outline: none; }
 .pm-help-toggle:focus-visible { outline: 2px solid var(--action-outline); outline-offset: 2px; border-radius: 2px; }
 .pm-help-toggle:active { transform: none; opacity: 1; }
-.pm-help-pop { width: max-content; max-width: 300px; padding: 10px 12px; color: var(--popup-item-fg); }
-.pm-help-pop-title { font-size: 12px; font-weight: 700; color: var(--content-primary); margin-bottom: 6px; }
+.pm-help-pop { width: max-content; max-width: 300px; padding: var(--space-sm) var(--space-md); color: var(--popup-item-fg); }
+.pm-help-pop-title { font-size: 12px; font-weight: 700; color: var(--content-primary); margin-bottom: var(--space-xs); }
 .pm-help-pop-step { font-size: 12px; color: var(--content-secondary); line-height: 1.7; }
-.pm-help-pop-note { margin-top: 6px; font-size: 11px; color: var(--popup-item-fg-muted); border-top: 1px solid var(--popup-divider); padding-top: 6px; line-height: 1.6; }
+.pm-help-pop-note { margin-top: var(--space-xs); font-size: 11px; color: var(--popup-item-fg-muted); border-top: 1px solid var(--popup-divider); padding-top: var(--space-xs); line-height: 1.6; }
 </style>

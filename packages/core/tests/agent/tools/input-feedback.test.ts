@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
-import { createProjectTool } from '../../../src/agent/tools/projects.js'
+import { createProjectTool } from '../../../src/agent/tools/projects/index.js'
 import { PROJECT_COLOR_PRESETS } from '../../../src/projects/colors.js'
 import type { ToolDefinition, ToolScope } from '../../../src/agent/tools/contracts.js'
 import type { ToolResult } from '../../../src/agent/models.js'

@@ -1,62 +1,37 @@
-import { activeProjectWorkspace } from './migrations/0044_active_project_workspace.js'
-import { projectWorkspaces } from './migrations/0037_project_workspaces.js'
-import { removeFolderIds } from './migrations/0038_remove_folder_ids.js'
-import { scheduledTaskFilePaths } from './migrations/0039_scheduled_task_file_paths.js'
-import { projectUndoPaths } from './migrations/0040_project_undo_paths.js'
-import { chatFilePaths } from './migrations/0041_chat_file_paths.js'
-import { filePathsAsKey } from './migrations/0042_file_paths_as_key.js'
-import { filesPathColumn } from './migrations/0043_files_path_column.js'
-import { restoreFileQuotas } from './migrations/0045_restore_file_quotas.js'
-import { imInboundQueue } from './migrations/0046_im_inbound_queue.js'
-import { repairIdentitySequences } from './migrations/0047_repair_identity_sequences.js'
-import { subagentSessionInbox } from './migrations/0036_subagent_session_inbox.js'
-import { subagentExecutions } from './migrations/0035_subagent_executions.js'
-import { subagentContinuations } from './migrations/0034_subagent_continuations.js'
 import type { Pool } from 'pg'
 import type { MigrationAction } from '../shared/command.js'
-import { initialize } from './migrations/0001_initialize.js'
-import { webDomain } from './migrations/0002_web_domain.js'
-import { agentRun } from './migrations/0003_agent_run.js'
-import { agentSnapshots } from './migrations/0004_agent_snapshots.js'
-import { filesystemAuthorization } from './migrations/0005_filesystem_authorization.js'
-import { securityEvents } from './migrations/0006_security_events.js'
-import { terminalSessions } from './migrations/0007_terminal_sessions.js'
-import { interactionActions } from './migrations/0008_interaction_actions.js'
-import { trashPurge } from './migrations/0009_trash_purge.js'
-import { searchUsage } from './migrations/0010_search_usage.js'
-import { ragIndex } from './migrations/0011_rag_index.js'
-import { agentReasoning } from './migrations/0012_agent_reasoning.js'
-import { imGateway } from './migrations/0013_im_gateway.js'
-import { imReflection } from './migrations/0014_im_reflection.js'
-import { dataPortability } from './migrations/0015_data_portability.js'
-import { providerCredentials } from './migrations/0016_provider_credentials.js'
-import { mcp } from './migrations/0017_mcp.js'
-import { fileSync } from './migrations/0018_file_sync.js'
-import { accountRecords } from './migrations/0019_account_records.js'
-import { memory } from './migrations/0020_memory.js'
-import { byokBindings } from './migrations/0021_byok_bindings.js'
-import { scheduledTaskMode } from './migrations/0022_scheduled_task_mode.js'
-import { calendarReminderMode } from './migrations/0023_calendar_reminder_mode.js'
-import { webPush } from './migrations/0024_web_push.js'
-import { webReflection } from './migrations/0025_web_reflection.js'
-import { reflectionCompaction } from './migrations/0026_reflection_compaction.js'
-import { imPrivateStreaming } from './migrations/0027_im_private_streaming.js'
-import { subagentDeliveries } from './migrations/0028_subagent_deliveries.js'
-import { subagentSessions } from './migrations/0029_subagent_sessions.js'
-import { subagentLaunches } from './migrations/0030_subagent_launches.js'
-import { subagentWaits } from './migrations/0031_subagent_waits.js'
-import { subagentConversations } from './migrations/0033_subagent_conversations.js'
-import { agentInbox } from './migrations/0032_agent_inbox.js'
-import { runPostgresMigrations } from './runner.js'
+import { postgresBaselineSql, postgresBaselineTables, postgresBaselineFunctions } from '../migrations/baseline/postgres-schema.js'
+import { conversationRoleSequenceIndex } from '../migrations/0049_conversation_role_sequence.js'
+import { logicalMigrations } from '../migrations/catalog.js'
+import { compileLogicalMigrations, type LogicalMigration } from '../migrations/plan.js'
+import { definePostgresMigration, runPostgresMigrations } from './runner.js'
 
-const catalog = [
-  initialize, webDomain, agentRun, agentSnapshots, filesystemAuthorization, securityEvents,
-  terminalSessions, interactionActions, trashPurge, searchUsage, ragIndex,
-  agentReasoning, imGateway, imReflection, dataPortability, providerCredentials, mcp, fileSync, accountRecords, memory, byokBindings, scheduledTaskMode, calendarReminderMode, webPush, webReflection, reflectionCompaction, imPrivateStreaming, subagentDeliveries, subagentSessions, subagentLaunches, subagentWaits, agentInbox, subagentConversations, subagentContinuations, subagentExecutions, subagentSessionInbox, projectWorkspaces, removeFolderIds, scheduledTaskFilePaths, projectUndoPaths, chatFilePaths, filePathsAsKey, filesPathColumn, activeProjectWorkspace, restoreFileQuotas, imInboundQueue, repairIdentitySequences,
-]
+const baseline = definePostgresMigration({
+  revision: '0000_baseline',
+  sql: postgresBaselineSql,
+  tables: postgresBaselineTables,
+  functions: postgresBaselineFunctions,
+  downstreamIndexes: [conversationRoleSequenceIndex],
+  downstreamStages: [{ revision: '0052_contact_address', addedFields: ['clients.address'] }],
+})
+
+export const checkPostgresBaseline = baseline.check
+
+export function definePostgresLogicalMigrations(items: readonly LogicalMigration[]) {
+  return compileLogicalMigrations('postgres', items).map(item => definePostgresMigration({
+    revision: item.id, sql: item.checksumInput, statements: item.statements,
+    tables: item.tables ?? [], createdObjects: item.createdObjects,
+    indexes: item.indexes, prerequisites: item.prerequisites,
+  }))
+}
+
+const shared = definePostgresLogicalMigrations(logicalMigrations)
 
 export function migratePostgres(pool: Pick<Pool, 'connect'>, action: MigrationAction) {
-  return runPostgresMigrations(pool, action, catalog)
+  return runPostgresMigrations(pool, action, [baseline, ...shared])
 }
 
 export { PostgresMigrationError } from './runner.js'
+
+/** 宿主管理独立迁移目录。连接的当前 schema 决定迁移账本所在位置。 */
+export { definePostgresMigration, runPostgresMigrations }

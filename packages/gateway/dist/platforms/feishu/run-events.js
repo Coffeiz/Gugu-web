@@ -15,6 +15,7 @@ export function createFeishuRunEventProjector(options = {}) {
                         ...(typeof payload.toolCallId === 'string' ? { toolCallId: payload.toolCallId } : {}),
                         ...(typeof payload.name === 'string' ? { name: payload.name, label: resolveImToolLabel(payload.name, payload.display, undefined, options.toolSummary?.locale) } : {}),
                         ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
+                        ...('display' in payload ? { display: payload.display } : {}),
                         ...('result' in payload ? { result: payload.result } : {}),
                     }];
             if (event.type === 'round_end')

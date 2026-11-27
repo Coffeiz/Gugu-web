@@ -3,7 +3,8 @@
        只传其一的旧调用方维持原 (…,0) 行为不变 -->
   <PopupMenu :show="show" :anchor="anchor"
     :position="x == null && y == null ? null : { x: x ?? 0, y: y ?? 0 }"
-    popup-class="ctx-menu popup-menu">
+    :placement="compact ? 'auto' : 'bottom'"
+    :popup-class="compact ? 'ctx-menu popup-menu ctx-menu--compact' : 'ctx-menu popup-menu'">
         <slot />
   </PopupMenu>
 </template>
@@ -15,6 +16,7 @@ import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 
 const props = defineProps({
   show: Boolean,
+  compact: Boolean,
   x: Number,
   y: Number,
   anchor: { type: Object as () => HTMLElement | null, default: null },
@@ -82,6 +84,7 @@ onUnmounted(() => {
   max-width: calc(100dvw - 12px);
   box-sizing: border-box;
 }
+:global(.ctx-menu.ctx-menu--compact) { min-width: 0; }
 /* 到达视口宽度上限时才换行，文案较长时仍保留完整选项。 */
 :global(.ctx-menu .popup-menu-item) {
   white-space: normal;

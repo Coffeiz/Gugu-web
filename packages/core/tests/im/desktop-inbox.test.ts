@@ -1,3 +1,5 @@
+import { createSqliteInboundStore } from '../../src/im/desktop-inbox-store.js'
+import { assertInboundRecordContract } from './inbox-contract.js'
 import { applyReflectionFileWrite } from '../../src/agent/memory/reflection/window.js'
 import { createDesktopGroupContextSearch } from '../../src/im/desktop-group-context.js'
 import { createDesktopChatAttachmentStore } from '../../src/agent/attachments/desktop-store.js'
@@ -51,7 +53,11 @@ it('重启后为同一收件恢复原会话和消息标识，隔离其他连接'
     opened = await openSqliteRuntime(path)
     const connection = { platform: 'telegram', connectionId: 'a'.repeat(64) }
     const event = { ...connection, eventKey: 'event-1', sealedEvent: 'AQ==' }
-    await expect(admitDesktopImEvent(opened.runtime.db, opened.ownerId, event)).resolves.toBe(true)
+    const scope = { ...connection, ownerId: opened.ownerId.replaceAll('-', '') }
+    const store = createSqliteInboundStore(opened.runtime.db)
+    await assertInboundRecordContract(() => store.recordInbound({ ...scope, eventKey: event.eventKey,
+      clientId: 'synthetic-test-client', payload: Buffer.from(event.sealedEvent, 'base64') }))
+    expect(await store.resumeDelivery(scope)).toBeNull()
     await opened.runtime.close()
     opened = await openSqliteRuntime(path)
     const first = await prepareDesktopImEvent(opened.runtime.db, opened.ownerId, connection)
@@ -73,6 +79,9 @@ it('重启后为同一收件恢复原会话和消息标识，隔离其他连接'
     expect(await prepareDesktopImEvent(opened.runtime.db, opened.ownerId, connection)).toMatchObject({
       runId: admitted.identity.runId,
     })
+    const recoveredStore = createSqliteInboundStore(opened.runtime.db)
+    expect(await recoveredStore.claimInbound(scope)).toBeNull()
+    expect(await recoveredStore.resumeDelivery(scope)).toMatchObject({ run_id: admitted.identity.runId })
     const admissions = await sql<{ run_id: string }>`SELECT run_id FROM agent_run_admissions
       WHERE session_id=${first.sessionId}`.execute(opened.runtime.db)
     expect(admissions.rows).toEqual([{ run_id: admitted.identity.runId }])
@@ -94,6 +103,24 @@ it('重启后为同一收件恢复原会话和消息标识，隔离其他连接'
     expect(await desktopImPrompt(db, opened.ownerId, { ...prompt, action: 'settle', messageId: lookup.messageId })).toBe(true)
     expect(await desktopImPrompt(db, opened.ownerId, { ...lookup, messageId: 'other' })).toBeNull()
     expect(await desktopImPrompt(db, opened.ownerId, lookup)).toEqual({ sessionId: first.sessionId, runId: key.runId })
+    const textKey = 'f'.repeat(64)
+    const textLookup = { ...connection, action: 'lookup-text', eventKey: textKey }
+    expect(await desktopImPrompt(db, opened.ownerId, textLookup)).toBeNull()
+    const choiceSchema = { source: 'agent', context: { tool_name: 'ask_user' }, allow_text_input: true,
+      options: [{ id: 'one' }, { id: '__custom_reply__' }], custom_input_active: true }
+    await sql`UPDATE interaction_prompts SET kind='choice',
+      schema_json=${JSON.stringify({ ...choiceSchema, custom_input_active: false })} WHERE id=1`.execute(db)
+    expect(await desktopImPrompt(db, opened.ownerId, textLookup)).toBeNull()
+    await sql`UPDATE interaction_prompts SET kind='question',
+      schema_json=${JSON.stringify({ ...choiceSchema, custom_input_active: false, options: [{ id: '__custom_reply__' }] })} WHERE id=1`.execute(db)
+    expect(await desktopImPrompt(db, opened.ownerId, textLookup)).toMatchObject({ promptId: 1, replayed: 0 })
+    await sql`UPDATE interaction_prompts SET kind='choice', schema_json=${JSON.stringify(choiceSchema)} WHERE id=1`.execute(db)
+    expect(await desktopImPrompt(db, opened.ownerId, textLookup)).toEqual({ sessionId: first.sessionId, runId: key.runId, promptId: 1, replayed: 0 })
+    expect(await desktopImPrompt(db, opened.ownerId, { ...textLookup, connectionId: 'c'.repeat(64) })).toBeNull()
+    await sql`UPDATE interaction_prompts SET status='resolved',
+      schema_json=${JSON.stringify({ ...choiceSchema, desktop_text_event_id: textKey })} WHERE id=1`.execute(db)
+    expect(await desktopImPrompt(db, opened.ownerId, textLookup)).toMatchObject({ replayed: 1 })
+    expect(await desktopImPrompt(db, opened.ownerId, { ...textLookup, eventKey: 'e'.repeat(64) })).toBeNull()
     const projection = { ...key, key: 'qq:0:1:1:frame', fingerprint: 'a'.repeat(64) }
     expect(await desktopImProjection(db, opened.ownerId, { ...projection, action: 'read' })).toEqual({ version: 0, state: null })
     expect(await desktopImProjection(db, opened.ownerId, { ...projection, action: 'checkpoint', version: 0, state: 'AQ==' })).toBe(1)
@@ -132,6 +159,8 @@ it('重启后为同一收件恢复原会话和消息标识，隔离其他连接'
     expect(await desktopImProjection(opened.runtime.db, opened.ownerId, { ...projection, action: 'read' })).toEqual({ version: 3, state: firstChunk.repeat(3) + 'Ag==' })
     expect(await updateDesktopImDelivery(opened.runtime.db, opened.ownerId, { ...notice, action: 'begin' })).toBe(false)
     expect(await updateDesktopImDelivery(opened.runtime.db, opened.ownerId, { ...notice, action: 'unknown' })).toBe(true)
+    const nextEvent = { ...event, eventKey: 'event-2' }
+    expect(await admitDesktopImEvent(opened.runtime.db, opened.ownerId, nextEvent)).toBe(true)
     expect(await prepareDesktopImEvent(opened.runtime.db, opened.ownerId, connection)).toMatchObject({ runId: key.runId })
     expect(await updateDesktopImDelivery(opened.runtime.db, opened.ownerId, { ...key, runId: 'other', action: 'begin' })).toBe(false)
     expect(await updateDesktopImDelivery(opened.runtime.db, opened.ownerId, { ...key, action: 'begin' })).toBe(true)
@@ -139,7 +168,8 @@ it('重启后为同一收件恢复原会话和消息标识，隔离其他连接'
     opened = await openSqliteRuntime(path)
     expect(await updateDesktopImDelivery(opened.runtime.db, opened.ownerId, { ...key, action: 'begin' })).toBe(false)
     expect(await updateDesktopImDelivery(opened.runtime.db, opened.ownerId, { ...key, action: 'unknown' })).toBe(true)
-    expect(await prepareDesktopImEvent(opened.runtime.db, opened.ownerId, connection)).toBeNull()
+    expect(await prepareDesktopImEvent(opened.runtime.db, opened.ownerId, connection)).toMatchObject({ eventKey: nextEvent.eventKey, runId: null })
+    expect(await rejectDesktopImEvent(opened.runtime.db, opened.ownerId, nextEvent)).toBe(true)
     await admitDesktopImEvent(opened.runtime.db, opened.ownerId, { ...event, eventKey: 'invalid' })
     await admitDesktopImEvent(opened.runtime.db, opened.ownerId, { ...event, eventKey: 'next' })
     expect(await rejectDesktopImEvent(opened.runtime.db, opened.ownerId, { ...connection, eventKey: 'invalid' })).toBe(true)
@@ -159,7 +189,7 @@ it('桌面收件与附件暂存原子提交，重复收件不创建附件', asyn
     try {
       const connection = { platform: 'telegram', connectionId: 'a'.repeat(64) }
       const event = { ...connection, eventKey: 'event-1', sealedEvent: 'AQ==', sourceMessageId: '10:20:30' }
-      const attachment = { attachId: 'a'.repeat(32), name: '测试', ext: 'png', mime: 'image/png', size: 100, voice: false, sourceIndex: 0 }
+      const attachment = { attachId: 'a'.repeat(32), name: '测试', ext: 'png', mime: 'image/png', size: 100, voice: false, sourceIndex: 0, quoted: true }
       await expect(admitDesktopImEvent(runtime.db, ownerId, { ...event,
         attachments: [attachment, { ...attachment, attachId: 'invalid' }] })).rejects.toMatchObject({ code: 'invalid_request' })
       expect(await prepareDesktopImEvent(runtime.db, ownerId, connection)).toBeNull()
@@ -185,6 +215,10 @@ it('桌面收件与附件暂存原子提交，重复收件不创建附件', asyn
         session_id: prepared.sessionId, message: '测试', client_message_id: prepared.clientId, attachments: [attachment.attachId],
       })
       expect(await store.forSession(ownerId, prepared.sessionId)).toEqual([attachment.attachId])
+      const { rows: [message] } = await sql<{ files: string }>`SELECT files FROM conversation_messages
+        WHERE session_id=${prepared.sessionId} AND client_message_id=${prepared.clientId}`.execute(runtime.db)
+      expect(JSON.parse(message!.files)).toMatchObject([{ attach_id: attachment.attachId, quoted: true }])
+
       expect(await readDesktopImAttachmentReference(runtime.db, ownerId, reference)).toMatchObject({ attachId: attachment.attachId })
       await sql`UPDATE conversation_sessions SET chat_type=NULL WHERE id=${prepared.sessionId}`.execute(runtime.db)
       const { rows: [previous] } = await sql<{ id: number }>`

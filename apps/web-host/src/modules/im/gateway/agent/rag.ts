@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
-import { configureRagJieba, createScopedRagSearch, createSqlMemoryScopeStateReader, createSqlRagPersistentIndexReader, prepareMemory,
+import { automaticRagSources, prepareAutomaticRagCorpus, createScopedRagSearch, createSqlMemoryScopeStateReader, createSqlRagPersistentIndexReader, prepareMemory,
   type AuthorizedMemoryScope, type RagDocument, type RagSearchScope } from '@gugu/core/agent/rag'
 import type { ContextSourceSelection, HistoryIdentity, PersistedHistoryRow, RagContext } from '@gugu/core/agent'
 import type { SqlDataRuntime } from '@gugu/core/data'
@@ -8,12 +8,10 @@ import { type ImActor, type ImBotAccess } from '@gugu/core/im/access'
 import { imCanUseGroupOwnerMemory, imContextPolicy } from '@gugu/core/agent/scenes/im'
 import { agentDispatchSource, type AgentDispatchLease } from '../../../agent/run/dispatch.js'
 import { createLocalAgentMemoryRagStore } from '../../../agent/rag/memory.js'
-import { getAgentRagJieba } from '../../../agent/rag/jieba.js'
 import type { createPostgresImAccess } from '../inbound/access.js'
 
 type Input = HistoryIdentity & { query: string; history: readonly PersistedHistoryRow[]; beforeMessageId: string | null; snapshotText: string }
 type Scope = { label: string; scope: RagSearchScope; memory: AuthorizedMemoryScope; revision?: string }
-const sources = ['memory', 'project', 'calendar', 'scheduled_task', 'conversation', 'canvas', 'knowledge', 'note']
 const hash = (text: string) => createHash('sha256').update(text.trim()).digest('hex')
 const key = (scope: RagSearchScope) => JSON.stringify([scope.scope_type, scope.scope_id ?? '', scope.platform ?? '', scope.bot_id ?? '', scope.group_id ?? ''])
 const invalid = () => new Error('IM 自动检索授权或消息水位不可用')
@@ -36,7 +34,6 @@ export function createPostgresImRagContextBuilder(options: {
   const anchorIds = lease.input.im.batch?.messageIds ?? [lease.input.userMessageId]
   const index = createSqlRagPersistentIndexReader(options.core.db, options.core.backend)
   const scopeState = createSqlMemoryScopeStateReader(options.core.db), storage = createLocalAgentMemoryRagStore(options.storageRoot)
-  configureRagJieba(getAgentRagJieba())
   async function current(signal?: AbortSignal) {
     signal?.throwIfAborted()
     if (!await options.access.authorizeDelivery(actor, bot)) throw invalid()
@@ -140,7 +137,12 @@ export function createPostgresImRagContextBuilder(options: {
       if (input.beforeMessageId !== String(active.before)) throw invalid()
       if (!active.scopes.length) return empty('no_eligible_scope') // 禁止空scope触发Memory loader的owner默认。
       const allowed = new Set(active.scopes.map(item => key(item.scope)))
-      const search = createScopedRagSearch({ index, async authorize(owner, scope, checkSignal) {
+      const scopes = active.scopes.map(item => item.scope)
+      const corpus = prepareAutomaticRagCorpus({
+        db: options.core.db, index, ownerId: identity.ownerId, scopes,
+      })
+      if (!corpus.ready) return corpus.context
+      const search = createScopedRagSearch({ index, lexicalCorpus: corpus.lexicalCorpus, async authorize(owner, scope, checkSignal) {
         if (owner !== identity.ownerId || !allowed.has(key(scope))) return false
         const latest = await current(checkSignal)
         return latest.before === active.before && latest.sequence === active.sequence && latest.scopes.some(item => key(item.scope) === key(scope)
@@ -152,7 +154,7 @@ export function createPostgresImRagContextBuilder(options: {
         if (typeof block.content_hash === 'string') excluded.add(block.content_hash)
         if (Array.isArray(block.content_hashes)) for (const value of block.content_hashes) if (typeof value === 'string') excluded.add(value)
       }
-      const result = await search(identity.ownerId, active.scopes.map(item => item.scope), input.query.trim(), { sourceTypes: sources, limit: 5, beforeMessageId: active.before, selectionMode: 'confidence', excludeContentHashes: [...excluded] }, signal)
+      const result = await search(identity.ownerId, scopes, input.query.trim(), { sourceTypes: automaticRagSources, limit: 5, beforeMessageId: active.before, selectionMode: 'confidence', excludeContentHashes: [...excluded] }, signal)
       const diagnostics = {
         engine: result.fusion,
         vector_doc_count: result.vectorDocCount,

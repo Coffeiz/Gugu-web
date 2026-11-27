@@ -62,15 +62,11 @@ describe('i18n locale policy', () => {
       }
     }
   }, 30_000)
-  it('模型级推理状态选项在三个语言包中都使用公共 llmExtraUi 文案', () => {
+  it('模型思考设置在三个语言包中使用公共文案', () => {
     for (const locale of ['zh-CN', 'ja-JP', 'en-US'] as const) {
       const scope = (messages[locale] as unknown as Record<string, Record<string, string>>).llmExtraUi
       expect(scope.thinkingHint).not.toBe('llmExtraUi.thinkingHint')
       expect(scope.keepUnchanged).not.toBe('llmExtraUi.keepUnchanged')
-      expect(scope.reasoningPersistence).not.toBe('llmExtraUi.reasoningPersistence')
-      expect(scope.reasoningPersistenceHint).not.toBe('llmExtraUi.reasoningPersistenceHint')
-      expect(scope.reasoningOff).not.toBe('llmExtraUi.reasoningOff')
-      expect(scope.reasoningContinuation).not.toBe('llmExtraUi.reasoningContinuation')
     }
   })
   it('Admin 模型图片细节选项在三个语言包中都有文案', () => {

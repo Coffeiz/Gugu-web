@@ -41,7 +41,7 @@
 }
 .md-preview .np-tasks li,
 .ne-body .ProseMirror ul[data-type="taskList"] li {
-  display: flex; align-items: flex-start; gap: 8px;
+  display: flex; align-items: flex-start; gap: var(--space-sm);
 }
 .md-preview .np-tasks li.done > span,
 .ne-body .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
@@ -51,7 +51,7 @@
 .md-preview .np-tasks input,
 .ne-body .ProseMirror ul[data-type="taskList"] input[type="checkbox"] {
   width: var(--control-checkbox-size); height: var(--control-checkbox-size);
-  margin-top: 3px; flex-shrink: 0; cursor: pointer;
+  margin-top: var(--space-xs); flex-shrink: 0; cursor: pointer;
 }
 .ne-body .ProseMirror ul[data-type="taskList"] li > label { display: flex; }
 .ne-body .ProseMirror ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
@@ -65,14 +65,14 @@
 }
 .md-preview .np-list li,
 .ne-body .ProseMirror ul:not([data-type="taskList"]) li {
-  display: flex; align-items: flex-start; gap: 8px; margin: 0.1em 0;
+  display: flex; align-items: flex-start; gap: var(--space-sm); margin: 0.1em 0;
 }
 .ne-body .ProseMirror ul:not([data-type="taskList"]) li > div { flex: 1; min-width: 0; }
 .ne-body .ProseMirror ul:not([data-type="taskList"]) li > div p { margin: 0; }
 
 /* 圆点标记：跟 checkbox 共用宽度令牌，预览/编辑态用同一个类名，一条规则两边都生效 */
 .mind-dot {
-  flex-shrink: 0; width: 14px; margin-top: 3px;
+  flex-shrink: 0; width: 14px; margin-top: var(--space-xs);
   text-align: center; line-height: 1; color: var(--text-secondary);
 }
 
@@ -83,10 +83,6 @@
 .md-preview strong, .ne-body .ProseMirror strong { font-weight: 700; }
 .md-preview em, .ne-body .ProseMirror em { font-style: italic; }
 .md-preview s, .ne-body .ProseMirror s { text-decoration: line-through; opacity: 0.75; }
-.md-preview code:not(pre code), .ne-body .ProseMirror code:not(pre code) {
-  padding: 1px 5px; border-radius: 4px;
-  background: color-mix(in srgb, var(--action-primary) 12%, transparent); font-size: 0.92em;
-}
 .md-preview a, .ne-body .ProseMirror a {
   color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px;
   cursor: pointer;
@@ -101,12 +97,12 @@
 }
 .md-preview .np-ordered li,
 .ne-body .ProseMirror ol li {
-  display: flex; align-items: flex-start; gap: 8px; margin: 0.1em 0;
+  display: flex; align-items: flex-start; gap: var(--space-sm); margin: 0.1em 0;
   counter-increment: mind-ol;
 }
 .md-preview .np-ordered li::before,
 .ne-body .ProseMirror ol li::before {
-  content: counter(mind-ol) '.'; flex-shrink: 0; min-width: 14px; margin-top: 3px;
+  content: counter(mind-ol) '.'; flex-shrink: 0; min-width: 14px; margin-top: var(--space-xs);
   text-align: right; line-height: 1; color: var(--text-secondary); font-variant-numeric: tabular-nums;
 }
 .ne-body .ProseMirror ol li > div { flex: 1; min-width: 0; }
@@ -116,7 +112,7 @@
    允许多段（每段一行，中间不留空行——跟待办/列表"一项一行"是同一个模型）。 */
 .md-preview .np-quote,
 .ne-body .ProseMirror blockquote {
-  padding: 2px 0 2px 12px;
+  padding: var(--space-xs) 0 var(--space-xs) var(--space-md);
   border-left: 3px solid color-mix(in srgb, var(--action-primary) 35%, transparent);
   color: var(--text-secondary);
 }
@@ -142,14 +138,14 @@
 }
 .md-preview .np-code-lang,
 .ne-body .ProseMirror .ne-codeblock-lang {
-  padding: 4px 12px; font-size: 10px; font-weight: 600;
+  padding: var(--space-xs) var(--space-md); font-size: 10px; font-weight: 600;
   color: var(--text-secondary); opacity: 0.8; text-transform: lowercase; letter-spacing: 0.03em;
   border-bottom: 1px solid color-mix(in srgb, var(--action-primary) 14%, transparent);
   user-select: none;
 }
 .md-preview .np-code,
 .ne-body .ProseMirror .ne-codeblock pre {
-  padding: 8px 12px; margin: 0;
+  padding: var(--space-sm) var(--space-md); margin: 0;
   font-family: var(--font-family-mono);
   font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
 }
@@ -215,8 +211,8 @@
    点击可交互（项目跳详情/文件预览下载/活动编辑，见 NoteCard.vue、NoteEditor.vue 的
    useMindRefActions 调用）——cursor:pointer + hover 加深，跟按钮同一套反馈语言。 */
 .mind-ref {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 0 6px; margin: 0 1px; border-radius: 5px;
+  display: inline-flex; align-items: center; gap: var(--space-xs);
+  padding: 0 var(--space-xs); margin: 0 var(--space-xs); border-radius: 5px;
   background: color-mix(in srgb, var(--action-primary) 14%, transparent);
   color: #5b5f8c; font-size: 12.5px; font-weight: 500;
   cursor: pointer; max-width: 100%; box-sizing: border-box;
@@ -239,3 +235,34 @@
    长串），但那条规则救不到这里——nowrap 的优先级比 overflow-wrap 高，继承下来也没用，
    得在 label 自己身上显式允许换行。 */
 .mind-ref-label { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+
+
+/* 笔记和便签的表格在正文内横向滚动，保持阅读与编辑的单元格样式一致。 */
+:is(.md-preview .mind-table-scroll, .ne-body .tableWrapper) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+:is(.md-preview, .ne-body .ProseMirror) table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: .9em;
+}
+:is(.md-preview, .ne-body .ProseMirror) :is(th, td) {
+  min-width: 4em;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border-document-table);
+  vertical-align: top;
+}
+:is(.md-preview, .ne-body .ProseMirror) th {
+  background: var(--surface-soft);
+  font-weight: 600;
+  text-align: start;
+}
+.md-preview th[align='center'] { text-align: center; }
+.md-preview th[align='right'] { text-align: right; }
+:is(.md-preview, .ne-body .ProseMirror) tr:nth-child(even) td {
+  background: var(--surface-soft-hover);
+}
+.ne-body .ProseMirror .selectedCell {
+  background: var(--selection-bg);
+}

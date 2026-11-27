@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { ToolDefinition, ToolScope } from '../../../src/agent/tools/contracts.js'
-import { createProjectTool } from '../../../src/agent/tools/projects.js'
+import { createProjectTool } from '../../../src/agent/tools/projects/index.js'
 
 const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }
 function setup(effect: 'read' | 'write' = 'read', destructive = false) {

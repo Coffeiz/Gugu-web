@@ -2,10 +2,10 @@ import type { FastifyInstance } from 'fastify'
 import type { Pool } from 'pg'
 import type { UserFromRequest } from '../../../app.js'
 import { normalizeOwnerId } from '../../../shared/owner-context.js'
-import type { ScheduledTaskTestNotificationPlan } from '@gugu/core/scheduled-task-test-notify'
-import { parseScheduledTaskDeliveryTarget } from '@gugu/core/scheduled-task-run-now-read'
+import type { ScheduledTaskTestNotificationPlan } from '@gugu/scheduler/tasks'
+import { parseScheduledTaskDeliveryTarget } from '@gugu/core/tasks/execution-read'
 import type { EmailAttachmentReferences } from '@gugu/core/email/smtp-test'
-import type { AssertScheduledTaskLease } from '@gugu/core/scheduled-task-runner'
+import type { AssertScheduledTaskLease } from '@gugu/scheduler'
 
 type GroupRow = { chat_id: string; title: string | null }
 

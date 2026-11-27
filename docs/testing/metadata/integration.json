@@ -138,8 +138,8 @@
   "packages/core/tests/integration/postgres/scheduled-task-delete.test.ts": {
     "domain": "scheduled-tasks",
     "layer": "L2",
-    "owner": "packages/core/src/scheduled-tasks",
-    "productionEntry": "packages/core/src/scheduled-tasks/task-delete.ts",
+    "owner": "packages/scheduler/src/tasks",
+    "productionEntry": "packages/scheduler/src/tasks/task-delete.ts",
     "keyBehavior": "双库任务显式删除归属隔离、并发和提交后通知",
     "ci": "core-node"
   },

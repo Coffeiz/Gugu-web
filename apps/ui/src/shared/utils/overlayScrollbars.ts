@@ -7,6 +7,7 @@ const SCROLL_SURFACE_SELECTOR = [
 
 const HOST_CLASS = 'overlay-scroll-host'
 const THUMB_ATTRIBUTE = 'data-overlay-scrollbar-thumb'
+const SCROLLBAR_LAYOUT_OWNER = '.kanban, .chat-window, .drawer-shell, .bm-card, .notif-popup, .gs-panel, .nb-item, .popup-menu-host, [data-overlay-scrollbar-owner]'
 const TRACK_INSET_HEADER_SELECTOR = ':scope > [data-scrollbar-inset-header]'
 
 type ScrollBinding = {
@@ -23,12 +24,30 @@ type ScrollBinding = {
 
 const bindings = new WeakMap<HTMLElement, ScrollBinding>()
 
+function scrollbarOwner(element: HTMLElement): HTMLElement | null {
+  for (let parent = element.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+    if (parent.matches(SCROLLBAR_LAYOUT_OWNER)) return parent
+    const style = getComputedStyle(parent)
+    // 有独立层叠上下文的区域必须保留自己的滑块，不能把它提升到 body。
+    const positionedLayer = style.zIndex !== 'auto' && (style.position !== 'static'
+      || /flex|grid/u.test(getComputedStyle(parent.parentElement ?? document.body).display))
+    const hasEffect = [style.transform, style.translate, style.rotate, style.scale, style.filter, style.backdropFilter, style.perspective]
+      .some(value => value && value !== 'none')
+    if (style.isolation === 'isolate' || style.position === 'fixed' || style.position === 'sticky'
+      || positionedLayer || hasEffect || (style.mixBlendMode && style.mixBlendMode !== 'normal')
+      || (style.opacity && Number(style.opacity) < 1)
+      || /\b(?:layout|paint|strict|content)\b/u.test(style.contain)) return parent
+  }
+  return null
+}
+
 function getTrackGeometry(element: HTMLElement, { thumb, owner }: ScrollBinding) {
   const rect = element.getBoundingClientRect()
-  const ownerRect = owner?.getBoundingClientRect()
+  const containingBlock = owner && thumb.offsetParent instanceof HTMLElement ? thumb.offsetParent : owner
+  const ownerRect = containingBlock?.getBoundingClientRect()
   // 宿主内的滑块使用宿主的布局坐标。开合缩放期间，先把屏幕上的距离换回布局距离。
-  const scaleX = owner && ownerRect && owner.offsetWidth ? ownerRect.width / owner.offsetWidth || 1 : 1
-  const scaleY = owner && ownerRect && owner.offsetHeight ? ownerRect.height / owner.offsetHeight || 1 : 1
+  const scaleX = containingBlock && ownerRect && containingBlock.offsetWidth ? ownerRect.width / containingBlock.offsetWidth || 1 : 1
+  const scaleY = containingBlock && ownerRect && containingBlock.offsetHeight ? ownerRect.height / containingBlock.offsetHeight || 1 : 1
   const styles = getComputedStyle(thumb)
   const baseInset = Math.max(0, parseFloat(styles.getPropertyValue('--scrollbar-overlay-track-inset')) || 0)
   const insetHeader = element.querySelector<HTMLElement>(TRACK_INSET_HEADER_SELECTOR)
@@ -48,27 +67,21 @@ function getTrackGeometry(element: HTMLElement, { thumb, owner }: ScrollBinding)
 function updateThumb(element: HTMLElement, binding: ScrollBinding) {
   const viewport = element.clientHeight
   const content = element.scrollHeight
-  const { top, right, height: track, minThumb } = getTrackGeometry(element, binding)
   const maxScroll = content - viewport
-
-  if (maxScroll <= 1 || track <= 1) {
+  binding.thumb.hidden = maxScroll <= 1
+  if (binding.thumb.hidden) return
+  const { top, right, height: track, minThumb } = getTrackGeometry(element, binding)
+  if (track <= 1) {
     binding.thumb.hidden = true
     return
   }
 
   const thumbHeight = Math.min(track, Math.max(minThumb, (viewport / content) * track))
   const maxOffset = Math.max(0, track - thumbHeight)
-  const offset = maxScroll > 0 ? (element.scrollTop / maxScroll) * maxOffset : 0
-  binding.thumb.hidden = false
+  const offset = (element.scrollTop / maxScroll) * maxOffset
   binding.thumb.style.height = `${thumbHeight}px`
   binding.thumb.style.top = `${top + offset}px`
   binding.thumb.style.right = `calc(${right}px - var(--scrollbar-overlay-right-offset))`
-
-  const modal = element.closest<HTMLElement>('.bm-center')
-  if (modal) {
-    const modalZ = Number.parseInt(getComputedStyle(modal).zIndex, 10)
-    if (Number.isFinite(modalZ)) binding.thumb.style.zIndex = String(modalZ + 1)
-  }
 }
 
 function bind(element: HTMLElement) {
@@ -81,7 +94,6 @@ function bind(element: HTMLElement) {
   if (element.classList.contains('scroll-surface--compact')) thumb.classList.add('overlay-scrollbar--compact')
   if (element.classList.contains('scroll-surface--editor')) thumb.classList.add('overlay-scrollbar--editor')
   if (element.classList.contains('col-body')) thumb.classList.add('overlay-scrollbar--column')
-  if (element.closest('.project-modal-root')) thumb.classList.add('overlay-scrollbar--modal')
   // Most offsets are owned by thumb variants (column/drawer). A specific scroll surface may opt in
   // through the same token; copy only non-zero surface values so the root 0px default does not
   // overwrite those thumb-variant contracts.
@@ -91,7 +103,7 @@ function bind(element: HTMLElement) {
   }
   // 独立浮层作为滚动宿主时，把滑块挂在宿主内部以共享层级并跟随其动画；
   // 否则滑块会挂到 body，可能被浮层遮挡或在浮层淡出后残留。
-  const owner = element.closest<HTMLElement>('.kanban, .chat-window, .drawer-shell, .bm-card, .notif-popup, .gs-panel, .nb-item, .popup-menu-host')
+  const owner = scrollbarOwner(element)
   if (owner) thumb.classList.add('overlay-scrollbar--owner')
   if (element.closest('.drawer-shell')) thumb.classList.add('overlay-scrollbar--drawer')
   if (element.closest('.notif-popup')) thumb.classList.add('overlay-scrollbar--notif')

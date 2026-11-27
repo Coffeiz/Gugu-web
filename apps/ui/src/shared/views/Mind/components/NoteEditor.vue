@@ -1,6 +1,40 @@
 <template>
   <div class="note-editor" ref="rootRef" :class="{ compact }">
+    <SelectionToolbar v-if="selectionSource" :read="readNoteSelection" />
     <div class="ne-body"><EditorContent v-if="editor" :editor="editor" /></div>
+
+    <PopupMenu ref="tablePopup" :show="!!editor && tableInView && !tableToolbarDismissed" :anchor="tableAnchor" placement="auto" popup-class="ne-table-popup" transparent>
+      <div v-if="editor" class="ne-toolbar ne-table-actions" role="group" :aria-label="t('mindEditorUi.tableActions')">
+        <button type="button" class="ne-tool" :title="t('mindEditorUi.addRow')"
+                :aria-label="t('mindEditorUi.addRow')"
+                :disabled="!editor.can().addRowAfter()"
+                @mousedown.prevent @click="editor.chain().focus().addRowAfter().run()">
+          <RiAddLine :size="14" aria-hidden="true" />
+          {{ t('mindEditorUi.addRow') }}
+        </button>
+        <button type="button" class="ne-tool" :title="t('mindEditorUi.deleteRow')"
+                :aria-label="t('mindEditorUi.deleteRow')"
+                :disabled="!editor.can().deleteRow()"
+                @mousedown.prevent @click="editor.chain().focus().deleteRow().run()">
+          <RiSubtractLine :size="14" aria-hidden="true" />
+          {{ t('mindEditorUi.deleteRow') }}
+        </button>
+        <button type="button" class="ne-tool" :title="t('mindEditorUi.addColumn')"
+                :aria-label="t('mindEditorUi.addColumn')"
+                :disabled="!editor.can().addColumnAfter()"
+                @mousedown.prevent @click="editor.chain().focus().addColumnAfter().run()">
+          <RiAddLine :size="14" aria-hidden="true" />
+          {{ t('mindEditorUi.addColumn') }}
+        </button>
+        <button type="button" class="ne-tool" :title="t('mindEditorUi.deleteColumn')"
+                :aria-label="t('mindEditorUi.deleteColumn')"
+                :disabled="!editor.can().deleteColumn()"
+                @mousedown.prevent @click="editor.chain().focus().deleteColumn().run()">
+          <RiSubtractLine :size="14" aria-hidden="true" />
+          {{ t('mindEditorUi.deleteColumn') }}
+        </button>
+      </div>
+    </PopupMenu>
 
     <!-- 窄口径工具栏：待办/列表/样式，没有 / 菜单（/ 预留给咕咕）、没有正文/标题文字样式
          切换——标题现在是便签卡自己的独立标题区（按区域区分，不是段落样式），这里只管
@@ -36,7 +70,7 @@
                 @mousedown.prevent="editor.chain().focus().toggleOrderedList().run()" :title="t('mindEditorUi.orderedList')">
           <PhListNumbers :size="13" weight="bold" />
         </button>
-        <button class="ne-tool" @mousedown.prevent="openReferencePicker" :title="t('mindEditorUi.reference')">
+        <button v-if="referencesEnabled" class="ne-tool" @mousedown.prevent="openReferencePicker" :title="t('mindEditorUi.reference')">
           <PhAt :size="13" weight="bold" />
         </button>
         <!-- 「样式」抽屉：加粗/斜体/删除线/行内代码/链接，2026-07-11 加。不是弹层——Aa 按钮
@@ -95,6 +129,11 @@
             <button class="ne-style-item" @mousedown.prevent="insertBlockquote" :title="t('mindEditorUi.blockquote')">
               <PhQuotes :size="13" weight="bold" />
             </button>
+            <button type="button" class="ne-style-item" :title="t('mindEditorUi.insertTable')"
+                    :aria-label="t('mindEditorUi.insertTable')" :disabled="editor.isActive('table')"
+                    @mousedown.prevent @click="insertTable">
+              <PhTable :size="13" weight="bold" />
+            </button>
           </div>
           <button v-if="!expandDrawers" class="ne-tool" :class="{ on: insertOpen || (isFocused && hasAnyBlock) }"
                   @mousedown.prevent="toggleInsertMenu" :title="t('mindEditorUi.insert')">
@@ -119,14 +158,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useFileOpenAccess } from '@/services/fileOpenAccess'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
+import SelectionToolbar from '@/components/common/selection/SelectionToolbar.vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
+import { RiAddLine, RiSubtractLine } from '@remixicon/vue'
+import { findParentNodeClosestToPos, type Editor } from '@tiptap/core'
+import PopupMenu from '@/components/common/overlays/PopupMenu.vue'
 import {
   PhAt, PhCheckSquare, PhCode, PhCodeBlock, PhLink, PhListBullets, PhListNumbers,
-  PhMinus, PhNoteBlank, PhQuotes, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
+  PhMinus, PhNoteBlank, PhQuotes, PhTable, PhTextAa, PhTextB, PhTextItalic, PhTextStrikethrough,
 } from '@phosphor-icons/vue'
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/mind/useMindEditor'
 import { useMindObjectPicker } from '@/composables/mind/useMindObjectPicker'
@@ -134,12 +177,14 @@ import { useMindRefActions } from '@/composables/mind/useMindRefActions'
 import ReferenceSuggestMenu from '@/components/common/content/ReferenceSuggestMenu.vue'
 import type { MindRefSuggestItem } from '@/services/api'
 
+const referencesEnabled = inject('gugu-note-reference-picker', true)
 const { openMindRef } = useMindRefActions()
 const { t } = useI18n()
 const createDroppedReference = useFileOpenAccess()?.createDroppedReference
 
 const props = withDefaults(defineProps<{
   modelValue: string
+  selectionSource?: { id: number; label: string; revision?: string | null; version?: number }
   placeholder?: string
   compact?: boolean
   autofocus?: boolean
@@ -159,6 +204,23 @@ const emit = defineEmits<{
   (e: 'update:modelValue', md: string): void
   (e: 'submit'): void
 }>()
+
+function readNoteSelection() {
+  const ed = editor.value
+  const source = props.selectionSource
+  if (!ed?.isFocused || !source) return null
+  const { from, to, empty } = ed.state.selection
+  if (empty) return null
+  const rect = ed.view.coordsAtPos(from)
+  return {
+    position: { x: rect.left, y: rect.top },
+    location: `编辑器位置 ${from}–${to}${source.revision ? '，已保存版本 ' + source.revision : ''}`,
+    content: ed.state.doc.textBetween(from, to, '\n', '\uFFFC'),
+    unsaved: true,
+    version: source.version,
+    resolve: () => ({ type: 'canvas_note' as const, id: source.id, label: source.label }),
+  }
+}
 
 const rootRef = ref<HTMLElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
@@ -220,6 +282,7 @@ function closePicker() {
 }
 
 function syncPicker(ed: any) {
+  if (!referencesEnabled) return
   const t = findTrigger(ed)
   if (!t) { if (picker.open) closePicker(); return }
   picker.open = true
@@ -368,6 +431,12 @@ function toggleInsertMenu() {
 // 跟下面两个插入动作一样，点了就直接生效，不弹二次确认。
 function insertCodeBlock() { editor.value?.chain().focus().toggleCodeBlock().run(); insertOpen.value = false }
 function insertBlockquote() { editor.value?.chain().focus().toggleBlockquote().run(); insertOpen.value = false }
+function insertTable() {
+  if (editor.value?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()) {
+    insertOpen.value = false
+    tableToolbarDismissed.value = false
+  }
+}
 function insertHorizontalRule() { editor.value?.chain().focus().setHorizontalRule().run(); insertOpen.value = false }
 
 async function insertDroppedFiles(files: File[], position?: number) {
@@ -389,6 +458,36 @@ async function insertDroppedFiles(files: File[], position?: number) {
   ])
   ed.chain().focus().insertContentAt(at, content).run()
   closePicker()
+}
+
+const tablePopup = ref<InstanceType<typeof PopupMenu> | null>(null)
+const tableToolbarDismissed = ref(false)
+const tableAnchor = ref<HTMLElement | null>(null)
+const tableInView = ref(false)
+watch(tableAnchor, (anchor, _previous, onCleanup) => {
+  tableInView.value = false
+  if (!anchor) return
+  const observer = new IntersectionObserver(([entry]) => {
+    tableInView.value = entry?.isIntersecting ?? false
+  })
+  observer.observe(anchor)
+  onCleanup(() => observer.disconnect())
+})
+
+function onTablePointerDown(event: PointerEvent) {
+  const target = event.target
+  if (!(target instanceof Element) || tablePopup.value?.contains(target)) return
+  const table = target.closest('.ne-body table')
+  tableToolbarDismissed.value = !table || !rootRef.value?.contains(table)
+}
+
+onMounted(() => document.addEventListener('pointerdown', onTablePointerDown, true))
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onTablePointerDown, true))
+
+function syncTableAnchor(ed: Editor) {
+  const table = findParentNodeClosestToPos(ed.state.selection.$from, node => node.type.name === 'table')
+  const element = table ? ed.view.nodeDOM(table.pos) : null
+  tableAnchor.value = element instanceof HTMLElement ? element : null
 }
 
 const editor = useEditor({
@@ -432,6 +531,11 @@ const editor = useEditor({
       return true
     },
   },
+  onTransaction({ editor: ed }) { syncTableAnchor(ed) },
+  onFocus({ editor: ed }) {
+    isFocused.value = true
+    syncTableAnchor(ed)
+  },
   onUpdate({ editor: ed }) {
     emit('update:modelValue', docToMarkdown(ed.getJSON() as any))
     syncPicker(ed)
@@ -439,7 +543,6 @@ const editor = useEditor({
   onSelectionUpdate({ editor: ed }) {
     syncPicker(ed)
   },
-  onFocus() { isFocused.value = true },
   onBlur() {
     isFocused.value = false
     clearDrawerSwitchTimer()   // 失焦直接双关，不留一个"马上要开另一个"的挂起计时器
@@ -471,13 +574,13 @@ function focusAtLineUnit(unitIdx: number) {
   // useEditor（tiptap v3）在 onMounted 才真正 new Editor：从只读态点进编辑的头几拍
   // editor 还不存在。挂起这次定位，实例就绪后补放光标，否则调用方拿到的就是静默落空
   if (!ed) { pendingLineUnit = unitIdx; return }
-  const LEAF_TYPES = new Set(['paragraph', 'heading', 'taskItem', 'listItem', 'orderedListItem', 'codeBlock'])
+  const LEAF_TYPES = new Set(['paragraph', 'heading', 'taskItem', 'listItem', 'orderedListItem', 'codeBlock', 'table'])
   let count = 0
   let target: number | null = null
   ed.state.doc.descendants((node: any, pos: number) => {
     if (target !== null) return false
     if (!LEAF_TYPES.has(node.type.name)) return true
-    if (count === unitIdx) { target = pos + node.nodeSize - 1; return false }
+    if (count === unitIdx) { target = node.type.name === 'table' ? pos + 4 : pos + node.nodeSize - 1; return false }
     count++
     return false
   })
@@ -519,11 +622,12 @@ onBeforeUnmount(() => {
 
 .ne-toolbar {
   --ne-tool-size: 26px;
-  display: flex; align-items: center; gap: 4px;
+  --ne-toolbar-gap: var(--space-xs);
+  display: flex; align-items: center; gap: var(--space-xs);
   padding: 6px 2px 4px;   /* 挪到正文下方了：上边距隔开文字，下边距接到后面的操作行 */
 }
 .ne-toolbar-main {
-  display: flex; align-items: center; gap: var(--ne-toolbar-gap, 4px);
+  display: flex; align-items: center; gap: var(--ne-toolbar-gap, var(--space-xs));
   min-width: 0; flex: 1 1 auto; overflow-x: auto;
 }
 .ne-toolbar-link-open .ne-toolbar-main { padding: 6px; margin-block: -6px; }
@@ -542,7 +646,9 @@ onBeforeUnmount(() => {
    规则谁写在后面。 */
 .ne-toolbar.ne-toolbar-floating {
   position: fixed; z-index: 2000; transform: translateX(-50%);
-  padding: 5px 6px; border-radius: var(--card-radius);
+}
+.ne-toolbar:is(.ne-toolbar-floating, .ne-table-actions) {
+  padding: var(--space-xs) var(--space-sm); border-radius: var(--card-radius);
   background: rgba(255,255,255,0.96);
   border: 1px solid rgba(255,255,255,0.9);
   box-shadow: 0 8px 26px rgba(60,70,100,0.18);
@@ -565,16 +671,25 @@ onBeforeUnmount(() => {
   font-family: var(--font-sans);
   transition: background 0.15s, color 0.15s;
 }
-.ne-tool:hover { background: color-mix(in srgb, var(--action-primary) 10%, transparent); color: var(--color-primary); }
+.ne-tool:hover:not(:disabled) { background: color-mix(in srgb, var(--action-primary) 10%, transparent); color: var(--color-primary); }
 .ne-tool.on { background: color-mix(in srgb, var(--action-primary) 16%, transparent); color: var(--color-primary); }
 /* 消费方（便签卡的取消/保存等）塞进来的按钮，跟格式工具栏同一行——原来这里还兜着
    "输入 @ 引用…" 提示的 margin-left:auto，提示挪到 CaptureBar 自己的 cb-foot 里了 */
-.ne-toolbar-actions { margin-left: 0; flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.ne-toolbar-actions { margin-left: 0; flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-xs); }
+.ne-table-actions { gap: var(--option-gap); }
+.ne-table-actions .ne-tool {
+  flex: 0 0 auto;
+  width: auto;
+  gap: var(--space-xs);
+  padding-inline: var(--space-xs);
+  white-space: nowrap;
+}
+.ne-tool:disabled { opacity: .4; cursor: default; }
 .ne-toolbar-actions:empty { display: none; }
 
 /* 普通笔记卡片宽度有限，使用紧凑工具栏；画布浮层使用默认尺寸。 */
-.ne-toolbar:not(.ne-toolbar-floating) {
-  --ne-tool-size: 22px; --ne-toolbar-gap: 2px; --ne-drawer-max-width: 150px;
+.ne-toolbar:not(.ne-toolbar-floating, .ne-table-actions) {
+  --ne-tool-size: 22px; --ne-toolbar-gap: var(--space-xs); --ne-drawer-max-width: 150px;
 }
 .ne-toolbar:not(.ne-toolbar-floating) .ne-drawer.open { gap: var(--ne-toolbar-gap); }
 .ne-toolbar:not(.ne-toolbar-floating) .ne-drawer-items { gap: var(--ne-toolbar-gap); }
@@ -589,9 +704,9 @@ onBeforeUnmount(() => {
 /* 「样式」「插入」抽屉：不是弹层——items 在 DOM 里排在 Aa/+ 按钮前面，收起时 0 宽不占
    位置，按钮就停在原地；展开时 items 从 0 宽长开、天然把按钮"挤"到右边，按钮自己就是
    收起入口（同一个 toggle 函数），不用额外的收起按钮。items 内部 gap 跟主工具栏的按钮
-   间距（.ne-toolbar 的 4px）保持一致，看着是同一排按钮在长出来，不是两套间距。
-   .ne-drawer 只有展开时才给 4px gap（items／按钮之间）——收起时 items 是 0 宽的空盒子，
-   这条 gap 不加，否则按钮会带着一个看不见的 4px 空隙、平时收起态的位置就跟以前对不上。
+   间距跟随 --ne-toolbar-gap，看着是同一排按钮在长出来，不是两套间距。
+   .ne-drawer 只有展开时才添加间隔（items／按钮之间）——收起时 items 是 0 宽的空盒子，
+   这条间距不加，否则按钮会带着一个看不见的空隙、平时收起态的位置就跟以前对不上。
    宽度用 max-width（不能直接转 width:auto）——220px 比实际内容（5 个 26px 图标）留了余量，
    动画时长按这个上限走，多出来的空间不影响观感。
    缓动统一用 cubic-bezier(0.65,0,0.35,1)——标准的缓入缓出（开头/结尾都慢，中段快），
@@ -610,9 +725,9 @@ onBeforeUnmount(() => {
   display: inline-flex; flex-shrink: 0; align-items: center; gap: 0;
   transition: gap 0.27s cubic-bezier(0.65,0,0.35,1);
 }
-.ne-drawer.open { gap: var(--ne-toolbar-gap, 4px); }
+.ne-drawer.open { gap: var(--ne-toolbar-gap, var(--space-xs)); }
 .ne-drawer-items {
-  display: flex; align-items: center; gap: var(--ne-toolbar-gap, 4px);
+  display: flex; align-items: center; gap: var(--ne-toolbar-gap, var(--space-xs));
   overflow: hidden; white-space: nowrap;
   max-width: 0;
   transition: max-width 0.27s cubic-bezier(0.65,0,0.35,1);

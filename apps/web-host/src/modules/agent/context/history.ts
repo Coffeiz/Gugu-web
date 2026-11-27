@@ -3,7 +3,7 @@ import type { HistoryReaderPort, Json } from '@gugu/core/agent'
 import { resolveAgentChatReferences } from './references.js'
 
 /** 旧历史仅在读取时补全引用块，不写回记录；每次均重新验证 owner 和对象权限。 */
-export function withAgentHistoryReferences(pool: Pick<Pool, 'query'>, history: HistoryReaderPort): HistoryReaderPort {
+export function withAgentHistoryReferences(pool: Pick<Pool, 'query'>, history: HistoryReaderPort, storageRoot?: string): HistoryReaderPort {
   return {
     ...history,
     async hydrateReferences(identity, rows, signal) {
@@ -29,7 +29,7 @@ export function withAgentHistoryReferences(pool: Pick<Pool, 'query'>, history: H
         let content = cache.get(key)
         if (content === undefined) {
           // 只缓存引用块，消息正文因每条消息不同而单独添加。
-          content = await resolveAgentChatReferences(pool, identity.ownerId, { message: '', references: filtered })
+          content = await resolveAgentChatReferences(pool, identity.ownerId, { message: '', references: filtered }, storageRoot)
           cache.set(key, content)
         }
         signal?.throwIfAborted()

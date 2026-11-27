@@ -48,25 +48,25 @@ const { t } = useI18n()
 .terminal-skeleton-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   min-height: 50px;
   flex: none;
-  padding: 0 8px;
+  padding: 0 var(--space-sm);
   border: 1px solid var(--content-divider);
   border-radius: var(--radius-xs);
 }
 .terminal-skeleton-add { justify-content: center; }
 .terminal-skeleton-icon { --skeleton-width: 28px; --skeleton-height: 28px; flex: none; }
 .terminal-skeleton-copy { flex: 1; }
-.terminal-skeleton-title, .terminal-skeleton-copy { display: grid; gap: 5px; }
+.terminal-skeleton-title, .terminal-skeleton-copy { display: grid; gap: var(--space-xs); }
 .terminal-skeleton-action { --skeleton-width: 56px; --skeleton-height: var(--control-height-sm); }
 .terminal-skeleton-output {
   flex: 1;
   min-height: 0;
   display: grid;
   align-content: start;
-  gap: 10px;
-  padding: 16px;
+  gap: var(--space-sm);
+  padding: var(--page-content-inset);
   background: #101319;
 }
 .terminal-skeleton-output :deep(.skeleton-block) { background: rgb(255 255 255 / 10%); }

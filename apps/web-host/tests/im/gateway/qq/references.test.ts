@@ -63,6 +63,12 @@ test('真实Redis Lua：索引TTL/cap、原子FIFO去重及跨speaker隔离', { 
     await run("for i=1,50000 do redis.call('ZADD',KEYS[1],ARGV[1],ARGV[2]..'synthetic-'..i) end; return 1", [registry], String(now - 1000), prefix)
     await store.remember(own, 'idx-b', { content: '第二条' }, signal)
     assert.equal(Number(await run("return redis.call('ZCARD',KEYS[1])", [registry])), QQ_REFERENCE_MAX_ENTRIES)
+    const cutoff = now - QQ_REFERENCE_TTL_SECONDS * 1000
+    await run("for i=1,50000 do redis.call('ZADD',KEYS[1],ARGV[1],ARGV[2]..'expired-'..i) end; return 1", [registry], String(cutoff), prefix)
+    await store.remember(own, 'idx-c', { content: '清理后写入' }, signal)
+    assert.equal(Number(await run("return redis.call('ZCOUNT',KEYS[1],'-inf',ARGV[1])", [registry], String(cutoff))), 0)
+    assert.equal(Number(await run("return redis.call('ZCARD',KEYS[1])", [registry])), QQ_REFERENCE_MAX_ENTRIES)
+    assert.equal((await store.read(own, 'idx-b', signal))?.content, '第二条')
     await store.queueFace(own, 'face-a', a, signal); await store.queueFace(own, 'face-a', a, signal); await store.queueFace(own, 'face-b', b, signal)
     assert.deepEqual(await store.takeFace({ ...own, platformUserId: 'member-b' }, 'image-other', signal), [])
     assert.deepEqual(await store.takeFace(own, 'image-a', signal), a)

@@ -6,7 +6,7 @@
     </div>
     <div v-if="!privateOnly || showStreaming" class="pm-bot-group-row pm-bot-tools-row">
       <div class="pm-field-desc"><span class="pm-field-name">{{ t('profileImUi.privateStreaming') }}</span><span class="pm-field-hint">{{ t(markdownPrivateFormat || !showFormats ? 'profileImUi.privateStreamingHint' : 'profileImUi.qqPrivateStreamingMarkdownRequiredHint') }}</span></div>
-      <span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="streamingEnabled" :disabled="showFormats && !markdownPrivateFormat" :aria-label="t('profileImUi.privateStreaming')" @update:model-value="emit('streaming', $event)" /><span class="pm-switch-label" :class="{ on: streamingEnabled }">{{ streamingEnabled ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
+      <span class="pm-switch-wrap"><ToggleSwitch :model-value="streamingEnabled" :disabled="showFormats && !markdownPrivateFormat" :aria-label="t('profileImUi.privateStreaming')" @update:model-value="emit('streaming', $event)" /><span class="pm-switch-label" :class="{ on: streamingEnabled }">{{ streamingEnabled ? t('profileImUi.enabled') : t('profileImUi.disabled') }}</span></span>
     </div>
   </div>
 </template>

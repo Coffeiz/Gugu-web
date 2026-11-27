@@ -38,6 +38,15 @@
       :active="referenceActive"
       @choose="chooseReference"
     />
+    <ContextMenu :show="!!selectionPreview" :anchor="selectionPreview?.anchor" @close="selectionPreview = null">
+      <template v-if="selectionPreview">
+        <div class="selection-reference-preview">
+          <div>{{ selectionPreview.snapshot.location }}</div>
+          <pre>{{ selectionPreview.snapshot.content }}</pre>
+        </div>
+        <button type="button" class="popup-menu-item" @click="openSelectionSource">{{ t('selectionUi.openSource') }}</button>
+      </template>
+    </ContextMenu>
     <input ref="fileInput" type="file" multiple style="display:none" @change="onFilePicked" />
     <div v-if="!recording" class="chat-input-editor" @click="onEditorClick">
       <EditorContent v-if="chatEditor" :editor="chatEditor" />
@@ -105,12 +114,12 @@
         <button v-if="voiceInputAvailable" class="att-btn" @click="onStartRecord" :title="t('chat.voiceInput')" :aria-label="t('chat.voiceInput')">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
         </button>
-        <button v-if="streaming" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
+        <button v-if="streaming || canStopRun" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
           :title="t('chatUi.interruptRun')" :aria-label="t('chatUi.interruptRun')"
           @click="onStopStreaming()">
           <Icon name="action.stop-fill" :size="expanded ? 14 : 13" />
         </button>
-        <button v-if="!streaming || hasDraft" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
+        <button v-if="!(streaming || canStopRun) || hasDraft" type="button" class="send-btn" :class="{ 'exp-send-btn': expanded }"
           @click="onSend()">
           <Icon name="action.next" :size="expanded ? 14 : 13" />
         </button>
@@ -120,12 +129,15 @@
 </template>
 
 <script setup lang="ts">
+import ContextMenu from '@/components/common/overlays/ContextMenu.vue'
+import type { SelectionSnapshot } from '../selection/selectionDraft'
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import SelectPopup from '@/components/common/controls/SelectPopup.vue'
 import { chatCommandCatalogKey, chatModelCatalogKey } from './chatPresentationAccess'
 import { userSkillsApi, type UserSkillItem } from '@/services/api'
+import { skillAccessKey } from '@/services/resourceAccess'
 import Icon from '@/components/common/icons/Icon.vue'
 import ReferenceSuggestMenu from '@/components/common/content/ReferenceSuggestMenu.vue'
 import { useReferenceSuggest } from '@/composables/mind/useReferenceSuggest'
@@ -163,6 +175,7 @@ const props = defineProps<{
   expanded: boolean
   ownerZ: number
   streaming: boolean
+  canStopRun?: boolean
   automaticModeEnabled: boolean
   automaticModeAvailable: boolean
   automaticModeSaving: boolean
@@ -199,20 +212,22 @@ function insertReferenceChip(reference: ChatReference) {
   if (!editor) return
   // 文档里已有同 type+id 的 chip 时不重复插入（referencesFromDoc 本身也会去重）
   if (referencesFromDoc(editor.getJSON() as MindDocNode)
-    .some(item => item.type === reference.type && item.id === reference.id)) return
+    .some(item => item.type === reference.type && item.id === reference.id && (!item.selection && !reference.selection || item.label === reference.label))) return
   let label: string
-  if (reference.type === 'folder') {
+  if (reference.selection) {
+    label = reference.label
+  } else if (reference.type === 'folder') {
     label = reference.label || `Folder ${reference.id}`
   } else if (reference.type === 'project') {
     label = projectStore.projects.find(project => project.id === Number(reference.id))?.name ?? (reference.label || `Project ${reference.id}`)
-  } else if (reference.type === 'event' || reference.type === 'canvas_note') {
-    label = reference.label || `${reference.type === 'event' ? 'Activity' : 'Canvas note'} ${reference.id}`
+  } else if (reference.type === 'client' || reference.type === 'event' || reference.type === 'canvas_note') {
+    label = reference.label || `${reference.type === 'client' ? '联系人' : reference.type === 'event' ? 'Activity' : 'Canvas note'} ${reference.id}`
   } else {
     label = (typeof reference.id === 'string' ? filesCache.getFile(reference.id)?.displayName : null)
       || reference.label || `File ${reference.id}`
   }
   editor.chain().focus('end')
-    .insertContent({ type: 'mindRef', attrs: { refType: reference.type, refId: reference.id, label } })
+    .insertContent({ type: 'mindRef', attrs: { refType: reference.type, refId: reference.id, label, selection: reference.selection ?? null } })
     .insertContent(' ')
     .run()
 }
@@ -244,6 +259,7 @@ function chatInlineNodes(text: string, references: ChatReference[]): MindDocNode
   const refs = references
     .map(reference => ({ reference, token: `@${reference.label}` }))
     .filter(entry => entry.token.length > 1)
+    .sort((left, right) => right.token.length - left.token.length)
   const nodes: MindDocNode[] = []
   let cursor = 0
   while (cursor < text.length) {
@@ -258,7 +274,7 @@ function chatInlineNodes(text: string, references: ChatReference[]): MindDocNode
       break
     }
     if (next > cursor) nodes.push({ type: 'text', text: text.slice(cursor, next) })
-    nodes.push({ type: 'mindRef', attrs: { refType: nextRef.reference.type, refId: nextRef.reference.id, label: nextRef.reference.label } })
+    nodes.push({ type: 'mindRef', attrs: { refType: nextRef.reference.type, refId: nextRef.reference.id, label: nextRef.reference.label, selection: nextRef.reference.selection ?? null } })
     cursor = next + nextRef.token.length
   }
   return nodes
@@ -272,8 +288,8 @@ function referencesFromDoc(doc: MindDocNode | null | undefined): ChatReference[]
     // mcp 引用的 refId 是 UUID 字符串，Number() 会变 NaN——非纯数字 id 原样保留
     const rawId = attrs.refId
     const id = typeof rawId === 'string' && !/^\d+$/.test(rawId) ? rawId : Number(rawId)
-    const reference = { type: attrs.refType as ChatReference['type'], id, label: String(attrs.label ?? '') }
-    if (reference.label && !result.some(item => item.type === reference.type && item.id === reference.id)) result.push(reference)
+    const reference = { type: attrs.refType as ChatReference['type'], id, label: String(attrs.label ?? ''), ...(attrs.selection ? { selection: attrs.selection as ChatReference['selection'] } : {}) }
+    if (reference.label && !result.some(item => item.type === reference.type && item.id === reference.id && (!item.selection && !reference.selection || item.label === reference.label))) result.push(reference)
   }
   return result
 }
@@ -401,9 +417,25 @@ function onOutsidePointerdown(event: PointerEvent) {
   resetReferences()
 }
 
+const selectionPreview = ref<{ anchor: HTMLElement; reference: ChatReference; snapshot: SelectionSnapshot } | null>(null)
+watch(() => props.references, references => {
+  if (selectionPreview.value && !references.some(item => item.label === selectionPreview.value?.reference.label))
+    selectionPreview.value = null
+})
+
+function openSelectionSource() {
+  const reference = selectionPreview.value?.reference
+  selectionPreview.value = null
+  if (reference) props.onReferenceClick(reference)
+}
+
 function onEditorClick(event: MouseEvent) {
   const reference = findClickedChatReference(event.target, props.references)
-  if (reference) props.onReferenceClick(reference)
+  if (!reference) return
+  const anchor = event.target instanceof Element ? event.target.closest<HTMLElement>('.mind-ref') : null
+  if (reference.selection && anchor) {
+    selectionPreview.value = selectionPreview.value?.anchor === anchor ? null : { anchor, reference, snapshot: reference.selection }
+  } else props.onReferenceClick(reference)
 }
 
 const chatEditor = useEditor({
@@ -484,6 +516,7 @@ const addOptions = computed(() => [
   { value: 'reference', label: t('chatComposer.reference'), icon: 'action.at' as const },
 ])
 const composerSkills = ref<Array<Pick<UserSkillItem, 'id' | 'name'>>>([])
+const composerSkillsApi = inject(skillAccessKey, null)?.api ?? userSkillsApi
 const skillLoading = ref(false)
 const skillError = ref(false)
 async function loadComposerSkills() {
@@ -491,7 +524,7 @@ async function loadComposerSkills() {
   skillLoading.value = true
   skillError.value = false
   try {
-    const { skills } = await userSkillsApi.list()
+    const { skills } = await composerSkillsApi.list()
     composerSkills.value = skills.filter(skill => skill.enabled).map(({ id, name }) => ({ id, name }))
   } catch {
     composerSkills.value = []
@@ -602,6 +635,10 @@ defineExpose({
 </script>
 
 <style scoped>
+.selection-reference-preview { width: min(420px, calc(100vw - 32px)); padding: var(--space-sm); color: var(--content-primary); }
+.selection-reference-preview > div { overflow-wrap: anywhere; font-size: var(--font-size-sm); }
+.selection-reference-preview pre { max-height: min(40vh, 240px); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--space-xs) 0 0; }
+
 .chat-preview-status { padding: var(--space-xs) var(--space-md); color: var(--content-secondary); font-size: 12px; }
 .chat-input-row[inert] { opacity: .6; }
 .chat-att-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 6px; }
@@ -619,7 +656,7 @@ defineExpose({
 .att-btn:hover:not(:disabled) { opacity: 1; color: var(--control-fg-strong); background: var(--action-soft); }
 .automatic-mode-btn.active { color: var(--color-primary); opacity: 1; }
 .automatic-mode-btn:disabled { cursor: default; opacity: 0.45; }
-.chat-composer-tools, .chat-composer-tools__group { display: flex; align-items: center; min-width: 0; gap: 4px; }
+.chat-composer-tools, .chat-composer-tools__group { display: flex; align-items: center; min-width: 0; gap: var(--space-xs); }
 .chat-composer-tools { justify-content: space-between; }
 @container (max-width: 320px) {
   .chat-composer-tools :deep(.chat-composer-approval-label) { display: none; }
@@ -634,7 +671,7 @@ defineExpose({
 .chat-composer-tools :deep(.select-popup) { min-width: 0; max-width: 100%; }
 .chat-composer-tools :deep(.select-popup-trigger) {
   justify-content: flex-start; min-width: 0; height: auto; min-height: 28px;
-  padding: 4px 6px; gap: 5px; border-color: transparent; background: transparent;
+  padding: 4px 6px; gap: var(--space-xs); border-color: transparent; background: transparent;
   font-size: 11px;
 }
 .chat-composer-tools :deep(.select-popup-trigger:hover:not(:disabled)),

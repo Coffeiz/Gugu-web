@@ -4,9 +4,10 @@
     :data-project-id="project.id"
     :data-layout-key="`project:${project.id}`"
     :data-card="String(project.id)"
-    :style="{ '--project-color': project.color, '--project-advance-color': projectAccent }"
+    :style="{ '--project-color': projectAccent, '--project-advance-color': projectAccent }"
     :class="{ 'file-drag-over': fileDragOver }"
     @click="emit('click')"
+    @contextmenu.prevent.stop="openProjectMenu"
     @dragenter.prevent="onFileDragEnter"
     @dragover.prevent="onFileDragOver"
     @dragleave="onFileDragLeave"
@@ -162,6 +163,7 @@
       <div v-else class="tp-empty">{{ t('projects.noTodos') }}</div>
       <button class="tp-add" @click="addTodo">＋ {{ t('projects.addTodo') }}</button>
   </PopupMenu>
+  <ProjectCardMenu :project="project" :position="menuPosition" @close="menuPosition = null" />
   <UploadConflictDialog ref="dropConflictDialog" />
   </div>
 </template>
@@ -174,6 +176,7 @@ import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { runtime, bindRuntimeObjectPointer } from '@/interaction/runtime'
 import { errorMessage, showAppError, showAppNotice } from '@/composables/core/useAppToast'
+import ProjectCardMenu from './ProjectCardMenu.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import UploadConflictDialog from '@/components/common/overlays/UploadConflictDialog.vue'
@@ -199,6 +202,11 @@ const emit = defineEmits(['click'])
 const projectStore = useProjectStore()
 const projectId = `project:${props.project.id}`
 const cardRef = ref<HTMLElement | null>(null)
+const menuPosition = ref<{ x: number; y: number } | null>(null)
+function openProjectMenu(event: MouseEvent) {
+  closeStagePop()
+  menuPosition.value = { x: event.clientX, y: event.clientY }
+}
 const projectGeneration = runtime.objects.register({
   id: projectId,
   type: 'project-card',
@@ -495,7 +503,7 @@ async function setPriority(n: number) {
 }
 .drop-content {
   position: relative; width: 100%; height: 100%;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-xs);
   font-size: 12px; font-weight: 600;
 }
 .drop-overlay-enter-active, .drop-overlay-leave-active { transition: opacity 0.15s; }
@@ -504,9 +512,7 @@ async function setPriority(n: number) {
    这里补文件卡同款阴影和项目卡的 sheen 契约。内部控件按住时不能覆盖根卡的
    hover transform，否则卡片会从 translateY(-2px) 突然回到 0，看起来像被按下。 */
 .proj-card:hover { border-color: var(--project-card-hover-border); box-shadow: var(--project-card-hover-shadow); }
-/* 常驻微光底层 + hover 亮色渐变增强层，与设计页示例卡/画布抽屉卡同一份 sheen 契约
-   （--project-card-sheen-rest/-hover）。linear-gradient 不能做 transition 插值，
-   hover 层改用 opacity 淡入淡出；强弱由各主题令牌自定（暗色取 7.5~8% 白的克制值）。 */
+/* 卡面高光与悬停色沿用共享令牌。 */
 .proj-card::before {
   content: '';
   position: absolute; inset: 0;
@@ -535,8 +541,8 @@ async function setPriority(n: number) {
 }
 .proj-card:hover::after { opacity: 1; }
 
-.card-body { position: relative; z-index: 1; flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.card-top { display: flex; align-items: flex-start; gap: 6px; }
+.card-body { position: relative; z-index: 1; flex: 1; padding: var(--space-md); display: flex; flex-direction: column; gap: var(--space-sm); min-width: 0; }
+.card-top { display: flex; align-items: flex-start; gap: var(--space-xs); }
 
 .proj-name {
   font-size: 13px; font-weight: 500; color: var(--text-primary);
@@ -544,21 +550,21 @@ async function setPriority(n: number) {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
 .proj-meta {
-  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs);
 }
 .proj-client {
-  display: flex; align-items: center; gap: 4px;
+  display: flex; align-items: center; gap: var(--space-xs);
   font-size: 11px; line-height: 1.15; color: var(--text-secondary);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1;
-  padding-bottom: 2px; margin-bottom: -2px;
+  padding-bottom: var(--space-xs); margin-bottom: calc(-1 * var(--space-xs));
 }
 .proj-client svg { opacity: 0.85; }
 .proj-client.empty { opacity: 0.75; }
 .proj-stage {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: inline-flex; align-items: center; gap: var(--space-xs);
   font-size: 10px; line-height: 1.15; color: var(--text-secondary);
   white-space: nowrap; flex-shrink: 0; opacity: 0.75;
-  padding: 2px 5px; margin: -2px -4px; border-radius: 6px;
+  padding: var(--space-xs) var(--space-xs); margin: calc(-1 * var(--space-xs)) calc(-1 * var(--space-xs)); border-radius: 6px;
   cursor: pointer; transition: background 0.12s, opacity 0.12s;
 }
 .proj-stage:hover, .proj-stage.open { background: rgba(0,0,0,0.06); opacity: 1; }
@@ -569,20 +575,19 @@ async function setPriority(n: number) {
 
 /* 当前阶段待办弹层（Teleport 到 body，通用弹窗风格） */
 :global(.popup-menu-host.todo-pop-popup) {
-  --todo-pop-padding: 14px;
-  padding: var(--todo-pop-padding) var(--todo-pop-padding) 12px; font-family: var(--font-sans); box-sizing: border-box;
-  display: flex; flex-direction: column; gap: 8px;
+  padding: var(--popup-content-inset); font-family: var(--font-sans); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: var(--space-sm);
 }
 .tp-header {
-  display: flex; align-items: center; gap: 6px;
-  padding-right: calc(var(--card-close-compact-safe-area) - var(--todo-pop-padding));
+  display: flex; align-items: center; gap: var(--space-xs);
+  padding-right: calc(var(--card-close-compact-safe-area) - var(--popup-content-inset));
 }
 .tp-title { font-size: 13px; font-weight: 700; color: var(--content-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-count { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; font-variant-numeric: tabular-nums; }
-.tp-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; --scrollbar-overlay-right-offset: 4px; }
-.tp-item { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 8px; }
+.tp-list { display: flex; flex-direction: column; gap: var(--space-xs); max-height: 220px; overflow-y: auto; --scrollbar-overlay-right-offset: 4px; }
+.tp-item { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-xs); border-radius: 8px; }
 .tp-item:hover { background: var(--surface-soft-hover); }
-.tp-name { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-name { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); padding: var(--space-xs) 0; cursor: grab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-item:active .tp-name { cursor: grabbing; }
 .tp-ghost { opacity: 0.35; }
 .tp-check {
@@ -597,7 +602,7 @@ async function setPriority(n: number) {
 .tp-check:focus-visible { outline: 2px solid var(--control-checkbox-border-hover); outline-offset: 2px; }
 .tp-input {
   flex: 1; min-width: 0; border: none; background: none; outline: none;
-  font-size: 12px; color: var(--text-primary); font-family: var(--font-sans); padding: 2px 0;
+  font-size: 12px; color: var(--text-primary); font-family: var(--font-sans); padding: var(--space-xs) 0;
 }
 .tp-del {
   flex-shrink: 0; width: 16px; height: 16px; border: none; background: none;
@@ -606,32 +611,32 @@ async function setPriority(n: number) {
 }
 .tp-item:hover .tp-del { opacity: 0.55; }
 .tp-del:hover { opacity: 1 !important; background: var(--status-danger-bg); color: var(--status-danger); }
-.tp-empty { font-size: 12px; color: var(--text-secondary); opacity: 0.55; text-align: center; padding: 6px 0 4px; }
+.tp-empty { font-size: 12px; color: var(--text-secondary); opacity: 0.55; text-align: center; padding: var(--space-xs) 0 var(--space-xs); }
 .tp-add {
-  width: 100%; padding: 6px; border: 1px dashed var(--content-outline);
+  width: 100%; padding: var(--space-xs); border: 1px dashed var(--content-outline);
   background: none; border-radius: 9px; font-size: 12px; color: var(--text-secondary);
   cursor: pointer; font-family: var(--font-sans); transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 .tp-add:hover { background: var(--action-soft); color: var(--action-primary); border-color: var(--action-outline); }
 
 .card-footer { display: flex; align-items: center; justify-content: space-between; }
-.footer-right { display: flex; align-items: center; gap: 5px; line-height: 1.15; }
+.footer-right { display: flex; align-items: center; gap: var(--space-xs); line-height: 1.15; }
 
 .date-range {
-  display: flex; align-items: center; gap: 4px;
+  display: flex; align-items: center; gap: var(--space-xs);
   font-size: 11px; line-height: 1.15; color: var(--text-secondary); min-width: 0; overflow: hidden;
 }
 .date-start { opacity: 0.65; white-space: nowrap; }
 .date-sep { opacity: 0.35; font-size: 9px; }
 .deadline { white-space: nowrap; }
 /* 用 inset 阴影代替 border、去掉纵向 padding，使胶囊不比正文行高更高 → 不把进度条挤下移 */
-.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); box-shadow: inset 0 0 0 1px rgba(90,158,136,0.35); border-radius: 20px; padding: 0 6px; display: inline-flex; align-items: center; gap: 2px; line-height: 1.15; }
+.done-label { white-space: nowrap; font-size: 10px; font-weight: 700; color: #3a8870; background: rgba(90,158,136,0.12); box-shadow: inset 0 0 0 1px rgba(90,158,136,0.35); border-radius: 20px; padding: 0 var(--space-xs); display: inline-flex; align-items: center; gap: var(--space-xs); line-height: 1.15; }
 .deadline.urgent { color: var(--color-warning); font-weight: 600; }
 
 .file-badge {
-  display: flex; align-items: center; gap: 3px;
+  display: flex; align-items: center; gap: var(--space-xs);
   font-size: 10px; line-height: 1.15; font-weight: 600; color: var(--text-secondary);
-  background: rgba(0,0,0,0.06); border-radius: 10px; padding: 1px 6px;
+  background: rgba(0,0,0,0.06); border-radius: 10px; padding: var(--space-xs) var(--space-xs);
 }
 .proj-client > svg,
 .proj-stage > svg,
@@ -668,13 +673,13 @@ async function setPriority(n: number) {
   cursor: pointer;
   color: var(--content-primary);
 }
-/* 前进区以项目主色单独铺底，透明度随交互状态变化。 */
+/* 推进区使用项目原始配色的主色，透明度随交互状态变化。 */
 button.card-advance::before {
   content: '';
   position: absolute; inset: 0;
   z-index: -1;
   pointer-events: none;
-  background: var(--project-advance-color);
+  background-color: var(--project-advance-color);
   opacity: 0.75;
   transition: opacity var(--motion-hover-card) var(--motion-ease-standard);
 }

@@ -9,7 +9,7 @@ import type { CanonicalRunContext, Json, RunIdentity } from '../models.js'
 import type { ContextSourcePorts } from '../ports.js'
 import { formatGroupMessage, formatQuotedContext } from './history/ordering.js'
 import { requireCanonicalSnapshotEffect } from './snapshot-effect.js'
-import { resolveCurrentTurnTextAttachments, type CurrentTurnAttachment } from '../attachments/current-turn.js'
+import { resolveCurrentTurnImages, resolveCurrentTurnTextAttachments, type CurrentTurnAttachment, type CurrentTurnImagePort } from '../attachments/current-turn.js'
 import { readDesktopTurnReferences, resolveDesktopChatReferences } from '../sessions/desktop-references.js'
 
 function scope(ownerId: string, sessionId: string) {
@@ -50,9 +50,11 @@ function historyContent(row: HistoryRow, files: Json[] | null): Json | undefined
 export function createSqliteAgentSessionSource(
   db: Kysely<Database>,
   options: {
+    images?: { maxInputBytes: number; readImage(identity: RunIdentity, ...args: Parameters<CurrentTurnImagePort['readImage']>): ReturnType<CurrentTurnImagePort['readImage']> }
     readAttachmentText?(identity: RunIdentity, attachment: CurrentTurnAttachment): Promise<string>
     readReferencedFile?(id: string, signal?: AbortSignal): Promise<{ name: string; path: string; relativePath?: string; text: string | null; isFolder?: boolean } | null>
     readProjectPath?(id: number, signal?: AbortSignal): Promise<string | null>
+    skillDataRoot?: string
   } = {},
 ): Pick<ContextSourcePorts, 'historyReader' | 'readSnapshot' | 'currentTurn'> {
   return {
@@ -145,22 +147,24 @@ export function createSqliteAgentSessionSource(
       const prepared = await resolveCurrentTurnTextAttachments(text, files, attachment =>
         options.readAttachmentText ? options.readAttachmentText(identity, attachment) : Promise.resolve(''))
       const { references, inherited } = await readDesktopTurnReferences(db, identity)
-      const imageIds = files.filter(file => file.kind === 'image').map(file => file.attach_id)
-        .filter(id => /^[0-9a-f]{32}$/u.test(id))
-      const input = imageIds.length
-        ? [prepared.rawText, `用户上传了图片，可用 view_image 查看（attach_id：${imageIds.join('、')}）。`].filter(Boolean).join('\n\n')
-        : prepared.rawText
+      const imagePort = options.images
+      const { blocks, notice } = await resolveCurrentTurnImages(files, imagePort && {
+        maxInputBytes: imagePort.maxInputBytes,
+        readImage: (attachment, imageSignal) => imagePort.readImage(identity, attachment, imageSignal),
+      }, signal)
+      const input = [prepared.rawText, notice].filter(Boolean).join('\n\n')
       const rawText = await resolveDesktopChatReferences(db, identity.ownerId, references, input,
         options.readReferencedFile ? id => options.readReferencedFile!(id, signal) : undefined, inherited,
-        options.readProjectPath ? id => options.readProjectPath!(id, signal) : undefined)
+        options.readProjectPath ? id => options.readProjectPath!(id, signal) : undefined, options.skillDataRoot)
+      const content = goal.goalActive
+        ? `${rawText}\n\n[目标任务] ${String(context.goal_text)}。仅当完整目标完成时，在答复末尾单独输出 ${GOAL_DONE_MARKER}，不要解释标记。`
+        : row.chat_type === 'group' && row.platform_user_id
+          ? formatGroupMessage({ body: rawText, quote: row.quoted_text })
+          : formatQuotedContext(rawText, row.quoted_text)
       return { currentUser: { persistedMessageId: String(row.id), rawText, messageTimestamp: row.im_platform_sent_ms ?? row.im_event_received_ms ?? utc(row.created_at),
         ...(row.chat_type === 'group' && row.platform_user_id ? { groupSpeaker: { id: row.platform_user_id,
           name: row.platform_user_name, owner: row.platform_user_id === row.owner_platform_user_id } } : {}),
-        message: { role: 'user', content: goal.goalActive
-          ? `${rawText}\n\n[目标任务] ${String(context.goal_text)}。仅当完整目标完成时，在答复末尾单独输出 ${GOAL_DONE_MARKER}，不要解释标记。`
-          : row.chat_type === 'group' && row.platform_user_id
-            ? formatGroupMessage({ body: rawText, quote: row.quoted_text })
-            : formatQuotedContext(rawText, row.quoted_text) }, files: prepared.cards } }
+        message: { role: 'user', content: blocks.length ? [{ type: 'text', text: content }, ...blocks] : content }, files: prepared.cards } }
     },
   }
 }

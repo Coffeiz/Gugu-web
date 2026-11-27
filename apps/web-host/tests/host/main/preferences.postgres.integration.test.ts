@@ -5,6 +5,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Pool } from 'pg'
+import { migratePostgres } from '@gugu/database/postgres'
 import test from 'node:test'
 import { createUserToken } from '../../../src/modules/auth/session/token.js'
 import { startServer } from '../../../src/main.js'
@@ -31,15 +32,11 @@ test('生产 Host 使用 Core 偏好存储并隔离用户', { skip: !databaseUrl
   try {
     const config = join(root, 'config.json')
     await writeFile(config, '{}')
-    await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY, username text NOT NULL, display_name text, email text NOT NULL,
-      is_active boolean NOT NULL, account_status text, security_version integer, avatar text, created_at timestamptz,
-      timezone text, email_subscribed boolean, last_active_at timestamptz);
-      CREATE TABLE user_bots(user_id uuid NOT NULL,platform text NOT NULL,enabled boolean NOT NULL);
-      CREATE TABLE user_preferences(id serial PRIMARY KEY,user_id uuid NOT NULL UNIQUE,data_json text NOT NULL,updated_at timestamptz NOT NULL)`)
+    assert.equal(await migratePostgres(pool, 'apply'), 'applied')
     const owner = randomUUID(), other = randomUUID(), secret = 'synthetic-preferences-main-secret'
-    await pool.query(`INSERT INTO users(id,username,email,is_active,account_status,security_version,created_at,email_subscribed)
-      VALUES ($1,'sample-owner','owner@example.test',true,'active',1,CURRENT_TIMESTAMP,false),
-             ($2,'sample-other','other@example.test',true,'active',1,CURRENT_TIMESTAMP,false)`, [owner, other])
+    await pool.query(`INSERT INTO users(id,username,email,hashed_password,is_active,account_status,security_version,created_at,email_subscribed)
+      VALUES ($1,'sample-owner','owner@example.test','synthetic',true,'active',1,CURRENT_TIMESTAMP,false),
+             ($2,'sample-other','other@example.test','synthetic',true,'active',1,CURRENT_TIMESTAMP,false)`, [owner, other])
     host = await startServer({ GUGU_WEBUI_DATABASE_URL: scoped.toString(), GUGU_WEBUI_SECRET_KEY: secret,
       GUGU_CONFIG_OVERRIDE_FILE: config, STORAGE__LOCAL_PATH: join(root, 'storage'), GUGU_WEBUI_HOST: '127.0.0.1', GUGU_WEBUI_PORT: String(await freePort()), GUGU_WEBUI_REDIS_URL: '' })
     const headers = (id: string) => ({ authorization: `Bearer ${createUserToken(id, 1, secret)}` })

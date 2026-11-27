@@ -1,11 +1,10 @@
+import { mailDraftLocation } from '@gugu/email/contracts'
 import { chatPanelContentGutter as gutter } from '@gugu/desktop-contracts'
-import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
 import { BrowserWindow, ipcMain, screen, type Point, type Rectangle } from 'electron'
 import { chatFabChannels as channels } from '../chat-fab-channels.js'
 import { DesktopError, desktopReply } from './core-host.js'
-import { watchWindowsFullscreen } from './foreground-fullscreen.js'
-import { secureWindow, trustedCaller, windowOptions } from './windows.js'
+import { desktopPlatform } from './platform/index.js'
+import { createChatFabGeometryStore, secureWindow, trustedCaller, windowOptions } from './windows.js'
 
 // 为悬停缩放后的阴影预留原生透明画布。
 const extent = 128
@@ -18,6 +17,18 @@ const panelResizeDuration = 420
 const floatingWidthRatio = 0.68
 const compactGap = 6
 const runtimeReferenceTypes = new Set(['project', 'file', 'folder', 'event', 'canvas_note'])
+type SelectionSnapshot = { content: string; location: string; unsaved?: boolean; rendered?: boolean; version?: number }
+
+function isSelectionSnapshot(value: unknown): value is SelectionSnapshot {
+  if (!value || typeof value !== 'object') return false
+  const { content, location, unsaved, rendered, version } = value as Partial<SelectionSnapshot>
+  return typeof content === 'string' && content.length > 0 && content.length <= 8000
+    && typeof location === 'string' && location.length <= 4096
+    && (unsaved === undefined || typeof unsaved === 'boolean')
+    && (rendered === undefined || typeof rendered === 'boolean')
+    && (version === undefined || typeof version === 'number' && Number.isSafeInteger(version) && version >= 0)
+}
+
 type RuntimeReference = { type: string; id: number | string; label: string }
 
 function isRuntimeReference(value: unknown): value is RuntimeReference {
@@ -30,27 +41,17 @@ function isRuntimeReference(value: unknown): value is RuntimeReference {
 }
 
 export function registerChatFabWindow(options: {
+  dataDirectory?: string
   uiUrl: string
   preload: string
   panelPreload: string
+  trustsSelectionSource?: (event: Parameters<typeof trustedCaller>[0]) => boolean
   mainWindow: () => BrowserWindow | undefined
   enabled: () => boolean
   prewarm?: boolean
   createDroppedReference?: (path: string) => Promise<{ type: 'file' | 'folder'; id: string; label: string }>
 }) {
-  let preventNativeActivation: ((handle: Buffer) => boolean) | undefined
-  let nativeGlass: ((handle: Buffer, enabled: boolean) => boolean) | undefined
-  if (process.platform === 'darwin') {
-    try {
-      const native = createRequire(import.meta.url)(
-        join(dirname(options.preload), '..', 'native', 'chat-fab-glass.node'),
-      )
-      nativeGlass = native.setChatFabGlass
-      preventNativeActivation = native.preventChatFabActivation
-    } catch {
-      console.warn('无法加载聊天悬浮球毛玻璃')
-    }
-  }
+  const platform = desktopPlatform().createFloatingChat(options.preload)
   const address = new URL(options.uiUrl)
   address.searchParams.set('chatFab', '1')
   const panelAddress = new URL(options.uiUrl)
@@ -70,9 +71,11 @@ export function registerChatFabWindow(options: {
   let warmTimer: ReturnType<typeof setTimeout> | undefined
   let droppedPaths: string[] = []
   let droppedReferences: RuntimeReference[] = []
+  let pendingSelections: Array<{ reference: RuntimeReference; selection: SelectionSnapshot }> = []
   let panelReady = false
   let expanded = false
-  let floatingSize: { width: number; height: number } | undefined
+  const geometryStore = options.dataDirectory ? createChatFabGeometryStore(options.dataDirectory) : undefined
+  let { detachedPosition, expandedSize: floatingSize } = geometryStore?.read() ?? {}
   let panelRequested = false
   let panelOpenSent = false
   let panelEntered = false
@@ -90,6 +93,45 @@ export function registerChatFabWindow(options: {
 
   let stopFullscreenWatch: (() => void) | undefined
   let fullscreenArea: Rectangle | undefined
+
+  function saveGeometry() {
+    if (mode === 'detached' && ball) {
+      const { x, y } = ball.getBounds()
+      detachedPosition = { x, y }
+    } else if (mode === 'docked') {
+      detachedPosition = undefined
+    }
+    try {
+      geometryStore?.save({ detachedPosition, expandedSize: floatingSize })
+    } catch {
+      console.warn('无法保存咕咕窗口位置和尺寸')
+    }
+  }
+
+  function detach(position: Point) {
+    if (!ball) return
+    if (ball.getParentWindow()) ball.setParentWindow(null)
+    platform.preventActivation?.(ball)
+    ball.setAlwaysOnTop(true, 'floating')
+    const center = { x: position.x + extent / 2, y: position.y + extent / 2 }
+    const { workArea } = screen.getDisplayNearestPoint(center)
+    moveBallAndPanel(
+      Math.max(workArea.x, Math.min(position.x, workArea.x + workArea.width - extent)),
+      Math.max(workArea.y, Math.min(position.y, workArea.y + workArea.height - extent)),
+    )
+    jointMotion = undefined
+    mode = 'detached'
+    if (platform.watchFullscreen && !stopFullscreenWatch) {
+      stopFullscreenWatch = platform.watchFullscreen(bounds => {
+        if (!stopFullscreenWatch) return
+        fullscreenArea = bounds ? screen.screenToDipRect(null, bounds) : undefined
+        syncDetachedBall()
+      })
+    }
+    syncDetachedBall()
+    options.mainWindow()?.webContents.send(channels.ballDetached, true)
+    saveGeometry()
+  }
 
   function syncDetachedBall() {
     if (mode !== 'detached' || !ball) return
@@ -204,8 +246,8 @@ export function registerChatFabWindow(options: {
     const right = anchor.x + anchor.width + gutter
     const bottom = anchor.y + anchor.height + gutter
     const desired = floatingSize ?? { width: Math.round(area.height * floatingWidthRatio), height: Math.round(area.height * 0.78) }
-    const wide = Math.min(area.width, Math.max(minWidth, Math.min(desired.width, right - area.x)))
-    const tall = Math.min(area.height, Math.max(minHeight, Math.min(desired.height, bottom - area.y)))
+    const wide = Math.min(area.width, Math.max(minWidth, floatingSize ? desired.width : Math.min(desired.width, right - area.x)))
+    const tall = Math.min(area.height, Math.max(minHeight, floatingSize ? desired.height : Math.min(desired.height, bottom - area.y)))
     let large = {
       x: Math.max(area.x, Math.min(right - wide, area.x + area.width - wide)),
       y: Math.max(area.y, Math.min(bottom - tall, area.y + area.height - tall)),
@@ -280,6 +322,9 @@ export function registerChatFabWindow(options: {
       panel.webContents.send(channels.droppedReferences, droppedReferences)
       droppedReferences = []
     }
+    for (const { reference, selection } of pendingSelections)
+      panel.webContents.send(channels.droppedReferences, [reference], selection)
+    pendingSelections = []
     const paths = droppedPaths
     droppedPaths = []
     if (paths.length) void deliverDroppedPaths(panel, paths, () => panelRequested)
@@ -298,8 +343,7 @@ export function registerChatFabWindow(options: {
   function focusPanel() {
     if (!panel || !panelEntered || !panelFocusRequested || mode === 'dragging' || !panel.isVisible()) return
     panelFocusRequested = false
-    // macOS 聚焦独立浮窗时也可能激活主窗，等用户直接操作浮窗再交给系统聚焦。
-    if (mode !== 'detached' || process.platform !== 'darwin') panel.focus()
+    if (platform.canFocus(mode === 'detached')) panel.focus()
   }
 
   function syncPanelWindow() {
@@ -342,7 +386,7 @@ export function registerChatFabWindow(options: {
 
   function createPanel() {
     const window = new BrowserWindow({
-      ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
+      ...platform.windowOptions,
       width: 480, height: 580, frame: false, transparent: true, backgroundColor: '#00000000',
       hasShadow: false, resizable: false, show: false, skipTaskbar: true, fullscreenable: false,
       webPreferences: windowOptions(options.panelPreload).webPreferences,
@@ -350,10 +394,7 @@ export function registerChatFabWindow(options: {
     })
     panel = window
     secureWindow(window)
-    if (process.platform === 'darwin') {
-      window.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false, skipTransformProcessType: true })
-      if (preventNativeActivation) preventNativeActivation(window.getNativeWindowHandle())
-    }
+    platform.configureWindow?.(window)
     window.on('show', () => {
       clearInterval(panelHitTimer)
       panelHitTimer = setInterval(syncPanelHitArea, 16)
@@ -405,8 +446,13 @@ export function registerChatFabWindow(options: {
     }
     window.on('move', followNativePanel)
     window.on('resize', followNativePanel)
-    window.on('moved', () => { if (panelNativeChange === 'move') panelNativeChange = undefined })
+    window.on('moved', () => {
+      if (panelNativeChange !== 'move') return
+      panelNativeChange = undefined
+      saveGeometry()
+    })
     window.on('resized', () => {
+      if (panelNativeChange === 'resize') saveGeometry()
       panelNativeChange = undefined
       nativeResizeAnchor = undefined
     })
@@ -420,6 +466,7 @@ export function registerChatFabWindow(options: {
       panel = undefined
       droppedPaths = []
       droppedReferences = []
+      pendingSelections = []
       expanded = false
       panelReady = false
       panelRequested = false
@@ -477,8 +524,8 @@ export function registerChatFabWindow(options: {
   }
 
   function setGlass(enabled: boolean) {
-    if (!ball || !nativeGlass) return
-    const applied = nativeGlass(ball.getNativeWindowHandle(), enabled)
+    if (!ball || !platform.setGlass) return
+    const applied = platform.setGlass(ball, enabled)
     ball.webContents.send(channels.material, enabled && applied)
   }
 
@@ -530,6 +577,7 @@ export function registerChatFabWindow(options: {
     else ball.setPosition(x, y)
     jointMotion = undefined
     mode = 'docked'
+    if (docking) saveGeometry()
     ball.hide()
     main.webContents.send(channels.ballDetached, false)
     if (docking && panelRequested) {
@@ -571,7 +619,7 @@ export function registerChatFabWindow(options: {
 
   async function create(main: BrowserWindow) {
     const window = new BrowserWindow({
-      ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
+      ...platform.windowOptions,
       width: extent, height: extent, frame: false, transparent: true, backgroundColor: '#00000000',
       hasShadow: false, resizable: false, show: false, skipTaskbar: true, focusable: false,
       fullscreenable: false, parent: main, title: '咕咕聊天',
@@ -586,10 +634,7 @@ export function registerChatFabWindow(options: {
     })
     window.on('hide', () => clearInterval(ballHitTimer))
     secureWindow(window)
-    if (process.platform === 'darwin') {
-      window.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false, skipTransformProcessType: true })
-      if (preventNativeActivation) preventNativeActivation(window.getNativeWindowHandle())
-    }
+    platform.configureWindow?.(window)
     window.webContents.once('render-process-gone', () => { if (!window.isDestroyed()) window.destroy() })
     window.once('closed', () => {
       resolveReady?.(false)
@@ -613,7 +658,8 @@ export function registerChatFabWindow(options: {
         if (!window.isDestroyed()) window.destroy()
         return false
       }
-      dock()
+      if (detachedPosition) detach(detachedPosition)
+      else dock()
       if (options.prewarm !== false) {
         warmTimer = setTimeout(() => {
           if (ball && !panel && options.enabled()) createPanel()
@@ -699,31 +745,14 @@ export function registerChatFabWindow(options: {
       && dropPoint.y >= bounds.y && dropPoint.y < bounds.y + bounds.height
     // 改父窗口会中断部分平台的指针捕获，等松手处理完落点再做。
     if (ball.getParentWindow()) ball.setParentWindow(null)
-    if (preventNativeActivation) preventNativeActivation(ball.getNativeWindowHandle())
+    platform.preventActivation?.(ball)
     ball.setAlwaysOnTop(true, 'floating')
     if (main && (cancelled ? previous === 'docked' : inside)) {
       if (fromMain) dock()
       else snap(main)
     }
     else {
-      const { workArea } = screen.getDisplayNearestPoint(center)
-      moveBallAndPanel(
-        Math.max(workArea.x, Math.min(destination.x, workArea.x + workArea.width - extent)),
-        Math.max(workArea.y, Math.min(destination.y, workArea.y + workArea.height - extent)),
-      )
-      jointMotion = undefined
-      mode = 'detached'
-      ball.showInactive()
-      syncBallHitArea()
-      main?.webContents.send(channels.ballDetached, true)
-      if (process.platform === 'win32' && !stopFullscreenWatch) {
-        stopFullscreenWatch = watchWindowsFullscreen(bounds => {
-          if (!stopFullscreenWatch) return
-          fullscreenArea = bounds ? screen.screenToDipRect(null, bounds) : undefined
-          syncDetachedBall()
-        })
-      }
-      syncPanelWindow()
+      detach(destination)
       // 脱离时就预留展开视口，避免第一次展开同时改变原生视口和内容布局。
       positionPanel(expanded && previous === 'docked', true)
       if (previous === 'docked' && mainChatVisible && main && !main.isDestroyed()) {
@@ -744,6 +773,7 @@ export function registerChatFabWindow(options: {
       panelRequested = false
       droppedPaths = []
       droppedReferences = []
+      pendingSelections = []
       panelFocusRequested = false
       if (panelOpenSent) panel?.webContents.send(channels.closeChat, true)
       return
@@ -768,6 +798,17 @@ export function registerChatFabWindow(options: {
       const validId = (typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
         || (typeof id === 'string' && /^[1-9][0-9]{0,15}$/u.test(id) && Number.isSafeInteger(Number(id)))
       switch (type) {
+        case 'mail-draft': {
+          if (typeof id !== 'string' || id.length > 1024) throw new DesktopError('invalid_request', '草稿引用无效')
+          let reference: unknown
+          try { reference = JSON.parse(id) } catch { throw new DesktopError('invalid_request', '草稿引用无效') }
+          if (!mailDraftLocation.safeParse(reference).success) throw new DesktopError('invalid_request', '草稿引用无效')
+          break
+        }
+        case 'mail':
+          if (typeof id === 'string' && id.length <= 254 && /^[^\s<>,;@/?#]+@[^\s<>,;@/?#]+\.[^\s<>,;@/?#]+$/u.test(id)) break
+          throw new DesktopError('invalid_request', '收件地址无效')
+        case 'client':
         case 'event':
         case 'canvas_note':
         case 'scheduled_task':
@@ -793,7 +834,25 @@ export function registerChatFabWindow(options: {
     }),
   )
 
-  ipcMain.on(channels.dropReferences, (event, references: unknown) => {
+  ipcMain.on(channels.dropReferences, (event, references: unknown, selection: unknown) => {
+    if (selection !== undefined) {
+      const main = options.mainWindow()
+      if (!options.enabled() || !main || main.isDestroyed()
+        || !(trustedCaller(event, [main], options.uiUrl) || options.trustsSelectionSource?.(event))
+        || !isSelectionSnapshot(selection) || !Array.isArray(references) || references.length !== 1
+        || !isRuntimeReference(references[0])) return
+      const snapshot = { content: selection.content, location: selection.location, unsaved: selection.unsaved, ...(selection.rendered === undefined ? {} : { rendered: selection.rendered }), ...(selection.version === undefined ? {} : { version: selection.version }) }
+      if (mode !== 'detached') {
+        if (main.isMinimized()) main.restore()
+        main.show()
+        main.focus()
+        main.webContents.send(channels.droppedReferences, references, snapshot)
+      } else {
+        pendingSelections = [...pendingSelections, { reference: references[0], selection: snapshot }].slice(-50)
+        openPanel()
+      }
+      return
+    }
     const main = options.mainWindow()
     if (!options.enabled() || !ball || !main || !trustedCaller(event, [main], options.uiUrl)
       || !Array.isArray(references) || !references.length || references.length > 50

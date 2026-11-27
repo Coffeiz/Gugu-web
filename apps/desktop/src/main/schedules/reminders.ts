@@ -57,7 +57,7 @@ export function startLocalReminders(host: IpcHost, onChanged: () => void, onErro
           const current = await host.request<Reminder & { channels: string[] }>('schedules.get', { id: task.id })
           if (active && current.channels.includes('web')) await deliverLocalReminder({ ...current, payload: text })
         })().catch(() => {
-          if (active) onError(new DesktopError('schedule_failed', '桌面定时任务指令执行或投递失败'))
+          if (active) onError(new DesktopError('schedule_failed', '桌面定时任务执行或投递失败'))
         }).finally(() => { if (active) onChanged() })
       }
       const completed = await Promise.allSettled(deliveries)

@@ -30,7 +30,7 @@ import {
   FEEDBACK_OWNER_TRIGGERS,
   PREFERENCES_OWNER_TRIGGERS,
   MCP_OWNER_TRIGGERS,
-} from './migrations/0001_initialize.js'
+} from '../migrations/baseline/sqlite.js'
 
 function columns(db: SQLite.Database, table: string): string[] {
   return (db.pragma(`table_info(${table})`) as { name: string }[])
@@ -176,11 +176,14 @@ export function validateSqliteBaseline(db: SQLite.Database): { owner: string; ve
   if (!ownerId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ownerId))
     throw new DatabaseError('storage_error', '本地数据库身份缺失或损坏')
   const owner = ownerId.toLowerCase()
-  if (values.schema_version !== SCHEMA_VERSION || values.migration_revision !== SQLITE_INITIAL_REVISION)
+  // 基线重命名没有改变版本 18 的结构，旧标记仍需通过下方的完整校验。
+  const knownBaseline = values.migration_revision === SQLITE_INITIAL_REVISION
+    || values.migration_revision === '0001_initialize'
+  if (values.schema_version !== SCHEMA_VERSION || !knownBaseline)
     throw new DatabaseError('schema_upgrade_required', '本地数据库版本与当前迁移基线不兼容')
   matchColumns(db, 'projects', PROJECT_COLUMNS)
   uniqueColumns(db, 'projects', ['user_id', 'idempotency_key'])
-  matchColumns(db, 'clients', CLIENT_COLUMNS)
+  matchColumns(db, 'clients', columns(db, 'clients').includes('address') ? [...CLIENT_COLUMNS, 'address'] : CLIENT_COLUMNS)
   matchColumns(db, 'core_operation_receipts', RECEIPT_COLUMNS)
   uniqueColumns(db, 'core_operation_receipts', ['owner_id', 'operation_id'])
   matchColumns(db, 'undo_operations', UNDO_COLUMNS)

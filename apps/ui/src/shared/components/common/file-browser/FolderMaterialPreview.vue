@@ -107,7 +107,7 @@ watch([visible, () => props.directoryId, () => props.relativePath, () => props.e
 .folder-material-samples {
   inline-size: min(154px, 96%); box-sizing: border-box;
   display: flex; justify-content: center; align-items: center;
-  padding: 6px 9px 3px;
+  padding: var(--space-xs) var(--space-sm) var(--space-xs);
   mask-image: var(--file-card-media-mask);
 }
 .folder-material-sample {
@@ -127,7 +127,7 @@ watch([visible, () => props.directoryId, () => props.relativePath, () => props.e
 .folder-material-sample.folder-material-more {
   border-style: dashed;
   background: var(--surface-soft); color: var(--content-primary);
-  justify-items: end; padding-inline-end: 5px; padding-block-end: 10px;
+  justify-items: end; padding-inline-end: var(--space-xs); padding-block-end: var(--space-sm);
   font-size: var(--font-size-xs); font-variant-numeric: tabular-nums;
 }
 .folder-material-sample > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }

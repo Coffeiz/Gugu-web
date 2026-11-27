@@ -1,3 +1,4 @@
+import { readCanvasContactRefs } from './canvas-contact-ref.js'
 import { canvasNoteDisplayTitle } from './note-create.js'
 import { recommendedCanvasSides } from './canvas-layout.js'
 import { strip } from '../shared/values.js'
@@ -74,7 +75,9 @@ export function createSqlMindCanvasReader(db: Kysely<Database>, backend: Backend
       const ids = [...new Set(nodes.filter(node => node.ref_type === 'event' && node.ref_id !== null).map(node => Number(node.ref_id)))]
       const eventRows = ids.length ? (await sql<{ id: number; date: string; time: string | null; end_time: string | null; description: string | null }>`SELECT id,date,time,end_time,description FROM calendar_events WHERE user_id=${owner} AND deleted_at IS NULL AND id IN (${sql.join(ids)})`.execute(db)).rows : []
       const events = new Map(eventRows.map(event => [Number(event.id), { date: String(event.date), time: event.time, endTime: event.end_time, description: event.description }]))
-      return items.flatMap(item => { const node = byNode.get(Number(item.node_id)); if (!node) return []; return [{ id: Number(item.id), canvasId: Number(item.canvas_id), nodeId: Number(item.node_id), x: Number(item.x), y: Number(item.y), w: item.w === null ? null : Number(item.w), h: item.h === null ? null : Number(item.h), z: Number(item.z), collapsed: Boolean(item.collapsed), data: object(item.data_json), refData: node.ref_type === 'event' && node.ref_id !== null ? events.get(Number(node.ref_id)) ?? null : null, node: mindNodeReadResponse(node), createdAt: iso(item.created_at), updatedAt: iso(item.updated_at) }] })
+      const contactIds = [...new Set(nodes.filter(node => node.ref_type === 'client' && node.ref_id !== null).map(node => Number(node.ref_id)))]
+      const contacts = await readCanvasContactRefs(db, owner, contactIds)
+      return items.flatMap(item => { const node = byNode.get(Number(item.node_id)); if (!node) return []; return [{ id: Number(item.id), canvasId: Number(item.canvas_id), nodeId: Number(item.node_id), x: Number(item.x), y: Number(item.y), w: item.w === null ? null : Number(item.w), h: item.h === null ? null : Number(item.h), z: Number(item.z), collapsed: Boolean(item.collapsed), data: object(item.data_json), refData: node.ref_type === 'event' && node.ref_id !== null ? events.get(Number(node.ref_id)) ?? null : node.ref_type === 'client' && node.ref_id !== null ? contacts.get(Number(node.ref_id)) ?? null : null, node: mindNodeReadResponse(node), createdAt: iso(item.created_at), updatedAt: iso(item.updated_at) }] })
     },
     async listRelations(raw: string, canvasId: number) {
       const owner = ownerId(raw), canvas = await findCanvas(owner, canvasId)
@@ -107,7 +110,7 @@ export function canvasViewSummary(raw: unknown) {
 export interface AgentCanvasOptions {canvas_id:number;include_nodes?:boolean;include_relations?:boolean;include_content?:boolean;limit?:number;offset?:number;query?:string;q?:string;queries?:string[];types?:string[];mode?:'OR'|'AND'}
 type CanvasRow=Record<string,unknown>
 export function agentCanvasNodeFields(row: CanvasRow) {
- return {node_id:Number(row.id),kind:row.kind,title:row.kind==='canvas_note'?canvasNoteDisplayTitle(row):row.title,ref_type:row.ref_type,ref_id:row.ref_type==='file'?object(row.ref_snapshot).fileReferenceId??null:row.ref_id,
+ return {node_id:Number(row.id),version:Number(row.version),kind:row.kind,title:row.kind==='canvas_note'?canvasNoteDisplayTitle(row):row.title,ref_type:row.ref_type,ref_id:row.ref_type==='file'?object(row.ref_snapshot).fileReferenceId??null:row.ref_id,
   preview:[...strip(String(row.content_plain??''))].slice(0,240).join('')}
 }
 export function agentCanvasNodeSummary(row:CanvasRow,content=false){

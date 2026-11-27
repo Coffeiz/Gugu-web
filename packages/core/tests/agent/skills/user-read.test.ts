@@ -1,37 +1,28 @@
 import assert from 'node:assert/strict'
-import SQLite from 'better-sqlite3'
-import { Kysely, SqliteDialect } from 'kysely'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'vitest'
-import { createUserSkillReader } from '../../../src/agent/skills/user-body.js'
+import { createFileSkillRuntime, createUserSkillBundle, isUserSkillBundleEnabled } from '../../../src/agent/skills/bundle-store.js'
+import { patchSkillDocument } from '../../../src/agent/skills/bundle.js'
 
-test('单个用户 Skill 正文只读取当前 owner 的启用 user 来源记录', async () => {
-  const file = new SQLite(':memory:')
-  const db = new Kysely<Record<string, never>>({ dialect: new SqliteDialect({ database: file }) })
+test('同名文件技能按用户隔离，停用后拒绝读取', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-skill-read-'))
   const owner = '00000000-0000-4000-8000-000000000101'
   const other = '00000000-0000-4000-8000-000000000102'
-  const ownerKey = owner.replaceAll('-', '')
-  const otherKey = other.replaceAll('-', '')
-  file.exec(`
-    CREATE TABLE user_skills(
-      owner_id TEXT NOT NULL,skill_id TEXT NOT NULL,name TEXT NOT NULL,body TEXT NOT NULL,
-      source TEXT NOT NULL,enabled INTEGER NOT NULL,content_digest TEXT NOT NULL,
-      UNIQUE(owner_id,skill_id)
-    );
-  `)
-  const insert = file.prepare('INSERT INTO user_skills VALUES(?,?,?,?,?,?,?)')
-  insert.run(ownerKey, 'U1', '用户技能', 'owner body', 'user', 1, 'digest-owner')
-  insert.run(otherKey, 'U1', '他人技能', 'other body', 'user', 1, 'digest-other')
-  insert.run(ownerKey, 'U2', '停用技能', 'disabled body', 'user', 0, 'digest-disabled')
-  insert.run(ownerKey, 'U3', '非用户来源', 'builtin body', 'builtin', 1, 'digest-builtin')
-
+  const signal = new AbortController().signal
+  const identity = { ownerId: owner, sessionId: '1', runId: 'run' }
+  const document = '---\nname: 用户技能\ndescription: 合成描述\n---\n'
   try {
-    const read = createUserSkillReader(db, 'sqlite')
-    assert.deepEqual(await read(owner, 'u1'), { id: 'U1', name: '用户技能', body: 'owner body', contentDigest: 'digest-owner' })
-    assert.deepEqual(await read(other, 'U1'), { id: 'U1', name: '他人技能', body: 'other body', contentDigest: 'digest-other' })
-    assert.equal(await read(owner, 'U2'), null)
-    assert.equal(await read(owner, 'U3'), null)
-    assert.equal(await read(owner, 'S1'), null)
-  } finally {
-    await db.destroy()
-  }
+    const bundle = await createUserSkillBundle(root, owner, 'demo', document + '当前用户正文')
+    await createUserSkillBundle(root, other, 'demo', document + '其他用户正文')
+    const { skills } = await createFileSkillRuntime({
+      dataRoot: root, ownerId: owner, mapPath: path => path, fingerprint: id => id,
+      isEnabled: (id, slug) => isUserSkillBundleEnabled(root, id, slug),
+    })
+    assert.equal((await skills.load('demo', identity, signal)).content, '当前用户正文')
+    await assert.rejects(skills.load('demo', { ...identity, ownerId: other }, signal))
+    await writeFile(join(bundle.path, 'SKILL.md'), patchSkillDocument(document + '当前用户正文', { enabled: false }))
+    await assert.rejects(skills.load('demo', identity, signal))
+  } finally { await rm(root, { recursive: true, force: true }) }
 })

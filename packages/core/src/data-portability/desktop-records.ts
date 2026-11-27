@@ -4,7 +4,6 @@ import { sql, type Transaction } from 'kysely'
 import { CoreError } from '../contracts/index.js'
 import { databaseTime } from '../data/codec.js'
 import type { Database } from '../data/schema.js'
-import { allocateDesktopSkillSequence } from '../runtime/desktop-resources.js'
 import type { PortableRecord } from './desktop-preflight.js'
 
 const optionalText = z.string().nullish().transform(value => value ?? null)
@@ -78,21 +77,6 @@ export async function restoreDesktopRelatedRecord(
       const body = JSON.stringify(items.map(item => ({ ...item, attachments: [], references: [] })))
       id = (await sql<{ id: number }>`INSERT INTO conversation_pending_queues(user_id,queue_id,session_id,items,updated_at)
         VALUES(${owner},${queueId},${session_id},${body},${updated}) RETURNING id`.execute(tx)).rows[0]!.id
-      break
-    }
-    case 'skill': {
-      const skill = z.object({ name: z.string().min(1).max(120), description_short: z.string().max(100),
-        description_long: z.string().max(500).nullish(), category: z.string().max(40), body: z.string().min(1).max(20000),
-        related_tools: z.array(z.string().max(120)).max(32).nullish() }).parse(fields)
-      const sequence = await allocateDesktopSkillSequence<Database>(tx)
-      if (!Number.isSafeInteger(sequence) || sequence < 2) throw new CoreError('storage_error', '无法分配技能编号')
-      const skillId = 'U' + (sequence - 1)
-      const digest = createHash('sha256').update(skill.body).digest('hex')
-      id = (await sql<{ id: number }>`INSERT INTO user_skills
-        (owner_id,skill_id,name,description_short,description_long,category,body,related_tools,source,managed_by,enabled,content_digest,created_at,updated_at)
-        VALUES(${owner},${skillId},${skill.name},${skill.description_short},${skill.description_long ?? null},
-          ${skill.category},${skill.body},${JSON.stringify(skill.related_tools ?? [])},'user','user',0,${digest},${created},${updated})
-        RETURNING id`.execute(tx)).rows[0]!.id
       break
     }
     case 'feedback': {

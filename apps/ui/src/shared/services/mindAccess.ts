@@ -28,7 +28,7 @@ export interface MindAccess {
   listCanvasRelations(id: number): Promise<MindRelation[]>
   createRelation(canvasId: number, srcNodeId: number, dstNodeId: number, allowParallel?: boolean): Promise<MindRelation>
   deleteRelation(canvasId: number, id: number): Promise<unknown>
-  createRefNode(refType: 'project' | 'event', refId: number, meta?: RequestMeta): Promise<MindNote>
+  createRefNode(refType: 'project' | 'event' | 'client', refId: number, meta?: RequestMeta): Promise<MindNote>
 }
 
 export const mindAccessKey: InjectionKey<MindAccess> = Symbol('mindAccess')

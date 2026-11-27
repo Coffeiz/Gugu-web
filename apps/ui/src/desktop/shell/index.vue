@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import OnboardingModal from '@/components/onboarding/OnboardingModal.vue'
+import { configureOnboardingGuideSave, onboardingGuideState, setOnboardingGuideState, shouldShowOnboarding } from '@/composables/onboarding/useOnboardingGuide'
+import DesktopAgentModel from '../account/DesktopAgentModel.vue'
+import ImConnectPane from '@/im/connect/ImConnectPane.vue'
+import { desktopImSettingsAdapter } from '../im/connect/adapter'
+import { provideMailInboxStatus } from '@/views/Mail/useMailInboxStatus'
 import DesktopBackdropDefinitions from '../shared/components/DesktopBackdropDefinitions.vue'
 import { syncDesktopFileOpenPreference } from '../files/fileOpen'
 import DesktopFiles from '../files/index.vue'
@@ -9,9 +15,11 @@ import { usePreviewStore } from '@/stores/preview'
 import type { ApplicationMenuBridge, ApplicationMenuCommand } from '@gugu/desktop-contracts'
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { isNavigationFailure, NavigationFailureType, RouterView, useRoute, useRouter } from 'vue-router'
-import { desktopData, DesktopBridgeError } from '@desktop/bridge/bridge'
+import { desktopData, DesktopBridgeError, hasDesktopTelegramGateway, requestDesktopTelegram } from '@desktop/bridge/bridge'
 import { useDesktopMindHistory } from '../mind/useDesktopMindHistory'
 import { undoShortcutMode } from '@/interaction/undo/UndoManager'
+import { desktopSkillsApi } from '../resources/transport'
+import { notifyResourceChanged } from '@/services/resourceRefreshEvents'
 import { setUserTimezone } from '@/utils/userTimezone'
 import { usePreferencesStore } from '@/stores/preferences'
 import { errorMessage, showAppError } from '@/composables/core/useAppToast'
@@ -48,8 +56,17 @@ const DevWorkbench = import.meta.env.DEV ? defineAsyncComponent(() => import('..
 const DevWorkbenchButton = import.meta.env.DEV ? defineAsyncComponent(() => import('../workbench/DevWorkbenchButton.vue')) : null
 
 const projectStore = useProjectStore()
+provideMailInboxStatus()
 const preferences = usePreferencesStore()
 const route = useRoute()
+configureOnboardingGuideSave(patch => desktopData.onboarding(patch))
+function closeOnboarding() {
+  if (onboardingGuideState.value) setOnboardingGuideState({ ...onboardingGuideState.value, should_show: false })
+}
+const connectOnboardingTelegram = hasDesktopTelegramGateway() ? async (token: string) => {
+  await requestDesktopTelegram({ action: 'save', input: { token } })
+} : undefined
+
 const skeletonRoute = useRouteSkeleton({ desktop: true })
 const router = useRouter()
 const uiStore = useUiStore()
@@ -76,7 +93,7 @@ const { width: sidebarWidth, compact: sidebarCompact, restore: restoreSidebar, s
 const PENDING_OPERATION_KEY = 'gugu.desktop.pending-operation'
 const contactsPanel = useDesktopContacts(perform, refresh)
 const calendarPanel = useDesktopCalendar(perform)
-const { clients, clientName, editingClient, editedClientName } = contactsPanel
+const { clients } = contactsPanel
 const { calendar, calendarHistory, initialLoading: calendarInitialLoading } = calendarPanel
 
 const applyMindHistory = useDesktopMindHistory()
@@ -92,6 +109,11 @@ function onHistoryShortcut(event: KeyboardEvent) {
   } else if (section === 'notes' || section === 'canvases') {
     event.preventDefault()
     void perform(() => applyMindHistory(mode))
+  } else if (section === 'skills') {
+    event.preventDefault()
+    void desktopSkillsApi.applyFileHistory(mode).then(result => {
+      if (result.changed) notifyResourceChanged('skills')
+    }).catch(error => showAppError(errorMessage(error)))
   }
 }
 
@@ -230,6 +252,7 @@ onMounted(() => perform(async () => {
   const appearance = await desktopData.appearance()
   await syncDesktopFileOpenPreference(appearance.fileOpenPreference).catch(error => showAppError(errorMessage(error)))
   await preferences.fetch(appearance)
+  void desktopData.onboarding().then(state => setOnboardingGuideState(state.guide)).catch(error => showAppError(errorMessage(error)))
   setUserTimezone(appearance.timezone)
   if (route.name === 'home' && !menuNavigationRequested) {
     const defaultView = preferences.defaultView
@@ -268,7 +291,7 @@ onMounted(() => perform(async () => {
     <main id="desktop-home" ref="contentArea" class="desktop-workbench" :class="{ 'is-canvas-workspace': visibleSection === 'canvases' }">
     <p v-if="error" class="desktop-error" role="alert">{{ error }}</p>
     <ActionButton v-if="pendingOperation" fit variant="secondary"
-      :disabled="busy" @click="perform(recoverPendingOperation)">查询待确认操作</ActionButton>
+      :disabled="busy" @click="perform(recoverPendingOperation)">{{ $t('pageUi.checkPending') }}</ActionButton>
     <WorkspaceRouteSkeleton v-if="pendingSkeleton" desktop :route-name="pendingSkeleton" />
     <div v-show="!pendingSkeleton" class="desktop-route-host">
     <DevWorkbench
@@ -281,16 +304,12 @@ onMounted(() => perform(async () => {
     <ProjectsPage v-if="activeSection === 'projects'" />
     <ContactsPage
       v-if="activeSection === 'contacts'"
-      v-model:client-name="clientName"
-      v-model:editing-client="editingClient"
-      v-model:edited-client-name="editedClientName"
       :clients="clients"
       :busy="busy"
-      @create="contactsPanel.create"
-      @rename="contactsPanel.rename"
+      :save-contact="contactsPanel.save"
       @remove="contactsPanel.remove"
     />
-    <section v-if="activeSection === 'calendar'" id="desktop-calendar" class="desktop-calendar-page" aria-label="日历">
+    <section v-if="activeSection === 'calendar'" id="desktop-calendar" class="desktop-calendar-page" :aria-label="$t('pageUi.calendar')">
       <DesktopCalendar :events="calendar" :initial-loading="calendarInitialLoading" :busy="busy" :save-event="calendarPanel.save" :remove-event="calendarPanel.remove" @add-project="openCalendarProjectDialog" @open-note="openCalendarNote" @move-project="moveCalendarProject" />
     </section>
     <section v-if="activeSection === 'notes' || activeSection === 'canvases'" class="desktop-mind-page">
@@ -304,7 +323,7 @@ onMounted(() => perform(async () => {
     <MailPage v-if="activeSection === 'mail'" />
     <DesktopResources v-if="activeSection === 'terminals'" />
     <DesktopFiles v-if="activeSection === 'files'" />
-    <ComingSoon v-if="['customers','team','notifications'].includes(activeSection)" :section="activeSection" />
+    <ComingSoon v-if="['customers','team'].includes(activeSection)" :section="activeSection" />
     </div>
     </main>
     <DesktopPersonalSettings v-if="personalSettingsMounted" :show="personalSettingsOpen"
@@ -316,6 +335,10 @@ onMounted(() => perform(async () => {
       <FloatPreviewWindow v-for="win in previewStore.windows" :key="win.id" :win="win" />
     </Teleport>
     <DesktopGuguChat />
+    <OnboardingModal v-if="shouldShowOnboarding" :show="true" @close="closeOnboarding">
+      <template #model><DesktopAgentModel onboarding /></template>
+      <template #im><ImConnectPane :desktop-im-adapter="desktopImSettingsAdapter" :connect-telegram="connectOnboardingTelegram" /></template>
+    </OnboardingModal>
     <ConfirmDialog teleport-to="body" />
     <AppToast />
   </div>
@@ -368,10 +391,6 @@ onMounted(() => perform(async () => {
 .desktop-workbench:has(.desktop-mind-page) { display: flex; overflow: hidden; }
 .desktop-workbench.is-canvas-workspace { padding: 0; }
 .desktop-route-host { display: contents; }
-.desktop-workbench :deep(.desktop-page-toolbar) {
-  min-height: var(--topbar-height);
-  padding: var(--space-xs) var(--space-lg);
-}
 .desktop-workbench :deep(.page-toolbar :is(button, .seg-control)) {
   box-sizing: border-box;
   height: var(--toolbar-compact-control-height);
@@ -394,10 +413,10 @@ onMounted(() => perform(async () => {
 .desktop-mind-page { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; box-sizing: border-box; }
 .desktop-mind-page :deep(.ntp-layout) { box-sizing: border-box; width: 100%; padding: 0; }
 .desktop-calendar-page { position: relative; display: flex; flex: 1; flex-direction: column; gap: var(--space-md); min-width: 0; min-height: 0; }
-.desktop-error { padding: 12px 16px; background: var(--control-bg); border: 1px solid var(--status-danger); border-radius: 8px; }
+.desktop-error { padding: var(--space-md) var(--space-lg); background: var(--control-bg); border: 1px solid var(--status-danger); border-radius: 8px; }
 @media (max-width: 760px) {
   .desktop-shell { grid-template-columns: 64px minmax(0,1fr); }
-  .desktop-topbar { display: flex; align-items: center; gap: 8px; margin-right: 8px; padding: 0; }
+  .desktop-topbar { display: flex; align-items: center; gap: var(--space-sm); margin-right: var(--space-sm); padding: 0; }
   .topbar-search { position: static; width: auto; flex: 1; min-width: 0; transform: none; }
 }
 </style>

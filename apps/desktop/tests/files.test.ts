@@ -1,8 +1,15 @@
-import { createProjectWorkspaceBindingTool } from '../../../packages/core/src/agent/tools/workspaces.js'
+import { prepareDesktopOwnerFiles } from '../../../packages/core/src/runtime/desktop-owner-files.js'
+import { stageSkillPackage } from '../../../packages/core/src/agent/skills/package-stage.js'
+import { createUserSkillBundle, listUserSkillBundles } from '../../../packages/core/src/agent/skills/bundle-store.js'
+import { createDesktopClawHubInstaller, createDesktopFileSkillCreator } from '../src/main/mcp/clawhub-install.js'
+import { skillPackageDigest } from '../../../packages/core/src/agent/skills/package-digest.js'
+import { resourceHandlers } from '../src/main/mcp/ipc.js'
+import type { IpcHost } from '../src/main/ipc/types.js'
+import { createProjectWorkspaceBindingTool } from '../../../packages/core/src/agent/tools/workspaces/index.js'
 import { createToolRegistry } from '../../../packages/core/src/agent/tools/registry.js'
 import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
 import { createHash } from 'node:crypto'
-import { lstat, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, truncate, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, beforeEach, expect, it } from 'vitest'
@@ -33,6 +40,259 @@ const native = {
 const createFiles = () => desktopFiles(join(directory, 'Gugu-data'), native, join(directory, 'app', 'workspaces.json'), join(directory, 'app'))
 const bytes = (text: string) => new TextEncoder().encode(text)
 
+it('安装技能包后可以通过文件历史撤销重做，且不会覆盖已有技能', async () => {
+  const owner = '00000000-0000-4000-8000-000000000001'
+  const service = desktopFiles(join(directory, owner), native)
+  const payload = new Map([['SKILL.md', bytes('---\nname: 示例\ndescription: 描述\n---\n正文')],
+    ['references/info.md', bytes('资料')]])
+  const install = () => stageSkillPackage({ dataRoot: directory, ownerId: owner, slug: 'sample', files: payload,
+    signal: new AbortController().signal, commit: input => service.installSkillPackage(input.stagedDirectory, input.slug) })
+  const target = join(directory, owner, '.agent', 'skills', 'sample')
+  await install()
+  expect(await readFile(join(target, 'references/info.md'), 'utf8')).toBe('资料')
+  await expect(install()).rejects.toThrow()
+  const execute = service.handlers[DESKTOP_CHANNELS.files]!
+  await writeFile(join(target, 'references/info.md'), '后来修改')
+  await expect(execute({ action: 'undo-trash', directoryId: 'skill-packages' })).rejects.toMatchObject({ code: 'conflict' })
+  expect(await readFile(join(target, 'references/info.md'), 'utf8')).toBe('后来修改')
+  await writeFile(join(target, 'references/info.md'), '资料')
+  expect(await execute({ action: 'undo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  await expect(readFile(join(target, 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await execute({ action: 'redo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  expect(await readFile(join(target, 'references/info.md'), 'utf8')).toBe('资料')
+})
+
+it('桌面资源接口下载并安装技能包，安装操作进入文件撤销历史', async () => {
+  const owner = '00000000-0000-4000-8000-000000000001'
+  const service = desktopFiles(join(directory, owner), { ...native, async trash() { throw new Error('技能删除应移动整个目录到应用撤销存储') } })
+  const installer = createDesktopClawHubInstaller({ dataRoot: directory, ownerId: owner,
+    commit: service.installSkillPackage,
+    async download(reference) {
+      expect(reference).toBe('sample/demo')
+      return new Map([['SKILL.md', bytes('---\nname: 示例\ndescription: 描述\n---\n正文')],
+        ['references/a.md', bytes('参考')]])
+    } })
+  const handler = resourceHandlers({ request: async () => { throw new Error('不应查询旧技能表') } } as unknown as IpcHost,
+    undefined, installer, () => listUserSkillBundles(directory, owner), service.updateSkillDocument, service.deleteSkillPackage,
+    mode => service.handlers[DESKTOP_CHANNELS.files]!({ action: mode === 'undo' ? 'undo-trash' : 'redo-trash', directoryId: 'skill-packages' }) as Promise<{ changed: boolean }>)[DESKTOP_CHANNELS.resources]!
+  await expect(handler({ domain: 'skills', action: 'list' } as never)).rejects.toMatchObject({ code: 'invalid_request' })
+  await expect(handler({ domain: 'skills', action: 'create', fields: {} } as never)).rejects.toMatchObject({ code: 'invalid_request' })
+  expect(await handler({ domain: 'skills', action: 'clawhub-install', reference: 'sample/demo' })).toEqual({ id: 'demo' })
+  const target = join(directory, owner, '.agent', 'skills', 'demo')
+  expect(await readFile(join(target, 'references/a.md'), 'utf8')).toBe('参考')
+  expect(await handler({ domain: 'skills', action: 'file-list', offset: 0 }))
+    .toMatchObject({ skills: [{ id: 'demo', name: '示例', storage_kind: 'file' }], nextOffset: null })
+  const digest = (await listUserSkillBundles(directory, owner)).skills[0]!.content_digest
+  expect(await handler({ domain: 'skills', action: 'file-update', id: 'demo', expectedDigest: digest, patch: { enabled: false } }))
+    .toEqual({ id: 'demo' })
+  expect((await listUserSkillBundles(directory, owner)).skills[0]?.enabled).toBe(false)
+  expect(await service.handlers[DESKTOP_CHANNELS.files]!({ action: 'undo-trash', directoryId: 'skill-packages' }))
+    .toEqual({ changed: true })
+  const restoredDigest = (await listUserSkillBundles(directory, owner)).skills[0]!.content_digest
+  expect(await handler({ domain: 'skills', action: 'file-delete', id: 'demo', expectedDigest: restoredDigest })).toEqual({ id: 'demo' })
+  await expect(readFile(join(target, 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(readFile(join(target, 'references/a.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  expect((await listUserSkillBundles(directory, owner)).skills).toEqual([])
+  expect(await handler({ domain: 'skills', action: 'file-history', mode: 'undo' })).toEqual({ changed: true })
+  expect(await readFile(join(target, 'references/a.md'), 'utf8')).toBe('参考')
+  expect(await handler({ domain: 'skills', action: 'file-history', mode: 'redo' })).toEqual({ changed: true })
+  await expect(readFile(join(target, 'references/a.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('桌面新建技能通过文件历史撤销和重做', async () => {
+  const owner = '00000000-0000-4000-8000-000000000001'
+  const service = desktopFiles(join(directory, owner), native)
+  const create = createDesktopFileSkillCreator({ dataRoot: directory, ownerId: owner,
+    commit: service.installSkillPackage, async tools() { return new Set(['read_file']) } })
+  const handler = resourceHandlers({ request: async () => { throw new Error('不应查询旧技能表') } } as unknown as IpcHost,
+    undefined, undefined, undefined, undefined, undefined, undefined, create)[DESKTOP_CHANNELS.resources]!
+  const fields = { name: '示例', description_short: '描述', description_long: null, category: 'personal',
+    body: '正文', related_tools: ['read_file'], enabled: true }
+  const result = await handler({ domain: 'skills', action: 'file-create', fields }) as { id: string }
+  const target = join(directory, owner, '.agent', 'skills', result.id, 'SKILL.md')
+  expect(await readFile(target, 'utf8')).toContain('正文')
+  expect((await listUserSkillBundles(directory, owner)).skills[0]).toMatchObject({ name: '示例', related_tools: ['read_file'] })
+  const history = service.handlers[DESKTOP_CHANNELS.files]!
+  expect(await history({ action: 'undo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  await expect(readFile(target)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await history({ action: 'redo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  expect(await readFile(target, 'utf8')).toContain('正文')
+})
+
+it('Agent 已提交技能操作可登记到桌面文件历史并去重', async () => {
+  const owner = '00000000-0000-4000-8000-000000000001'
+  const service = desktopFiles(join(directory, owner), native)
+  const original = '---\nname: 示例\ndescription: 描述\n---\n初版'
+  const changed = '---\nname: 示例\ndescription: 描述\n---\n新版'
+  const bundle = await createUserSkillBundle(directory, owner, 'demo', original)
+  const install = { operationId: '00000000-0000-4000-8000-000000000001', slug: 'demo', action: 'install',
+    before: null, after: original, packageDigest: await skillPackageDigest(bundle.path) }
+  expect(await service.agentRecordSkillHistory(install)).toEqual({ recorded: true })
+  expect(await service.agentRecordSkillHistory(install)).toEqual({ recorded: false })
+  await expect(service.agentRecordSkillHistory({ ...install, after: '不同内容' })).rejects.toMatchObject({ code: 'conflict' })
+  await writeFile(join(bundle.path, 'SKILL.md'), changed)
+  const edit = { operationId: '00000000-0000-4000-8000-000000000002', slug: 'demo', action: 'update', before: original, after: changed, packageDigest: null }
+  await expect(service.agentRecordSkillHistory({ ...edit, after: '不符' })).rejects.toMatchObject({ code: 'conflict' })
+  expect(await service.agentRecordSkillHistory(edit)).toEqual({ recorded: true })
+  const history = service.handlers[DESKTOP_CHANNELS.files]!
+  expect(await history({ action: 'undo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  expect(await readFile(join(bundle.path, 'SKILL.md'), 'utf8')).toBe(original)
+  expect(await history({ action: 'redo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  expect(await readFile(join(bundle.path, 'SKILL.md'), 'utf8')).toBe(changed)
+  expect(await history({ action: 'undo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  expect(await history({ action: 'undo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  expect(await service.agentRecordSkillHistory(install)).toEqual({ recorded: false })
+})
+
+it('桌面 Agent 技能收据提交后进入文件撤销栈', async () => {
+  const { initializeSqlite, openSqliteRuntime } = await import('../../../packages/core/src/data/sqlite.js')
+  const { createDurableFileSkillManagementPort } = await import('../../../packages/core/src/agent/tools/skill-management/file-port.js')
+  const { createDesktopAgentSkillMutationAdapter } = await import('../src/main/agent/runtime/skill-storage.js')
+  const database = join(directory, 'core.db')
+  await initializeSqlite(database)
+  const { runtime, ownerId } = await openSqliteRuntime(database)
+  try {
+    await mkdir(join(directory, ownerId))
+    const service = desktopFiles(join(directory, ownerId), native)
+    let failSync = true
+    const adapter = createDesktopAgentSkillMutationAdapter({ core: runtime, dataRoot: directory,
+      async hostRequest(method, params, signal) {
+        if (method === 'agent.files.acquireSkillLock') return service.acquireAgentSkillLock(params.operationId, signal!)
+        if (method === 'agent.files.releaseSkillLock') return service.releaseAgentSkillLock(params.operationId)
+        if (method === 'agent.files.recordSkillHistory') {
+          if (failSync) { failSync = false; throw new Error('合成历史同步失败') }
+          return service.agentRecordSkillHistory(params)
+        }
+        throw new Error('未预期的宿主请求')
+      } })
+    const port = createDurableFileSkillManagementPort({ core: runtime, adapter, async authorize() { return true } })
+    const identity = { ownerId, sessionId: '1', runId: 'run' }
+    const scope = { identity, roundId: 'round', signal: new AbortController().signal } as Parameters<typeof port.execute>[2]
+    const input = { skill_name: '示例', description_short: '描述', body: '正文', related_tools: [], managed_by: 'assistant' as const }
+    const call = { id: 'create', name: 'create_skill', input }
+    const result = await port.execute('create', input, scope, call)
+    expect(result).toEqual({ kind: 'unknown' })
+    const replay = await port.execute('create', input, scope, call)
+    expect(replay).toMatchObject({ kind: 'completed', successful: true, mutated: false })
+    if (replay.kind !== 'completed') throw new Error('技能创建失败')
+    const slug = (replay.value as { skill: { id: string } }).skill.id
+    const target = join(directory, ownerId, '.agent', 'skills', slug, 'SKILL.md')
+    expect(await readFile(target, 'utf8')).toContain('正文')
+    expect(await port.execute('create', input, scope, call)).toMatchObject({ mutated: false })
+    const history = service.handlers[DESKTOP_CHANNELS.files]!
+    expect(await history({ action: 'undo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+    await expect(readFile(target)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await history({ action: 'redo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+    expect(await readFile(target, 'utf8')).toContain('正文')
+  } finally { await runtime.close() }
+})
+
+it('桌面 Agent 删除技能同步文件历史，撤销重做保留附属文件', async () => {
+  const { initializeSqlite, openSqliteRuntime } = await import('../../../packages/core/src/data/sqlite.js')
+  const { createDurableFileSkillDeletePort } = await import('../../../packages/core/src/agent/tools/skill-management/file-delete-port.js')
+  const { readFileSkillDeleteTarget } = await import('../../../packages/core/src/agent/tools/skill-management/file-delete-target.js')
+  const { createDesktopAgentSkillDeleteStorage } = await import('../src/main/agent/runtime/skill-storage.js')
+  const database = join(directory, 'core.db')
+  await initializeSqlite(database)
+  const { runtime, ownerId } = await openSqliteRuntime(database)
+  try {
+    await mkdir(join(directory, ownerId))
+    const service = desktopFiles(join(directory, ownerId), native)
+    const bundle = await createUserSkillBundle(directory, ownerId, 'demo', '---\nname: 示例\ndescription: 描述\n---\n正文')
+    await writeFile(join(bundle.path, 'reference.txt'), '附属资料')
+    let failSync = true
+    const storage = createDesktopAgentSkillDeleteStorage({ core: runtime, dataRoot: directory, async hostRequest(method, params, signal) {
+      if (method === 'agent.files.acquireSkillLock') return service.acquireAgentSkillLock(params.operationId, signal!)
+      if (method === 'agent.files.releaseSkillLock') return service.releaseAgentSkillLock(params.operationId)
+      if (method === 'agent.files.recordSkillHistory') {
+        if (failSync) { failSync = false; throw new Error('合成历史同步失败') }
+        return service.agentRecordSkillHistory(params)
+      }
+      throw new Error('未预期的宿主请求')
+    } })
+    const confirmation = { async claim() { return true } } as unknown as Parameters<typeof createDurableFileSkillDeletePort>[0]['confirmation']
+    const port = createDurableFileSkillDeletePort({ core: runtime, dataRoot: directory, storage, confirmation, async authorize() { return true } })
+    const identity = { ownerId, sessionId: '1', runId: 'run' }, scope = { identity, roundId: 'round', signal: new AbortController().signal } as Parameters<typeof port.remove>[0]['scope']
+    const call = { id: 'delete', name: 'delete_skill', input: { id: 'demo' } }
+    const target = await readFileSkillDeleteTarget(directory, ownerId, 'demo')
+    expect(await port.remove({ target, scope, call, claim: {} as never })).toEqual({ kind: 'unknown' })
+    expect(await port.reconcile({ id: 'demo', identity: { ...identity, roundId: 'round' }, call })).toMatchObject({ kind: 'completed', successful: true, mutated: false })
+    const history = service.handlers[DESKTOP_CHANNELS.files]!
+    expect(await history({ action: 'undo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+    expect(await readFile(join(bundle.path, 'reference.txt'), 'utf8')).toBe('附属资料')
+    await writeFile(join(bundle.path, 'reference.txt'), '用户修改')
+    await expect(history({ action: 'redo-trash', directoryId: 'skill-packages' })).rejects.toMatchObject({ code: 'conflict' })
+    expect(await readFile(join(bundle.path, 'reference.txt'), 'utf8')).toBe('用户修改')
+    await writeFile(join(bundle.path, 'reference.txt'), '附属资料')
+    expect(await history({ action: 'redo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+    await expect(readFile(join(bundle.path, 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally { await runtime.close() }
+})
+
+it('Agent 技能锁与桌面文件修改串行，取消排队不会留下死锁', async () => {
+  const owner = '00000000-0000-4000-8000-000000000001'
+  const service = desktopFiles(join(directory, owner), native)
+  const bundle = await createUserSkillBundle(directory, owner, 'demo', '---\nname: 示例\ndescription: 描述\n---\n正文')
+  const first = '00000000-0000-4000-8000-000000000001', second = '00000000-0000-4000-8000-000000000002'
+  await service.acquireAgentSkillLock(first, new AbortController().signal)
+  let completed = false
+  const update = service.updateSkillDocument('demo', bundle.contentDigest, { enabled: false }).then(value => { completed = true; return value })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(completed).toBe(false)
+  service.releaseAgentSkillLock(first)
+  await update
+  expect(completed).toBe(true)
+  await service.acquireAgentSkillLock(first, new AbortController().signal)
+  const abort = new AbortController()
+  const waiting = service.acquireAgentSkillLock(second, abort.signal)
+  abort.abort()
+  service.releaseAgentSkillLock(first)
+  await expect(waiting).rejects.toMatchObject({ code: 'cancelled' })
+  await service.acquireAgentSkillLock(second, new AbortController().signal)
+  service.releaseAllAgentSkillLocks()
+})
+
+it('桌面文件技能修改支持撤销重做并拒绝覆盖外部修改', async () => {
+  const owner = '00000000-0000-4000-8000-000000000001'
+  const service = desktopFiles(join(directory, owner), native)
+  const source = '---\nname: 示例\ndescription: 描述\nmetadata:\n  upstream: 保留\n---\n正文'
+  await stageSkillPackage({ dataRoot: directory, ownerId: owner, slug: 'demo',
+    files: new Map([['SKILL.md', bytes(source)], ['assets/a.txt', bytes('资源')]]),
+    signal: new AbortController().signal, commit: input => service.installSkillPackage(input.stagedDirectory, input.slug) })
+  const target = join(directory, owner, '.agent', 'skills', 'demo')
+  const digest = (await listUserSkillBundles(directory, owner)).skills[0]!.content_digest
+  await service.updateSkillDocument('demo', digest, { enabled: false })
+  expect((await listUserSkillBundles(directory, owner)).skills[0]?.enabled).toBe(false)
+  const execute = service.handlers[DESKTOP_CHANNELS.files]!
+  expect(await execute({ action: 'undo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  expect(await readFile(join(target, 'SKILL.md'), 'utf8')).toBe(source)
+  expect(await execute({ action: 'redo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  expect((await listUserSkillBundles(directory, owner)).skills[0]?.enabled).toBe(false)
+  await writeFile(join(target, 'SKILL.md'), `${source}\n外部变更`)
+  await expect(execute({ action: 'undo-trash', directoryId: 'skill-packages' })).rejects.toMatchObject({ code: 'conflict' })
+  await expect(service.updateSkillDocument('demo', digest, { enabled: true })).rejects.toMatchObject({ code: 'conflict' })
+  expect(await readFile(join(target, 'assets/a.txt'), 'utf8')).toBe('资源')
+})
+
+it('删除文件技能后撤销恢复整个目录，重做不覆盖后续修改', async () => {
+  const owner = '00000000-0000-4000-8000-000000000001'
+  const service = desktopFiles(join(directory, owner), native)
+  await stageSkillPackage({ dataRoot: directory, ownerId: owner, slug: 'demo',
+    files: new Map([['SKILL.md', bytes('---\nname: 示例\ndescription: 描述\n---\n正文')], ['assets/a.txt', bytes('资源')]]),
+    signal: new AbortController().signal, commit: input => service.installSkillPackage(input.stagedDirectory, input.slug) })
+  const target = join(directory, owner, '.agent', 'skills', 'demo')
+  const digest = (await listUserSkillBundles(directory, owner)).skills[0]!.content_digest
+  await expect(service.deleteSkillPackage('demo', 'f'.repeat(64))).rejects.toMatchObject({ code: 'conflict' })
+  await service.deleteSkillPackage('demo', digest)
+  await expect(readFile(join(target, 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  const execute = service.handlers[DESKTOP_CHANNELS.files]!
+  expect(await execute({ action: 'undo-trash', directoryId: 'skill-packages' })).toEqual({ changed: true })
+  expect(await readFile(join(target, 'assets/a.txt'), 'utf8')).toBe('资源')
+  await writeFile(join(target, 'assets/a.txt'), '后续修改')
+  await expect(execute({ action: 'redo-trash', directoryId: 'skill-packages' })).rejects.toMatchObject({ code: 'conflict' })
+  expect(await readFile(join(target, 'assets/a.txt'), 'utf8')).toBe('后续修改')
+})
+
 beforeEach(async () => {
   directory = await realpath(await mkdtemp(join(tmpdir(), 'gugu-files-')))
   await mkdir(join(directory, 'app'))
@@ -58,6 +318,49 @@ it('文件夹引用可以搜索和打开，目录被同名替换后失效', asyn
   await mkdir(join(root, target.path))
   expect(await files.resolveWorkspaceReference(reference.id)).toBeNull()
   await expect(call(verified)).rejects.toMatchObject({ code: 'not_found' })
+})
+
+async function selectionCommand(path: string) {
+  const target = { directoryId: 'personal', path }
+  const entries = await call({ action: 'list', directoryId: target.directoryId, path: '' }) as Array<{ relativePath: string; revision: string }>
+  const reference = await call({ action: 'reference', ...target }) as { id: string }
+  const resolved = await files.resolveWorkspaceReference(reference.id)
+  expect(resolved?.fileIdentity).toBeTruthy()
+  return {
+    action: 'replace-selection', ...target, identity: resolved?.fileIdentity,
+    revision: entries.find(entry => entry.relativePath === path)?.revision,
+    expected: '原文', replacement: '改文',
+  }
+}
+
+it('文件选区只接受一次并发替换，后续请求不能覆盖结果', async () => {
+  const file = join(await files.personalRoot(), '样本.txt')
+  await writeFile(file, '前缀原文后缀')
+  const command = await selectionCommand('样本.txt')
+  const results = await Promise.allSettled([call(command), call({ ...command, replacement: '另一处' })])
+  expect(results[0]).toEqual({ status: 'fulfilled', value: { changed: true } })
+  expect(results[1]).toMatchObject({ status: 'rejected' })
+  expect(await readFile(file, 'utf8')).toBe('前缀改文后缀')
+})
+
+it('文件选区拒绝重复原文、跨工作区、改名替换和删除', async () => {
+  const root = await files.personalRoot()
+  const file = join(root, '样本.txt')
+  await writeFile(file, '原文原文')
+  const command = await selectionCommand('样本.txt')
+  await expect(call(command)).rejects.toMatchObject({ code: 'conflict' })
+  await expect(call({ ...command, directoryId: '未授权工作区' })).rejects.toThrow()
+  expect(await readFile(file, 'utf8')).toBe('原文原文')
+
+  const renamed = join(root, '已改名.txt')
+  await rename(file, renamed)
+  await writeFile(file, '原文')
+  await expect(call(command)).rejects.toThrow()
+  expect(await readFile(file, 'utf8')).toBe('原文')
+  expect(await readFile(renamed, 'utf8')).toBe('原文原文')
+  await rm(file)
+  await expect(call(command)).rejects.toThrow()
+  await expect(lstat(file)).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
 it('拖出解析已选工作区的文件和目录，拒绝链接和越界路径', async () => {
@@ -582,9 +885,9 @@ it('项目按 Linux 目录规则落盘，改名及跨月后原文件和引用继
   })
   files = createProjectFiles()
   await expect(call({ action: 'list', directoryId: id, path: '' })).resolves.toEqual([])
-  await expect(readFile(join(root, 'project', '2026', '11', '小北_设计 #12', path))).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(readFile(join(root, 'projects', '2026', '11', '小北_设计 #12', path))).rejects.toMatchObject({ code: 'ENOENT' })
   await call({ action: 'upload', directoryId: id, path, data: bytes('原文件') })
-  const original = join(root, 'project', '2026', '11', '小北_设计 #12', path)
+  const original = join(root, 'projects', '2026', '11', '小北_设计 #12', path)
   expect(await readFile(original, 'utf8')).toBe('原文件')
   await expect(files.resolveFileForDrag(id, path)).resolves.toBe(original)
   const hint = await call({ action: 'reference', directoryId: id, path }) as { id: string }
@@ -601,7 +904,7 @@ it('项目按 Linux 目录规则落盘，改名及跨月后原文件和引用继
   url.search = new URLSearchParams({ directoryId, path, identity }).toString()
   expect(await (await files.content(url, null)).text()).toBe('原文件')
   await expect(readFile(original)).rejects.toMatchObject({ code: 'ENOENT' })
-  expect(await readFile(join(root, 'project', '2027', '01', '交付 #12', path), 'utf8')).toBe('原文件')
+  expect(await readFile(join(root, 'projects', '2027', '01', '交付 #12', path), 'utf8')).toBe('原文件')
 
   project = { ...project, deletedAt: '2027-02-01' }
   await expect(call({ action: 'list', directoryId: id, path: '' })).rejects.toMatchObject({ code: 'not_found' })
@@ -612,9 +915,9 @@ it('项目按 Linux 目录规则落盘，改名及跨月后原文件和引用继
 it('项目目录解析拒绝链接年月目录与工作区外路径', async () => {
   const root = join(directory, 'Gugu-data')
   const outside = join(directory, '外部目录')
-  await mkdir(join(root, 'project'), { recursive: true })
+  await mkdir(join(root, 'projects'), { recursive: true })
   await mkdir(outside)
-  await symlink(outside, join(root, 'project', '2026'), 'junction')
+  await symlink(outside, join(root, 'projects', '2026'), 'junction')
   files = desktopFiles(root, native, undefined, undefined, async () => ({
     name: '小北', startDate: '2026-11-20', createdAt: '2026-10-01', deletedAt: null,
   }))
@@ -631,7 +934,7 @@ it('在系统中显示空项目时，定位到新建的项目根目录', async (
     name: '小北', startDate: '2026-11-20', createdAt: '2026-11-20', deletedAt: null,
   }))
   await expect(call({ action: 'reveal', directoryId: 'project:12', path: '' })).resolves.toEqual({ ok: true })
-  expect(shown).toEqual([join(root, 'project', '2026', '11', '小北 #12')])
+  expect(shown).toEqual([join(root, 'projects', '2026', '11', '小北 #12')])
 })
 
 it('拖入大文件和嵌套目录会移动原件，遇到同名项会保留两边', async () => {
@@ -653,6 +956,20 @@ it('拖入大文件和嵌套目录会移动原件，遇到同名项会保留两�
   await expect(call({ action: 'move-dropped', path: '', sources: [large] })).rejects.toMatchObject({ code: 'conflict' })
   expect(await readFile(large, 'utf8')).toBe('同名原件')
   expect((await lstat(join(root, basename(large)))).size).toBe(size)
+})
+
+it('拖入操作同时保护多个应用数据目录', async () => {
+  const first = join(directory, 'app'), second = join(directory, 'protected')
+  await mkdir(second)
+  const library = join(directory, 'library')
+  await mkdir(library)
+  files = desktopFiles(library, native, undefined, [first, second])
+  await files.personalRoot()
+  for (const source of [join(first, '配置.txt'), join(second, '私有.txt')]) {
+    await writeFile(source, '保留')
+    await expect(call({ action: 'move-dropped', path: '', sources: [source] })).rejects.toMatchObject({ code: 'forbidden' })
+    expect(await readFile(source, 'utf8')).toBe('保留')
+  }
 })
 
 it('原生拖入查询同名项后可保留两份或替换原文件', async () => {
@@ -683,7 +1000,7 @@ it('项目删除移动完整目录，恢复移回原位，提交失败时回滚'
   let project = { name: '交付', startDate: '2026-11-20', createdAt: '2026-11-20', deletedAt: null as string | null }
   files = desktopFiles(root, native, undefined, undefined, async () => project)
   await call({ action: 'upload', directoryId: 'project:12', path: '图稿.md', data: bytes('原文件') })
-  const active = join(root, 'project', '2026', '11', '交付 #12', '图稿.md')
+  const active = join(root, 'projects', '2026', '11', '交付 #12', '图稿.md')
   const parked = join(root, '.gugu-project-trash', '12', '图稿.md')
 
   await expect(files.changeProjectDirectory(12, 'delete', async () => { throw new Error('提交失败') })).rejects.toThrow('提交失败')
@@ -835,4 +1152,33 @@ it('本地目录监听推送外部保存事件，同名替换后仍能收到通�
     await watcher.cancel()
     watcher.releaseLock()
   }
+})
+
+it('迁移安装目录和旧文件根中的 Agent 数据，保留冲突与其他账号文件', async () => {
+  const root = join(directory, 'managed'), database = join(directory, 'app')
+  const owner = '5d413fad-2e23-40fa-9d72-ba9d7c58f638'
+  const other = '344ee0d2-1fd0-4f72-8f84-1f593d558b7c'
+  const account = join(root, owner)
+  const entries = [
+    [join(root, '.agent', 'memories'), 'memory.md', '旧记忆'],
+    [join(account, '.agent', 'memories'), 'memory.md', '当前记忆'],
+    [join(database, owner, '.agent', 'knowledge'), '合成.md', '旧知识'],
+    [join(root, 'personal'), '个人.md', '个人文件'],
+    [join(root, 'project'), '项目.md', '项目文件'],
+    [join(root, other, '.agent'), '私有.md', '其他账号'],
+  ]
+  for (const [folder, name, body] of entries) {
+    await mkdir(folder!, { recursive: true })
+    await writeFile(join(folder!, name!), body!)
+  }
+  expect(await prepareDesktopOwnerFiles(root, database, owner)).toBe(account)
+  expect(await readFile(join(account, '.agent', 'memories', 'memory.md'), 'utf8')).toBe('当前记忆')
+  const [conflict] = await readdir(join(account, '.migration-conflicts'))
+  expect(await readFile(join(account, '.migration-conflicts', conflict!, 'memory.md'), 'utf8')).toBe('旧记忆')
+  expect(await readFile(join(account, '.agent', 'knowledge', '合成.md'), 'utf8')).toBe('旧知识')
+  expect(await readFile(join(account, 'personal', '个人.md'), 'utf8')).toBe('个人文件')
+  expect(await readFile(join(account, 'projects', '项目.md'), 'utf8')).toBe('项目文件')
+  await expect(lstat(join(root, '.agent'))).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await prepareDesktopOwnerFiles(root, database, other)).toBe(join(root, other))
+  expect(await readFile(join(root, other, '.agent', '私有.md'), 'utf8')).toBe('其他账号')
 })

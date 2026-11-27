@@ -16,6 +16,7 @@ export { createSqlRagRebuildWorker, enqueueAgentRagRebuild, changeAgentMemorySco
 export { enqueueAgentRagRebuildInTransaction, invalidateAgentKnowledgeRagInTransaction, invalidateAgentMemoryRagInTransaction } from './rebuild-worker.js'
 export type { RagRebuildSource } from './rebuild-worker.js'
 export { createSqlRagPersistentIndexReader } from './persistent-index.js'
+export { automaticRagSources, prepareAutomaticRagCorpus } from './automatic-corpus.js'
 export { createScopedRagSearch } from './scoped-search.js'
 export { createAgentRagContextBuilder } from './context-builder.js'
 export { readRagDocumentVectors } from './vector-reader.js'

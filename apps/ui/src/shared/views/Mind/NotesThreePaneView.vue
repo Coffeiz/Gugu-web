@@ -13,7 +13,7 @@
           @scrub="onDateScrub"
           @snap="onDateSnap"
         />
-        <div ref="listRef" class="ntp-list-scroll scroll-surface--hidden" @scroll="onListScroll">
+        <div ref="listRef" class="ntp-list-scroll scroll-surface--hidden" :class="{ 'empty-state-viewport': !initialLoading && !store.timeline.length }" @scroll="onListScroll">
           <SkeletonGate v-if="initialLoading">
             <PageSkeleton class="ntp-loading-skeleton" variant="list" :count="5" />
           </SkeletonGate>
@@ -26,26 +26,28 @@
               <div
                 v-for="note in group.items"
                 :key="note.id"
-                class="ntp-item"
-                :class="[note.color ? `tint-${note.color}` : '', { selected: note.id === selectedId }]"
+                class="ntp-item app-hover-actions"
+                :class="[notePaletteOption(note.color) ? 'tint-palette' : '', { selected: note.id === selectedId }]"
+                :style="{ '--note-palette-accent': notePaletteAccent(note.color) }"
                 role="button"
                 tabindex="0"
                 :data-note-id="note.id"
                 @click="selectNote(note.id)"
                 @keydown.enter.self.prevent="selectNote(note.id)"
               >
-                <div class="ni-head">
+                <div class="ni-head app-hover-action-content">
                   <span class="ni-time">{{ timeHM(note) }}</span>
                   <span v-if="titleOf(note)" class="ni-title">{{ titleOf(note) }}</span>
                 </div>
-                <div class="ni-preview" :class="{ 'no-title': !titleOf(note) }">{{ previewOf(note) }}</div>
+                <div class="ni-preview app-hover-action-content" :class="{ 'no-title': !titleOf(note) }">{{ previewOf(note) }}</div>
                 <div class="ni-foot">
                   <!-- 颜色球：显示当前颜色，点击向右展开抽屉选择（含默认纸色）；选完球即新色 -->
                   <span class="color-dot-wrap">
                     <button
                       class="ni-dot-btn"
-                      :class="[note.color || 'none', { open: openColorFor === note.id }]"
-                      :title="note.color ? t(`mindUi.colors.${note.color}`) : t('mindUi.defaultColor')"
+                      :class="[note.color ? '' : 'none', { open: openColorFor === note.id }]"
+                      :title="note.color ? t(`mindUi.colors.${notePaletteOption(note.color)?.key}`) : t('mindUi.defaultColor')"
+                      :style="{ background: notePaletteOption(note.color)?.background }"
                       @click.stop="toggleColorPicker(note.id)"
                     ></button>
                     <span class="color-drawer" :class="{ open: openColorFor === note.id }" @click.stop>
@@ -57,10 +59,10 @@
                         @click="pickColor(note, null)"
                       ></button>
                       <button
-                        v-for="c in NOTE_COLORS.filter(c => c !== note.color)" :key="c"
-                        class="pop-dot" :class="c"
-                        :title="t(`mindUi.colors.${c}`)"
-                        @click="pickColor(note, c)"
+                        v-for="option in NOTE_COLOR_OPTIONS.filter(option => option.color !== note.color)" :key="option.key"
+                        class="pop-dot" :style="{ background: option.background }"
+                        :title="t(`mindUi.colors.${option.key}`)"
+                        @click="pickColor(note, option.color)"
                       ></button>
                     </span>
                   </span>
@@ -69,7 +71,7 @@
                     {{ taskCount(note) }}
                   </span>
                 </div>
-                <ActionButton type="button" variant="danger" fit class="ni-delete"
+                <ActionButton type="button" variant="danger" fit class="ni-delete app-hover-action"
                   :aria-label="t('mindUi.delete')" :title="t('mindUi.delete')" @click.stop="onDelete(note)">
                   <PhTrash :size="13" weight="bold" />
                 </ActionButton>
@@ -97,7 +99,8 @@
     <!-- 栏 2+3：阅读窗格与信息栏合并为同一块玻璃面板，中间只用内容色细分隔线 -->
     <section
       class="ntp-detail glass-card"
-      :class="[selected?.color ? `tint-${selected.color}` : '', { empty: !selected && !initialLoading }]"
+      :class="[notePaletteOption(selected?.color) ? 'tint-palette' : '', { empty: !selected && !initialLoading }]"
+      :style="{ '--note-palette-accent': notePaletteAccent(selected?.color) }"
     >
       <SkeletonGate v-if="!selected && initialLoading">
         <NoteDetailSkeleton />
@@ -111,22 +114,23 @@
               <h1 v-if="selectedTitle" class="rp-title">
                 <button type="button" class="rp-title-button" @click="startEdit('title')">{{ selectedTitle }}</button>
               </h1>
-              <button v-if="nodeRef" class="ntp-ref-chip" :title="refTypeLabel(nodeRef.type)" @click="openNodeRef(nodeRef)">
-                <component :is="refIcon(nodeRef.type)" :size="14" weight="bold" />
-                <span class="label">{{ nodeRef.label }}</span>
+              <button v-if="nodeRef" type="button" class="mind-ref ntp-ref-chip" :title="refTypeLabel(nodeRef.type)" @click="openNodeRef(nodeRef)">
+                <ReferenceTypeIcon :type="nodeRef.type" :size="12" class="mind-ref-icon" />
+                <span class="mind-ref-label">{{ nodeRef.label }}</span>
               </button>
             </div>
             <div v-if="selectedTitle || nodeRef" class="rp-divider"></div>
             <!-- 只读正文复用 NoteCard 同一套 mdToPreviewHtml + 全局 .md-preview 样式：
                  待办勾选、引用 chip、代码块、引用块的行为和主题适配免费拿到 -->
             <div class="rp-body-wrap scroll-surface scroll-surface--editor" @click="onBodyClick" @dragover="onReadingFileDragOver" @drop="onReadingFileDrop">
-              <article v-if="selectedBody" class="rp-body md-preview" v-mind-preview="previewHtml"></article>
+              <SelectionToolbar v-if="selectedBody && selected.id > 0" :read="readPreviewSelection" />
+              <article v-if="selectedBody" ref="previewBody" class="rp-body md-preview" v-mind-preview="previewHtml"></article>
               <div v-else class="rp-empty-note">
                 {{ selectedTitle ? t('mindThreePane.titleOnly') : t('mindThreePane.emptyNote') }}
               </div>
             </div>
             <!-- 底部操作区：与编辑态 Done/Cancel 同一位置；删除带文字，四个按钮统一形态 -->
-            <div class="rp-foot">
+            <div class="rp-foot app-card-actions">
               <ActionButton variant="secondary" fit class="rp-foot-action" @click="startEdit()">
                 <PhPencilSimple :size="14" weight="bold" />
                 {{ t('mindUi.edit') }}
@@ -153,7 +157,7 @@
               ></textarea>
             </div>
             <div class="rp-divider"></div>
-            <NoteEditor ref="noteEditorRef" v-model="editMd" :autofocus="!focusEditTitle" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
+            <NoteEditor :selection-source="selected.id > 0 ? { id: selected.id, label: selectedTitle || t('mindThreePane.titleOnly'), revision: selected.updatedAt, version: selected.version } : undefined" ref="noteEditorRef" v-model="editMd" :autofocus="!focusEditTitle" :expand-drawers="true" class="rp-editor" @submit="finishEdit">
               <template #foot-actions>
                 <ActionButton variant="primary" fit class="rp-foot-action" @click="finishEdit">
                   <PhCheck :size="14" weight="bold" /> {{ t('mindUi.editDone') }}
@@ -196,11 +200,11 @@
           <div v-if="allRefs.length" class="ref-list">
             <button
               v-for="r in allRefs" :key="`${r.type}:${r.id}`"
-              class="ntp-ref-chip wide" :title="refTypeLabel(r.type)"
+              type="button" class="mind-ref ntp-ref-chip" :title="refTypeLabel(r.type)"
               @click="openNodeRef(r)"
             >
-              <component :is="refIcon(r.type)" :size="14" weight="bold" />
-              <span class="label">{{ r.label }}</span>
+              <ReferenceTypeIcon :type="r.type" :size="12" class="mind-ref-icon" />
+              <span class="mind-ref-label">{{ r.label }}</span>
             </button>
           </div>
           <div v-else class="info-empty">{{ t('mindThreePane.noRefs') }}</div>
@@ -211,6 +215,11 @@
 </template>
 
 <script setup lang="ts">
+import ReferenceTypeIcon from '@/components/common/icons/ReferenceTypeIcon.vue'
+import SelectionToolbar from '@/components/common/selection/SelectionToolbar.vue'
+import { readRenderedSelection } from '@/components/common/selection/selectionDraft'
+
+import { NOTE_COLOR_OPTIONS, notePaletteAccent, notePaletteOption } from '@/utils/projectColors'
 import SkeletonGate from '@/components/common/feedback/skeleton/SkeletonGate.vue'
 import NoteDetailSkeleton from '@/components/common/feedback/skeleton/NoteDetailSkeleton.vue'
 import PageSkeleton from '@/components/common/feedback/skeleton/PageSkeleton.vue'
@@ -219,7 +228,7 @@ import { flashNoteTarget } from './utils/flashNoteTarget'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { PhCalendarBlank, PhCheck, PhCheckSquare, PhFile, PhNotePencil, PhPencilSimple, PhPlus, PhStack, PhTrash, PhX } from '@phosphor-icons/vue'
+import { PhCheck, PhCheckSquare, PhNotePencil, PhPencilSimple, PhPlus, PhTrash, PhX } from '@phosphor-icons/vue'
 import { showAppError, showAppNotice } from '@/composables/core/useAppToast'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
 import { MindConflictError, useMindStore } from '@/stores/mind'
@@ -283,6 +292,15 @@ onBeforeUnmount(() => {
 // 当前选中的便签。数据刷新（勾待办 / 其他端改动）后 store.notes 是同引用替换，
 // 这里按 id 重新 find，保证读到的是最新字段。
 const selected = computed(() => store.notes.find(n => n.id === selectedId.value) ?? null)
+const previewBody = ref<HTMLElement | null>(null)
+function readPreviewSelection() {
+  const note = selected.value
+  const snapshot = readRenderedSelection(previewBody.value)
+  if (!note || note.id <= 0 || !snapshot) return null
+  const label = selectedTitle.value || String(note.id)
+  return { ...snapshot, location: label, version: note.version,
+    resolve: () => ({ type: 'canvas_note' as const, id: note.id, label }) }
+}
 const selectedRecordDate = computed(() => selected.value ? localDayKey(parseUtc(selected.value.capturedAt)) : '')
 const recordDateSaving = ref(false)
 
@@ -404,8 +422,6 @@ function refLabel(type: string, id: number | string): string | null {
   return null
 }
 function refTypeLabel(type: string) { return t(`mindEditorUi.referenceTypes.${type}`, t('mindUi.object')) }
-const REF_ICONS: Record<string, typeof PhStack> = { project: PhStack, file: PhFile, event: PhCalendarBlank }
-function refIcon(type: string) { return REF_ICONS[type] ?? PhCalendarBlank }
 function openNodeRef(ref: NtpNodeRef) { void openMindRef(ref.type, ref.id) }
 
 // 正文点击：待办勾选走与卡片同一条乐观锁保存路径；引用 chip 打开对应对象；
@@ -645,7 +661,6 @@ watch(selectedId, async (_newId, oldId) => {
 
 // ── 颜色：卡片上的颜色球，点击弹出选择（含默认纸色），选完球即新色 ──
 // 颜色只改 color 字段，不牵动 contentMd/version 冲突判定（与 NotesView.onColor 同口径）
-const NOTE_COLORS = ['amber', 'coral', 'blue', 'teal'] as const
 const openColorFor = ref<number | null>(null)
 
 function toggleColorPicker(id: number) {
@@ -816,7 +831,7 @@ function onListScroll() {
   grid-template-rows: auto minmax(0, 1fr);
   gap: var(--space-md);
   height: 100%; min-height: 0;
-  padding: 0 24px 22px;
+  padding: 0 var(--space-xl) var(--space-xl);
 }
 .ntp-toolbar { grid-column: 1 / -1; }
 
@@ -829,7 +844,7 @@ function onListScroll() {
 .ntp-list-surface {
   flex: 1; min-width: 0; min-height: 0;
   display: flex; flex-direction: column;
-  padding: 8px 10px 10px;
+  padding: var(--page-content-inset);
 }
 .ntp-list-surface > .ntp-date-index {
   flex: none; position: relative; z-index: 2;
@@ -839,16 +854,15 @@ function onListScroll() {
 .ntp-list-scroll {
   /* 补回被覆盖的上半段，让卡片初始位置保持不变。 */
   /* 横向扩展滚动视口并补足内容内边距，给卡片外阴影留空间且不改变卡片几何位置。 */
-  flex: 1; min-width: 0; min-height: 0; overflow-y: auto; margin-inline: -6px; padding: 28px 8px 16px;
+  flex: 1; min-width: 0; min-height: 0; overflow-y: auto; margin-inline: calc(-1 * var(--space-xs)); padding: calc(var(--space-xl) + var(--space-xs)) var(--space-xs) var(--page-content-inset);
   /* 顶部渐变淡出到日期滑条下方，底部渐隐到新建按钮上方，避免卡片硬切。 */
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 64px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 40px, #000 calc(100% - 64px), transparent 100%);
 }
 .ntp-state { color: var(--text-secondary); }
-.ntp-empty-state { min-height: min(52vh, 360px); --empty-description-width: 220px; }
-.ntp-loading-skeleton { padding: 16px; }
-.ntp-list-scroll > .ntp-empty-state { min-height: calc(100% - 44px); }
-.ntp-loading { display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.5; }
+.ntp-empty-state { --empty-description-width: 220px; }
+.ntp-loading-skeleton { padding: var(--space-lg); }
+.ntp-loading { display: flex; align-items: center; justify-content: center; gap: var(--space-sm); color: var(--text-secondary); font-size: 12.5px; line-height: 1.5; }
 .ntp-spinner {
   width: 15px; height: 15px; flex: none; box-sizing: border-box; display: inline-block;
   border: 2px solid color-mix(in srgb, var(--text-primary) 13%, transparent);
@@ -856,16 +870,16 @@ function onListScroll() {
 }
 @keyframes ntp-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ntp-spinner { animation: none; } }
-.ntp-loading-more { min-height: 38px; padding: 8px 10px 12px; }
+.ntp-loading-more { min-height: 38px; padding: var(--space-sm) var(--space-sm) var(--space-md); }
 .ntp-day-label {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 14px 6px 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary);
+  display: flex; align-items: baseline; gap: var(--space-sm);
+  padding: var(--space-md) var(--space-xs) var(--space-sm); font-size: 12px; font-weight: 600; color: var(--text-secondary);
 }
-.ntp-day-label:first-child { padding-top: 4px; }
+.ntp-day-label:first-child { padding-top: var(--space-xs); }
 .ntp-day-label .n { font-weight: 400; opacity: var(--mind-notes-meta-opacity, 0.7); }
 .ntp-item {
   position: relative; display: block; width: 100%; text-align: left;
-  padding: 11px 13px 10px; margin-bottom: 8px;
+  padding: var(--space-md); margin-bottom: var(--space-xs);
   /* 不能加 overflow:hidden——颜色弹层要从卡片向上弹出，裁剪会把弹层吃掉 */
   background: var(--mind-notes-list-card-bg); border: 1px solid transparent; border-radius: var(--radius-sm);
   box-shadow: var(--elevation-card); cursor: pointer; color: inherit; font-family: inherit;
@@ -891,33 +905,25 @@ function onListScroll() {
 .ntp-item > * { position: relative; z-index: 1; }
 /* 便签四色 tint 消费主题 token（tokens/components/mind.css 定义亮暗两套值）——
    不能像 NoteCard 旧底稿那样硬编码浅色 rgb，暗色下会变成浅底配浅字不可读 */
-.ntp-item.tint-amber { background: var(--note-paper-amber); }
-.ntp-item.tint-coral { background: var(--note-paper-coral); }
-.ntp-item.tint-blue  { background: var(--note-paper-blue); }
-.ntp-item.tint-teal  { background: var(--note-paper-teal); }
-.ni-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.ntp-item.tint-palette { background: var(--note-paper-palette); }
+.ni-head { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-xs); }
 .ni-time { font-size: 11px; color: var(--text-secondary); opacity: var(--mind-notes-meta-opacity, 0.85); font-variant-numeric: tabular-nums; flex: none; }
 .ni-title {
   flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.4; font-weight: 600; color: var(--text-primary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-bottom: 1px; margin-bottom: -1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-bottom: var(--space-xs); margin-bottom: calc(-1 * var(--space-xs));
 }
 .ni-preview {
   font-size: 12.5px; color: var(--text-secondary); line-height: 1.55;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  margin-bottom: 7px;
+  margin-bottom: var(--space-sm);
 }
 .ni-preview.no-title { -webkit-line-clamp: 3; color: var(--text-primary); font-weight: 500; }
-.ni-foot { display: flex; align-items: center; gap: 8px; min-height: 18px; }
+.ni-foot { display: flex; align-items: center; gap: var(--space-sm); min-height: 18px; }
 .ntp-item > .ni-delete {
-  position: absolute; inset-inline-end: 13px; top: 50%; transform: translateY(-50%);
-  opacity: 0; pointer-events: none;
+  position: absolute; inset-inline-end: 13px; inset-block-start: 50%; translate: 0 -50%;
+  background: color-mix(in srgb, var(--status-danger) 12%, var(--surface-card-solid));
 }
-.ntp-item:is(:hover, :focus-within) { padding-inline-end: 48px; }
-.ntp-item:is(:hover, :focus-within) .ni-delete { opacity: 1; pointer-events: auto; }
-@media (hover: none) {
-  .ntp-item { padding-inline-end: 48px; }
-  .ntp-item > .ni-delete { opacity: 1; pointer-events: auto; }
-}
+.ntp-item > .ni-delete:hover { background: color-mix(in srgb, var(--status-danger) 20%, var(--surface-card-solid)); }
 /* 颜色球：即当前颜色指示；点击向右展开抽屉选择（默认纸色 = 棋盘格），选完球即新色。
    抽屉沿用 NoteEditor 样式/插入抽屉的「max-width 从 0 长开」模式，不用浮层 */
 .color-dot-wrap { position: relative; display: inline-flex; align-items: center; }
@@ -929,31 +935,23 @@ function onListScroll() {
 .ni-dot-btn:hover { transform: scale(1.12); }
 .ni-dot-btn.open { box-shadow: 0 0 0 2px var(--color-primary), 0 1px 2px rgba(80, 90, 110, 0.18); }
 .ni-dot-btn.none { background: repeating-conic-gradient(#dcdce2 0% 25%, #fff 0% 50%) 0 0 / 6px 6px; }
-.ni-dot-btn.amber { background: #ffc05f; }
-.ni-dot-btn.coral { background: #ff826c; }
-.ni-dot-btn.blue  { background: #3196e2; }
-.ni-dot-btn.teal  { background: #53d2dc; }
 .color-drawer {
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: var(--space-xs);
   max-width: 0; opacity: 0; overflow: hidden;
   transition: max-width 0.18s cubic-bezier(0.65, 0, 0.35, 1), opacity 0.14s ease;
 }
 .color-drawer.open { max-width: 140px; opacity: 1; }
 /* 与本体球的间隔放抽屉内部：闭合时被 overflow 裁掉不占位，展开时才出现 */
-.color-drawer .pop-dot:first-child { margin-left: 6px; }
+.color-drawer .pop-dot:first-child { margin-left: var(--space-xs); }
 .pop-dot {
-  flex: none; width: 16px; height: 16px; border-radius: 50%; padding: 0; cursor: pointer;
+  flex: none; width: 12px; height: 12px; border-radius: 50%; padding: 0; cursor: pointer;
   border: 1px solid rgba(255, 255, 255, 0.85); box-shadow: 0 1px 2px rgba(80, 90, 110, 0.18);
 }
 .pop-dot.none { background: repeating-conic-gradient(#dcdce2 0% 25%, #fff 0% 50%) 0 0 / 6px 6px; }
-.pop-dot.amber { background: #ffc05f; }
-.pop-dot.coral { background: #ff826c; }
-.pop-dot.blue  { background: #3196e2; }
-.pop-dot.teal  { background: #53d2dc; }
-.ni-task { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary); }
+.ni-task { display: inline-flex; align-items: center; gap: var(--space-xs); font-size: 11px; color: var(--text-secondary); }
 
 /* 新建笔记：列表底部整宽胶囊，标准 ActionButton 只接管几何宽度 */
-.ntp-new { width: 100%; height: 38px; min-height: 38px; flex: none; margin-top: 8px; }
+.ntp-new { width: 100%; height: 38px; min-height: 38px; flex: none; margin-top: var(--space-sm); }
 
 /* ── 栏 2+3：阅读 + 信息同一块玻璃 ── */
 .ntp-detail {
@@ -965,32 +963,27 @@ function onListScroll() {
   --glass-card-background: var(--ntp-detail-note-paper);
   border-color: color-mix(in srgb, var(--glass-card-border) 90%, var(--ntp-detail-note-paper));
 }
-.ntp-detail.tint-amber { --ntp-detail-note-paper: var(--note-paper-amber); }
-.ntp-detail.tint-coral { --ntp-detail-note-paper: var(--note-paper-coral); }
-.ntp-detail.tint-blue  { --ntp-detail-note-paper: var(--note-paper-blue); }
-.ntp-detail.tint-teal  { --ntp-detail-note-paper: var(--note-paper-teal); }
+.ntp-detail.tint-palette { --ntp-detail-note-paper: var(--note-paper-palette); }
 .ntp-detail.empty { grid-template-columns: minmax(0, 1fr); }
-/* 只读态按钮距窗格底部 10px；编辑态工具栏自带 4px 底 padding，
-   因此窗格自身留 6px，两种模式的按钮底缘保持同高。 */
 .ntp-reading {
   flex: 1; min-width: 0; min-height: 0;
-  display: flex; flex-direction: column; overflow-y: auto; padding: 20px 28px 10px;
+  display: flex; flex-direction: column; overflow-y: auto; padding: var(--page-content-inset);
 }
-/* 编辑态：工具栏自带 4px 底 padding，外层留 6px，与只读态 10px 对齐。 */
-.ntp-reading.editing { overflow: hidden; padding-bottom: 6px; }
+/* 编辑工具栏自带底部留白，扣除该间距以对齐阅读态。 */
+.ntp-reading.editing { overflow: hidden; padding-block-end: calc(var(--page-content-inset) - var(--space-xs)); }
 .ntp-detail.empty .ntp-reading { display: grid; place-items: center; }
 .ntp-detail-empty { max-width: 320px; --empty-description-width: 260px; }
-.ntp-detail-empty.ntp-loading { flex-direction: column; gap: 10px; text-align: center; }
-.rp-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; }
+.ntp-detail-empty.ntp-loading { flex-direction: column; gap: var(--space-sm); text-align: center; }
+.rp-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-sm); margin: 0; }
 /* 浏览器原生 input 的文字垂直居中与 h1 字形基线有约 1px 的差异，预览标题微调对齐编辑态。 */
 .rp-title { position: relative; flex: 1; min-width: 0; top: 1px; font-size: 23px; font-weight: 700; line-height: 1.35; margin: 0; color: var(--text-primary); }
 .rp-title-button {
   display: block; width: 100%; padding: 0; border: 0; background: transparent;
   color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; cursor: text;
 }
-/* 标题→分割线→正文的节奏（12/14）与编辑态标题 h1 的 padding/margin 严格同值，
-   两种模式切换时标题、分割线、正文的相对位置不动 */
-.rp-divider { border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent); margin: 12px 0 14px; }
+/* 阅读态的滚动区紧贴分割线，编辑态保留输入区间距。 */
+.rp-divider { border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent); margin: var(--space-md) 0 0; }
+.ntp-reading.editing .rp-divider { margin-block-end: var(--space-xs); }
 /* 编辑态复用阅读态标题行与分割线结构；显式覆盖全局输入框控件高度，避免通用
    表单尺寸和下边距把标题基线与分割线间距挤偏。 */
 .rp-title-input {
@@ -1007,12 +1000,16 @@ function onListScroll() {
 /* 正文区自占剩余高度滚动，底部操作区（编辑/删除）钉在窗格底部，与编辑态 Done/Cancel 同位 */
 .rp-body-wrap {
   flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
-  --scrollbar-overlay-right-offset: 20px;
 }
-.rp-empty-note { margin-top: 14px; color: var(--text-secondary); font-size: 13px; }
-.rp-body { font-size: 14px; margin-top: 14px; }
-.rp-divider ~ .rp-body-wrap .rp-body { margin-top: 0; }
-.rp-foot { flex: none; display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding-top: 12px; }
+.rp-empty-note { margin-top: var(--space-md); color: var(--text-secondary); font-size: 13px; }
+.rp-body { font-size: 14px; margin-top: var(--space-md); }
+.rp-divider ~ .rp-body-wrap :is(.rp-body, .rp-empty-note) { margin-top: 0; }
+.ntp-reading:has(> .rp-foot) { padding-block-end: 0; }
+.rp-foot {
+  --card-actions-inset: var(--page-content-inset);
+  --card-actions-control-height: 38px;
+  padding-inline: var(--page-content-inset);
+}
 .rp-foot .app-action-button.is-secondary,
 .rp-editor :deep(.app-action-button.is-secondary) {
   --action-secondary-bg: var(--surface-card-solid);
@@ -1026,7 +1023,7 @@ html[data-theme='dark'] .rp-editor :deep(.app-action-button.is-secondary) {
 /* 宽窗格顶层块间距统一锁 3px：mind-content 的 0.2em 是 em 口径，15px 标题算 3px、
    14px 正文算 2.8px 混着不齐；窗格字号已锁 14/15px，间距钉成同值，两模式同源一致 */
 .rp-body > * + *,
-.rp-editor :deep(.ProseMirror > * + *) { margin-top: 3px; }
+.rp-editor :deep(.ProseMirror > * + *) { margin-top: var(--space-xs); }
 /* 编辑态：排版与只读预览完全同口径——mind-content 基础 13px 是窄卡片口径，宽窗格
    两边一起抬到 14px；标题行与只读大标题同字号（ne-body h1 默认 15px 是卡片口径）；
    小节标题对齐只读视图的 15px；工具栏图标比卡片编辑态大一档（阅读窗格宽、密度低）；
@@ -1039,7 +1036,7 @@ html[data-theme='dark'] .rp-editor :deep(.app-action-button.is-secondary) {
 /* 宽笔记窗格的工具按钮整体放大，尺寸与间距由 NoteEditor 统一消费，避免主工具和抽屉
    选项被各自的局部规则覆盖成不同点击盒子。 */
 .rp-editor :deep(.ne-toolbar) {
-  --ne-tool-size: 30px; --ne-toolbar-gap: 4px; --ne-drawer-max-width: 180px;
+  --ne-tool-size: 30px; --ne-toolbar-gap: var(--space-xs); --ne-drawer-max-width: 180px;
 }
 /* 编辑器把所有 md 标题级别折叠成 h1（markdownToDoc level:1）：其余 h1 一律 15px
    对齐 .md-preview h1（笔记标题改由独立的标题输入位承担，不再依赖首块 h1 字号）。
@@ -1050,40 +1047,35 @@ html[data-theme='dark'] .rp-editor :deep(.app-action-button.is-secondary) {
 .rp-editor :deep(.ProseMirror h3) { font-size: 15px; font-weight: 700; }
 .rp-editor :deep(.ne-tool svg),
 .rp-editor :deep(.ne-style-item svg) { width: 16px; height: 16px; }
-.rp-editor :deep(.ne-toolbar-actions) { display: inline-flex; align-items: center; gap: 8px; }
+.rp-editor :deep(.ne-toolbar-actions) { display: inline-flex; align-items: center; gap: var(--space-xs); }
 
-/* 引用 chip（便签本体单引用）：对齐气泡 @ chip 契约——图标不压扁 + label 不换行 */
 .ntp-ref-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  max-width: 280px; padding: 4px 10px;
-  background: var(--surface-soft, color-mix(in srgb, var(--color-primary) 7%, transparent));
-  border: 1px solid color-mix(in srgb, var(--text-primary) 9%, transparent);
-  border-radius: 8px; font-size: 12.5px; color: var(--text-secondary); cursor: pointer;
-  font-family: inherit; transition: background 0.15s;
+  appearance: none;
+  min-width: 0;
+  margin: 0;
+  font-family: inherit;
+  line-height: 1.5;
+  text-align: start;
 }
-.ntp-ref-chip:hover { background: color-mix(in srgb, var(--color-primary) 12%, transparent); }
-.ntp-ref-chip svg { flex: none; color: var(--color-primary); }
-.ntp-ref-chip .label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ntp-ref-chip.wide { max-width: 100%; width: 100%; box-sizing: border-box; justify-content: flex-start; }
-.ref-list { display: flex; flex-direction: column; align-items: stretch; gap: 5px; }
+.ref-list { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-xs); }
 
 /* ── 信息栏：与阅读窗格同一块玻璃，用内容色细分隔线分区 ── */
 .ntp-info {
   min-height: 0; overflow-y: auto;
-  padding: 20px 18px;
+  padding: var(--page-content-inset);
   border-left: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 .info-sec + .info-sec {
-  margin-top: 14px; padding-top: 14px;
+  margin-top: var(--space-md); padding-top: var(--space-md);
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
-.info-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; }
-.kv { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 4px 0; }
+.info-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: var(--space-sm); }
+.kv { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-sm); padding: var(--space-xs) 0; }
 .kv .k { font-size: 12px; color: var(--text-secondary); opacity: var(--mind-notes-meta-opacity, 0.8); flex: none; }
 .kv .v { font-size: 12.5px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .record-date-value { display: flex; align-items: center; justify-content: flex-end; width: 98px; flex: 0 0 98px; min-width: 0; }
 .record-date-value :deep(.dp-wrap) { width: 100%; }
-.record-date-value :deep(.dp-input) { min-height: 30px; padding: 5px 8px; box-sizing: border-box; font-size: 12px; }
+.record-date-value :deep(.dp-input) { min-height: 30px; padding: var(--space-xs) var(--space-sm); box-sizing: border-box; font-size: 12px; }
 .info-empty { font-size: 12px; color: var(--text-secondary); opacity: var(--mind-notes-meta-opacity, 0.75); line-height: 1.6; }
 </style>
 <!-- 只读正文的排版结构（np-tasks / np-quote / 代码块…）是全局样式，NoteCard.vue 用同一份；

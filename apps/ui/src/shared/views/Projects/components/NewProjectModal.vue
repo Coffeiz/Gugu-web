@@ -43,10 +43,14 @@
           <div class="color-grid">
             <button
               v-for="c in colorPresets"
-              :key="c.value"
+              :key="c.key"
+              :title="t(`mindUi.colors.${c.key}`)"
+              :aria-label="t(`mindUi.colors.${c.key}`)"
+              :aria-pressed="form.color === c.value"
+              type="button"
               class="color-chip"
               :class="{ active: form.color === c.value }"
-              :style="{ background: c.value }"
+              :style="{ backgroundColor: extractProjectAccent(c.value) }"
               @click="form.color = c.value"
             >
               <Icon name="status.success" v-if="form.color === c.value" :size="11" style="color:white" />
@@ -188,7 +192,7 @@
       </div>
 
       <!-- 底部 -->
-      <div class="modal-footer">
+      <div class="modal-footer app-card-actions">
         <ActionButton variant="secondary" @click="$emit('close')">{{ t('projects.cancel') }}</ActionButton>
         <ActionButton :disabled="creating" @click="handleCreate">{{ t('projects.create') }}</ActionButton>
       </div>
@@ -219,7 +223,7 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { onboardingProjectId } from '@/composables/onboarding/useOnboarding'
 import Icon from '@/components/common/icons/Icon.vue'
 import CloseButton from '@/components/common/overlays/CloseButton.vue'
-import { SELECTABLE_PROJECT_COLORS } from '@/utils/projectColors'
+import { extractProjectAccent, PROJECT_COLOR_OPTIONS } from '@/utils/projectColors'
 import { projectStatusLabelKey } from '@/utils/projectStages'
 import { useI18n } from 'vue-i18n'
 import { browserDayKey as toIso } from '@/utils/dateAttribution'
@@ -336,7 +340,7 @@ function weekLaterIso() {
   const d = new Date(); d.setDate(d.getDate() + 7); return toIso(d)
 }
 
-const colorPresets = SELECTABLE_PROJECT_COLORS.map(value => ({ value }))
+const colorPresets = PROJECT_COLOR_OPTIONS
 
 const prefsStore = usePreferencesStore()
 
@@ -851,9 +855,9 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
 /* ── 底部 ── */
 .modal-footer {
   display: flex; justify-content: flex-end; gap: 10px;
-  padding: 14px 20px;
-  border-top: 1px solid rgba(0,0,0,0.07);
-  flex-shrink: 0;
+
+
+
 }
 </style>
 

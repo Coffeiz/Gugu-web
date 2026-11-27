@@ -7,9 +7,6 @@ export interface CapabilityCredentialInput {
   value?: string
 }
 export interface LocalCapabilityAccess {
-  smtpSettings(): Promise<{ host: string; port: number; user: string; fromAddr: string; useSsl: boolean; enabled: boolean; configured: boolean } | null>
-  saveSmtp(input: Record<string, unknown>): Promise<unknown>
-  testSmtp(input: Record<string, unknown>): Promise<{ ok: boolean; message: string }>
   list(): Promise<import('@gugu/core/byok/contracts').ByokSummary[]>
   save(input: CapabilityCredentialInput, id: number | null): Promise<{ id: number }>
   remove(id: number): Promise<void>

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createGroupContextSearchTool, resolveGroupSpeaker } from '../../../src/agent/tools/group-context.js'
+import { createGroupContextSearchTool, resolveGroupSpeaker } from '../../../src/agent/tools/im/group-context.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { ToolScope } from '../../../src/agent/tools/contracts.js'
 

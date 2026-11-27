@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import test from 'node:test'
-import { revokeUserSessions, UserNotFoundError } from '../../src/modules/auth/session/revoke.js'
+import { revokeUserSessions, UserNotFoundError } from '@gugu/auth/postgres'
 
 const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 

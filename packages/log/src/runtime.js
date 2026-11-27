@@ -76,7 +76,7 @@ function safeILinkDetails(error) {
   }
 }
 
-export function createRuntimeLog({ regular, diagnostic }) {
+export function createRuntimeLog({ regular, diagnostic, hostKind }) {
   return (event, details = {}) => {
     if (!levels.has(event)) return
     const { error, code, exitCode, frames, ok, timedOut, phase, signal, elapsedMs, pid, rpcMethod } = details
@@ -91,6 +91,7 @@ export function createRuntimeLog({ regular, diagnostic }) {
     const iLinkDetails = typeof code === 'string' && code.startsWith('wechat-') ? safeILinkDetails(error) : {}
     const { uploadStage, httpStatus, upstreamCode, deliveryOutcome } = details
     const attributes = {
+      ...(['host.started', 'host.stopped'].includes(event) && hostKind === 'desktop' ? { hostKind } : {}),
       ...(event === 'gateway.qq_upload_timing' ? Object.fromEntries(
         ['prepareMs', 'transferMs', 'putMs', 'finishMs', 'completeMs', 'parts', 'concurrency', 'elapsedMs']
           .flatMap(key => {

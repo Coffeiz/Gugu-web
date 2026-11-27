@@ -72,7 +72,7 @@ export function createPlatformMedia(options: { storage: PlatformAttachmentStore;
           async file(media, file, index) {
             try {
               ids.push(await add({ scope, sourcePlatformMessageId: source, sourceAttachmentIndex: media.source === 'quote' ? media.attachmentIndex : index,
-                ...file, quoted: media.source === 'quote' }))
+                ...file }))
             } catch {
               signal.throwIfAborted()
               throw new QqMediaIngressError('qq_media_stage')

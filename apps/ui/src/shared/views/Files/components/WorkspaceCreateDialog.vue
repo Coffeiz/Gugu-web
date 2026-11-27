@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import BaseModal from '@/components/common/overlays/BaseModal.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 
-const props = defineProps({ show: Boolean, busy: Boolean, local: Boolean, error: String })
+const props = defineProps({ show: Boolean, busy: Boolean, error: String })
 const emit = defineEmits<{ close: []; submit: [] }>()
 const name = defineModel('name', { default: '' })
 const { t } = useI18n()
@@ -16,7 +16,7 @@ watch(() => props.show, async show => {
   }
 })
 function submit() {
-  if (!props.busy && (props.local || name.value.trim())) emit('submit')
+  if (!props.busy && name.value.trim()) emit('submit')
 }
 </script>
 
@@ -30,14 +30,14 @@ function submit() {
   >
     <form class="workspace-modal" @submit.prevent="submit">
       <div class="workspace-modal-heading">
-        <h2>{{ t(local ? 'filesUi.addDesktopWorkspace' : 'workspaceUi.createWorkspace') }}</h2>
-        <p>{{ t(local ? 'filesUi.localWorkspaceHint' : 'workspaceUi.createWorkspaceHint') }}</p>
+        <h2>{{ t('workspaceUi.createWorkspace') }}</h2>
+        <p>{{ t('workspaceUi.createWorkspaceHint') }}</p>
       </div>
-      <input v-if="!local" ref="createInput" v-model="name" class="workspace-input" :placeholder="t('workspaceUi.workspaceNamePlaceholder')" maxlength="200" autofocus />
+      <input ref="createInput" v-model="name" class="workspace-input" :placeholder="t('workspaceUi.workspaceNamePlaceholder')" maxlength="200" autofocus />
       <p v-if="error" class="workspace-form-error">{{ error }}</p>
-      <div class="workspace-modal-actions">
+      <div class="workspace-modal-actions app-card-actions">
         <ActionButton variant="secondary" fit type="button" @click="$emit('close')">{{ t('common.actions.cancel') }}</ActionButton>
-        <ActionButton fit type="submit" :disabled="busy || (!local && !name.trim())">{{ busy ? t('common.status.saving') : t(local ? 'filesUi.chooseWorkspaceFolder' : 'common.actions.confirm') }}</ActionButton>
+        <ActionButton fit type="submit" :disabled="busy || !name.trim()">{{ busy ? t('common.status.saving') : t('common.actions.confirm') }}</ActionButton>
       </div>
     </form>
   </BaseModal>
@@ -48,7 +48,7 @@ function submit() {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
-  padding: var(--confirm-dialog-padding);
+  --card-actions-inset: var(--confirm-dialog-padding); padding: var(--confirm-dialog-padding) var(--card-actions-inset) 0;
   color: var(--text-primary);
 }
 .workspace-modal-heading {

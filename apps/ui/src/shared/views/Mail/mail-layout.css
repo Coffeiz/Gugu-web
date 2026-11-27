@@ -1,0 +1,32 @@
+.mail-page { width: 100%; height: 100%; min-width: 0; min-height: 0; box-sizing: border-box; container-type: inline-size; }
+.mail-columns { display: grid; grid-template-columns: minmax(160px, min(22cqi, 220px)) minmax(220px, min(27cqi, 290px)) minmax(0, 2.25fr); gap: var(--space-md); height: 100%; min-height: 0; }
+.mail-folders, .mail-list, .mail-content { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.mail-columns > [data-overlay-scrollbar-owner] { position: relative; isolation: isolate; }
+.mail-pane-toolbar { flex: none; padding: var(--toolbar-inset); border-bottom: 1px solid var(--content-divider); box-sizing: border-box; }
+@container (max-width: 740px) {
+  .mail-columns { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 2fr) minmax(0, 3fr); }
+  .mail-columns:not(.show-reading) .mail-content, .show-reading .mail-list, .show-reading .mail-folders { display: none; }
+  .mail-columns.show-reading { grid-template-rows: minmax(0, 1fr); }
+}
+
+.mail-pane-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--page-content-inset); }
+.mail-pane-scroll > .mail-nav-row + .mail-nav-row { margin-top: var(--space-xs); }
+.mail-nav-row { border-radius: var(--radius-xs); display: flex; align-items: center; gap: var(--space-sm); }
+.mail-nav-row { transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard); }
+.mail-nav-row svg { flex: none; }
+.mail-nav-icon { color: var(--content-secondary); }
+.mail-nav-row:disabled { cursor: default; }
+.mail-nav-row:hover:not(:disabled):not([aria-pressed=true]) { background: var(--sidebar-item-hover); }
+.mail-nav-row[aria-pressed=true] { background: var(--sidebar-item-active); color: var(--sidebar-item-active-fg); border-color: var(--sidebar-item-active-border); box-shadow: none; }
+.mail-nav-row .mail-nav-count {
+  margin-inline-start: auto;
+  flex: none;
+  padding-inline: var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+.mail-nav-row { width: 100%; text-align: left; border: 1px solid transparent; padding: var(--space-sm); font: inherit; color: var(--content-primary); background: transparent; cursor: pointer; }
+.mail-nav-row:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }

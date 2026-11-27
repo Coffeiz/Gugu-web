@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { createWorkspaceTool, type WorkspaceCreatePort } from '../../../src/agent/tools/workspaces.js'
+import { createWorkspaceTool, type WorkspaceCreatePort } from '../../../src/agent/tools/workspaces/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 
 const identity = { ownerId: '00000000-0000-4000-8000-000000000001', sessionId: '8', runId: 'create-workspace-run' }

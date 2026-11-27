@@ -6,7 +6,7 @@ import { sql } from 'kysely'
 import { beforeEach,afterEach,it,expect,vi,type Mock } from 'vitest'
 import { initializeSqlite,openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { SqlDataRuntime } from '../../../src/data/runtime.js'
-import { createCanvasBatchPort,createCanvasBatchTool,createCanvasDeleteNotePort,createCanvasDeleteNoteTool,createCanvasDisconnectPort,createCanvasDisconnectTool,createCanvasDeletePort,createCanvasDeleteTool,createCanvasEditPort,createCanvasEditTools,type CanvasBatchConfirmationPort } from '../../../src/agent/tools/canvas.js'
+import { createCanvasBatchPort,createCanvasBatchTool,createCanvasDeleteNotePort,createCanvasDeleteNoteTool,createCanvasDisconnectPort,createCanvasDisconnectTool,createCanvasDeletePort,createCanvasDeleteTool,createCanvasEditPort,createCanvasEditTools,type CanvasBatchConfirmationPort } from '../../../src/agent/tools/canvas/index.js'
 import { createConfirmationGate } from '../../../src/agent/tools/confirmation.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect,fixture } from '../run/fixtures.js'
@@ -60,11 +60,19 @@ it('移除视图保留节点和关系，记录detached；节点墓碑不阻止�
  expect(await send('canvas_remove_node',{canvas_id:1,item_id:5},'deleted-node')).toMatchObject({successful:true,value:{removed_item_id:5,node_preserved:true}})
 })
 it('画布便签增量更新正文/摘要/版本，空标题默认值和BOM按Python保留，普通笔记/跨owner不可改',async()=>{
- expect(await send('canvas_update_note',{updates:[{node_id:1,title:' ',content:'# 新正文',color:'blue'},{node_id:2,title:'\ufeff 保留'}]})).toMatchObject({successful:true,value:{count:2,results:[{updated:true,node:{title:'新便签',preview:'新正文'}},{node:{title:'\ufeff 保留'}}]}})
- const nodes=await rows('mind_nodes');expect(nodes[0]).toMatchObject({content_md:'# 新正文',content_plain:'新正文',color:'blue',version:2});expect(nodes[1]).toMatchObject({version:2})
+ expect(await send('canvas_update_note',{updates:[{node_id:1,title:' ',content:'# 新正文',color:'sky'},{node_id:2,title:'\ufeff 保留'}]})).toMatchObject({successful:true,value:{count:2,results:[{updated:true,node:{title:'新便签',preview:'新正文'}},{node:{title:'\ufeff 保留'}}]}})
+ const nodes=await rows('mind_nodes');expect(nodes[0]).toMatchObject({content_md:'# 新正文',content_plain:'新正文',color:'project:sky',version:2});expect(nodes[1]).toMatchObject({version:2})
  for(const node_id of [4,5,6,999])expect(await send('canvas_update_note',{node_id,content:'不可改'},randomUUID())).toMatchObject({successful:false,value:{error:'找不到这条画布便签'}})
  expect(await send('canvas_update_note',{updates:[{node_id:1,title:'要回滚'},{node_id:4,title:'非法'}]},'rollback')).toMatchObject({successful:false})
  expect(await rows('mind_nodes')).toEqual(nodes)
+})
+it('画布选区替换需要当前版本与唯一原文', async () => {
+ const edit = { node_id: 1, expected_version: 1, find_replace: { find: '原正文', replace: '新片段' } }
+ expect(await send('canvas_update_note', { ...edit, expected_version: 0 }, 'stale-selection'))
+   .toMatchObject({ successful: false, mutated: false })
+ expect(await send('canvas_update_note', edit, 'replace-selection'))
+   .toMatchObject({ successful: true, mutated: true, value: { node: { preview: '新片段' } } })
+ expect((await rows('mind_nodes'))[0]).toMatchObject({ content_md: '# 新片段', version: 2 })
 })
 it('收据重建/并发/丢应答恢复不重复修改版本，撤权、组关闭和取消阻断执行',async()=>{
  const input={node_id:1,content:'新内容'}

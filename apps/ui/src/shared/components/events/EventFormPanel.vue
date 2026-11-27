@@ -2,11 +2,9 @@
   <div class="event-form-body" :class="{ 'shared-event-popup': surface }">
     <div class="popup-header">
       <span class="popup-title">{{ title }}</span>
-      <button class="popup-close-btn" @click="emit('close')" :title="t('common.actions.close')">
-        <Icon name="action.close" :size="12" />
-      </button>
+      <CloseButton compact @click="emit('close')" />
     </div>
-    <EventFormFields :event="event" :form="form" :is-past-date="isPastDate" :autofocus="autofocus" :show-reminders="showReminders"
+    <EventFormFields :event="event" :form="form" :is-past-date="isPastDate" :autofocus="autofocus" :show-reminders="showReminders && form.remindersAvailable !== false"
                      @save="emit('save')" @close="emit('close')" @test-reminder="emit('test-reminder')" />
     <div class="popup-actions">
       <button class="popup-save" @click="emit('save')" :disabled="!event.name || saving">{{ t('common.actions.save') }}</button>
@@ -18,7 +16,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
-import Icon from '@/components/common/icons/Icon.vue'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import EventFormFields from './EventFormFields.vue'
 import { type EventDraft, type useEventEditForm } from '@/composables/calendar/useEventEditForm'
 
@@ -48,7 +46,7 @@ const emit = defineEmits<{
   box-sizing: border-box;
   max-height: calc(100dvh - 12px);
   overflow-y: auto;
-  padding: var(--space-md);
+  padding: var(--popup-content-inset);
   border: 1px solid var(--popup-surface-border);
   border-radius: var(--event-popup-radius);
   background: var(--popup-surface-bg);
@@ -58,13 +56,6 @@ const emit = defineEmits<{
 }
 .popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .popup-title { font-size: 13px; font-weight: 700; color: var(--content-primary); }
-.popup-close-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border: none; border-radius: var(--radius-compact);
-  background: transparent; color: var(--content-secondary); cursor: pointer;
-  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
-}
-.popup-close-btn:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
 .popup-delete {
   padding: 5px 12px; border-radius: var(--danger-button-radius); border: 1px solid var(--danger-button-border);
@@ -87,8 +78,6 @@ const emit = defineEmits<{
 <style>
 /* EventFormFields/TimeInput 可能由 Teleport 挂载；主题映射仍归活动表单组件。 */
 html[data-theme][data-family] .event-form-body .popup-title { color: var(--content-primary); }
-html[data-theme][data-family] .event-form-body .popup-close-btn { color: var(--content-secondary); }
-html[data-theme][data-family] .event-form-body .popup-close-btn:hover { background: var(--surface-soft-hover); }
 html[data-theme][data-family] .event-form-body .popup-save {
   color: var(--content-on-accent); background: var(--action-primary-bg); box-shadow: none;
 }

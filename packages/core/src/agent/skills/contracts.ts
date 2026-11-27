@@ -3,6 +3,8 @@ import type { RunIdentity } from '../models.js'
 export interface SkillMetadata {
   readonly id: string
   readonly key?: string
+  /** 当前运行可读的技能目录，由可信宿主解析。 */
+  readonly path?: string
   readonly name: string
   readonly description: string
   readonly description_short?: string
@@ -10,6 +12,7 @@ export interface SkillMetadata {
   readonly category?: string
   readonly emoji?: string
   readonly source?: 'builtin' | 'user'
+  readonly storage_source?: 'user' | 'clawhub'
   readonly related_tools?: readonly string[]
 }
 

@@ -54,7 +54,7 @@
           <Icon name="action.expand" v-if="!maximized" :size="13" />
           <Icon name="action.collapse" v-else :size="13" />
         </button>
-        <button class="fpw-btn fpw-close" :title="t('sharedUi.close')" :aria-label="t('sharedUi.close')" @click.stop="closePreview">
+        <button type="button" class="fpw-btn" :title="t('sharedUi.close')" :aria-label="t('sharedUi.close')" @click.stop="closePreview">
           <Icon name="action.close" :size="13" />
         </button>
       </div>
@@ -1031,7 +1031,6 @@ onUnmounted(() => {
 }
 .fpw-btn:hover { background: rgba(0,0,0,0.1); color: var(--text-primary); }
 .fpw-btn[aria-pressed='true'].active { color: var(--text-primary); background: var(--status-info-bg); }
-.fpw-close:hover { background: rgba(200,90,90,0.12); color: rgba(200,90,90,0.9); }
 .fpw-font-size {
   font-size: 10px; font-weight: 600; color: var(--text-secondary);
   min-width: 18px; text-align: center; line-height: 26px; user-select: none;

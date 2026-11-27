@@ -8,9 +8,9 @@ import { dataContext } from '../../src/contracts/index.js'
 import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
 import type { Database } from '../../src/data/schema.js'
 import { createDesktopMcpCrypto } from '../../src/mcp/desktop-crypto.js'
-import { desktopMcp, desktopSkills } from '../../src/runtime/desktop-resources.js'
+import { desktopMcp } from '../../src/runtime/desktop-resources.js'
 
-it('桌面技能与 MCP 写入本地数据库，配置密文和重放收据互不泄露', async () => {
+it('桌面 MCP 写入本地数据库，配置密文和重放收据互不泄露', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-resource-test-'))
   const database = join(directory, 'local.db')
   try {
@@ -19,17 +19,6 @@ it('桌面技能与 MCP 写入本地数据库，配置密文和重放收据互�
     const crypto = createDesktopMcpCrypto(database)
     try {
       const context = dataContext(ownerId)
-      const skills = desktopSkills(runtime.db, ownerId)
-      const fields = { name: '阅读笔记', description_short: '整理阅读记录', body: '按主题归类' }
-      const first = await runtime.operationWithTransaction(context, randomUUID(), 'skills.create', { fields },
-        tx => desktopSkills<Database>(tx, ownerId).write(undefined, fields))
-      const skillId = first.result.id
-      await runtime.db.transaction().execute(tx => desktopSkills<Database>(tx, ownerId).write(skillId, { enabled: false }))
-      await expect(skills.list(0)).resolves.toMatchObject({ skills: [{ ...fields, id: skillId, enabled: false }] })
-      await expect(desktopSkills(runtime.db, randomUUID()).list(0)).resolves.toMatchObject({ skills: [] })
-      await skills.remove(skillId)
-      await expect(skills.list(0)).resolves.toMatchObject({ skills: [] })
-
       const mcp = desktopMcp(runtime.db, ownerId, crypto)
       const config = {
         name: '阅读目录', endpoint: 'https://example.com/mcp',

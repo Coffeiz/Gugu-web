@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createScheduledTaskDeleter, ScheduledTaskNotFound } from '@gugu/core/scheduled-task-delete'
+import { createScheduledTaskDeleter, ScheduledTaskNotFound } from '@gugu/scheduler/tasks'
 
 test('删除只匹配 owner，未找到时不发布事件', async () => {
   const calls: unknown[][] = []
   const events: unknown[][] = []
   let found = false
   const remove = createScheduledTaskDeleter({
+    resolveOwner: owner => owner,
     async deleteOwned(owner, id) { calls.push([id, owner]); return found },
     async publish(...event) { events.push(event) },
   })

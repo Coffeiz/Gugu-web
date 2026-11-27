@@ -5,7 +5,7 @@ import { AgentFilesystemAuthorizationError, readActiveSessionFilesystemGrant, ty
 import { createPostgresWorkspaceDeletionTransaction } from '../../../workspaces/store.js'
 import { createPostgresWorkspaceBindingOperations } from '../../../workspaces/bindings.js'
 import { isAgentCommandHelpArgument } from '@gugu/core/agent/commands/help'
-import { canonicalAgentCommandName, parseAgentGoalArgument } from '@gugu/core/agent/commands/menu'
+import { canonicalAgentCommandName, parseAgentGoalArgument, workspaceOptionsReply } from '@gugu/core/agent/commands/menu'
 import { imSessionScopeSql } from '../agent/conversations.js'
 import { createHash, createHmac } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
@@ -214,7 +214,7 @@ export function createPostgresImControls(options: {
     if (argument === 'list') {
       const { rows } = await options.pool.query<{ id: number; name: string }>(
         'SELECT id,name FROM workspaces WHERE user_id=$1 AND enabled IS TRUE ORDER BY id', [scope.ownerId])
-      return reply(rows.length ? `可绑定的工作区：\n${rows.map(row => `- ${row.id}. ${row.name}`).join('\n')}\n\n使用 /workspace <ID> 绑定。` : '当前没有可绑定的工作区。')
+      return reply(workspaceOptionsReply(rows))
     }
     const authorization = /^(status|revoke|god)(?:\s+([a-zA-Z0-9_-]+))?$/u.exec(argument)
     const number = /^(?:bind\s+)?([1-9][0-9]*)$/u.exec(argument)
@@ -228,7 +228,7 @@ export function createPostgresImControls(options: {
         [scope.ownerId, scope.platform, scope.botId, scope.chatId, scope.platformUserId])
       return session?.id
     }, fail)
-    if (!sessionId) return reply(argument === 'show' ? '当前会话未绑定工作区。' : '当前还没有会话，请先发送一条普通消息。')
+    if (!sessionId) return reply(argument === 'show' ? '当前会话的工作区：个人文件。' : '当前还没有会话，请先发送一条普通消息。')
     try {
       if (authorization) {
         const [, action, code] = authorization
@@ -254,11 +254,11 @@ export function createPostgresImControls(options: {
       }
       if (argument === 'show') {
         const current = await workspaces.current(scope.ownerId, sessionId, { signal })
-        return reply(current ? `当前会话绑定的工作区：${current.name}（${current.id}）` : '当前会话未绑定工作区。')
+        return reply(current ? `当前会话绑定的工作区：${current.name}（${current.id}）` : '当前会话的工作区：个人文件。')
       }
       if (argument === 'unlink') {
         await workspaces.unbind(scope.ownerId, sessionId, { signal })
-        return reply('已解除当前会话的工作区绑定。')
+        return reply('已将当前会话切回个人文件。')
       }
       const bound = await workspaces.bind(scope.ownerId, Number(number![1]), sessionId, { signal })
       return reply(`已将当前会话绑定到工作区「${bound.name}」。`)
@@ -388,7 +388,7 @@ export function createPostgresImControls(options: {
     ...shortcut,decideShortcut,reply:options.reply,
   }
   /** 原生按钮只消费给定token，不轮换token或按label/序号重新选择。 */
-  async function consumeNativeAction(scope:ImPreflightScope,promptId:number,token:string,signal:AbortSignal,replayOnly=false):Promise<{accepted:boolean;replayed:boolean;awaitingText?:boolean}> {
+  async function consumeNativeAction(scope:ImPreflightScope,promptId:number,token:string,signal:AbortSignal,replayOnly=false):Promise<{accepted:boolean;replayed:boolean;awaitingText?:boolean; nextQuestion?: { index: number; text: string }}> {
     if(!Number.isSafeInteger(promptId)||promptId<1||typeof token!=='string'||!token||token.length>256||!await authorize(scope,signal))return{accepted:false,replayed:false}
     const bot=await access.readBot(scope)
     if(!bot||scope.platform==='telegram'&&resolveImAccess(scope,bot).role!=='owner'||scope.chatType==='c2c'&&!await privateOwner(scope,signal))return{accepted:false,replayed:false}
@@ -421,6 +421,9 @@ export function createPostgresImControls(options: {
     const service=createAgentInteractionRespondService({pool:options.pool,effects:options.interactionEffects,enqueue:bound.enqueueChecked,wake:options.wakeInteractions,diagnose(){report('interaction_wake_pending')}})
     const result=await service.respond(scope.ownerId,promptId,token,scope.eventId)
     if(result.prompt_id!==promptId||String(result.session_id)!==target.identity.sessionId)throw fail()
+    if (result.result.status === 'question_next' && typeof result.result.question_index === 'number'
+      && typeof result.result.text === 'string')
+      return { accepted: true, replayed: false, nextQuestion: { index: result.result.question_index, text: result.result.text } }
     const awaitingText = result.result.status === 'awaiting_text'
     if ((scope.platform === 'qq' || scope.platform === 'telegram') && awaitingText) {
       try { await options.reply(scope, '请直接发送你的回复，咕咕会继续处理。', { quote: false, signal }) }
@@ -429,5 +432,6 @@ export function createPostgresImControls(options: {
     return{accepted:result.result.status!=='error',replayed:false,awaitingText}
   }
   return{ports,preflight:createImInboundPreflight(ports),consumeNativeAction,
+    replyQuestion: (scope: ImPreflightScope, text: string, signal: AbortSignal) => options.reply(scope, text, { quote: false, signal }),
     authorizeNativeTarget:(scope:ImPreflightScope,target:ImInteractionTarget,signal:AbortSignal)=>perScope(scope,signal).authorizeTarget(target)}
 }

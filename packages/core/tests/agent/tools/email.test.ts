@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { expect, it, vi } from 'vitest'
 import { createConfirmationGate, type ConfirmationIntent, type ConfirmationClaimReference } from '../../../src/agent/tools/confirmation.js'
-import { createSendEmailTool, createDurableAgentEmailDelivery } from '../../../src/agent/tools/email.js'
+import { createSendEmailTool, createDurableAgentEmailDelivery } from '../../../src/agent/tools/email/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { ToolScope } from '../../../src/agent/tools/contracts.js'
 
@@ -47,10 +47,10 @@ it('邮件默认使用可信账号邮箱，确认绑定邮件内容和附件版�
     authorize: async candidate => candidate.ownerId === identity.ownerId,
     confirmationGatedDestructiveTools: [emailTool],
   })
-  const call = { name: 'send_email', id: 'call-a', input: { subject: ' 计划 ', body: ' 正文 ', file_ids: [3] } }
+  const call = { name: 'send_email', id: 'call-a', input: { subject: ' 计划 ', body: ' 正文 ', file_paths: ['/personal/示例.txt'] } }
   expect(await registry.tools.dispatch({ ...call, input: { ...call.input, client_id: 9 } }, scope)).toMatchObject({ value: { error: '联系人不存在' } })
   expect(await registry.tools.dispatch(call, scope)).toMatchObject({ kind: 'waiting' })
-  expect(prepare.mock.calls[0]?.[1]).toMatchObject({ recipient: 'owner@example.com', subject: '计划', body: '正文', format: 'template', fileIds: [3] })
+  expect(prepare.mock.calls[0]?.[1]).toMatchObject({ recipient: 'owner@example.com', subject: '计划', body: '正文', format: 'template', filePaths: ['/personal/示例.txt'] })
   expect(send).not.toHaveBeenCalled()
 
   const resume = { ...scope, resolution: { status: 'confirmed' as const, interactionId: 'interaction-a', receiptId: 'receipt-a', value: null } }
@@ -176,6 +176,30 @@ it('邮件 HTML 保留安全表格与链接，移除脚本、远程图片及混�
   expect(html).toContain('src="cid:logo"')
   expect(html).toContain('<p>保留正文</p>')
   expect(html).not.toMatch(/敏感脚本|外部标记|javascript:|onclick|remote.png|data:image|background:/u)
+})
+
+it('收件阅读只将 HTTPS 图片保留为惰性属性', () => {
+  const html = sanitizeEmailHtml('<img src="https://example.test/news.png?a=1&amp;b=2" srcset="https://example.test/other.png"><img src="http://example.test/a.png"><img src="https://user:pass@example.test/b.png"><img data-mail-image="https://example.test/forged.png">', true)
+  expect(html).toContain('data-mail-image="https://example.test/news.png?a=1&amp;b=2"')
+  expect(html).not.toMatch(/\ssrc=|srcset=|\/a\.png|\/b\.png|forged\.png/u)
+})
+
+it('完整邮件只提取正文并保留底色与惰性背景图', () => {
+  const html = sanitizeEmailHtml('<html><head><title>邮件元数据</title></head><body bgcolor="#f7f7f7"><table bgcolor="#ffffff" style="background-image:url(https://example.test/hero.png);color:#333"><tr><td>正文标题</td></tr></table></body></html>', true)
+  expect(html).not.toContain('邮件元数据')
+  expect(html).toContain('正文标题')
+  expect(html).toContain('background-color:#f7f7f7')
+  expect(html).toContain('bgcolor="#ffffff"')
+  expect(html).toContain('style="color:#333"')
+  expect(html).toContain('data-mail-background="https://example.test/hero.png"')
+  expect(html).not.toContain('url(')
+})
+
+it('阅读邮件忽略 1 像素图片并保留叠加布局定位', () => {
+  const html = sanitizeEmailHtml('<img width="1" height="1" src="https://example.test/pixel"><img style="width:1px;height:1px" src="https://example.test/pixel2"><div style="position:relative"><img style="position:absolute;right:4px;top:3px;width:16px" src="https://example.test/icon"></div>', true)
+  expect(html).not.toContain('pixel')
+  expect(html).toContain('style="position:relative"')
+  expect(html).toContain('style="position:absolute;right:4px;top:3px;width:16px"')
 })
 
 it('定时邮件撤权时不写尝试收据，结果未知后同一调用禁止重发', async () => {

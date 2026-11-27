@@ -24,7 +24,7 @@ emoji: 📝
 
 - 引用文件时，先通过文件工具查到目标，调用 `open_item` 并传 `reference_only: true`，使用返回的 `link` 写成 `[文件名](链接)`。工作区使用路径引用，桌面宿主机文件遵循本机授权。不要自己编码引用，也不要填数字文件 ID。桌面回执同时有真实绝对路径 `location.value` 时，把它原样作为行内代码写在文件引用旁，方便以后读取；点击仍使用 `link`。
 - 引用项目或活动时，使用工具确认过的 ID 写成 `[名称](gugu://open-object/project/ID)` 或 `[名称](gugu://open-object/event/ID)`。保存后会显示可点击的引用。
-- 颜色参数只传 `amber`、`coral`、`blue`、`teal` 或 `null`。
+- 颜色参数只传 `amber`、`sage`、`teal`、`sky`、`indigo`、`lavender`、`rose` 或 `null`。
 
 ## 更新前先读取最新正文
 

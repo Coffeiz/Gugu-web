@@ -6,7 +6,7 @@ import { promisify } from 'node:util'
 import { Pool } from 'pg'
 import { createScheduledTaskRedisLease } from '../../../src/modules/scheduled-tasks/run/lease.js'
 import { createPostgresRuntime } from '@gugu/core/data'
-import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/scheduled-task-list'
+import { createKyselyScheduledTaskReader, createScheduledTaskQueries } from '@gugu/core/tasks/list'
 
 const url = process.env.GUGU_WEBUI_TEST_DATABASE_URL
 const socket = process.env.GUGU_TEST_REDIS_SOCKET

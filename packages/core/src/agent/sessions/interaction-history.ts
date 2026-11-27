@@ -1,3 +1,4 @@
+import { projectEmailCompose } from '../interactions/email-compose.js'
 import { readResolvedChoiceOptions } from '../interactions/projection.js'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { Kysely, PostgresDialect, sql } from 'kysely'
@@ -212,7 +213,9 @@ export function createSqlAgentInteractionHistory(db: Kysely<any>, backend: 'post
         output.push({ id: row.id, session_id: sessionId, kind: row.kind,
           title: route ? `Searcher (${route.child_id}) · ${row.title}` : row.title, body: row.body, tool_call_id: call,
           ...(route ? { run_id: route.run_id, delegated: true as const } : {}),
+          email_compose: projectEmailCompose(context, resolved),
           task_paused: !route && row.kind === 'confirm' && !!call, options, secret_fields: secretFields,
+          ...(Array.isArray(schema.questions) ? { questions: schema.questions, question_answers: resolved.answers } : {}),
           allow_text_input: schema.source === 'agent' && truthy(schema.allow_text_input), custom_input_active: truthy(schema.custom_input_active),
           resolved: !active, ...(row.status === 'expired' || route && row.status === 'active' && !active ? { expired: true } : {}),
           selected_option_id: selected, response_text: resolved.text ?? null,

@@ -15,7 +15,7 @@ const viteCli = resolve(ui, 'node_modules/vite/bin/vite.js')
 const electronCli = resolve(desktop, 'node_modules/electron/cli.js')
 const root = resolve(desktop, '../..')
 const tsc = resolve(desktop, 'node_modules/typescript/bin/tsc')
-const compiledPackages = ['sandbox', 'database', 'auth', 'fs', 'search', 'gateway', 'core']
+const compiledPackages = ['scheduler', 'sandbox', 'database', 'email', 'auth', 'fs', 'search', 'gateway', 'core']
 const hostOutputs = [
   resolve(desktop, 'dist/main/index.cjs'),
   resolve(desktop, 'dist/preload/index.cjs'),
@@ -181,11 +181,22 @@ function reloadRuntime(target) {
       path: `/__desktop-preview/reload${target === 'core' ? '-core' : ''}`,
       method: 'POST',
       headers: { Authorization: bridge.GUGU_DESKTOP_PREVIEW_SECRET, 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(30_000),
     }, res => {
-      res.resume()
-      if (res.statusCode === (target === 'core' ? 204 : 202)) resolveReload()
-      else reject(new Error('桌面进程未能重载运行时'))
+      if (res.statusCode === (target === 'core' ? 204 : 202)) {
+        res.resume()
+        resolveReload()
+        return
+      }
+      let body = ''
+      res.setEncoding('utf8')
+      res.on('data', chunk => { body = (body + chunk).slice(0, 256) })
+      res.once('error', reject)
+      res.once('end', () => {
+        let code
+        try { code = JSON.parse(body)?.code } catch { /* 旧版宿主可能返回空响应。 */ }
+        const reason = typeof code === 'string' && /^[a-z_]{1,64}$/u.test(code) ? `（${code}）` : ''
+        reject(new Error(`桌面进程未能重载运行时${reason}`))
+      })
     })
     req.once('error', reject)
     req.end()
@@ -197,8 +208,9 @@ async function restartElectron() {
   if (stopping) return
   restarting = true
   try {
-    const exited = once(electron, 'exit', { signal: AbortSignal.timeout(30_000) })
-    await Promise.all([reloadRuntime('electron'), exited])
+    await reloadRuntime('electron')
+    if (electron.exitCode === null && electron.signalCode === null)
+      await once(electron, 'exit', { signal: AbortSignal.timeout(30_000) })
     if (stopping) return
     await waitForVite()
     if (stopping) return
@@ -225,7 +237,9 @@ async function rebuild() {
       return
     }
     if (stopping) return
-    if (runningHostFingerprint !== hostFingerprint()) await restartElectron()
+    const restartHost = runningHostFingerprint !== hostFingerprint()
+    if (restartHost || level === 2) console.log('桌面构建完成，等待运行中的任务结束后重载')
+    if (restartHost) await restartElectron()
     else if (level === 2) {
       await reloadRuntime('core')
       console.log('桌面 Core 已自动重载')
@@ -299,7 +313,7 @@ try {
     for (const source of ['main', 'preload'])
       watchSource(resolve(desktop, 'src', source), 1)
     watchSource(resolve(root, 'packages/desktop-contracts/src'), 1)
-    for (const pkg of ['core', 'database', 'auth', 'fs', 'search', 'gateway', 'log', 'loopscope', 'sandbox', 'charts']) {
+    for (const pkg of ['scheduler', 'core', 'database', 'email', 'auth', 'fs', 'search', 'gateway', 'log', 'loopscope', 'sandbox', 'charts']) {
       const directory = resolve(desktop, '../../packages', pkg)
       if (pkg === 'loopscope') watchSource(directory, 2)
       else for (const source of ['src', 'native', 'resources']) watchSource(resolve(directory, source), 2)

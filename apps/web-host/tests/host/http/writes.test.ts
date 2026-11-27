@@ -1,5 +1,5 @@
 import { createProfileUpdater } from '../../../src/modules/auth/account/profile-update.js'
-import { createPostgresProfileUpdateStore } from '../../../src/modules/auth/account/profile-store.js'
+import { createPostgresProfileUpdateStore } from '@gugu/users/postgres'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CoreError } from '@gugu/core'

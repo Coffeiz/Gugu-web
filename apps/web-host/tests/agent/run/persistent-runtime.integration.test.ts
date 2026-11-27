@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { createPostgresRuntime, tablesSql } from '@gugu/core/data'
-import { createKnowledgeDeleteTool, createMcpManagementCreateOperations, createMcpManagementEditOperations, createMcpManagementRemoveOperations, createMcpManagementTool, createScheduledTaskDeleteTool, createSkillDeleteTool, createToolRegistry } from '@gugu/core/tools'
+import { createKnowledgeDeleteTool, createMcpManagementCreateOperations, createMcpManagementEditOperations, createMcpManagementRemoveOperations, createMcpManagementTool, createScheduledTaskDeleteTool, createToolRegistry } from '@gugu/core/tools'
 import { createApp } from '../../../src/app.js'
 import { createUserToken } from '../../../src/modules/auth/session/token.js'
 import { createPostgresAgentRunStore } from '../../../src/modules/agent/run/store.js'
@@ -21,7 +21,7 @@ import { createWebAgentConfirmationAuthorization, createWebAgentToolConfirmation
 import { createWebAgentEmailTool } from '../../../src/modules/agent/tools/email.js'
 import { createWebAgentScheduledTaskWrites } from '../../../src/modules/agent/tools/schedule.js'
 import { createPostgresTaskResolver } from '../../../src/modules/scheduled-tasks/store.js'
-import { hasScheduledEmailAuthorization } from '@gugu/core/scheduled-task-run-now-read'
+import { hasScheduledEmailAuthorization } from '@gugu/core/tasks/execution-read'
 import { createLocalAgentKnowledgeDeletePort, createLocalAgentKnowledgeWritePort } from '../../../src/modules/agent/tools/knowledge/write.js'
 import { createLocalAgentKnowledgeReadStore } from '../../../src/modules/agent/rag/knowledge.js'
 import { applyRagIndexMigration } from '@gugu/database/postgres/migrations/0011_rag_index'
@@ -265,11 +265,7 @@ test('隔离 PG 和 Redis 下 Agent 执行、取消、归属与 outbox 重放', 
         CREATE TABLE agent_run_dispatch(user_id uuid,session_id integer,run_id text,state text,token text,fence bigint,lease_expires_at timestamptz);
         CREATE TABLE agent_interaction_intents(user_id uuid,session_id integer,run_id text,interaction_id text,tool_call_id text,
           ciphertext text,nonce text,encrypted_data_key text,key_version integer,expires_at timestamptz,
-          PRIMARY KEY(user_id,session_id,run_id,interaction_id));
-        CREATE TABLE user_skills(id serial PRIMARY KEY,owner_id uuid,skill_id text,name text,description_short text,
-          description_long text,category text,body text,related_tools json,source text,managed_by text,enabled boolean,
-          content_digest text,updated_at timestamptz)`)
-      await pool.query("INSERT INTO user_skills(owner_id,skill_id,name,source,managed_by,enabled,updated_at) VALUES ($1,'U1','合成技能','user','user',TRUE,now()),($1,'U2','助理技能','user','assistant',TRUE,now()),($2,'U1','其他账号','user','user',TRUE,now())", [owner, other])
+          PRIMARY KEY(user_id,session_id,run_id,interaction_id))`)
       await pool.query(tablesSql('postgres').scheduledTasks)
       await pool.query(tablesSql('postgres').ragJobs)
       await applyRagIndexMigration(pool)
@@ -322,7 +318,6 @@ test('隔离 PG 和 Redis 下 Agent 执行、取消、归属与 outbox 重放', 
             async redeemConfirmation(_client, candidate, code) { return redis.redeem(candidate, code) } },
           async wake() {}, diagnose() {},
         })
-        let skillPublishes = 0
         const taskPublishes: number[] = []
         const sentSubjects: string[] = []
         const invalidatedMcp: string[] = []
@@ -331,8 +326,6 @@ test('隔离 PG 和 Redis 下 Agent 执行、取消、归属与 outbox 重放', 
           async decrypt(): Promise<never> { throw new Error('删除不解密凭据') },
         }
         const cases = [
-          { sessionId: '10', tool: 'delete_skill', input: { id: 'U1' }, action: 'confirm' },
-          { sessionId: '11', tool: 'delete_skill', input: { id: 'U2' }, action: 'cancel' },
           { sessionId: '12', tool: 'delete_scheduled_task', input: { task_ids: [21] }, action: 'confirm' },
           { sessionId: '13', tool: 'delete_scheduled_task', input: { task_id: 22 }, action: 'cancel' },
           { sessionId: '14', tool: 'send_email', input: { subject: '确认的邮件', body: '合成私密正文', format: 'plain' }, action: 'confirm' },
@@ -350,7 +343,6 @@ test('隔离 PG 和 Redis 下 Agent 执行、取消、归属与 outbox 重放', 
           const readTarget = () => taskCase
             ? pool.query('SELECT 1 FROM scheduled_tasks WHERE user_id=$1 AND id=$2',
               [owner, 'task_ids' in input ? input.task_ids[0] : input.task_id])
-            : tool === 'delete_skill' ? pool.query('SELECT 1 FROM user_skills WHERE owner_id=$1 AND skill_id=$2', [owner, input.id])
             : mcpCase ? pool.query("SELECT 1 FROM user_mcp_servers WHERE user_id=$1 AND id=$2 AND scope='user'", [owner, input.server_id])
             : undefined
           const sendsBefore = sentSubjects.length
@@ -390,10 +382,6 @@ test('隔离 PG 和 Redis 下 Agent 执行、取消、归属与 outbox 重放', 
                 assert.equal(delivery.message.plain, '合成私密正文')
                 sentSubjects.push(delivery.message.subject)
               },
-            }),
-            delete_skill: () => createSkillDeleteTool(core, confirmationPorts, async id => {
-              assert.equal(id, owner)
-              skillPublishes++
             }),
             delete_knowledge: () => createKnowledgeDeleteTool(createLocalAgentKnowledgeDeletePort(core, root, knowledgeStore, confirmationPorts)),
             manage_mcp_servers: () => createMcpManagementTool({
@@ -471,10 +459,8 @@ test('隔离 PG 和 Redis 下 Agent 执行、取消、归属与 outbox 重放', 
             ...knowledgeEntry(owner, input.knowledge_id), active: action === 'cancel',
           })
           else if (!mailCase) assert.equal((await readTarget())?.rowCount, action === 'confirm' ? 0 : 1)
-          assert.equal((await pool.query('SELECT 1 FROM user_skills WHERE owner_id=$1 AND skill_id=$2', [other, 'U1'])).rowCount, 1)
           await assert.rejects(respond.respond(owner, prompt.prompt_id, token), /无效|结束/u)
         }
-        assert.equal(skillPublishes, 1)
         assert.deepEqual(taskPublishes, [21])
         assert.deepEqual(sentSubjects, ['确认的邮件'])
         const emailReceipts = (await pool.query("SELECT result_json FROM core_operation_receipts WHERE method LIKE 'agent.email.%'")).rows

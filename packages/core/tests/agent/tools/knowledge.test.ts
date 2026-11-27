@@ -1,7 +1,7 @@
 import type { ConfirmationTargetSnapshot } from '../../../src/agent/tools/confirmation.js'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { KnowledgeReadPort } from '../../../src/agent/tools/knowledge.js'
-import { createKnowledgeDeleteTool, createKnowledgeReadTool, createKnowledgeWriteTools, type KnowledgeDeletePort, type KnowledgeWritePort } from '../../../src/agent/tools/knowledge.js'
+import type { KnowledgeReadPort } from '../../../src/agent/tools/knowledge/index.js'
+import { createKnowledgeDeleteTool, createKnowledgeReadTool, createKnowledgeWriteTools, type KnowledgeDeletePort, type KnowledgeWritePort } from '../../../src/agent/tools/knowledge/index.js'
 import { parseAgentKnowledgeEntry, serializeAgentKnowledgeEntry, type AgentKnowledgeEntry } from '../../../src/agent/knowledge/entry.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 

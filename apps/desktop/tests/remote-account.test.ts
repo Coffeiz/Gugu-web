@@ -10,6 +10,7 @@ import type { RemoteSession, RemoteUser } from '@gugu/auth/contracts'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
 import { createRemoteSessionStore } from '../src/main/auth/store.js'
 import { createRemoteAccountHandlers } from '../src/main/auth/session.js'
+import { getDesktopDeviceId } from '../src/main/auth/device-id.js'
 
 const createRemoteByokClient = (request: typeof fetch) => createRemoteByokClientWithTransport(bindRemoteSession(request))
 
@@ -42,6 +43,29 @@ function encryption() {
     },
   }
 }
+
+it('桌面并发初始化返回同一个安装 ID，并用该 ID 标记远程登录', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gugu-device-id-'))
+  dirs.push(dir)
+  const getDeviceId = () => getDesktopDeviceId(dir)
+  const ids = await Promise.all([getDeviceId(), getDeviceId(), getDeviceId()])
+  expect(new Set(ids).size).toBe(1)
+  expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/)
+  expect((await readFile(join(dir, 'device-id'), 'utf8')).trim()).toBe(ids[0])
+
+  const client = createRemoteAuthClient(async (url, init) => {
+    if (String(url).endsWith('/login')) {
+      expect(new Headers(init?.headers).get('X-Device-ID')).toBe(ids[0])
+      return Response.json({ access_token: session.token, token_type: 'bearer', user })
+    }
+    return Response.json(user)
+  })
+  const handlers = createRemoteAccountHandlers(createRemoteSessionStore(dir, encryption()), client, undefined, getDeviceId)
+  const input = { provider: 'self-hosted', server: session.origin, username: user.username, password: 'synthetic-password' }
+  await expect(handlers[DESKTOP_CHANNELS.remoteLogin](input)).resolves.toMatchObject({ state: 'connected' })
+  await handlers[DESKTOP_CHANNELS.remoteLogout]()
+  await expect(getDeviceId()).resolves.toBe(ids[0])
+})
 
 it('远程账号通过加密记录跨重启恢复，断网保留记录，到期及本机退出清除记录', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gugu-remote-account-'))

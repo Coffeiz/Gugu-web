@@ -89,7 +89,10 @@ const conditions = new Map(Object.entries({
 }))
 
 export function eventMessage(record) {
-  const label = events.get(record?.event)
+  const desktop = record?.attributes?.hostKind === 'desktop'
+  const label = desktop && record.event === 'host.started' ? '桌面 Core 已启动'
+    : desktop && record.event === 'host.stopped' ? '桌面 Core 已停止'
+      : events.get(record?.event)
   if (!label) return undefined
   const attributes = record.attributes ?? {}
   const phase = record.event.startsWith('host.shutdown_phase_') && shutdownPhases.get(attributes.phase)

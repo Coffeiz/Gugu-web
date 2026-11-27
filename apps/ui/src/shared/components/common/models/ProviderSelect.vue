@@ -100,13 +100,14 @@ function selectChild(provider: ProviderOption, child: ChildOption) {
 </script>
 
 <style scoped>
+:global(.provider-child-popup .provider-child + .provider-child) { margin-block-start: var(--option-gap); }
 .provider-select { position:relative; display:inline-block; min-width:220px; }
 .provider-trigger { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; height:34px; padding:0 12px; border:1px solid var(--input-border); border-radius:9px; background:var(--input-bg); color:var(--input-fg); font:13px var(--font-sans); cursor:pointer; text-align:left; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
 .provider-trigger:hover { border-color:var(--input-border-hover); background:var(--input-bg); }
 .provider-trigger.open { border-color:var(--input-border-hover); background:var(--input-bg-focus); }
 .provider-chevron { color:var(--popup-item-fg-muted); }
 :global(.provider-popup) { min-width:220px; max-height:260px; overflow:auto; }
-:global(.provider-popup .provider-option-group + .provider-option-group) { margin-top:1px; }
+:global(.provider-popup .provider-option-group + .provider-option-group) { margin-block-start:var(--option-gap); }
 :global(.provider-popup .provider-option), :global(.provider-child-popup .provider-child) { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; padding:var(--popup-item-padding); border:0; border-radius:var(--popup-item-radius); background:transparent; color:var(--popup-item-fg); font:13px var(--font-sans); text-align:left; cursor:pointer; transition:background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
 :global(.provider-child-popup) { min-width:150px; }
 :global(.provider-popup .provider-option:hover), :global(.provider-popup .provider-option.expanded), :global(.provider-child-popup .provider-child:hover) { background:var(--popup-item-bg-hover); }

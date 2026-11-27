@@ -1,6 +1,6 @@
 import type { RagDocument, RagRankCandidate, RagSearchScope } from './contracts.js'
 import type { createSqlRagPersistentIndexReader } from './persistent-index.js'
-import { createRagLexicalIndex, type createRagDocumentTermCache } from './lexical-index.js'
+import { createRagLexicalIndex, rerankRagLexicalResults } from './lexical-index.js'
 import { rankCandidates } from './ranking/rank-candidates.js'
 import { readRagDocumentVectors, type RagVectorSource } from './vector-reader.js'
 
@@ -17,7 +17,7 @@ export function createScopedRagSearch(ports:{
  authorize(owner:string,scope:RagSearchScope,signal?:AbortSignal):Promise<boolean>
  /** 可选可信事实复核：在排序/向量/结果投影前裁剪过期索引与邻文；不能自行授予scope。 */
  filterDocuments?(documents:readonly RagDocument[],signal?:AbortSignal):Promise<readonly RagDocument[]>
- documentTerms?:ReturnType<typeof createRagDocumentTermCache>
+ lexicalCorpus?(owner: string, revision: string, documents: RagDocument[]): ReturnType<typeof createRagLexicalIndex>
  vectors?:ScopedRagVectors
 }) {
  return async(owner:string,scope:RagSearchScope|readonly RagSearchScope[],query:string,options:{sourceTypes:readonly string[];limit:number;beforeMessageId?:number;selectionMode?:'confidence'|'top_k';excludeContentHashes?:readonly string[]},signal?:AbortSignal)=>{
@@ -28,11 +28,18 @@ export function createScopedRagSearch(ports:{
   if(!scopes.length||scopes.length>3)throw new Error('RAG 检索范围数量无效')
   const stageMs:Record<string,number>={}
   let stageStarted=performance.now(),fallbackReason:string|null=null
+  const snapshotTimings: Record<string, number> = {}
+  const addSnapshotTiming = (stage: string, duration: number) => {
+   snapshotTimings[stage] = (snapshotTimings[stage] ?? 0) + duration
+  }
   const snapshots=[]
   for(const current of scopes){
+   const authorizeStarted=performance.now()
    if(!await ports.authorize(owner,current,signal))throw new Error('RAG 检索未授权')
-   signal?.throwIfAborted();snapshots.push(await ports.index.snapshotForScope(owner,current,signal))
+   addSnapshotTiming('snapshot_authorize_ms',performance.now()-authorizeStarted)
+   signal?.throwIfAborted();snapshots.push(await ports.index.snapshotForScope(owner,current,signal,addSnapshotTiming))
   }
+  for (const [stage,duration] of Object.entries(snapshotTimings))stageMs[stage]=Math.round(duration)
   stageMs.scope_snapshot_ms=Math.max(0,Math.round(performance.now()-stageStarted))
   stageStarted=performance.now()
   const snapshot={revision:snapshots.length===1?snapshots[0]!.revision:snapshots.map(value=>value.revision??'empty').join('|'),documents:[...new Map(snapshots.flatMap(value=>value.documents).map(document=>[document.id,document])).values()]}
@@ -52,38 +59,60 @@ export function createScopedRagSearch(ports:{
    return doc.scope_type===current.scope_type&&doc.scope_id===current.scope_id||current.scope_type==='member'&&doc.scope_type==='group'
   }))
   stageMs.document_filter_ms=Math.max(0,Math.round(performance.now()-stageStarted))
-  const documentTerms=ports.documentTerms
-  const index=createRagLexicalIndex(owner,documentTerms ? document => documentTerms(owner,document) : undefined)
-  index.replace(owner,snapshot.revision||'empty',documents)
   stageStarted=performance.now()
-  let fused
-  if(ports.vectors&&documents.length){
-   let queryVector:readonly number[]=[]
-   try{queryVector=await ports.vectors.embed(owner,query,signal)}catch{
-    // embedding 传输不可用时按 Python 行为保留词法候选；调用方取消仍必须向上传播。
+  const revision=snapshot.revision||'empty'
+  const index=ports.lexicalCorpus?.(owner,revision,documents)
+    ?? createRagLexicalIndex(owner)
+  if(!ports.lexicalCorpus)index.replace(owner,revision,documents)
+  stageMs.lexical_sync_ms=Math.round(performance.now()-stageStarted)
+  const searchStarted=performance.now()
+  const lexical=index.search(owner,query,50,options.sourceTypes,trustedScope)
+  // 向量读取可能与另一个 Run 交错，锁定本轮排名使用的词频统计。
+  stageMs.lexical_search_ms=Math.round(performance.now()-searchStarted)
+  const statistics=index.statistics(owner)
+  stageMs.lexical_retrieval_ms=Math.round(performance.now()-stageStarted)
+
+  const byId=new Map(documents.map(document=>[document.id,document]))
+  const fused=await (async ()=>{
+   const lexicalOnly={...lexical,fusion:'bm25' as const,vectorDocCount:0}
+   const vectors=ports.vectors
+   if(!vectors?.version)return lexicalOnly
+   if(!lexical.results.length){
+    fallbackReason=documents.length?'no_lexical_hits':'no_documents_for_embedding'
+    return lexicalOnly
+   }
+   const hits=lexical.results.map(hit=>byId.get(hit.id)!)
+   stageStarted=performance.now()
+   const source=await vectors.source(owner,signal)
+   const vectorMap=await readRagDocumentVectors(hits,vectors.version,source,signal,owner)
+   const cached=await vectors.readDocuments?.(owner,hits,signal)
+   signal?.throwIfAborted()
+   const documentVectors=new Map(Object.entries({...cached,...vectorMap}).filter(([,vector])=>vector.length>0))
+   stageMs.document_vectors_ms=Math.round(performance.now()-stageStarted)
+   if(!documentVectors.size){
+    fallbackReason='no_matching_document_vectors'
+    return lexicalOnly
+   }
+
+   stageStarted=performance.now()
+   let queryVector:readonly number[]
+   try{queryVector=await vectors.embed(owner,query,signal)}catch{
+    // embedding 传输失败时保留同一授权范围内的词法结果，调用方取消仍向上传播。
     signal?.throwIfAborted()
     fallbackReason='embedding_failed'
+    queryVector=[]
    }
+   stageMs.query_embedding_ms=Math.round(performance.now()-stageStarted)
    signal?.throwIfAborted()
-   if(queryVector.length){
-    const source=await ports.vectors.source(owner,signal)
-    const vectorMap=await readRagDocumentVectors(documents,ports.vectors.version,source,signal,owner)
-    const cached=await ports.vectors.readDocuments?.(owner,documents,signal)
-    signal?.throwIfAborted()
-    fused=index.searchHybrid(owner,query,50,options.sourceTypes,trustedScope,{vectors:new Map(Object.entries({...cached,...vectorMap})),queryVector,vectorVersion:ports.vectors.version,expectedVersion:ports.vectors.version})
-   }else{
-    // Python 在 embedding 未配置/请求失败时退回同一 owner scope 下的词法召回。
-    if(!fallbackReason)fallbackReason='embedding_empty'
-    const lexical=index.search(owner,query,50,options.sourceTypes,trustedScope)
-    fused={...lexical,fusion:'bm25' as const,vectorDocCount:0}
+   if(!queryVector.length){
+    fallbackReason??='embedding_empty'
+    return lexicalOnly
    }
-  }else{
-   if(ports.vectors)fallbackReason='no_documents_for_embedding'
-   const lexical=index.search(owner,query,50,options.sourceTypes,trustedScope)
-   fused={...lexical,fusion:'bm25' as const,vectorDocCount:0}
-  }
-  stageMs.vector_retrieval_ms=Math.max(0,Math.round(performance.now()-stageStarted))
-  const byId=new Map(documents.map(document=>[document.id,document]))
+   stageStarted=performance.now()
+   const result=rerankRagLexicalResults(lexical,queryVector,documentVectors)
+   stageMs.vector_fusion_ms=Math.round(performance.now()-stageStarted)
+   return result
+  })()
   const candidates:RagRankCandidate[]=fused.results.flatMap(hit=>{
    const document=byId.get(hit.id)
    if(!document)return []
@@ -91,7 +120,7 @@ export function createScopedRagSearch(ports:{
    return [{id:hit.id,source_type:hit.source_type,raw_score:hit.score,document,...(typeof semantic==='number'?{semantic_score:semantic}:{})}]
   })
   stageStarted=performance.now()
-  const ranked=rankCandidates(query,candidates,{limit:options.limit,maxChars:3000,selectionMode:options.selectionMode??'top_k',excludeContentHashes:[...(options.excludeContentHashes??[])],corpusStatistics:index.statistics(owner)})
+  const ranked=rankCandidates(query,candidates,{limit:options.limit,maxChars:3000,selectionMode:options.selectionMode??'top_k',excludeContentHashes:[...(options.excludeContentHashes??[])],corpusStatistics:statistics})
   stageMs.ranking_ms=Math.max(0,Math.round(performance.now()-stageStarted))
   signal?.throwIfAborted()
   stageStarted=performance.now()

@@ -1,6 +1,7 @@
 import {emailPreviewImages} from './preview-assets.js'
 import {isIP} from 'node:net'
 import {strip} from '../shared/values.js'
+import {normalizeThemePalette,themePaletteColor} from '../preferences/palette.js'
 
 export interface EmailPreviewDraft {
  subject:string; title:string; body:string; preheader?:string
@@ -9,7 +10,6 @@ export interface EmailPreviewDraft {
  actions?:{label:string;url:string}[]
 }
 export class EmailPreviewError extends Error {override name='EmailPreviewError'}
-const palettes:Record<string,readonly[string,string]>={cafe:['#715653','#be9d98'],neutral:['#565b64','#c0c3c9'],red:['#a66e73','#d0a1a4'],blue:['#65789a','#9aaecd'],green:['#718a7e','#a9c2b5']}
 const escape=(text:string)=>text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;')
 function text(value:unknown,field:string,limit:number):string{
  if(value==null)return ''
@@ -45,7 +45,7 @@ function actionUrl(value:string):string{
 export function renderEmailPreview(draft:EmailPreviewDraft):{html:string;plain:string}{
  const template=draft.template??'notification',theme=draft.theme??'light',palette=draft.palette??'neutral'
  if(!['notification','reminder','report','security','test'].includes(template))throw new EmailPreviewError('不支持的邮件模板')
- const dark=theme==='dark',brand=(palettes[palette]??palettes.neutral)![dark?1:0]
+ const dark=theme==='dark',brand=themePaletteColor(normalizeThemePalette(palette),dark?'dark':'light')
  const token=dark?{canvas:'#171925',surface:'#232638',text:'#f3f4f8',muted:'#b7bbca',border:'#41465c',brand}:{canvas:'#f3f4f8',surface:'#ffffff',text:'#20222b',muted:'#6f7486',border:'#dfe2eb',brand}
  const subject=text(draft.subject,'邮件主题',200),body=text(draft.body,'邮件正文',20000),preheader=text(draft.preheader,'预览摘要',180)
  let title=text(draft.title,'邮件标题',200)||subject

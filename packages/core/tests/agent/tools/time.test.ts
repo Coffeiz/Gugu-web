@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createTimeTool } from '../../../src/agent/tools/time.js'
+import { createTimeTool } from '../../../src/agent/tools/time/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { ToolScope } from '../../../src/agent/tools/contracts.js'
 import { collect, fixture, identity as runIdentity } from '../run/fixtures.js'

@@ -1,4 +1,5 @@
-import { CompiledQuery, Kysely, PostgresDialect, type PostgresPool } from 'kysely'
+import { createPostgresKysely } from '@gugu/database/postgres/kysely'
+import { CompiledQuery, type Kysely, type PostgresPool } from 'kysely'
 import type { PoolClient } from 'pg'
 import type { Database } from './schema.js'
 
@@ -75,7 +76,7 @@ async function borrow<T>(client: PoolClient, allowMindSavepoint: boolean, work: 
     release() { /* 借用期间不释放外层 client。 */ },
   }
   const pool = { options: {}, async connect() { return proxy }, async end() { /* 外层拥有连接池。 */ } } as unknown as PostgresPool
-  const db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) })
+  const db = createPostgresKysely(pool)
   function tracked<TValue>(run: () => Promise<TValue>): Promise<TValue> {
     if (!active) throw new Error('事务连接借用已结束')
     if (pending) throw new Error('事务连接不支持并发查询')

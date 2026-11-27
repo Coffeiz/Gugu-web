@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
+import { migratePostgres } from '@gugu/database/postgres'
 import { registerAgentRunStartupLocked } from '../../../src/modules/agent/run/start.js'
 import { createPostgresAgentChatPreparation, createPostgresWebChatSession, type AgentChatPreparationPorts } from '../../../src/modules/agent/chat/prepare.js'
 import { decryptAgentDispatchInput, enqueueAgentRunLocked } from '../../../src/modules/agent/run/dispatch.js'
@@ -13,13 +14,8 @@ test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失�
   await admin.query(`CREATE SCHEMA "${schema}"`)
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}` })
   try {
-    await pool.query(`CREATE TABLE conversation_sessions (id serial PRIMARY KEY, user_id uuid NOT NULL, title text NOT NULL, title_locked boolean NOT NULL, summary text NOT NULL, source text NOT NULL, context_epoch integer NOT NULL, baseline_message_seq bigint NOT NULL, last_message_seq bigint NOT NULL, execution_state text NOT NULL, pending_message_count integer NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL);
-      CREATE TABLE conversation_messages (id serial PRIMARY KEY, session_id integer NOT NULL REFERENCES conversation_sessions(id), conversation_seq bigint NOT NULL, role text NOT NULL, content text NOT NULL, client_message_id text, files json, references_json json, content_json json, created_at timestamptz NOT NULL, sent_at timestamptz NOT NULL, UNIQUE(session_id, conversation_seq));
-      CREATE TABLE rag_index_jobs (id bigserial PRIMARY KEY,user_id uuid NOT NULL,source_type text NOT NULL,source_id text NOT NULL,version text NOT NULL,operation text NOT NULL,status text NOT NULL,generation integer NOT NULL,completed_generation integer NOT NULL,attempts integer NOT NULL,next_attempt_at timestamptz,lease_until timestamptz,last_started_at timestamptz,last_succeeded_at timestamptz,last_error_code text,pending_source_ids json NOT NULL,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,UNIQUE(user_id,source_type));
-      CREATE TABLE claims (message_id integer REFERENCES conversation_messages(id));
-      CREATE TABLE agent_run_startups (user_id uuid NOT NULL,session_id integer NOT NULL,run_id text NOT NULL,status text NOT NULL,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL,PRIMARY KEY(user_id,session_id,run_id));
-      CREATE TABLE agent_run_dispatch(sequence bigserial PRIMARY KEY,user_id uuid,session_id integer,run_id text,state text,message_id integer,nonce bytea,payload bytea,request_expires_at timestamptz,UNIQUE(user_id,session_id,run_id));
-      CREATE UNIQUE INDEX uq_selected ON agent_run_dispatch(user_id,session_id) WHERE state='selected'`)
+    assert.equal(await migratePostgres(pool, 'apply'), 'applied')
+    await pool.query('CREATE TABLE claims (message_id integer REFERENCES conversation_messages(id))')
     let fail = ''
     const ports: AgentChatPreparationPorts = {
       createSession: createPostgresWebChatSession,
@@ -33,9 +29,16 @@ test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失�
     const prepare = createPostgresAgentChatPreparation(pool, ports)
     const owner = randomUUID()
     // 生产身份行也是Web/IM创建的共同串行点；只创建本随机schema的合成owner。
-    await pool.query('CREATE TABLE users(id uuid PRIMARY KEY)')
-    await pool.query('INSERT INTO users(id) VALUES($1)',[owner])
-    const result = await prepare(owner, { message: '测试', greeting: '  欢迎  ', client_message_id: 'client-1' }, 'run-1', { mode: 'direct' })
+    await pool.query("INSERT INTO users(id,username,email,hashed_password) VALUES($1,'synthetic','synthetic@example.test','synthetic')",[owner])
+    const firstInput = { message: '测试', greeting: '  欢迎  ', client_message_id: 'client-1' }
+    const attempts = await Promise.all([
+      prepare(owner, firstInput, 'run-1', { mode: 'direct' }),
+      prepare(owner, firstInput, 'retry', { mode: 'direct' }),
+    ])
+    const result = attempts.find(attempt => attempt.isNew)
+    assert.ok(result)
+    assert.deepEqual(attempts.find(attempt => !attempt.isNew), { ...result, isNew: false, replay: true })
+    await assert.rejects(prepare(owner, { message: '冲突', client_message_id: 'client-1' }, 'conflict', { mode: 'direct' }), { code: 'conflict' })
     const session = (await pool.query('SELECT * FROM conversation_sessions WHERE id = $1', [result.sessionId])).rows[0]
     assert.equal(session.title, '测试'); assert.equal(session.source, 'web'); assert.equal(session.context_epoch, 1); assert.equal(Number(session.last_message_seq), 2)
     const messages = (await pool.query('SELECT id, role, content, conversation_seq, client_message_id FROM conversation_messages ORDER BY conversation_seq')).rows
@@ -59,12 +62,13 @@ test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失�
     assert.equal(Number((await pool.query('SELECT count(*) FROM agent_run_startups')).rows[0].count), 2)
     assert.equal(Number((await pool.query(`SELECT generation FROM rag_index_jobs WHERE user_id=$1 AND source_type='conversation'`, [owner])).rows[0].generation), 2)
     fail = 'dispatch'
-    await assert.rejects(prepare(owner, { session_id: result.sessionId, message: '事务失败' }, 'dispatch-failure', { mode: 'dispatch', origin: null, accessVersion: 'a'.repeat(64), ttlSeconds: 60 }))
+    await assert.rejects(prepare(owner, { session_id: result.sessionId, message: '事务失败', client_message_id: 'retry-after-rollback' }, 'dispatch-failure', { mode: 'dispatch', origin: null, accessVersion: 'a'.repeat(64), ttlSeconds: 60 }))
     assert.equal(Number((await pool.query('SELECT count(*) FROM conversation_messages')).rows[0].count), 3)
     assert.equal(Number((await pool.query('SELECT count(*) FROM agent_run_dispatch')).rows[0].count), 0)
+    assert.equal((await pool.query("SELECT 1 FROM agent_chat_receipts WHERE client_id='retry-after-rollback'")).rowCount, 0)
     fail = ''
     const model = { modelIdentity: 'gugu-model-v1.synthetic.payload', accessScopeHash: 'b'.repeat(64) }
-    const admitted = await prepare(owner, { session_id: result.sessionId, message: '持久入队', credential_id: 12 }, 'dispatch-success', {
+    const admitted = await prepare(owner, { session_id: result.sessionId, message: '持久入队', credential_id: 12, client_message_id: 'retry-after-rollback' }, 'dispatch-success', {
       mode: 'dispatch', origin: null, accessVersion: 'a'.repeat(64), ttlSeconds: 60,
       async pin(identity, credentialId) {
         assert.equal(identity.runId, 'dispatch-success')
@@ -73,6 +77,14 @@ test('隔离 PG 新会话和问候先于用户消息提交，附件或队列失�
       },
     })
     assert.ok(admitted.userMessageId)
+    const retry = await prepare(owner, { session_id: result.sessionId, message: '持久入队', credential_id: 12, client_message_id: 'retry-after-rollback' }, 'retry-run', {
+      mode: 'dispatch', origin: null, accessVersion: 'a'.repeat(64), ttlSeconds: 60,
+      async pin() { assert.fail('重放不得重新冻结模型') },
+    })
+    assert.equal(retry.runId, admitted.runId)
+    assert.equal(retry.userMessageId, admitted.userMessageId)
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM agent_run_dispatch')).rows[0].count, 1)
+
     const { state, nonce, payload } = (await pool.query('SELECT state,nonce,payload FROM agent_run_dispatch')).rows[0]
     assert.equal(state, 'selected')
     const dispatch = decryptAgentDispatchInput('synthetic-secret', { ownerId: owner, sessionId: String(result.sessionId), runId: 'dispatch-success' }, nonce, payload)

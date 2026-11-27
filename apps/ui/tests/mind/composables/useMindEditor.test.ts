@@ -15,6 +15,44 @@ import type { MindDocNode } from '@/composables/mind/useMindEditor'
 
 const roundTrip = (md: string) => docToMarkdown(markdownToDoc(md))
 
+describe('笔记 Markdown 表格', () => {
+  it('保留对齐、行内代码、对象引用及表格后面的正文', () => {
+    const md = [
+      '| 文档 | 路径 |',
+      '| --- | ---: |',
+      '| [[project:7\\|方案]] | `a\\|b` |',
+      '表格后的正文',
+    ].join('\n')
+    const normalized = roundTrip(md)
+    expect(normalized).toBe(md.replace('\n表格后的正文', '\n\n表格后的正文'))
+    expect(roundTrip(normalized)).toBe(normalized)
+    const preview = mdToPreviewHtml(md)
+    expect(preview).toContain('<th align="right">路径</th>')
+    expect(preview).toContain('<code>a|b</code>')
+    expect(preview).toContain('<p data-line-unit="1">表格后的正文</p>')
+  })
+
+  it('插入表格后可增删行和列，保存并重新读取仍保留尺寸', () => {
+    const editor = new Editor({ extensions: mindExtensions() })
+    try {
+      expect(editor.commands.insertTable({ rows: 3, cols: 3, withHeaderRow: true })).toBe(true)
+      expect(editor.commands.addColumnAfter()).toBe(true)
+      const markdown = () => docToMarkdown(editor.getJSON() as MindDocNode)
+      const widths = () => markdownToDoc(markdown()).content
+        ?.find(node => node.type === 'table')?.content?.map(row => row.content?.length)
+      expect(widths()).toEqual([4, 4, 4])
+      expect(editor.commands.deleteColumn()).toBe(true)
+      expect(widths()).toEqual([3, 3, 3])
+      expect(editor.commands.addRowAfter()).toBe(true)
+      expect(widths()).toEqual([3, 3, 3, 3])
+      expect(editor.commands.deleteRow()).toBe(true)
+      expect(widths()).toEqual([3, 3, 3])
+    } finally {
+      editor.destroy()
+    }
+  })
+})
+
 describe('Mind md⇄doc 往返：稳定形态无损', () => {
   it.each([
     '普通一段',
@@ -279,6 +317,13 @@ describe('MIND_REF_RE', () => {
   it('捕获 type / id / label', () => {
     const m = MIND_REF_RE.exec('[[client:12|张三]]')
     expect([m?.[1], m?.[2], m?.[3]]).toEqual(['client', '12', '张三'])
+  })
+  it('文件技能目录标识在编辑和展示中保持原样', () => {
+    const source = '[[skill:u7|整理技能]]'
+    expect(MIND_REF_RE.exec(source)?.slice(1)).toEqual(['skill', 'u7', '整理技能'])
+    expect(docToMarkdown(markdownToDoc(source))).toBe(source)
+    expect(mindPreviewText(source)).toBe('整理技能')
+    expect(MIND_REF_RE.test('[[project:abc|无效项目]]')).toBe(false)
   })
 })
 

@@ -24,7 +24,6 @@ const paths = {
   'records/conversations/messages.jsonl': { category: 'conversations', type: 'message' },
   'records/scheduled_tasks.jsonl': { category: 'scheduled_tasks', type: 'scheduled_task' },
   'records/conversations/drafts.jsonl': { category: 'drafts', type: 'pending_queue' },
-  'records/skills.jsonl': { category: 'skills', type: 'skill' },
   'records/feedback.jsonl': { category: 'feedback', type: 'feedback' },
   'records/clients.jsonl': { category: 'clients', type: 'client' },
 } as const
@@ -84,7 +83,7 @@ const recordSchema = z.strictObject({
 })
 const decoder = new TextDecoder('utf-8', { fatal: true })
 const allowedCategories = new Set([
-  'account', 'preferences', 'projects', 'clients', 'files', 'calendar', 'mind', 'skills',
+  'account', 'preferences', 'projects', 'clients', 'files', 'calendar', 'mind',
   'feedback', 'workspaces', 'scheduled_tasks', 'conversations', 'drafts', 'connections',
   'owner_memory', 'im_memory', 'archive_docs',
 ])
@@ -214,7 +213,7 @@ async function* verifiedRecords(
       const data = recordSchema.parse(JSON.parse(decoder.decode(Buffer.concat(parts, length))))
       parts = []
       length = 0
-      if (data.source_type !== type || (data.record_schema !== `gugu.${type}.v1` && !(type === 'skill' && data.record_schema === 'gugu.skill.v2')) || identities.has(data.portable_id))
+      if (data.source_type !== type || data.record_schema !== `gugu.${type}.v1` || identities.has(data.portable_id))
         invalidArchive()
       identities.add(data.portable_id)
       return { ...data, type }

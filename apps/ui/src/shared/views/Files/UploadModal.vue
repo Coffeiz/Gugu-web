@@ -169,7 +169,7 @@
           </div>
         </div>
 
-        <div v-if="!uploading" class="modal-footer">
+        <div v-if="!uploading" class="modal-footer app-card-actions">
           <button class="btn-cancel" @click="handleClose">{{ t('filesUi.cancel') }}</button>
           <button class="btn-upload" :disabled="pendingFiles.length === 0 || uploading" @click="handleUpload">
             {{ uploading ? `${t('filesUi.uploading')} (${uploadedCount}/${pendingFiles.length})` : t('filesUi.confirmUpload') }}
@@ -497,7 +497,7 @@ label {
 .up-spinner { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--file-dialog-drop-border); border-top-color: var(--action-primary); animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--file-dialog-divider); flex-shrink: 0; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 10px;    }
 .btn-cancel {
   padding: 8px 18px; border-radius: var(--radius-xs); border: 1px solid var(--file-dialog-control-border);
   background: var(--file-dialog-control-bg); color: var(--control-fg); font: 13px var(--font-sans); cursor: pointer;

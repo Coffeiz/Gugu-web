@@ -201,6 +201,37 @@ it('桌面追问沿用本会话前一条图片引用的槽位，其他会话和 
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
+it('SQLite 准入回执随失败事务回滚，重开后复用消息和 Run', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-chat-receipt-'))
+  const path = join(directory, 'core.db')
+  let opened: Awaited<ReturnType<typeof openSqliteRuntime>> | undefined
+  try {
+    await initializeSqlite(path)
+    opened = await openSqliteRuntime(path)
+    const { runtime, ownerId } = opened
+    const session = await runtime.db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '测试'))
+    const input = { session_id: session.id, client_message_id: 'receipt-1', message: '测试' }
+    const failing = createSqliteAgentAdmission(runtime.db, { async bindRun() { throw new Error('合成绑定失败') } })
+    await expect(failing.prepare(ownerId, input)).rejects.toThrow('合成绑定失败')
+    expect((await sql`SELECT client_id FROM agent_chat_receipts`.execute(runtime.db)).rows).toEqual([])
+    expect((await sql`SELECT run_id FROM agent_run_admissions`.execute(runtime.db)).rows).toEqual([])
+    const admitted = await createSqliteAgentAdmission(runtime.db).prepare(ownerId, input)
+    await runtime.close()
+    opened = await openSqliteRuntime(path)
+    const restarted = createSqliteAgentAdmission(opened.runtime.db)
+    await expect(restarted.prepare(ownerId, input)).resolves.toMatchObject({
+      identity: admitted.identity, userMessageId: admitted.userMessageId, replay: true,
+    })
+    await expect(restarted.prepare(ownerId, { ...input, message: '改写' })).rejects.toMatchObject({ code: 'conflict' })
+    await expect(restarted.prepare(randomUUID(), input)).rejects.toMatchObject({ code: 'not_found' })
+    const { rows } = await sql<{ n: number }>`SELECT count(*) AS n FROM agent_run_admissions`.execute(opened.runtime.db)
+    expect(rows[0]?.n).toBe(1)
+  } finally {
+    await opened?.runtime.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 it('共享聊天服务通过 SQLite 原子登记，重复发送只重放同一运行', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-sqlite-agent-admission-'))
   const path = join(directory, 'core.db')
@@ -215,6 +246,7 @@ it('共享聊天服务通过 SQLite 原子登记，重复发送只重放同一�
       const admission = createSqliteAgentAdmission(runtime.db)
       expect(await admission.active(ownerId, session.id)).toEqual({ identity: null, executionState: 'idle' })
       expect((await sql`SELECT id FROM conversation_messages WHERE session_id=${session.id}`.execute(runtime.db)).rows).toEqual([])
+      expect((await sql`SELECT client_id FROM agent_chat_receipts WHERE session_id=${session.id}`.execute(runtime.db)).rows).toEqual([])
       await expect(admission.prepare(randomUUID(), input)).rejects.toMatchObject({ code: 'not_found' })
 
       await sql`UPDATE conversation_sessions SET session_context=${JSON.stringify({
@@ -479,7 +511,7 @@ it('独占重启结算遗留运行，保留事件并允许会话再次发送', a
     const { runtime, ownerId } = await openSqliteRuntime(path, { exclusive: true })
     try {
       const create = () => runtime.db.transaction().execute(tx => createDesktopAgentSession(tx, ownerId, '合成会话'))
-      const session = await create(), queued = await create(), compacting = await create()
+      const session = await create(), queued = await create(), compacting = await create(), streaming = await create()
       const admission = createSqliteAgentAdmission(runtime.db)
       const input = { session_id: session.id, message: '合成旧消息' }
       const accepted = await admission.prepare(ownerId, input)
@@ -498,6 +530,20 @@ it('独占重启结算遗留运行，保留事件并允许会话再次发送', a
       const secret = await loadSqliteAgentRunSecret(runtime.db, path)
       const store = createSqliteAgentRunStore(runtime.db, secret, { async writeHistory() {} })
       const leases = createSqliteAgentRunLeasePort(runtime.db)
+      const partial = (await admission.prepare(ownerId, { ...input, session_id: streaming.id })).identity
+      const partialLease = (await leases.acquire(partial))!
+      const at = '2026-01-01T00:00:00.000Z'
+      await store.create({
+        identity: partial, version: 0, sequence: 1, status: 'running', phase: 'provider', round: 17,
+        context: null, text: '合成回复片段', displayTimeline: [
+          { eventId: 'sent-file', kind: 'tool', runId: partial.runId, roundId: `${partial.runId}:16`,
+            toolName: 'send_item', toolCallId: 'file', toolStatus: 'success', createdAt: at, updatedAt: at },
+          { eventId: 'streamed-text', kind: 'assistant', runId: partial.runId, roundId: `${partial.runId}:17`,
+            text: '合成回复片段', createdAt: at, updatedAt: at },
+        ],
+      } as unknown as RunCheckpoint<unknown>, partialLease, [{ id: 'partial-token', identity: partial,
+        sequence: 1, round: 17, type: 'token', payload: { text: '合成回复片段' } }])
+      await leases.release(partial, partialLease)
       const lease = (await leases.acquire(identity))!
       const started: RunEvent = { id: 'started', identity, sequence: 1, round: 1, type: 'run_started', payload: {} }
       try {
@@ -528,6 +574,10 @@ it('独占重启结算遗留运行，保留事件并允许会话再次发送', a
         await settleExclusiveSqliteAgentRuns(runtime.db, path, ownerId, reconcile)
         await settleExclusiveSqliteAgentRuns(runtime.db, path, ownerId, reconcile)
         expect(requested).toEqual(['search-a', 'search-b'])
+        expect(await store.read(partial)).toMatchObject({ status: 'failed', remoteStatusUnknown: false, text: '合成回复片段' })
+        expect(await store.readEventsAfter(partial, 1)).toEqual([expect.objectContaining({
+          type: 'final', payload: expect.objectContaining({ status: 'failed', remoteStatusUnknown: false, text: '本次回复中断，可能不完整。' }),
+        })])
         const recovered = await store.read(identity)
         expect(recovered).toMatchObject({ status: 'unknown', remoteStatusUnknown: true, sequence: 2 })
         expect(recovered?.displayTimeline.map(item => [item.eventId, item.toolStatus])).toEqual([
@@ -598,7 +648,7 @@ it('Desktop 独占恢复只续跑结果就绪的等待，先结算取消且清�
       await store.create(childCheckpoint, childLease, [])
       await leases.release(child!, childLease)
       await settleStoppedSqliteAgentRun(db, path, child!, interrupted.identity)
-      expect(await store.read(child!)).toMatchObject({ status: 'unknown' })
+      expect(await store.read(child!)).toMatchObject({ status: 'failed', remoteStatusUnknown: false })
       expect(await deliveries.pending(interrupted.identity)).toMatchObject([{ status: 'failed', reasonCode: 'desktop_run_interrupted' }])
       expect(await store.read(pending.identity)).toMatchObject({ status: 'waiting' })
       await createSqliteAgentRunCoordination(db, store).cancellation.request(interrupted.identity)
@@ -677,6 +727,26 @@ it('SQLite 压缩按持久历史推进水位并保留上一轮与本轮原文', 
         provider: 'local', api_format: 'openai', base_url: 'http://127.0.0.1:1/v1', model: 'synthetic',
       }, { text: '/compact', clientId: randomUUID() }, randomUUID(), new AbortController().signal)
       expect(noPlan.text).toBe('当前历史还不够长，暂时无需整理上下文。')
+    } finally { await runtime.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('桌面只引用文件技能时仍可准入并冻结可信引用信息', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-skill-admission-'))
+  try {
+    const path = join(directory, 'core.db')
+    await initializeSqlite(path)
+    const { runtime, ownerId } = await openSqliteRuntime(path)
+    try {
+      const { createUserSkillBundle } = await import('../../../src/agent/skills/bundle-store.js')
+      await createUserSkillBundle(directory, ownerId, 'demo', '---\nname: 文件技能\ndescription: 描述\n---\n秘密正文')
+      const session = await createDesktopAgentSession(runtime.db, ownerId, '测试会话')
+      const admission = createSqliteAgentAdmission(runtime.db, { skillDataRoot: directory })
+      await admission.prepare(ownerId, { session_id: session.id, message: '', references: [{ type: 'skill', id: 'demo', label: '伪造' }] })
+      const row = await runtime.db.selectFrom('conversation_messages').select('content_json').where('session_id', '=', session.id).executeTakeFirstOrThrow()
+      expect(row.content_json).toContain('文件技能')
+      expect(row.content_json).not.toContain('秘密正文')
+      expect(row.content_json).not.toContain('伪造')
     } finally { await runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

@@ -561,3 +561,39 @@ test('HTTP 等待超时后，Host 关闭仍等待定时投递和租约释放', a
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('定时任务可使用当前用户的文件技能且停用后撤权', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gugu-task-file-skill-'))
+  let opened: Awaited<ReturnType<typeof openSqliteRuntime>> | undefined
+  try {
+    const path = join(directory, 'core.db')
+    await initializeSqlite(path)
+    opened = await openSqliteRuntime(path)
+    const owner = opened.ownerId
+    const time = databaseTime('2020-01-01T00:00:00.000000Z', 'sqlite')
+    await sql`INSERT INTO scheduled_tasks(id,user_id,name,payload,cron,schedule_kind,start_at,channels,enabled,last_run_failed,created_at,updated_at)
+      VALUES(810,${owner.replaceAll('-', '')},'测试任务','测试','*','cron',${time},'web',1,0,${time},${time})`.execute(opened.runtime.db)
+    const { createUserSkillBundle, patchSkillDocument } = await import('@gugu/core/skills')
+    const { writeFile } = await import('node:fs/promises')
+    const original = '---\nname: 测试技能\ndescription: 描述\n---\n技能正文'
+    await createUserSkillBundle(directory, owner, 'demo', original)
+    const resources = createWebScheduledTaskToolResources({ core: opened.runtime, now: () => new Date(), timezone: async () => 'UTC',
+      skillCatalog: { builtins: [], fingerprint: id => `synthetic:${id}`, dataRoot: directory } })
+    const identity = { ownerId: owner, sessionId: 'scheduled-task:810', runId: 'run' }
+    const task = { id: '810', ownerId: owner, workspaceId: null, authorizedTools: [], groupScope: null, name: '测试任务', payload: '测试' }
+    const { tools } = await resources({ identity, task, assertLease: async () => {} })
+    const scope = { identity, signal: new AbortController().signal, roundId: '1', resolution: null,
+      async execute(): Promise<never> { throw new Error('不执行进程') } }
+    const call = () => tools.dispatch({ id: 'test', name: 'use_skill', input: { id: 'demo' } }, scope)
+    const result = await call()
+    assert.ok(result.kind === 'completed' && result.successful)
+    assert.match(JSON.stringify(result.value), /技能正文/u)
+    const listing = await tools.dispatch({ id: 'list', name: 'list_skills', input: {} }, scope)
+    assert.ok(listing.kind === 'completed' && listing.successful)
+    assert.match(JSON.stringify(listing.value), /测试技能/u)
+    assert.doesNotMatch(JSON.stringify(listing.value), /\/workspace\/\.agent/u)
+    await writeFile(join(directory, owner, '.agent', 'skills', 'demo', 'SKILL.md'), patchSkillDocument(original, { enabled: false }))
+    const revoked = await call()
+    assert.ok(revoked.kind === 'completed' && !revoked.successful)
+  } finally { await opened?.runtime.close(); await rm(directory, { recursive: true, force: true }) }
+})

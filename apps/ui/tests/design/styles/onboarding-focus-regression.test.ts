@@ -110,7 +110,7 @@ describe('onboarding 与重命名 focus 视觉回归', () => {
     expect(profileByokPane).toContain('border-radius: var(--radius-sm);')
     expect(onboarding).toContain('overflow-y: auto;')
     expect(onboarding).toContain('padding-right: var(--space-sm);')
-    expect(profileByokPane).toContain('class="onboarding-model-dialog-backdrop"')
+    expect(profileByokPane).toContain('class="onboarding-model-dialog-backdrop modal-backdrop"')
     expect(profileByokPane).toContain('class="{ \'onboarding-model-editor\': onboarding }"')
     expect(profileByokPane).toContain("'onboarding-provider-popup'")
     expect(profileByokPane).toContain('z-index: 30002 !important;')

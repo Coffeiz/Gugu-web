@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { databaseTime } from '../../src/data/codec.js'
 import { initializeSqlite, openSqliteRuntime } from '../../src/data/sqlite.js'
 import type { SqlDataRuntime } from '../../src/data/runtime.js'
-import { createKyselyScheduledTaskExecutionReader, createKyselyScheduledTaskRunNowReader } from '../../src/scheduled-tasks/run-now-read.js'
+import { createKyselyScheduledTaskExecutionReader, createKyselyScheduledTaskRunNowReader } from '../../src/tasks/run-now-read.js'
 import { createSqlImPushWriter } from '../../src/agent/sessions/im-push.js'
 import { createSqlConversationHistoryTrimmer } from '../../src/agent/sessions/retention.js'
 
@@ -99,12 +99,12 @@ describe('一次运行任务的 Core owner 读取合同', () => {
     const feishu = { chat_type: 'group', chat_id: 'synthetic-feishu', channel_id: '2' }
     await runtime.db.updateTable('scheduled_tasks').set({
       channels: 'qq,email', delivery_targets: JSON.stringify({ qq, feishu }),
-      authorized_tools: JSON.stringify(['send_email']), email_attachment_file_paths: JSON.stringify([17]),
+      authorized_tools: JSON.stringify(['send_email']), email_attachment_file_paths: JSON.stringify([17, '/personal/合成文件.txt']),
     }).where('id', '=', 43).execute()
     const read = createKyselyScheduledTaskExecutionReader(runtime.db, 'sqlite')
     expect(await read(owner, '43')).toMatchObject({ plan: {
       ownerId: owner, id: '43', payload: '做一件事', channels: ['qq', 'email'], deliveryTargets: { qq },
-      authorizedTools: ['send_email'], emailAttachmentFilePaths: [17], workspaceId: null, filesystemGrantId: null,
+      authorizedTools: ['send_email'], emailAttachmentFilePaths: ['/personal/合成文件.txt'], workspaceId: null, filesystemGrantId: null,
     } })
     const current = await read(owner, '43')
     expect('plan' in current && Object.keys(current.plan.deliveryTargets)).toEqual(['qq'])
@@ -129,4 +129,17 @@ describe('一次运行任务的 Core owner 读取合同', () => {
     for (const id of ['0', '-1', '1e2', '9007199254740992'])
       await expect(read(owner, id)).rejects.toThrow('定时任务 ID 无效')
   })
+})
+
+it('桌面定时 Shell 拒绝通过父目录离开已授权工作区', async () => {
+  const { executeDesktopScheduledSandboxShell } = await import('../../src/runtime/desktop-shell.js')
+  let checked = false
+  const result = await executeDesktopScheduledSandboxShell({
+    command: 'pwd', cwd: '..', timeout: 1, max_output_chars: 200, scope: 'sandbox',
+  }, {
+    root: directory, writable: false, signal: new AbortController().signal,
+    async assertAuthorized() { checked = true },
+  })
+  expect(result).toMatchObject({ executed: false, value: { error: '定时任务的工作目录超出授权工作区' } })
+  expect(checked).toBe(false)
 })

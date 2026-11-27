@@ -81,7 +81,7 @@ function toggle() {
       </div>
     </div>
     <div :id="`desktop-logs-${kind}`" v-show="open">
-      <p v-if="truncated" class="pm-field-hint desktop-log-limit">显示最近的日志记录。</p>
+      <p v-if="truncated" class="pm-field-hint desktop-log-limit">{{ $t('pageUi.recentLogs') }}</p>
       <p v-if="error" class="pm-msg err" role="alert">{{ error }}</p>
       <p v-else-if="loading && !rows.length" class="pm-field-hint" role="status">{{ t('adminLogs.loading') }}</p>
       <p v-else-if="!rows.length" class="pm-field-hint">{{ t('adminLogs.empty') }}</p>

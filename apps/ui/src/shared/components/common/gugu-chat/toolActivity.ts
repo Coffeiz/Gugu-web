@@ -1,4 +1,4 @@
-import { formatShellActivityLabel, toolDisplayIdentity } from '@gugu/core/agent/sessions/tool-labels'
+import { resolveToolDisplayLabel, toolDisplayIdentity } from '@gugu/core/agent/sessions/tool-labels'
 import { describeShellActivity } from '@gugu/core/agent/shell-activity'
 import type { ChatMessage } from './chatTypes'
 
@@ -193,7 +193,7 @@ function readSubagentOutput(msg: ChatMessage) {
 }
 
 export function toolActivityLabel(
-  msg: Pick<ChatMessage, 'toolName' | 'toolInput' | 'toolResult' | 'shellActivity' | 'toolLabel' | 'toolLabelOverride'>,
+  msg: Pick<ChatMessage, 'toolName' | 'toolInput' | 'toolResult' | 'shellActivity' | 'shellDescription' | 'toolLabel' | 'toolLabelOverride'>,
   translate: (key: string, values?: Record<string, string>) => string,
   exists: (key: string) => boolean,
   subagentNames?: ReadonlyMap<string, string>,
@@ -215,12 +215,8 @@ export function toolActivityLabel(
       : typeof childId === 'string' ? subagentNames?.get(childId) : undefined
     if (agentName) return translate(`toolNames.${name}_target`, { target: agentName })
   }
-  if (name === 'read_file') return translate('chatUi.toolCall')
-  const activity = shellActivityForMessage({ ...msg, toolName: name, toolInput })
-  if (!msg.toolLabelOverride?.trim()) {
-    const label = formatShellActivityLabel(activity, (key, values) => translate(`toolNames.${key}`, values), true)
-    if (label) return label
-  }
-  const key = `toolNames.${name}`
-  return msg.toolLabelOverride?.trim() || (name && exists(key) ? translate(key) : msg.toolLabel?.trim() || name || translate('chatUi.toolCall'))
+  return resolveToolDisplayLabel({
+    name: msg.toolName, input: msg.toolInput, shellDescription: msg.shellDescription,
+    override: msg.toolLabelOverride, label: msg.toolLabel,
+  }, key => exists(`toolNames.${key}`) ? translate(`toolNames.${key}`) : undefined, translate('chatUi.toolCall'))
 }

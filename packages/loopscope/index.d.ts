@@ -21,7 +21,7 @@ export interface LoopScopeTraceEvent {
 export function createLoopScopeTrace(options: {
   endpoint: string
   source?: string
-  resolveSessionTitle?(sessionId: string): Promise<string | undefined>
+  resolveSessionMetadata?(sessionId: string): Promise<{ title?: string; imPlatform?: string } | undefined>
   maxQueue?: number
   maxRuns?: number
   maxSpans?: number

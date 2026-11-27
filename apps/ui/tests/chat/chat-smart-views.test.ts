@@ -50,6 +50,20 @@ it('空结果有提示，未知模板与未闭合围栏保留正文', () => {
   expect(completed).not.toContain(i18n.global.t('smartView.generating'))
 })
 
+it('历史消息截断在智能视图 JSON 中时保留正文和表格', () => {
+  const body = '对比摘要\n\n| 指标 | 结果 |\n| --- | --- |\n| 耗时 | 100ms |'
+  const truncated = body + '\n\n```gugu-ui\n{"version":1,"layout":{"type":"stack","label":"截断'
+  const host = document.createElement('div')
+  host.innerHTML = sanitizeChatHtml(renderMd(truncated))
+  expect(host.textContent).toContain('对比摘要')
+  expect(host.querySelector('td:last-child')?.textContent).toBe('100ms')
+  expect(host.textContent).not.toContain(i18n.global.t('smartView.unavailable'))
+  expect(host.textContent).not.toContain('截断')
+  expect(renderMd(truncated + '\n```')).toContain(i18n.global.t('smartView.unavailable'))
+  expect(renderMd(fence({ template: 'today-agenda', date: '2026-01-15', items: [] }).slice(0, -4)))
+    .toContain(i18n.global.t('smartView.empty'))
+})
+
 it('滑块同步更新绑定指标和进度，并在混入异常项时继续筛选列表', async () => {
   const { createApp, h, nextTick } = await import('vue')
   const { default: Citations } = await import('@/components/common/gugu-chat/GuguChatCitations.vue')
@@ -540,7 +554,6 @@ it('网页动作沿用聊天外链行为，无效地址不生成导航入口', (
 
 it('无效布局和未注册动作不生成控件', () => {
   for (const layout of [
-    { type: 'section', title: '空分区', children: [{ type: 'input' }] },
     { type: 'button', label: '执行', action: { type: 'submit', id: 12 } },
     { type: 'button', label: '执行', action: { type: 'open-object', kind: 'file', id: 12 } },
     { type: 'list', filter: { slider: 'missing', operator: 'lte' }, items: [] },
@@ -562,4 +575,61 @@ it('修复多个同级段落前多写的花括号并保留图表', () => {
   host.innerHTML = sanitizeChatHtml(renderMd(['```gugu-ui', source, '```'].join('\n')))
   expect(host.querySelectorAll('.chat-smart-section')).toHaveLength(3)
   expect(host.querySelector('[data-smart-chart="bar"]')).not.toBeNull()
+})
+
+it('保留列表详情和正文中未转义的引号，并渲染较长的列表详情', () => {
+  const layout = { type: 'stack', children: [
+    { type: 'list', items: [{ label: '示例', detail: '属于“示例”分类。'.repeat(30) + ' 仍保留 "引用"。' }] },
+    { type: 'text', text: '正文包含 "直接引语"。' },
+  ] }
+  const host = document.createElement('div')
+  host.innerHTML = sanitizeChatHtml(renderMd(fence({ version: 1, layout }).replaceAll('\\"', '"')))
+  expect(host.querySelector('.chat-smart-list-detail')?.textContent).toContain('仍保留 "引用"')
+  expect(host.querySelector('.chat-smart-text')?.textContent).toContain('"直接引语"')
+})
+
+it('围栏未闭合时逐个显示完整组件，失败组件不阻挡后续组件', () => {
+  const start = '~~~gugu-ui\n{"version":1,"layout":{"type":"stack","children":['
+  const first = '{"type":"text","text":"已完成"}'
+  const host = document.createElement('div')
+  host.innerHTML = sanitizeChatHtml(renderMdStream(start + first + ',{"type":"text","text":"尚未'))
+  expect(host.querySelector('.chat-smart-text')?.textContent).toBe('已完成')
+  expect(host.textContent).not.toContain('尚未')
+
+  host.innerHTML = sanitizeChatHtml(renderMd(start + first + ',{"type":"input"},{"type":"text","text":"后续完成"}]}}\n~~~'))
+  expect([...host.querySelectorAll('.chat-smart-text')].map(node => node.textContent)).toEqual(['已完成', '后续完成'])
+  expect(host.querySelectorAll('.chat-smart-view-notice')).toHaveLength(1)
+
+  host.innerHTML = sanitizeChatHtml(renderMd(start + first + ',{"type":"text","text": } ,{"type":"text","text":"后续完成"}]}}\n~~~'))
+  expect([...host.querySelectorAll('.chat-smart-text')].map(node => node.textContent)).toEqual(['已完成', '后续完成'])
+  expect(host.querySelectorAll('.chat-smart-view-notice')).toHaveLength(1)
+})
+
+it('增量追加组件和收尾时保留已经编辑的输入框', async () => {
+  const { createApp, h, nextTick, ref } = await import('vue')
+  const { default: Citations } = await import('@/components/common/gugu-chat/GuguChatCitations.vue')
+  const source = ref('~~~gugu-ui\n{"version":1,"layout":{"type":"stack","children":['
+    + '{"type":"input","inputType":"text","id":"draft","label":"草稿"}')
+  const presenting = ref(true)
+  const host = document.createElement('div')
+  const app = createApp({ render: () => h(Citations, {
+    html: presenting.value ? renderMdStream(source.value) : renderMd(source.value),
+    text: source.value, presenting: presenting.value,
+  }) }).use(i18n)
+  app.mount(host)
+  try {
+    const input = host.querySelector('input')!
+    input.value = '已输入'
+    source.value += ',{"type":"text","text":"追加内容"}'
+    await nextTick()
+    expect(host.querySelector('input')).toBe(input)
+    expect(host.textContent).toContain('追加内容')
+    source.value += ']}}\n~~~'
+    presenting.value = false
+    await nextTick()
+    expect(host.querySelector('input')).toBe(input)
+    expect(input.value).toBe('已输入')
+  } finally {
+    app.unmount()
+  }
 })

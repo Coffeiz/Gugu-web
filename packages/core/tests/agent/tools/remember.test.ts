@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { createRememberTool } from '../../../src/agent/tools/memory.js'
+import { createRememberTool } from '../../../src/agent/tools/memory/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import type { MemoryRow } from '../../../src/agent/memory/remember.js'
 

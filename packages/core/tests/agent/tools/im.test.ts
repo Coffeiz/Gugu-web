@@ -5,11 +5,11 @@ import { sql } from 'kysely'
 import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
 import { createSqlAgentGroupHistory, createSqlAgentOwnerSessionBindings } from '../../../src/agent/sessions/im-tools.js'
 import { expect, it, vi } from 'vitest'
-import { createAgentImTools } from '../../../src/agent/tools/im.js'
+import { createAgentImTools } from '../../../src/agent/tools/im/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
-import { createMemorySearchTool } from '../../../src/agent/tools/memory.js'
+import { createMemorySearchTool } from '../../../src/agent/tools/memory/index.js'
 import { configureRagJieba } from '../../../src/agent/rag/tokenizer.js'
-import { createScheduledTaskGroupMemorySearchPort } from '../../../src/scheduled-tasks/group-tools.js'
+import { createScheduledTaskGroupMemorySearchPort } from '../../../src/agent/scenes/task/group-tools.js'
 
 const identity = { ownerId: 'owner-a', sessionId: '1', runId: 'run-a' }
 const context = { identity, roundId: 'round-a', signal: new AbortController().signal, resolution: null,

@@ -6,7 +6,7 @@ import { sql } from 'kysely'
 import { beforeEach,afterEach,it,expect,vi } from 'vitest'
 import { initializeSqlite,openSqliteRuntime } from '../../../src/data/sqlite.js'
 import type { SqlDataRuntime } from '../../../src/data/runtime.js'
-import { createWorkspaceMutationPort,createWorkspaceUpdateTool } from '../../../src/agent/tools/workspaces.js'
+import { createWorkspaceMutationPort,createWorkspaceUpdateTool } from '../../../src/agent/tools/workspaces/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect,fixture } from '../run/fixtures.js'
 let core:SqlDataRuntime,folder:string,owner:string,other:string,allowed:boolean,registry:ReturnType<typeof createToolRegistry>

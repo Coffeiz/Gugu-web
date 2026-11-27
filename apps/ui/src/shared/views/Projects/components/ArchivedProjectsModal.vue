@@ -6,9 +6,7 @@
           <span class="ap-title">{{ title }}</span>
           <span v-if="isDeleted" class="ap-retention">{{ t('projectsDeleted.deletedRetention') }}</span>
         </div>
-        <button class="ap-close" @click="$emit('close')">
-          <Icon name="action.close" :size="14" />
-        </button>
+        <CloseButton @click="$emit('close')" />
       </div>
 
       <div ref="layoutRoot" class="ap-body">
@@ -37,7 +35,7 @@
 
                 <div class="ap-list" data-layout-content :data-layout-key="yg.year + mg.month" :data-layout-open="openMonths.has(yg.year + mg.month) ? 'true' : 'false'">
                   <div v-for="p in mg.items" :key="p.id" class="ap-row">
-                    <span class="ap-dot" :style="{ background: p.color }"></span>
+                    <span class="ap-dot" :style="{ backgroundColor: extractProjectAccent(p.color) }"></span>
                     <div class="ap-info">
                       <div class="ap-name">{{ p.name }}</div>
                       <div class="ap-sub">
@@ -67,6 +65,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { extractProjectAccent } from '@/utils/projectColors'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
@@ -227,17 +227,11 @@ function formatDate(value: string | null | undefined): string {
 .ap-modal { display: flex; flex-direction: column; max-height: 70vh; }
 .ap-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 18px; border-bottom: 1px solid var(--content-divider); flex-shrink: 0;
+  padding: var(--space-lg); border-bottom: 1px solid var(--content-divider); flex-shrink: 0;
 }
 .ap-heading { display:flex; align-items:baseline; gap:8px; min-width:0; }
 .ap-title { font-size: 15px; font-weight: 700; color: var(--content-primary); }
 .ap-retention { font-size:11px; color:var(--content-tertiary); }
-.ap-close {
-  width: 26px; height: 26px; border-radius: 8px; border: none; background: none;
-  color: var(--content-secondary); display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s;
-}
-.ap-close:hover { background: var(--surface-soft-hover); }
 
 .ap-body {
   --ap-year-chevron-center: 10px;

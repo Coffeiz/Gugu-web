@@ -1,12 +1,18 @@
 <template>
-  <div class="interaction-bubble" :class="{ 'is-choice': isChoice, 'is-multiple-choice': isMultiple }">
+  <div class="interaction-bubble" :class="{ 'is-choice': isChoice, 'is-multiple-choice': isMultiple, 'has-question-batch': msg.interaction?.questions?.length && !resolved && !expired }">
     <div class="interaction-title">
       <span v-if="isChoice" class="interaction-choice-icon"><Icon name="action.list" :size="15" /></span>
       <span>{{ msg.interaction?.title || t('chatUi.confirmRequired') }}</span>
     </div>
-    <div v-if="!isChoice || msg.interaction?.body" class="interaction-body">{{ msg.interaction?.body }}</div>
+    <GuguChatQuestionBatch v-if="msg.interaction?.questions?.length && !resolved && !expired"
+      :key="msg.interaction.promptId" :questions="msg.interaction.questions" :disabled="submitting"
+      @submit="submitQuestionBatch" @cancel="cancelQuestionBatch" />
+    <GuguChatEmailCompose v-else-if="msg.interaction?.emailCompose" :key="msg.interaction.promptId"
+      :initial="msg.interaction.emailCompose" :email-tool="emailTool" :disabled="resolved || submitting || expired"
+      @submit="submitEmail" @cancel="cancelEmail" />
+    <div v-else-if="!isChoice || msg.interaction?.body" class="interaction-body">{{ msg.interaction?.body }}</div>
     <!-- 空 options 的存量提问（兜底按钮上线前创建的）不渲染空按钮区，避免悬空分隔线 -->
-    <div v-if="displayOptions.length" class="interaction-actions"
+    <div v-if="!msg.interaction?.emailCompose && displayOptions.length" class="interaction-actions"
          :role="isChoice ? 'group' : undefined" :aria-label="isChoice ? msg.interaction?.title : undefined">
       <ActionButton v-for="option in displayOptions" :key="option.id" class="interaction-option" fit
                     :variant="isChoice ? 'secondary' : 'primary'"
@@ -75,7 +81,15 @@
       </div>
     </form>
     <div v-if="!isMultiple && answerMode === 'composer' && customInputActive && !resolved && !expired" class="interaction-custom-hint">{{ t('chatUi.customReplyHint') }}</div>
-    <div v-if="resolved && msg.interaction?.responseText && !answerShownByOptions" class="interaction-response">
+    <ol v-if="resolved && questionSummary.length" class="interaction-question-summary">
+      <li v-for="entry in questionSummary" :key="entry.id">
+        <div class="interaction-question-label">{{ entry.title }}</div>
+        <ul class="interaction-question-answers">
+          <li v-for="(answer, index) in entry.answers" :key="index">{{ answer }}</li>
+        </ul>
+      </li>
+    </ol>
+    <div v-else-if="!msg.interaction?.emailCompose && resolved && msg.interaction?.responseText && !answerShownByOptions" class="interaction-response">
       {{ msg.interaction.customAnswer || msg.interaction.responseText }}
     </div>
     <div v-if="submitting" class="interaction-resolved">{{ t(isMultiple ? 'chatUi.multiSubmitting' : 'chatUi.confirmationSubmitting') }}</div>
@@ -91,15 +105,28 @@
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import GuguChatQuestionBatch from './GuguChatQuestionBatch.vue'
+import GuguChatEmailCompose from './GuguChatEmailCompose.vue'
 import Icon from '@/components/common/icons/Icon.vue'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import { CUSTOM_REPLY_OPTION_ID, type ChatMessage, type InteractionAnswerMode } from './chatTypes'
 
-const props = withDefaults(defineProps<{ msg: ChatMessage; answerMode?: InteractionAnswerMode }>(), {
+const props = withDefaults(defineProps<{ msg: ChatMessage; answerMode?: InteractionAnswerMode; emailTool?: { status: ChatMessage['toolStatus']; result: unknown } }>(), {
   answerMode: 'composer',
 })
 const resolved = ref(Boolean(props.msg.interaction?.resolved))
 const submitting = ref(Boolean(props.msg.interaction?.submitting))
+const questionSummary = computed(() => {
+  const interaction = props.msg.interaction
+  const byQuestion = new Map(interaction?.questionAnswers?.map(answer => [answer.question_id, answer]))
+  return (interaction?.questions ?? []).flatMap(question => {
+    const answer = byQuestion.get(question.id)
+    if (!answer) return []
+    const answers = typeof answer.text === 'string' ? [answer.text] : (answer.option_ids ?? []).map(id =>
+      question.options?.find(option => option.id === id)?.label ?? id)
+    return [{ id: question.id, title: question.title, answers }]
+  })
+})
 const initiallyExpired = Boolean(
   props.msg.interaction?.expired
   || (!resolved.value && !submitting.value && !props.msg.interaction?.selectedOptionId
@@ -125,7 +152,7 @@ const customExpanded = ref(customInputActive.value)
 const showAnswerInput = computed(() => props.msg.interaction?.allowTextInput && !secretFields.value.length &&
   customExpanded.value && (isMultiple.value || props.answerMode === 'inline'))
 const displayOptions = computed(() => {
-  if (secretFields.value.length) return []
+  if (secretFields.value.length || props.msg.interaction?.questions?.length) return []
   const options = (props.msg.interaction?.options ?? []).filter(option => option.id !== CUSTOM_REPLY_OPTION_ID)
   if (resolved.value || expired.value) return options
   const custom = props.msg.interaction?.options.find(option => option.id === CUSTOM_REPLY_OPTION_ID)
@@ -209,6 +236,26 @@ function cancelSecrets() {
   if (resolved.value || submitting.value || expired.value) return
   emit('secretCancel', props.msg)
 }
+function submitEmail(payload: string, action: 'send' | 'draft') {
+  const option = props.msg.interaction?.options.find(item => item.id === 'confirm')
+  if (option?.token) selectOption({ ...option, label: action === 'draft' ? '已提交保存草稿' : '已提交发送', customAnswer: payload })
+}
+
+function cancelEmail() {
+  const option = props.msg.interaction?.options.find(item => item.id === 'cancel')
+  if (option?.token) selectOption(option)
+}
+
+function submitQuestionBatch(answers: string) {
+  const option = props.msg.interaction?.options.find(item => item.id === '__submit_questions__')
+  if (option?.token) selectOption({ ...option, label: '已提交全部答案', customAnswer: answers })
+}
+
+function cancelQuestionBatch() {
+  const option = props.msg.interaction?.options.find(item => item.id === '__cancel_questions__')
+  if (option?.token) selectOption({ ...option, label: '已取消问答' })
+}
+
 function selectOption(option: { id: string; label: string; token: string; selectedOptionIds?: string[]; customAnswer?: string }) {
   if (resolved.value || submitting.value || expired.value) return
   emit('select', props.msg, option)
@@ -291,9 +338,11 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 
 <style scoped>
 .interaction-bubble { width: 100%; max-width: var(--chat-assistant-bubble-max-width, 88%); min-width: 0; box-sizing: border-box; margin: 0; padding: 14px; border: 1px solid var(--border-default); border-radius: var(--card-radius); background: var(--surface-card-solid); color: var(--content-primary); box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card); }
+.has-question-batch { position: relative; }
+.has-question-batch .interaction-title { min-block-size: 32px; padding-inline-end: 40px; }
 .interaction-title { color: var(--content-primary); font-size: var(--font-size-md); font-weight: 650; line-height: var(--line-height-ui); }
 .interaction-body { min-width: 0; max-width: 100%; max-height: 40vh; overflow: auto; margin-top: 5px; color: var(--content-secondary); font-size: var(--font-size-sm); line-height: var(--line-height-body); white-space: pre-wrap; overflow-wrap: anywhere; }
-.interaction-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider); }
+.interaction-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); min-width: 0; max-width: 100%; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider); }
 .interaction-actions :deep(.interaction-option) {
   flex: 1 1 auto;
   min-width: 0;
@@ -329,32 +378,7 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
   border-radius: var(--radius-xs); background: var(--action-soft); color: var(--action-primary);
 }
 .is-choice .interaction-body { margin-top: 8px; }
-.is-choice .interaction-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
-.is-choice .interaction-actions :deep(.interaction-option) {
-  width: 100%; padding: 8px 10px; min-height: 38px;
-  justify-content: flex-start; text-align: start; color: var(--content-primary);
-  border-color: var(--content-divider); background: var(--surface-soft);
-  transition: background-color var(--motion-hover-control), border-color var(--motion-hover-control), opacity var(--motion-hover-control);
-}
-.is-choice .interaction-actions :deep(.interaction-option:hover:not(:disabled)),
-.is-choice .interaction-actions :deep(.interaction-option.is-selected) {
-  background: var(--action-soft); border-color: var(--action-outline); box-shadow: none;
-}
-.is-choice .interaction-actions :deep(.interaction-option .app-action-button-content) {
-  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%;
-}
-.interaction-choice-marker {
-  display: grid; place-items: center; inline-size: 18px; block-size: 18px;
-  box-sizing: border-box; border: 1px solid var(--border-default); border-radius: 50%;
-  color: var(--action-primary);
-}
-.is-selected .interaction-choice-marker { border-color: var(--action-outline); background: var(--action-soft); }
-.interaction-choice-label { min-width: 0; }
-.interaction-choice-arrow { color: var(--content-secondary); }
 .is-custom-choice[aria-expanded="true"] .interaction-choice-arrow { transform: rotate(90deg); }
-.is-multiple-choice .interaction-option:not(.is-custom-choice) .interaction-choice-marker {
-  border-radius: var(--radius-xs);
-}
 .interaction-choice-footer {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-sm);
   margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--content-divider);
@@ -368,8 +392,14 @@ onBeforeUnmount(() => { if (expiryTimer) clearTimeout(expiryTimer) })
 .interaction-secrets { display: grid; gap: 9px; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider); }
 .interaction-secret-field { display: grid; gap: 5px; color: var(--content-secondary); font-size: var(--font-size-xs); }
 .interaction-secret-field input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 7px 9px; border: 1px solid var(--input-border); border-radius: var(--control-radius); background: var(--surface-input); color: var(--content-primary); }
-.interaction-secret-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-width: 100%; margin-top: 2px; }
+.interaction-secret-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); max-width: 100%; margin-top: 2px; }
 .interaction-secret-actions :deep(.app-action-button) { width: 100%; min-width: 0; }
+.interaction-question-summary { display: grid; gap: var(--space-sm); margin: var(--space-sm) 0 0; padding-inline-start: var(--space-lg); }
+.interaction-question-label { font-weight: var(--font-weight-semibold); }
+.interaction-question-answers { display: grid; gap: var(--space-xs); list-style: none; padding: 0; margin: var(--space-xs) 0 0; }
+.interaction-question-answers li { padding: 7px 9px; border-radius: var(--control-radius); background: var(--surface-soft); color: var(--content-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 .interaction-response { margin-top: 8px; padding: 7px 9px; border-radius: var(--control-radius); background: var(--surface-soft); color: var(--content-secondary); font-size: var(--font-size-sm); white-space: pre-wrap; }
 .interaction-resolved { margin-top: 8px; color: var(--content-tertiary); font-size: var(--font-size-xs); }
 </style>
+
+<style scoped src="./interaction-choice.css"></style>

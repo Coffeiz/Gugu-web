@@ -12,6 +12,12 @@ export const remoteLoginBodySchema = z.object({
   password: z.string(),
 })
 
+/** 设备标识用于标记会话，认证仍由服务端验证凭据。 */
+export const deviceIdSchema = z.uuid()
+export const saasLoginBodySchema = remoteLoginBodySchema.extend({
+  device_id: deviceIdSchema.optional(),
+})
+
 export const remoteUserSchema = z.object({
   id: z.string().uuid(),
   username: z.string(),
@@ -41,7 +47,7 @@ export const remoteLoginInputSchema = remoteLoginBodySchema.extend({
 })
 
 export const remoteSessionSchema = z.object({
-  provider: z.literal('self-hosted'),
+  provider: z.enum(['self-hosted', 'official-saas']),
   origin: z.string(),
   accountId: remoteUserSchema.shape.id,
   token: bearerSchema,
@@ -55,5 +61,5 @@ export type RemoteUser = Omit<z.infer<typeof remoteUserSchema>, 'imChannels'> & 
 export type RemoteSession = z.infer<typeof remoteSessionSchema>
 export type RemoteAccountState =
   | { state: 'signed-out' }
-  | { state: 'connected'; origin: string; user: RemoteUser }
+  | { state: 'connected'; origin: string; user: RemoteUser; provider?: 'official-saas'; projects?: readonly { id: string; name: string; summary: string | null }[]; projectsUnavailable?: boolean }
   | { state: 'offline' | 'expired'; origin: string }

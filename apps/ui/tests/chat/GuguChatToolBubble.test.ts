@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, reactive, ref } from 'vue'
-import { chatToolDetailsKey } from '@/components/common/gugu-chat/chatPresentationAccess'
+import { chatHideSuccessfulShellResultKey, chatToolDetailsKey } from '@/components/common/gugu-chat/chatPresentationAccess'
 import { readDesktopChatToolDetails } from '../../src/desktop/shell/agent-chat'
 import GuguChatToolBubble from '@/components/common/gugu-chat/GuguChatToolBubble.vue'
 import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
@@ -13,7 +13,7 @@ vi.mock('vue-i18n', async importOriginal => ({
   useI18n: () => ({ t: (key: string) => key, te: (key: string) => key === 'toolNames.list_projects' }) }))
 
 const mounted: Array<{ app: ReturnType<typeof createApp>; host: HTMLElement }> = []
-function mountBubble(overrides: Partial<ChatMessage> = {}, readDetails?: typeof readDesktopChatToolDetails) {
+function mountBubble(overrides: Partial<ChatMessage> = {}, readDetails?: typeof readDesktopChatToolDetails, hideSuccessfulShellResult = false) {
   const msg = reactive<ChatMessage>({ id: 1, role: 'tool', text: '', time: '', toolName: 'shell',
     toolStatus: 'success', toolDetailsAvailable: true,
     _toolDetailsSource: { kind: 'timeline', messageId: 11, index: 0 }, ...overrides })
@@ -25,6 +25,7 @@ function mountBubble(overrides: Partial<ChatMessage> = {}, readDetails?: typeof 
     msg, sessionId: 7, expanded: expanded.value, 'onUpdate:expanded': changes,
   }) }))
   if (readDetails) app.provide(chatToolDetailsKey, readDetails)
+  if (hideSuccessfulShellResult) app.provide(chatHideSuccessfulShellResultKey, true)
   app.mount(host)
   mounted.push({ app, host })
   return { app, host, msg, expanded, changes, click: () => host.querySelector<HTMLButtonElement>('.tool-event-head')!.click() }
@@ -58,6 +59,23 @@ it('桌面历史卡片展开时读取本机会话详情，并渲染参数和结�
   expect(agentApi.getToolEventDetails).not.toHaveBeenCalled()
   expect(bubble.host.querySelector('.tool-detail-shell')?.textContent).toContain('合成查询')
   expect(bubble.host.querySelector('.tool-detail-shell')?.textContent).toContain('合成本机结果')
+})
+
+it.each([
+  ['success', false],
+  ['error', true],
+] as const)('桌面 Shell 状态为 %s 时仅在失败后展示结果', async (toolStatus, showsResult) => {
+  const readDetails = vi.fn().mockResolvedValue({
+    toolInput: { command: 'cat sample.txt' },
+    toolResult: { stderr: '合成结果', cwd: '/example', exit_code: toolStatus === 'error' ? 1 : 0 },
+  })
+  const bubble = mountBubble({ toolStatus }, readDetails, true)
+  bubble.click()
+  await vi.waitFor(() => expect(bubble.expanded.value).toBe(true))
+  const details = bubble.host.querySelector('.tool-detail-shell')?.textContent ?? ''
+  expect(details).toContain('cat sample.txt')
+  expect(details.includes('合成结果')).toBe(showsResult)
+  expect(details.includes('/example')).toBe(showsResult)
 })
 
 it('运行中的卡片恢复计时，结束后显示持久化耗时', async () => {

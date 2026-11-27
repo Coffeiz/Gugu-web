@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import type { DesktopClientFields } from '@gugu/core/desktop'
 import { desktopData } from '@desktop/bridge/bridge'
 import type { ClientRow } from '@desktop/bridge/bridge'
 import { confirmDialog } from '@/composables/core/useConfirmDialog'
@@ -7,30 +8,21 @@ type Perform = (action: () => Promise<void>) => Promise<void>
 
 export function useDesktopContacts(perform: Perform, refresh: () => Promise<void>) {
   const clients = ref<ClientRow[]>([])
-  const clientName = ref('')
-  const editingClient = ref<ClientRow | null>(null)
-  const editedClientName = ref('')
-
-  async function setRows(rows: ClientRow[]) {
+  function setRows(rows: ClientRow[]) {
     clients.value = rows
   }
 
-  function create() {
-    return perform(async () => {
-      await desktopData.createClient(clientName.value)
-      clientName.value = ''
+  async function save(fields: DesktopClientFields, id?: number) {
+    let saved: ClientRow | undefined
+    await perform(async () => {
+      saved = id === undefined ? await desktopData.createClient(fields) : await desktopData.renameClient(id, fields)
+      const result = saved
+      clients.value = id === undefined
+        ? [result, ...clients.value]
+        : clients.value.map(client => client.id === id ? result : client)
       await refresh()
     })
-  }
-
-  function rename() {
-    return perform(async () => {
-      const client = editingClient.value
-      if (!client) return
-      await desktopData.renameClient(client.id, editedClientName.value)
-      editingClient.value = null
-      await refresh()
-    })
+    return saved
   }
 
   function remove(client: ClientRow) {
@@ -47,5 +39,5 @@ export function useDesktopContacts(perform: Perform, refresh: () => Promise<void
     })
   }
 
-  return { clients, clientName, editingClient, editedClientName, setRows, create, rename, remove }
+  return { clients, setRows, save, remove }
 }

@@ -500,7 +500,7 @@ function unavailableTrace(run, originalBytes, maxBytes) {
 }
 
 /** 可信 Host 开启采集后才构造；`record` 同步入队且不等待网络 I/O。 */
-export function createLoopScopeTrace({ endpoint, transport, source = 'web', resolveSessionTitle, maxQueue = 64, maxRuns = 12, maxSpans = 600, maxTraceBytes = 48 * 1024 * 1024, maxQueueBytes = 64 * 1024 * 1024, requestTimeoutMs = 15000 }) {
+export function createLoopScopeTrace({ endpoint, transport, source = 'web', resolveSessionMetadata, maxQueue = 64, maxRuns = 12, maxSpans = 600, maxTraceBytes = 48 * 1024 * 1024, maxQueueBytes = 64 * 1024 * 1024, requestTimeoutMs = 15000 }) {
   const base = String(endpoint ?? '').replace(/\/+$/, '')
   const parsed = new URL(base)
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('LoopScope Collector 地址配置无效')
@@ -533,8 +533,11 @@ export function createLoopScopeTrace({ endpoint, transport, source = 'web', reso
         try {
           if (id) {
             // 会话可能在运行结束前完成自动命名，每次上报读取当前标题。
-            const title = await resolveSessionTitle?.(payload.external_session_id).catch(() => undefined)
-            await request('runs', title ? { ...payload, title } : payload)
+            const metadata = await resolveSessionMetadata?.(payload.external_session_id).catch(() => undefined)
+            await request('runs', { ...payload,
+              ...(metadata?.title ? { title: metadata.title } : {}),
+              ...(metadata?.imPlatform ? { attributes: { ...payload.attributes, im_platform: metadata.imPlatform } } : {}),
+            })
           }
           if (finishId && finish && !queue.has(finishId)) {
             await request(`runs/${encodeURIComponent(finishId)}/finish`, finish)

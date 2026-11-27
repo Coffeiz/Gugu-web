@@ -100,6 +100,20 @@ async function prepareSidecar() {
   const decoder = 'node_modules/@zpowertech/audio-player'
   mkdirSync(dirname(join(host, decoder)), { recursive: true })
   cpSync(join(gateway, decoder), join(host, decoder), { recursive: true, dereference: true })
+  // 图片 worker 由独立 Node 启动，需要在制品内解析 Canvas 与当前平台原生绑定。
+  const canvas = '@napi-rs/canvas'
+  const canvasSource = realpathSync(join(gateway, 'node_modules', canvas))
+  const canvasPackage = JSON.parse(readFileSync(join(canvasSource, 'package.json'), 'utf8'))
+  const nativeCanvas = Object.keys(canvasPackage.optionalDependencies ?? {}).flatMap(name => {
+    const source = resolve(canvasSource, '../..', name)
+    return existsSync(source) ? [[name, source]] : []
+  })
+  if (!nativeCanvas.length) throw new Error('图片处理缺少 Canvas 原生绑定')
+  for (const [name, source] of [[canvas, canvasSource], ['image-size', join(gateway, 'node_modules/image-size')], ...nativeCanvas]) {
+    const destination = join(host, 'node_modules', name)
+    mkdirSync(dirname(destination), { recursive: true })
+    cpSync(source, destination, { recursive: true, dereference: true })
+  }
   prepareDesktopPty(join(host, 'package.json'))
   cpSync(join(root, 'LICENSE'), join(host, 'LICENSE'))
   mkdirSync(join(host, 'agent'), { recursive: true })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createWebAgentContextBuilder, type ContextDataPorts } from '../../src/agent/index.js'
-import { createScheduledTaskContextLoader } from '../../src/scheduled-tasks/run-now.js'
+import { createScheduledTaskContextLoader } from '../../src/agent/scenes/task/owner-context.js'
 
 const identity = { ownerId: 'owner', sessionId: 'scheduled-task:7', runId: 'run' }
 const task = { id: '7', ownerId: 'owner', payload: '查询本周项目进度' }

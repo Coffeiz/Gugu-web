@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { Pool, type PoolClient } from 'pg'
 import { parseAgentKnowledgeEntry, serializeAgentKnowledgeEntry, type AgentKnowledgeEntry } from '@gugu/core/agent/knowledge/entry'
+import { listUserSkillBundles, readUserSkillBundle } from '@gugu/core/skills'
 import { startServer } from '../../../../src/main.js'
 import { applyAgentBaseMigration, checkAgentBaseMigration } from '@gugu/database/postgres/migrations/0001_initialize'
 import { applyAgentRunMigration, checkAgentRunMigration } from '@gugu/database/postgres/migrations/0003_agent_run'
@@ -454,7 +455,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       } }] }, finish_reason: 'tool_calls' }
       : needsCreateClient
       ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-create-client', type: 'function', function: {
-        name: 'call_tool', arguments: '{"tool_name":"create_contact","arguments":{"name":"工具创建联系人","contact":"合成联系人","email":"tool-created@example.test"}}',
+        name: 'call_tool', arguments: '{"tool_name":"create_contact","arguments":{"name":"工具创建联系人","email":"tool-created@example.test"}}',
       } }] }, finish_reason: 'tool_calls' }
       : needsUpdateClient
         ? { delta: { tool_calls: [{ index: 0, id: 'synthetic-update-client', type: 'function', function: {
@@ -1129,13 +1130,12 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(createClientResponse.status, 200, createClientSse)
     assert.match(createClientSse, /"type":"done"/u)
     assert.ok(createClientSse.includes('create_contact'))
-    const createdClient = await pool.query<{ id: number; user_id: string; contact: string; email: string }>(
-      "SELECT id,user_id,contact,email FROM clients WHERE name='工具创建联系人'",
+    const createdClient = await pool.query<{ id: number; user_id: string; email: string }>(
+      "SELECT id,user_id,email FROM clients WHERE name='工具创建联系人'",
     )
     assert.equal(createdClient.rows.length, 1)
     assert.ok(Number.isSafeInteger(createdClient.rows[0]?.id))
     assert.equal(createdClient.rows[0]?.user_id, owner)
-    assert.equal(createdClient.rows[0]?.contact, '合成联系人')
     assert.equal(createdClient.rows[0]?.email, 'tool-created@example.test')
     agentCreatedClientId = createdClient.rows[0]!.id
     const updateClientResponse = await chat('更新合成联系人。', 4)
@@ -1519,26 +1519,22 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
     assert.equal(createSkillResponse.status, 200, createSkillSse)
     assert.match(createSkillSse, /"type":"done"/u)
     assert.ok(createSkillSse.includes('create_skill'))
-    const createdSkill = await pool.query<{ id: number; skill_id: string; name: string; body: string; managed_by: string; enabled: boolean }>(
-      `SELECT id,skill_id,name,body,managed_by,enabled FROM user_skills WHERE owner_id=$1 AND name='Agent合成用户技能'`, [owner],
-    )
-    assert.equal(createdSkill.rowCount, 1)
-    assert.equal(createdSkill.rows[0]?.body, '# Agent合成用户技能\n\n初始技能正文。')
-    assert.equal(createdSkill.rows[0]?.managed_by, 'assistant')
-    assert.equal(createdSkill.rows[0]?.enabled, true)
-    userSkillId = createdSkill.rows[0]?.skill_id
-    assert.match(userSkillId ?? '', /^U[1-9][0-9]*$/u)
+    const createdSkill = (await listUserSkillBundles(storageRoot, owner)).skills.find(skill => skill.name === 'Agent合成用户技能')
+    assert.ok(createdSkill, 'Agent 创建的技能必须写入用户文件目录')
+    userSkillId = createdSkill.id
+    assert.equal((await readUserSkillBundle(storageRoot, owner, userSkillId)).body, '# Agent合成用户技能\n\n初始技能正文。')
+    assert.equal((await pool.query('SELECT count(*)::integer AS count FROM user_skills WHERE owner_id=$1', [owner])).rows[0]?.count, 0,
+      '文件技能创建不应回写旧技能表')
     const updateSkillResponse = await chat('更新合成用户技能。', 4)
     const updateSkillSse = await updateSkillResponse.text()
     assert.equal(updateSkillResponse.status, 200, updateSkillSse)
     assert.match(updateSkillSse, /"type":"done"/u)
     assert.ok(updateSkillSse.includes('update_skill'))
-    const updatedSkill = await pool.query<{ name: string; body: string; managed_by: string; enabled: boolean }>(
-      'SELECT name,body,managed_by,enabled FROM user_skills WHERE owner_id=$1 AND skill_id=$2', [owner, userSkillId],
-    )
-    assert.deepEqual(updatedSkill.rows[0], {
-      name: 'Agent合成用户技能已更新', body: '# Agent合成用户技能\n\n更新后的用户技能正文。', managed_by: 'assistant', enabled: true,
-    })
+    const updatedSkill = await readUserSkillBundle(storageRoot, owner, userSkillId)
+    assert.equal(updatedSkill.name, 'Agent合成用户技能已更新')
+    assert.equal(updatedSkill.body, '# Agent合成用户技能\n\n更新后的用户技能正文。')
+    assert.equal((await pool.query('SELECT count(*)::integer AS count FROM user_skills WHERE owner_id=$1', [owner])).rows[0]?.count, 0,
+      '文件技能更新不应使用旧技能表')
     const useUserSkillResponse = await chat('加载更新后的合成用户技能。', 4)
     const useUserSkillSse = await useUserSkillResponse.text()
     assert.equal(useUserSkillResponse.status, 200, useUserSkillSse)
@@ -1562,7 +1558,7 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
       'SELECT kind,status FROM interaction_prompts WHERE id=$1 AND user_id=$2 AND session_id=$3',
       [deleteSkillInteraction.prompt_id, owner, deleteSkillInteraction.session_id],
     )).rows, [{ kind: 'confirm', status: 'active' }])
-    assert.equal((await pool.query('SELECT id FROM user_skills WHERE owner_id=$1 AND skill_id=$2', [owner, userSkillId])).rowCount, 1,
+    await assert.doesNotReject(() => readUserSkillBundle(storageRoot, owner, userSkillId),
       '用户确认之前，技能删除不能产生副作用')
     const deleteSkillRun = await pool.query<{ run_id: string }>(
       'SELECT run_id FROM agent_interaction_bindings WHERE prompt_id=$1 AND user_id=$2 AND session_id=$3',
@@ -1583,9 +1579,9 @@ test('生产 Web Agent 经真实 HTTP/SSE 执行 Node 工具并持久续轮', {
         'SELECT status FROM agent_run_checkpoints WHERE user_id=$1 AND session_id=$2 AND run_id=$3',
         [owner, deleteSkillInteraction.session_id, deleteSkillRun.rows[0]!.run_id],
       )
-      const skill = await pool.query('SELECT id FROM user_skills WHERE owner_id=$1 AND skill_id=$2', [owner, userSkillId])
+      const skill = await readUserSkillBundle(storageRoot, owner, userSkillId).catch(() => null)
       const revision = Number(await readRedisValue(skillRevisionKey) ?? 0)
-      return checkpoint.rows[0]?.status === 'completed' && skill.rowCount === 0 && revision > skillRevisionBeforeDelete
+      return checkpoint.rows[0]?.status === 'completed' && skill === null && revision > skillRevisionBeforeDelete
         && requests.length > deleteSkillProviderCalls && requests.slice(deleteSkillProviderCalls).some(input => input.includes('synthetic-delete-user-skill'))
     }, AbortSignal.timeout(8000), () => '技能确认后，删除/Redis 通知/Run 恢复没有闭合')
     const noteSearchResponse = await chat('搜索合成笔记。', 4)

@@ -5,8 +5,6 @@
   "tests/im/desktop-inbox.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/agent/attachments/desktop-store.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/agent/attachments/recent.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
-  "tests/mail/transport.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
-  "tests/mail/service.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/runtime/desktop-data-export.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/runtime/desktop-data-inventory.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/runtime/desktop-greeting.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
@@ -49,6 +47,7 @@
   "tests/terminals/pty-state.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/terminals/lifecycle.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/agent/skills/user-read.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/agent/skills/bundle.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/tools/send-file-image.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/terminals/rename.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/terminals/events.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
@@ -902,8 +901,6 @@
 "tests/agent/tools/canvas-focus.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mind/canvas-detail.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/canvas-ready.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
-"tests/agent/tools/skill-management.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
-"tests/agent/skills/user-management-sqlite.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/canvas-edits.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/agent/tools/canvas-placement.test.ts":{"markers": [], "layer": "L1", "purpose": "contract"},
 "tests/mind/canvas-layout.test.ts":{"markers": [], "layer": "L0", "purpose": "contract"},
@@ -978,6 +975,7 @@
   "tests/scheduled-tasks/run-now.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/scheduled-tasks/owner-context.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/scheduled-tasks/run-now-read.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
+  "tests/scheduled-tasks/shell.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/interactions/consume-secret.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/interactions/grant-filesystem.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"}
 }

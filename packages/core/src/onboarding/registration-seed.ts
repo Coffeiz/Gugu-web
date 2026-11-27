@@ -40,7 +40,6 @@ export interface RegistrationSeedPorts {
    * The orchestrator deliberately exposes no per-row mutation ports.
    */
   applySeed(ownerId: string, plan: RegistrationSeedPlan): Promise<'applied' | 'already_seeded'>
-  surpriseMp3(): Promise<{ name: string; data: Uint8Array } | null>
   onFailure?(error: unknown): void
 }
 
@@ -141,11 +140,6 @@ export function createRegistrationSeeder(ports: RegistrationSeedPorts, options: 
         space: 'project', projectRef: 'seed_project', displayName: selected.scratchTitle,
         ext: 'md', mimeType: 'text/markdown', data: new TextEncoder().encode(pick(selected.scratchBodies, random)),
       }]
-      const surprise = await ports.surpriseMp3()
-      if (surprise) files.push({
-        space: 'personal', projectRef: null, displayName: surprise.name,
-        ext: 'mp3', mimeType: 'audio/mpeg', data: surprise.data,
-      })
       await ports.applySeed(ownerId, {
         project: {
           name, status: 'active', currentStage: stages[0]!.key,

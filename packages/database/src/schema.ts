@@ -31,6 +31,7 @@ export interface ClientTable {
   contact: string | null
   email: string | null
   phone: string | null
+  address: Generated<string | null>
   notes: string
   created_at: string
 }
@@ -131,9 +132,22 @@ export interface ScheduledTaskTable {
   email_attachment_file_paths: ColumnType<unknown, string, string>; last_run_at: ColumnType<Date | string | null, Date | string | null, Date | string | null>
   last_run_failed: boolean | number | null; created_at: string; updated_at: string
 }
+export interface DesktopImInboxTable {
+  owner_id: string
+  platform: string
+  connection_id: string
+  event_key: string
+  sealed_event: Buffer
+  received_at: string
+  session_id: number | null
+  run_id: string | null
+  state: Generated<'pending' | 'running' | 'completed' | 'rejected'>
+}
+
 export interface Database {
   projects: ProjectTable
   clients: ClientTable
+  desktop_im_inbox: DesktopImInboxTable
   core_runtime_meta: { key: string; value: string }
   core_operation_receipts: ReceiptTable
   undo_operations: UndoTable
@@ -244,7 +258,7 @@ export function tablesSql(backend: 'sqlite' | 'postgres'): {
   const timestamp = backend === 'sqlite' ? 'DATETIME' : 'TIMESTAMPTZ'
   return {
     projects: `CREATE TABLE projects (id ${id}, user_id ${owner} NOT NULL, name VARCHAR(200) NOT NULL, summary VARCHAR(200), contact_name VARCHAR(200), status VARCHAR(20) NOT NULL, start_date VARCHAR(10), deadline VARCHAR(10), color VARCHAR(300) NOT NULL, progress INTEGER NOT NULL, stages_json TEXT NOT NULL, current_stage VARCHAR(100), priority VARCHAR(20), version INTEGER NOT NULL, archived BOOLEAN NOT NULL, done_at ${timestamp}, created_at ${timestamp} NOT NULL, updated_at ${timestamp} NOT NULL, deleted_at ${timestamp}, idempotency_key VARCHAR(64), idempotency_fingerprint VARCHAR(64), CONSTRAINT uq_projects_user_idempotency_key UNIQUE (user_id,idempotency_key))`,
-    clients: `CREATE TABLE clients (id ${id}, user_id ${owner} NOT NULL, name VARCHAR(200) NOT NULL, contact VARCHAR(200), email VARCHAR(300), phone VARCHAR(50), notes TEXT NOT NULL, created_at ${timestamp} NOT NULL)`,
+    clients: `CREATE TABLE clients (id ${id}, user_id ${owner} NOT NULL, name VARCHAR(200) NOT NULL, contact VARCHAR(200), email VARCHAR(300), phone VARCHAR(50), address VARCHAR(500), notes TEXT NOT NULL, created_at ${timestamp} NOT NULL)`,
     receipts: `CREATE TABLE core_operation_receipts (owner_id ${owner} NOT NULL, operation_id VARCHAR(36) NOT NULL, fingerprint VARCHAR(64) NOT NULL, method VARCHAR(100) NOT NULL, result_json TEXT NOT NULL, created_at ${timestamp} NOT NULL, PRIMARY KEY (owner_id, operation_id))`,
     undo: `CREATE TABLE undo_operations (id VARCHAR(80) PRIMARY KEY NOT NULL, user_id ${owner} NOT NULL, undo_context_id VARCHAR(128) NOT NULL, group_id VARCHAR(80) NOT NULL, resource VARCHAR(32) NOT NULL, action VARCHAR(32) NOT NULL, target_refs ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL, before_state ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL, after_state ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL, base_versions ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL, artifact_refs ${backend === 'sqlite' ? 'TEXT' : 'JSON'} NOT NULL, actor_type VARCHAR(32) NOT NULL, status VARCHAR(24) NOT NULL, created_at ${timestamp} NOT NULL, undone_at ${timestamp}, expires_at ${timestamp}, failure_code VARCHAR(80))`,
     mindNodes: `CREATE TABLE mind_nodes (id ${id}, user_id ${owner} NOT NULL, kind VARCHAR(20) NOT NULL, title VARCHAR(300), content_md TEXT NOT NULL, content_plain TEXT NOT NULL, color VARCHAR(300), ref_type VARCHAR(20), ref_id INTEGER, ref_snapshot ${backend === 'sqlite' ? 'TEXT' : 'JSON'}, origin VARCHAR(10) NOT NULL, indexed_at ${timestamp}, indexed_hash VARCHAR(64), version INTEGER NOT NULL, captured_at ${timestamp} NOT NULL, created_at ${timestamp} NOT NULL, updated_at ${timestamp} NOT NULL, deleted_at ${timestamp}, CONSTRAINT uq_mind_node_ref UNIQUE (user_id, ref_type, ref_id), CONSTRAINT ck_mind_node_ref_shape CHECK ((kind = 'ref' AND ref_type IS NOT NULL AND ref_id IS NOT NULL) OR (kind <> 'ref' AND ref_type IS NULL AND ref_id IS NULL)))`,

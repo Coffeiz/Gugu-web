@@ -1,5 +1,4 @@
-import { ScheduleValidationError } from '@gugu/core/scheduled-task-schedule'
-export { ScheduleValidationError } from '@gugu/core/scheduled-task-schedule'
+import { ScheduleValidationError } from '@gugu/scheduler'
 
 const SCHEDULE_KINDS = new Set(['cron', 'interval', 'once'])
 

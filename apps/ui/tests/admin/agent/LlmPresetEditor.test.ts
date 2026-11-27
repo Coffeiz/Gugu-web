@@ -52,7 +52,6 @@ describe('LlmPresetEditor', () => {
       max_tokens: 1000,
       context_tokens: 4000,
       thinking: '',
-      reasoning_persistence: 'off' as const,
       image: false,
       video: false,
       audio: false,

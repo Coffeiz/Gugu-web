@@ -9,6 +9,7 @@ import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
 // Markdown 渲染器输出的是 HTML 字符串，不能直接挂载 Vue 图标组件；这里复用
 // Remix Icon 的 path 数据，保持对象卡片和应用内 Icon 的视觉语义一致。
 const CHAT_OBJECT_ICON_PATH: Record<string, string> = {
+  client: 'M12 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm0 10a8 8 0 0 0-8 8h2a6 6 0 0 1 12 0h2a8 8 0 0 0-8-8Z',
   event: 'M9 1V3H15V1H17V3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3H7V1H9ZM20 11H4V19H20V11ZM11 13V17H6V13H11ZM7 5H4V9H20V5H17V7H15V5H9V7H7V5Z',
   canvas: 'M21 3C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3H21ZM11 13H4V19H11V13ZM20 13H13V19H20V13ZM11 5H4V11H11V5ZM20 5H13V11H20V5Z',
   note: 'M20.0049 2C21.1068 2 22 2.89821 22 3.9908V20.0092C22 21.1087 21.1074 22 20.0049 22H4V18H2V16H4V13H2V11H4V8H2V6H4V2H20.0049ZM8 4H6V20H8V4ZM20 4H10V20H20V4Z',
@@ -52,10 +53,10 @@ function objectCard(href: string, title = '', description?: string): ObjectCard 
     return { ...base, title: title || decodeMindFileReference(folder)?.relativePath.split('/').at(-1) || context,
       type: 'folder', icon: CHAT_PROJECT_ICON_PATH, context }
   }
-  const object = /^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task)\/(\d+)$/i.exec(href)
+  const object = /^gugu:\/\/open-object\/(project|event|canvas|note|scheduled-task|client)\/(\d+)$/i.exec(href)
   if (object) {
     const type = object[1]!.toLowerCase()
-    const context = i18n.global.t(`chatUi.objectCardTypes.${type}`)
+    const context = i18n.global.t(type === 'client' ? 'mindEditorUi.referenceTypes.client' : `chatUi.objectCardTypes.${type}`)
     return { ...base, title: title || `${context} #${object[2]}`, href: `gugu://open-object/${type}/${object[2]}`, type,
       icon: CHAT_OBJECT_ICON_PATH[type] ?? CHAT_PROJECT_ICON_PATH, context }
   }
@@ -65,10 +66,10 @@ function objectCard(href: string, title = '', description?: string): ObjectCard 
     return { ...base, title: title || `${context} #${focus[2]}`, href: `gugu://focus-canvas/${focus[1]}/${focus[2]}`, type: 'canvas',
       icon: CHAT_OBJECT_ICON_PATH.canvas!, context }
   }
-  const skill = /^gugu:\/\/open-skill\/([SU][1-9][0-9]*)$/i.exec(href)
+  const skill = /^gugu:\/\/open-skill\/([SU][1-9][0-9]*|[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)$/u.exec(href)
   if (skill) {
-    const id = skill[1]!.toUpperCase()
-    const builtin = id.startsWith('S')
+    const id = skill[1]!
+    const builtin = /^S[1-9][0-9]*$/u.test(id)
     const metadata = builtin ? __BUILTIN_SKILL_CARDS__[id] : undefined
     const context = i18n.global.t('chatUi.objectCardTypes.skill')
     return { ...base, title: metadata?.name || title || (builtin ? context : id),

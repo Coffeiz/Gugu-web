@@ -1270,11 +1270,11 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: var(--space-md); flex: 1; min-height: 0; }
 .cal-main.is-initial-loading { position: relative; }
 .cal-main.is-initial-loading > :not(.calendar-loading) { visibility: hidden; }
-.cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }
+.cal-main { padding: var(--page-content-inset); display: flex; flex-direction: column; overflow: hidden; }
 .chip-more-btn {
   height: 16px; box-sizing: border-box;
   font-size: 10px; font-weight: 500;
-  padding: 0 7px; border-radius: 99px;
+  padding: 0 var(--space-sm); border-radius: 99px;
   border: 1px solid color-mix(in srgb, var(--action-primary) 35%, transparent);
   background: color-mix(in srgb, var(--action-primary) 10%, transparent); color: rgb(101,104,146);
   cursor: pointer; font-family: var(--font-sans);
@@ -1286,15 +1286,15 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
   flex-shrink: 0;
   font-size: 8px; font-weight: 700; letter-spacing: 0.04em;
   background: rgba(255,255,255,0.5);
-  border-radius: 3px; padding: 0 3px; line-height: 11px;
-  margin-right: 2px;
+  border-radius: 3px; padding: 0 var(--space-xs); line-height: 11px;
+  margin-right: var(--space-xs);
 }
 .cal-done-mark {
   display: inline-flex; align-items: center;
-  color: #3a8870; vertical-align: -2px; margin-left: 2px;
+  color: #3a8870; vertical-align: -2px; margin-left: var(--space-xs);
 }
 .bar-status-dot {
-  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-right: 4px;
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-right: var(--space-xs);
 }
 .bsd-pending { background: #d46b6b; }
 .bsd-active  { background: #c9943a; }
@@ -1303,8 +1303,8 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
   flex-shrink: 0;
   font-size: 8px; font-weight: 700; letter-spacing: 0.04em;
   background: rgba(255,255,255,0.55);
-  border-radius: 3px; padding: 0 3px; line-height: 11px;
-  margin-right: 4px;
+  border-radius: 3px; padding: 0 var(--space-xs); line-height: 11px;
+  margin-right: var(--space-xs);
 }
 .chip-ev-tag {
   background: rgba(210,175,40,0.28); color: #7a5c00;
@@ -1313,22 +1313,22 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 
 
 /* 侧栏 */
-.cal-sidebar { padding: 16px; display: flex; flex-direction: column; gap: 0; overflow-y: auto; min-height: 0; scrollbar-gutter: auto; }
-.sidebar-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.cal-sidebar { padding: var(--page-content-inset); display: flex; flex-direction: column; gap: 0; overflow-y: auto; min-height: 0; scrollbar-gutter: auto; }
+.sidebar-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-md); }
 .sidebar-date-label { font-size: 13px; font-weight: 700; color: var(--text-primary); }
-.add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 30%, transparent); background: color-mix(in srgb, var(--action-primary) 8%, transparent); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
+.add-event-btn { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 30%, transparent); background: color-mix(in srgb, var(--action-primary) 8%, transparent); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
 .add-event-btn:hover { background: color-mix(in srgb, var(--action-primary) 15%, transparent); border-color: color-mix(in srgb, var(--action-primary) 50%, transparent); }
 .add-proj-btn { background: var(--action-primary-bg); border-color: transparent; color: var(--content-on-accent); box-shadow: none; }
 .add-proj-btn:hover { background: var(--action-primary-bg-hover); border-color: transparent; opacity: 1; box-shadow: none; }
-.sidebar-events { display: flex; flex-direction: column; gap: 7px; margin-bottom: 4px; }
-.sidebar-ev { display: flex; gap: 9px; align-items: flex-start; background: rgba(255,255,255,0.66); border: 1px solid rgba(255,255,255,0.88); border-radius: 10px; padding: 8px 10px; transition: box-shadow 0.25s ease; }
+.sidebar-events { display: flex; flex-direction: column; gap: var(--space-xs); margin-bottom: var(--space-xs); }
+.sidebar-ev { display: flex; gap: var(--space-sm); align-items: flex-start; background: rgba(255,255,255,0.66); border: 1px solid rgba(255,255,255,0.88); border-radius: 10px; padding: var(--space-sm) var(--space-sm); transition: box-shadow 0.25s ease; }
 .sidebar-ev:hover { box-shadow: inset 0 0 0 100px rgba(255,255,255,0.2), 0 3px 10px rgba(0,0,0,0.10); }
 .sidebar-ev-body { flex: 1; min-width: 0; }
 .ev-del-btn {
   background: rgba(176,120,88,0.08);
   border: 1px solid rgba(176,120,88,0.3);
   cursor: pointer; flex-shrink: 0;
-  color: #b07858; padding: 4px;
+  color: #b07858; padding: var(--space-xs);
   display: flex; align-items: center; align-self: center;
   border-radius: 6px; margin-left: auto;
   transition: background 0.15s, transform 0.15s;
@@ -1338,18 +1338,18 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .sidebar-ev-name { font-size: 12px; font-weight: 500; color: var(--text-primary); line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
 /* 有结束时间时按最长内容「00:00–00:00」固定，周视图拖拽改时间不会推挤活动名；
    只有开始时间时不预留结束时间的空位，让名称紧跟日期。 */
-.sidebar-ev-time { display: inline-block; font-size: 11px; font-weight: 600; color: var(--accent, var(--action-primary)); margin-left: 7px; margin-right: 4px; font-variant-numeric: tabular-nums; }
+.sidebar-ev-time { display: inline-block; font-size: 11px; font-weight: 600; color: var(--accent, var(--action-primary)); margin-left: var(--space-sm); margin-right: var(--space-xs); font-variant-numeric: tabular-nums; }
 .sidebar-ev-time.has-end-time { min-width: 11ch; }
-.popup-row { display: flex; gap: 6px; align-items: center; }
+.popup-row { display: flex; gap: var(--space-xs); align-items: center; }
 .popup-row > :first-child { flex: 1; min-width: 0; }
-.date-row { display: flex; align-items: center; gap: 8px; }
+.date-row { display: flex; align-items: center; gap: var(--space-sm); }
 .date-row-picker { flex: 1; min-width: 0; }
-.allday-toggle { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; user-select: none; white-space: nowrap; }
+.allday-toggle { display: flex; align-items: center; gap: var(--space-xs); flex-shrink: 0; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; user-select: none; white-space: nowrap; }
 .time-dash { color: #8a8fa8; font-size: 12px; font-weight: 600; }
 .ev-type-badge {
-  display: inline-block; vertical-align: middle; margin-left: 4px;
+  display: inline-block; vertical-align: middle; margin-left: var(--space-xs);
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
-  padding: 1px 5px; border-radius: 4px; line-height: 1.5;
+  padding: var(--space-xs) var(--space-xs); border-radius: 4px; line-height: 1.5;
   white-space: nowrap;
 }
 .ev-proj-badge {
@@ -1360,43 +1360,43 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
   background: rgba(210,175,40,0.15); color: #a07c00;
   border: 1px solid rgba(210,175,40,0.4);
 }
-.sidebar-ev-desc { font-size: 11px; color: var(--text-secondary); margin-top: 3px; line-height: 1.4; display: flex; align-items: flex-start; gap: 4px; }
-.sidebar-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 0; color: var(--text-secondary); font-size: 12px; opacity: 0.55; }
-.sidebar-section-title { font-size: 10px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
-.upcoming-item { display: flex; align-items: center; margin-bottom: 7px; }
+.sidebar-ev-desc { font-size: 11px; color: var(--text-secondary); margin-top: var(--space-xs); line-height: 1.4; display: flex; align-items: flex-start; gap: var(--space-xs); }
+.sidebar-empty { display: flex; flex-direction: column; align-items: center; gap: var(--space-xs); padding: var(--space-lg) 0; color: var(--text-secondary); font-size: 12px; opacity: 0.55; }
+.sidebar-section-title { font-size: 10px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: var(--space-sm); }
+.upcoming-item { display: flex; align-items: center; margin-bottom: var(--space-sm); }
 .upcoming-item:last-child { margin-bottom: 0; }
 
 .add-event-popup { background: transparent; border: 0; border-radius: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0; display: flex; flex-direction: column; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
 .popup-textarea:focus { border-color: var(--input-border-focus); background: rgba(255,255,255,0.85); }
-.popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
-.popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: var(--font-family-ui); font-weight: 600; transition: background 0.12s, border-color 0.12s; }
+.popup-actions { display: flex; gap: var(--space-xs); justify-content: flex-end; align-items: center; margin-top: var(--space-xs); }
+.popup-delete { padding: var(--space-xs) var(--space-md); border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: var(--font-family-ui); font-weight: 600; transition: background 0.12s, border-color 0.12s; }
 .popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }
-.popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background-color 0.15s; box-shadow: none; }
+.popup-save { padding: var(--space-xs) var(--space-md); border-radius: 8px; border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background-color 0.15s; box-shadow: none; }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
 .popup-save:not(:disabled):hover { background: var(--action-primary-bg-hover); opacity: 1; }
-.reminder-section { display: flex; flex-direction: column; gap: 6px; padding-top: 7px; border-top: 1px solid color-mix(in srgb, var(--action-primary) 18%, transparent); }
-.reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.reminder-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
-.reminder-item { display: flex; align-items: center; gap: 6px; }
+.reminder-section { display: flex; flex-direction: column; gap: var(--space-xs); padding-top: var(--space-sm); border-top: 1px solid color-mix(in srgb, var(--action-primary) 18%, transparent); }
+.reminder-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+.reminder-label { display: inline-flex; align-items: center; gap: var(--space-xs); font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+.reminder-item { display: flex; align-items: center; gap: var(--space-xs); }
 .reminder-lead { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
-.reminder-test-bar { width: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 7px; padding: 6px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 40%, transparent); background: color-mix(in srgb, var(--action-primary) 8%, transparent); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
+.reminder-test-bar { width: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: var(--space-xs); margin-top: var(--space-sm); padding: var(--space-xs) var(--space-sm); border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 40%, transparent); background: color-mix(in srgb, var(--action-primary) 8%, transparent); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
 .reminder-test-bar:hover { border-color: color-mix(in srgb, var(--action-primary) 70%, transparent); background: color-mix(in srgb, var(--action-primary) 16%, transparent); color: var(--text-primary); }
-.reminder-del { display: flex; align-items: center; padding: 2px; border: none; background: none; cursor: pointer; color: #b07858; border-radius: 5px; }
+.reminder-del { display: flex; align-items: center; padding: var(--space-xs); border: none; background: none; cursor: pointer; color: #b07858; border-radius: 5px; }
 .reminder-del:hover { background: rgba(176,120,88,0.12); }
-.reminder-add { display: flex; gap: 6px; align-items: center; }
-.lead-select { flex: 1; height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 11px; font-family: var(--font-family-ui); color: #1e2028; cursor: pointer; outline: none; }
-.reminder-add-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 30%, transparent); background: color-mix(in srgb, var(--action-primary) 10%, transparent); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background 0.12s; }
+.reminder-add { display: flex; gap: var(--space-xs); align-items: center; }
+.lead-select { flex: 1; height: 28px; padding: 0 var(--space-sm); border-radius: 8px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 11px; font-family: var(--font-family-ui); color: #1e2028; cursor: pointer; outline: none; }
+.reminder-add-btn { flex-shrink: 0; padding: var(--space-xs) var(--space-sm); border-radius: 8px; border: 1px solid color-mix(in srgb, var(--action-primary) 30%, transparent); background: color-mix(in srgb, var(--action-primary) 10%, transparent); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background 0.12s; }
 .reminder-add-btn:hover { background: color-mix(in srgb, var(--action-primary) 20%, transparent); }
-.reminder-cancel { flex-shrink: 0; display: flex; align-items: center; padding: 4px; border: none; background: none; cursor: pointer; color: var(--text-secondary); border-radius: 6px; }
+.reminder-cancel { flex-shrink: 0; display: flex; align-items: center; padding: var(--space-xs); border: none; background: none; cursor: pointer; color: var(--text-secondary); border-radius: 6px; }
 .reminder-cancel:hover { background: rgba(0,0,0,0.06); }
-.reminder-add-toggle { width: 100%; box-sizing: border-box; text-align: center; padding: 6px 10px; border-radius: 8px; border: 1px dashed color-mix(in srgb, var(--action-primary) 40%, transparent); background: none; color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
+.reminder-add-toggle { width: 100%; box-sizing: border-box; text-align: center; padding: var(--space-xs) var(--space-sm); border-radius: 8px; border: 1px dashed color-mix(in srgb, var(--action-primary) 40%, transparent); background: none; color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
 .reminder-add-toggle:hover { border-color: color-mix(in srgb, var(--action-primary) 70%, transparent); color: var(--text-primary); background: color-mix(in srgb, var(--action-primary) 6%, transparent); }
 /* 绝对定位浮在右侧，不参与 flex 居中，保证「开始—结束」时间仍水平居中 */
-.nextday-tag { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 600; color: var(--action-primary-hover); background: color-mix(in srgb, var(--action-primary) 10%, transparent); padding: 1px 6px; border-radius: 5px; white-space: nowrap; pointer-events: none; }
-.nextday-mini { margin-left: 4px; font-size: 9px; font-weight: 600; color: #a8a3c8; padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, var(--action-primary) 10%, transparent); vertical-align: 1px; }
-.chan-block { display: flex; flex-direction: column; gap: 5px; }
-.chan-chips { display: flex; gap: 5px; flex-wrap: wrap; }
-.chan-chip { padding: 3px 11px; border-radius: 99px; border: 1px solid color-mix(in srgb, var(--action-primary) 30%, transparent); background: rgba(255,255,255,0.5); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
+.nextday-tag { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 600; color: var(--action-primary-hover); background: color-mix(in srgb, var(--action-primary) 10%, transparent); padding: var(--space-xs) var(--space-xs); border-radius: 5px; white-space: nowrap; pointer-events: none; }
+.nextday-mini { margin-left: var(--space-xs); font-size: 9px; font-weight: 600; color: #a8a3c8; padding: var(--space-xs) var(--space-xs); border-radius: 4px; background: color-mix(in srgb, var(--action-primary) 10%, transparent); vertical-align: 1px; }
+.chan-block { display: flex; flex-direction: column; gap: var(--space-xs); }
+.chan-chips { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
+.chan-chip { padding: var(--space-xs) var(--space-md); border-radius: 99px; border: 1px solid color-mix(in srgb, var(--action-primary) 30%, transparent); background: rgba(255,255,255,0.5); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
 .chan-chip.on { background: color-mix(in srgb, var(--action-primary) 16%, transparent); border-color: color-mix(in srgb, var(--action-primary) 55%, transparent); color: #5b5f8c; }
 .form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }

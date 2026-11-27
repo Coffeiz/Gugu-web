@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import type { DesktopFileDirectory } from '@gugu/core/desktop'
-import { smbShareUrl, smbWorkspaces } from './smb-workspaces.js'
+import { smbShareUrl, smbWorkspaces } from '../platform/macos/smb-workspaces.js'
 import { DesktopError } from '../core-host.js'
 
 type Binding = { id: DesktopFileDirectory; name: string; root: string; projectIds?: number[]; activeProjectIds?: number[]; commandNumber?: number; smb?: { url: string; mountPath: string } }
@@ -20,7 +20,7 @@ async function directory(path: string) {
   return realpath(path)
 }
 
-export function fileWorkspaces(root: string, registry?: string, protectedRoot?: string, smb = smbWorkspaces) {
+export function fileWorkspaces(root: string, registry?: string, protectedRoot?: string | readonly string[], smb = smbWorkspaces) {
   const personal: Binding = { id: 'personal', name: '个人文件', root: join(root, 'personal') }
   let pending: Promise<unknown> = Promise.resolve()
   const reconnecting = new Map<string, Promise<boolean>>()
@@ -83,7 +83,7 @@ export function fileWorkspaces(root: string, registry?: string, protectedRoot?: 
     await mkdir(root, { recursive: true })
     const base = await directory(root)
     const personalRoot = join(base, 'personal')
-    const projectRoot = join(base, 'project')
+    const projectRoot = join(base, 'projects')
     await Promise.all([mkdir(personalRoot, { recursive: true }), mkdir(projectRoot, { recursive: true })])
     return { base, personal: await directory(personalRoot), project: await directory(projectRoot) }
   }
@@ -220,8 +220,9 @@ export function fileWorkspaces(root: string, registry?: string, protectedRoot?: 
     bind(path: string, id?: unknown) {
       return change(async rows => {
         const actual = await directory(path)
-        const appData = protectedRoot ? await realpath(protectedRoot) : undefined
-        if (appData && (contains(actual, appData) || contains(appData, actual)))
+        const protectedDirectories = typeof protectedRoot === 'string' ? [protectedRoot] : protectedRoot ?? []
+        const protectedPaths = await Promise.all(protectedDirectories.map(path => realpath(path)))
+        if (protectedPaths.some(path => contains(actual, path) || contains(path, actual)))
           throw new DesktopError('forbidden', '请选择与应用数据分开的目录')
 
         const defaultBinding = currentPersonal(rows)

@@ -69,6 +69,7 @@
   --progress-track-radius: 99px;
   --progress-track-bg: color-mix(in srgb,var(--action-primary) 14%,transparent);
   --progress-fill-bg: var(--action-primary);
+  --option-gap: 1px;
   --segmented-track-bg: var(--action-soft);
   --segmented-pill-bg: var(--control-bg);
   --segmented-pill-shadow: var(--elevation-card);
@@ -106,8 +107,9 @@
   --topbar-shadow-hover: var(--theme-topbar-shadow-hover);
   --topbar-title-size: var(--font-size-xl);
   --topbar-meta-size: var(--font-size-sm);
-  --topbar-height: 52px;
-  --toolbar-compact-control-height: 26px;
+  --toolbar-inset: var(--space-md);
+  --page-content-inset: var(--space-md);
+  --toolbar-compact-control-height: var(--control-height-sm);
   --toolbar-action-min-width: 96px;
   --web-workspace-top-inset: 20px;
   --topbar-search-result-icon: var(--content-secondary);
@@ -117,14 +119,14 @@
   /* Scrollbar: one visual contract for page and component scroll surfaces. */
   --scrollbar-track: transparent;
   --scrollbar-thumb: var(--theme-scrollbar-thumb);
+  --sidebar-divider-mask: linear-gradient(to right, transparent, black 20%, black 80%, transparent);
   --scrollbar-thumb-hover: var(--theme-scrollbar-thumb-hover);
   --scrollbar-corner: transparent;
   --scrollbar-safe-inset: var(--space-sm);
   --scrollbar-min-thumb: 24px;
   --scrollbar-overlay-right-offset: 0px;
-  --scrollbar-column-right-offset: 4px;
+  --scrollbar-column-right-offset: calc(-1 * var(--space-xs));
   --scrollbar-overlay-z-index: 10;
-  --scrollbar-overlay-modal-z-index: var(--layer-modal);
   --scrollbar-overlay-transition: 120ms ease;
   --scrollbar-overlay-track-inset: 8px;
 
@@ -135,9 +137,9 @@
   --project-card-hover-border: var(--theme-project-hover-border);
   --project-card-shadow: var(--theme-project-shadow);
   --project-card-hover-shadow: var(--theme-project-hover-shadow);
-  --project-card-sheen-rest: linear-gradient(to bottom,var(--theme-project-sheen-rest) 0%,transparent 50%);
+  --project-card-sheen-rest: transparent;
   --project-card-highlight-rest: var(--theme-project-highlight-rest);
-  --project-card-sheen-hover: linear-gradient(to bottom,var(--theme-project-sheen-hover) 0%,var(--theme-project-sheen-hover-mid) 50%,transparent 100%);
+  --project-card-sheen-hover: var(--theme-project-sheen-hover-mid);
   --project-card-highlight-hover: var(--theme-project-highlight-hover);
   --project-card-radius: var(--radius-sm);
   --project-card-motion: var(--card-motion), box-shadow var(--motion-hover-card) ease;
@@ -235,6 +237,7 @@ html[data-theme='dark'][data-family] {
 }
 
 html[data-family='glass'][data-theme] {
+  --sidebar-bg: var(--theme-sidebar);
   --glass-card-background: var(--surface-glass);
   --chrome-glass-bg: var(--surface-glass);
   --mind-timeline-bg: var(--surface-glass);

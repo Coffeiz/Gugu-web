@@ -82,7 +82,7 @@ const statusText = computed(() => {
   position: absolute; top: 10px; left: 10px; z-index: 2;
   font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--fc-color, var(--color-primary)); background: rgba(0,0,0,0.04);
-  border-radius: 4px; padding: 2px 5px; line-height: 1.5;
+  border-radius: 4px; padding: var(--space-xs) var(--space-xs); line-height: 1.5;
 }
 .fc-icon-area {
   height: 90px; flex-shrink: 0;
@@ -94,13 +94,13 @@ const statusText = computed(() => {
   mask-image: var(--file-card-media-mask);
   -webkit-mask-image: var(--file-card-media-mask);
 }
-.fc-label { padding: 0 13px 13px; min-width: 0; }
+.fc-label { padding: 0 var(--space-md) var(--space-md); min-width: 0; }
 .fc-name {
   font-size: 11.5px; font-weight: 600; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
+  line-height: 1.35; padding-bottom: var(--space-xs); margin-bottom: calc(-1 * var(--space-xs));
 }
-.fc-meta { font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 2px; }
+.fc-meta { font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: var(--space-xs); }
 .fc-ghost .fc-ext-badge { opacity: 0.6; }
 .fc-ghost .fc-icon-area { opacity: 0.35; }
 .fc-ghost .fc-label { opacity: 0.75; }

@@ -2,9 +2,9 @@ import type { SearchAccess } from '@/services/searchAccess'
 import { desktopData } from '../bridge/bridge'
 
 export const desktopSearchAccess: SearchAccess = {
-  async query(queries, signal) {
+  async query(queries, signal, expansion) {
     signal?.throwIfAborted()
-    const result = await desktopData.search(queries.slice(0, 8).map(term => [...term].slice(0, 64).join('')))
+    const result = await desktopData.search(queries.slice(0, 8).map(term => [...term].slice(0, 64).join('')), expansion)
     signal?.throwIfAborted()
     return result
   },

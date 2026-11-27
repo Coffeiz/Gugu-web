@@ -1,9 +1,10 @@
-import { isFloatingPreviewable, isImageExt, isOfficeExt, isSvgMime, isTextFallbackCandidate } from '@gugu/desktop-contracts/file-preview'
+import { isAudioExt, isFloatingPreviewable, isImageExt, isOfficeExt, isSvgMime, isTextFallbackCandidate } from '@gugu/desktop-contracts/file-preview'
 export { isAudioExt, isCsvExt, isFloatingPreviewable, isImageExt, isOfficeExt, isPreviewable, isSvgMime, isTextExt, isTextFallbackCandidate, isTextMime, isVideoExt } from '@gugu/desktop-contracts/file-preview'
 import { defineStore } from 'pinia'
 import { inject, ref, type InjectionKey } from 'vue'
 import { nextZ } from '@/composables/core/windowz'
 import type { FileMeta } from '@/stores/filesCache'
+import { useAudioStore } from '@/stores/audio'
 import type { LiveEventPayload } from '@/types/live-events'
 import type { PathFileRef } from '@/services/api'
 
@@ -104,16 +105,18 @@ export const usePreviewStore = defineStore('preview', () => {
   const openPlatformPreview = inject(openPlatformPreviewKey, null)
   // 图片 / 视频 → 浮动窗口列表
   const windows    = ref<PreviewWindow[]>([])
-  // 其余类型（PDF、文本、音频）→ 原侧边 modal
+  // PDF 等抽屉预览文件
   const singleFile = ref<PreviewFile | null>(null)
-  const singleSiblings = ref<PreviewFile[]>([])
 
   let _nextId = 1
   // z 统一走 windowz.nextZ()（窗口带 20000+，点谁谁上；见 composables/core/windowz.ts）
 
-  // siblings：调用方传同目录下的完整文件列表（可选），供图片预览左右切换用；
-  // 只在图片间导航，siblings 里混着非图片文件会被 navigate() 自动跳过。
+  // 同目录文件列表供预览导航和音频播放列表使用，各自筛选支持的类型。
   function open(f: PreviewFile, siblings: PreviewFile[] | null = null, forceRefresh = false, streamUrl?: string) {
+    if (isAudioExt(f.ext) && (f.workspaceFile || f.filePath)) {
+      void useAudioStore().play(f, siblings ?? [])
+      return
+    }
     if (openPlatformPreview?.(f)) return
 
     // Office（前端 HTML 渲染）与图片/视频/文本一样走浮动窗口；抽屉留给 PDF。
@@ -174,7 +177,6 @@ export const usePreviewStore = defineStore('preview', () => {
       })
     } else {
       singleFile.value = f
-      singleSiblings.value = siblings || []
     }
   }
 
@@ -225,7 +227,6 @@ export const usePreviewStore = defineStore('preview', () => {
   const file  = singleFile
   function close() {
     singleFile.value = null
-    singleSiblings.value = []
   }
 
   function resetAccountState() {
@@ -234,5 +235,5 @@ export const usePreviewStore = defineStore('preview', () => {
     _nextId = 1
   }
 
-  return { windows, singleFile, singleSiblings, file, open, openVirtual, close, closeWindow, bringToFront, navigate, resetAccountState }
+  return { windows, singleFile, file, open, openVirtual, close, closeWindow, bringToFront, navigate, resetAccountState }
 })

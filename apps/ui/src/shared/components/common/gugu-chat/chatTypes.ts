@@ -1,10 +1,40 @@
+import type { SelectionSnapshot } from '../selection/selectionDraft'
 /** Agent ask_user 选择卡的协议保留 ID；系统确认卡不会生成这个选项。 */
+export interface ChatQuestion {
+  id: string
+  title: string
+  body?: string
+  options?: { id: string; label: string }[]
+  selection_mode?: 'single' | 'multiple'
+}
+
+export type ChatQuestionAnswer = { question_id: string; option_ids?: string[]; text?: string }
+
 export const CUSTOM_REPLY_OPTION_ID = '__custom_reply__'
 export type InteractionAnswerMode = 'inline' | 'composer'
 
 // 聊天气泡的完整字段集合（TS 转换新增）：字段来自不同代码路径按需附加（默认问候/流式回复/
 // 历史消息回填/用户发送各自只带自己用得上的那几个），松散 interface 如实反映这个既有形状，
 // 不强行收紧成必填。
+export interface ChatEmailCompose {
+  enabled: true
+  canDraft: boolean
+  account?: string
+  sender: string
+  senderName: string
+  recipient: string
+  recipientName?: string
+  format?: 'plain' | 'html' | 'template'
+  templateHtml?: string
+  submittedAction?: 'send' | 'draft'
+  cc?: string
+  bcc?: string
+  subject: string
+  text: string
+  accounts: { id: string; email: string; name: string }[]
+  attachments: string[]
+}
+
 export interface ChatMessage {
   id: number
   /** 仅用于从 API 恢复工具/交互时间线，不参与发送。 */
@@ -54,8 +84,10 @@ export interface ChatMessage {
   toolCallId?: string
   toolName?: string
   toolLabel?: string
+  shellDescription?: string
   shellActivity?: import('@gugu/core/agent/shell-activity').ShellActivity
   toolLabelOverride?: string
+  _replayedTool?: boolean
   toolStatus?: 'queued' | 'running' | 'waiting' | 'success' | 'error' | 'skipped' | 'cancelled' | 'stopped' | 'unknown'
   toolInput?: unknown
   toolResult?: unknown
@@ -81,7 +113,10 @@ export interface ChatMessage {
     submitting?: boolean
     resolved?: boolean
     selectionMode?: 'multiple'
+    questions?: ChatQuestion[]
+    questionAnswers?: ChatQuestionAnswer[]
     selectedOptionIds?: string[]
+    emailCompose?: ChatEmailCompose
     customAnswer?: string
     selectedOptionId?: string | null
     submissionRejected?: boolean
@@ -147,16 +182,19 @@ export const CHAT_REF_ACCEPTS = [
 
 /** 用户在聊天输入中选中的业务对象引用。 */
 export interface ChatReference {
-  type: 'project' | 'file' | 'folder' | 'event' | 'canvas_note' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
+  type: 'project' | 'client' | 'file' | 'folder' | 'event' | 'canvas_note' | 'conversation' | 'skill' | 'mcp' | 'scheduled_task'
   // mcp 引用的 id 是 UUID 字符串，其余是 int 自增
   id: number | string
   label: string
+  selection?: SelectionSnapshot
 }
 
 export function findClickedChatReference(target: EventTarget | null, references: readonly ChatReference[] = []) {
   const chip = target instanceof Element ? target.closest<HTMLElement>('.mind-ref') : null
   if (!chip) return undefined
-  return references.find(item => item.type === chip.dataset.refType && String(item.id) === chip.dataset.refId)
+  const matches = references.filter(item => item.type === chip.dataset.refType && String(item.id) === chip.dataset.refId)
+  const label = chip.querySelector('.mind-ref-label')?.textContent
+  return matches.find(item => item.label === label) ?? matches[0]
 }
 
 /** 后端持久化的单条待发消息，不包含页面态或临时预览 URL。 */
@@ -169,6 +207,11 @@ export interface QueuedMessagePayload {
   text: string
   attachments: ChatFile[]
   references: ChatReference[]
+}
+
+export interface ChatWorkspaceAccess {
+  list(sessionId: number): Promise<{ id: number | string; name: string }[]>
+  select(sessionId: number, workspaceId: number | string): Promise<unknown>
 }
 
 export interface ChatSession {

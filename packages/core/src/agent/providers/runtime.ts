@@ -296,10 +296,14 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
     const stableHistory = driver.project(formatToolResults(stableMessages), config, policy, { ...projectionOptions, dynamicTailSize: 0 })
     let historySanitization: HistorySanitization | undefined
     const history = driver.project(formatToolResults([...stableMessages, ...area.dynamicTail]), config, policy, { ...projectionOptions, onSanitization: value => { historySanitization = value } })
+    const storedAnchor = record(context.sourceEffects?.sessionSnapshot.state.context?.provider_cache_anchor)
+    const tools = providerToolSchemas(context.capabilities)
+    const cacheScope = driver.protocol === 'anthropic' ? this.options.digest({ accessScopeHash, config, systemPrompt, tools }) : undefined
     const anchor: unknown = context.providerCacheAnchor?.anchor
+      ?? (cacheScope && storedAnchor.scope_digest === cacheScope ? storedAnchor : undefined)
     let actualCacheAnchor: unknown
     const scope = { ...identity, round: request.round, modelIdentity: context.modelIdentity, accessScopeHash: context.accessScopeHash }
-    const input: ProviderInvocation = { config, policy, history, system: systemPrompt, tools: providerToolSchemas(context.capabilities), signal, scope, purpose: 'chat', continuation, cacheAnchor: anchor, stableHistoryCount: stableHistory.length }
+    const input: ProviderInvocation = { config, policy, history, system: systemPrompt, tools, signal, scope, purpose: 'chat', continuation, cacheAnchor: anchor, stableHistoryCount: stableHistory.length }
     const transport = this.#transport(identity, config, policy)
     const probe: { current: RequestProbe | null } = { current: null }
     let usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, contextInput: null as number | null }
@@ -326,7 +330,7 @@ export class ProviderRuntime implements ProviderPort<CanonicalRunContext> {
           let body = record(outbound.body), outgoing = outbound
           if (driver.protocol === 'anthropic' && Array.isArray(body.messages)) {
             const stableCount = body.messages.length - Math.max(0, history.length - stableHistory.length)
-            const cached = prepareAnthropicCache(body.messages as JsonObject[], policy, config, this.options.digest, stableCount, anchor)
+            const cached = prepareAnthropicCache(body.messages as JsonObject[], policy, config, this.options.digest, stableCount, anchor, cacheScope, context.providerCacheAnchor === null)
             body = { ...body, messages: cached.messages }
             outgoing = { ...outbound, body: body as JsonObject }
             actualCacheAnchor = { modelIdentity: context.modelIdentity, anchor: cached.anchor }

@@ -87,14 +87,20 @@ it('等待运行恢复时从上次游标续读并保留先前的回复正文', a
   expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: '第一段' }), undefined)
 })
 
-it.each([true, false])('暂停提示先登记，重复登记时不发送卡片（首次 %s）', async first => {
+it.each([
+  { first: true, kind: 'confirm', paused: true },
+  { first: false, kind: 'confirm', paused: true },
+  { first: true, kind: 'choice', paused: false },
+  { first: false, kind: 'choice', paused: false },
+])('QQ $kind 卡片先登记，重复登记时不发送（首次 $first）', async ({ first, kind, paused }) => {
   const controller = new AbortController()
   const connection = { platform: 'qq', botId: 'bot', ownerId: 'desktop' } as const
   const event = { version: 1, kind: 'message.received', eventId: 'event', text: '测试', quotedText: null, botMentioned: false,
     scope: { ...connection, chatType: 'c2c' as const, chatId: null, platformUserId: 'user' } }
   const eventKey = desktopImEventKey(event)
-  const prompt = { type: 'interaction_required', task_paused: true, prompt_id: 3, title: '确认',
-    secret_fields: [], options: [{ id: 'yes', label: '继续', token: 'synthetic' }] }
+  const choice = { id: 'yes', label: '继续', token: 'synthetic' }
+  const prompt = { type: 'interaction_required', kind, task_paused: paused, prompt_id: 3, title: '合成提示',
+    secret_fields: [], options: paused ? [choice] : [choice, { id: '__custom_reply__', label: '自定义回复', token: 'custom' }] }
   const operations: unknown[] = []
   const request = async (method: string, params?: Record<string, unknown>) => {
     if (method === 'im.inbox.prepare') return { sessionId: 1, runId: 'run', eventKey, sealedEvent: 'AQ==', clientId: 'client' }
@@ -113,6 +119,7 @@ it.each([true, false])('暂停提示先登记，重复登记时不发送卡片�
   await dispatch({ connection, connectionId: 'a'.repeat(64), userId: 'user', signal: controller.signal,
     authorize: async () => !controller.signal.aborted, send, sendPrompt })
   expect(operations).toEqual(first ? ['begin', 'send', 'settle'] : ['begin'])
+  if (first) expect(sendPrompt).toHaveBeenCalledWith(expect.objectContaining({ options: prompt.options }), 'user')
   expect(send).not.toHaveBeenCalled()
 })
 
@@ -412,12 +419,17 @@ it.each(['storage_error', 'busy'])('重复 RPC 故障 %s 退避，只记录一�
   expect(timestamps[1]! - timestamps[0]!).toBeGreaterThanOrEqual(950)
   expect(timestamps[2]! - timestamps[1]!).toBeGreaterThanOrEqual(1950)
   expect(send).not.toHaveBeenCalled()
-  expect(regular).toHaveBeenCalledOnce()
-  expect(diagnostic).toHaveBeenCalledOnce()
-  expect(JSON.parse(regular.mock.calls[0]![0])).toMatchObject({
-    attributes: { code: 'dispatch_unavailable', errorCode, rpcMethod: 'im.inbox.prepare' },
-  })
-  expect(diagnostic.mock.calls[0]![0]).not.toContain('合成内部详情')
+  if (errorCode === 'busy') {
+    expect(regular).not.toHaveBeenCalled()
+    expect(diagnostic).not.toHaveBeenCalled()
+  } else {
+    expect(regular).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(JSON.parse(regular.mock.calls[0]![0])).toMatchObject({
+      attributes: { code: 'dispatch_unavailable', errorCode, rpcMethod: 'im.inbox.prepare' },
+    })
+    expect(diagnostic.mock.calls[0]![0]).not.toContain('合成内部详情')
+  }
 }, 10_000)
 
 it.each(['slow_only', 'off'] as const)('QQ 整理按展示偏好发送主动回执并保留最终被动回复（%s）', async imToolDisplayMode => {
@@ -460,7 +472,8 @@ it.each([
   { text: '@咕咕 /help', group: 'member', methods: [], reply: '当前入口可用命令' },
   { text: '/help', methods: [], reply: '当前入口可用命令' },
   { text: '@咕咕 /workspace', methods: ['agent.sessions.workspace'], reply: '当前会话绑定的工作区' },
-  { text: '@咕咕 /workspace unbind', methods: ['agent.sessions.setWorkspace'], reply: '已解除当前会话的工作区绑定' },
+  { text: '@咕咕 /workspace personal', methods: ['agent.sessions.setWorkspace'], reply: '已将当前会话切回个人文件' },
+  { text: '@咕咕 /workspace unbind', methods: ['agent.sessions.setWorkspace'], reply: '已将当前会话切回个人文件' },
   { text: '@咕咕 助手 /workspace list', methods: ['agent.sessions.workspace'], reply: '1. 合成目录' },
   { text: '@咕咕 /workspace god', methods: [], reply: '桌面端当前不提供完整用户沙箱授权' },
   { text: '@咕咕 /workspace delete 1', methods: [], reply: '确认请发送 /workspace delete 1 confirm' },
@@ -550,4 +563,38 @@ it('即时停止命令重投复用原操作标识，保留群发起者范围', a
   expect(request.mock.calls[0]?.[1]).toMatchObject({ platformUserId: 'synthetic-sender', ownerPlatformUserId: 'synthetic-owner' })
   expect(request.mock.calls[0]?.[2]).toBe(request.mock.calls[1]?.[2])
   expect(request.mock.calls[0]?.[2]).not.toBe(request.mock.calls[2]?.[2])
+})
+
+it('监听模式空闲时不补读，仅由对应连接的收件事件唤醒', async () => {
+  vi.useFakeTimers()
+  const controller = new AbortController()
+  const connectionId = 'a'.repeat(64)
+  let onInbox: ((platform: string, id: string) => void) | undefined
+  const unsubscribe = vi.fn()
+  const request = vi.fn(async () => null)
+  const dispatch = createDesktopImDispatch({
+    request: request as IpcHost['request'],
+    onAgentRunChanged: () => unsubscribe,
+    onImInboxChanged(listener) { onInbox = listener; return unsubscribe },
+  }, { decryptStringAsync: vi.fn() }, { resolveRunModelSelection: vi.fn() })
+  const work = dispatch({
+    connection: { platform: 'telegram', botId: 'bot', ownerId: 'desktop' },
+    connectionId, userId: 'user', signal: controller.signal,
+    authorize: async () => true, send: vi.fn(),
+  })
+  try {
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(request).toHaveBeenCalledTimes(1)
+    onInbox?.('telegram', 'b'.repeat(64))
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(request).toHaveBeenCalledTimes(1)
+    onInbox?.('telegram', connectionId)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(request).toHaveBeenCalledTimes(2)
+  } finally {
+    controller.abort()
+    await work
+    vi.useRealTimers()
+  }
+  expect(unsubscribe).toHaveBeenCalledTimes(2)
 })

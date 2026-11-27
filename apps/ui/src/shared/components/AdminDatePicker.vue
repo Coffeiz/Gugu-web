@@ -36,7 +36,7 @@
         </div>
 
         <div class="adp-weekdays">
-          <span v-for="d in ['日','一','二','三','四','五','六']" :key="d">{{ d }}</span>
+          <span v-for="d in $tm('sharedUi.weekdays')" :key="d">{{ d }}</span>
         </div>
         <div class="adp-grid">
           <button v-for="cell in cells" :key="cell.key" class="adp-cell"
@@ -216,7 +216,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
 .adp-clear:hover { color: rgba(255,255,255,0.65); }
 
 /* 主弹窗 */
-.adp-popup { width: 248px; padding: 10px; font-family: var(--font-sans); }
+.adp-popup { width: 248px; padding: var(--popup-content-inset); font-family: var(--font-sans); }
 
 .adp-header {
   display: flex; align-items: center; justify-content: space-between;

@@ -23,7 +23,7 @@ fi
 debootstrap --force-check-gpg --keyring="$keyring" --variant=minbase \
     --include=bash,coreutils,findutils,grep,sed,tar,ca-certificates \
     bookworm "$target" https://deb.debian.org/debian
-install -d -m 0755 "$target/workspace" "$target/project" "$target/personal"
+install -d -m 0755 "$target/workspace" "$target/project" "$target/personal" "$target/skills"
 # debootstrap 会复制构建机的解析器配置和主机名。运行根只保留固定值。
 rm -f -- "$target/etc/resolv.conf" "$target/etc/hosts" "$target/etc/hostname" \
     "$target/etc/machine-id" "$target/var/lib/dbus/machine-id"

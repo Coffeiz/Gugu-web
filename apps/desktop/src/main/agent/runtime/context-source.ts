@@ -187,13 +187,14 @@ export function createDesktopRunContextLoader(options: {
   sceneBuiltins: BuiltinSkillDefinition[]
   configuredTools: (identity: RunIdentity) => Promise<PreparedToolDefinition[]>
   groupSkillRegistry: { catalog(identity: RunIdentity): Promise<readonly { id: string }[]> }
+  loadMailPrompt: (identity: RunIdentity, signal?: AbortSignal) => Promise<string>
   readMcpServices: (ownerId: string) => Promise<Parameters<typeof mcpServiceReminder>[0]>
   digest: (value: unknown) => string
 }) {
   const { db, ownerId, contextState, selection, source, contextBuilder, sessionSource, privateImChat, groupChat, canDelegate,
     desktopPrivateImOwner, authorizeContext, readImChannels, readMemberReminder, hostRequest, preferenceFiles,
     preferences, embedding, memoryFiles, resolveProxy, recordMemoryRevision, buildSystemPrompt, sceneBuiltins,
-    configuredTools, groupSkillRegistry, readMcpServices, digest } = options
+    configuredTools, groupSkillRegistry, loadMailPrompt, readMcpServices, digest } = options
   const load: AgentRuntimeOptions['context']['load'] = async (identity, signal) => {
     contextState.boundIdentity = identity
     if (privateImChat && !await desktopPrivateImOwner(identity, signal))
@@ -224,7 +225,8 @@ export function createDesktopRunContextLoader(options: {
       if (!await authorizeContext(identity)) throw new CoreError('conflict', '当前运行无权读取 IM 渠道')
       contextState.imChannels = await readImChannels(signal)
     }
-    contextState.contextRevision = Number.parseInt(digest([revision, contextState.overviewData, contextState.filesOverview, contextState.stylePreferences, contextState.imChannels, contextState.timezone]).slice(0, 12), 16)
+    const mailPrompt = await loadMailPrompt(identity, signal)
+    contextState.contextRevision = Number.parseInt(digest([revision, mailPrompt, contextState.overviewData, contextState.filesOverview, contextState.stylePreferences, contextState.imChannels, contextState.timezone]).slice(0, 12), 16)
     const loaded = await source.load(identity, signal)
     const directoryId = selection.workspaceBinding?.directory_id
     if (typeof directoryId === 'string') {

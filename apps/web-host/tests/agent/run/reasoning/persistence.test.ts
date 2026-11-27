@@ -33,7 +33,7 @@ function checkpoint(version:number,ctx:CanonicalRunContext|null):RunCheckpoint<C
   maxRounds:null,goalMode:false,replyChoice:'disabled',roundRequiresTools:false,completedToolCount:0,remoteStatusUnknown:false,errorCode:null,earlyExitReason:null} as unknown as RunCheckpoint<CanonicalRunContext>
 }
 const dbUrl=process.env.GUGU_IM_GATEWAY_TEST_DATABASE_URL??process.env.GUGU_WEBUI_TEST_DATABASE_URL
-test('隔离PG：真实Provider私有状态与checkpoint原子保存、重启精确恢复、成功跨Run与off失效',{
+test('隔离PG：真实Provider私有状态与checkpoint原子保存、重启精确恢复、成功跨Run',{
  skip:!dbUrl&&'未运行：需显式隔离PG验证checkpoint/CAS/加密；query替身不能证明持久恢复',
 },async t=>{
  const{Pool}=await import('pg'),admin=new Pool({connectionString:dbUrl}),schema=`reasoning_active_${randomUUID().replaceAll('-','')}`
@@ -69,7 +69,7 @@ test('隔离PG：真实Provider私有状态与checkpoint原子保存、重启精
      return{status:200,headers:{},body:(async function*(){yield Buffer.from(`data: ${JSON.stringify(response)}\n\n`)})(),cancel(){}}
     }}});runtimes.push(runtime);return runtime
   }
-  let runtime=provider();service=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:runtime,binding:binding(),mode:'continuation',authorize})
+  let runtime=provider();service=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:runtime,binding:binding(),authorize})
   let store=createPostgresAgentRunStore<CanonicalRunContext>(db,'synthetic-checkpoint-secret',{persistPrivateContext:(...args)=>service.checkpointHook(...args),async writeHistory(client,_id,history){
    if(history.outcome==='success')await service.commitSuccess(client,history.context)
    await client.query('INSERT INTO synthetic_history VALUES($1)',[history.text]);if(failure)throw Error('synthetic-private-history-failure')
@@ -89,7 +89,7 @@ test('隔离PG：真实Provider私有状态与checkpoint原子保存、重启精
    assert.equal((await db.query('SELECT count(*)::int AS n FROM provider_reasoning_states')).rows[0].n,0,'活动状态尚未发布成成功会话状态')
   })
   await t.test('重启后checkpoint提交先于Provider时按精确previous续存，原ref/sourceRound/area保持；ensure后真实HTTP重放',async()=>{
-   await runtime.close();runtime=provider();service=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:runtime,binding:binding(),mode:'continuation',authorize})
+   await runtime.close();runtime=provider();service=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:runtime,binding:binding(),authorize})
    ctx={...ctx,failedCompactionInput:45};const next=checkpoint(2,ctx)
    await store.commit({identity,lease,expectedVersion:1,checkpoint:next,events:[],history:null,interactionReceipt:null});current=next
    const staged=await runtime.withStagedContinuation(ctx,async item=>item)
@@ -125,30 +125,23 @@ test('隔离PG：真实Provider私有状态与checkpoint原子保存、重启精
    assert.equal((await db.query('SELECT count(*)::int AS n FROM gugu_agent_active_reasoning WHERE user_id=$1',[owner])).rows[0].n,0,'终态清理当前Run私有行，不留每Run大payload')
    const client=await db.connect();try{await client.query('BEGIN');await assert.rejects(service.commitSuccess(client,ctx),AgentReasoningUnavailableError);await client.query('ROLLBACK')}finally{client.release()}
   })
-  await t.test('成功状态跨Run加载到新ref/round0，无新round不重写；off真实失效阻止切回后复活',async()=>{
+  await t.test('成功状态跨Run加载到新ref/round0，无新round不重写',async()=>{
    const nextIdentity={...identity,runId:'synthetic-next-run'},nextCtx=await context(nextIdentity),nextRuntime=provider()
-   const nextService=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:nextRuntime,binding:binding(nextIdentity),mode:'continuation',authorize})
+   const nextService=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:nextRuntime,binding:binding(nextIdentity),authorize})
    const ref=await nextService.initialize(nextCtx,signal(),nextCtx.prepared.area.digest);assert.ok(ref);assert.notEqual(ref,ctx.continuationRef)
    const loaded={...nextCtx,continuationRef:ref};assert.equal((await nextRuntime.withStagedContinuation(loaded,async item=>item)).round,0)
    const client=await db.connect();try{await client.query('BEGIN');await nextService.commitSuccess(client,loaded);await client.query('COMMIT')}finally{client.release()}
    assert.equal((await db.query('SELECT version FROM provider_reasoning_states')).rows[0].version,1)
-   const off=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:nextRuntime,binding:binding(nextIdentity),mode:'off',authorize})
-   assert.equal(await off.initialize(nextCtx,signal(),nextCtx.prepared.area.digest),null)
-   const row=(await db.query('SELECT status,version,encrypted_payload FROM provider_reasoning_states')).rows[0]
-   assert.equal(row.status,'invalidated');assert.equal(row.version,2);assert.equal(row.encrypted_payload,'')
-   await off.invalidate(nextCtx,signal())
-   assert.equal((await db.query('SELECT version FROM provider_reasoning_states')).rows[0].version,2,'off协议拒绝仍复用真实冻结版本CAS，已失效状态不重复推进版本')
-   assert.equal(await nextService.initialize(nextCtx,signal(),nextCtx.prepared.area.digest),null)
   })
   await t.test('未知协议明确拒绝；真实另一owner/Run密文错置即使元数据有效也不能解密恢复',async()=>{
    const unsupported=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:runtime,
-    binding:{...binding(),identity:{...binding().identity,apiFormat:'unsupported'}},mode:'continuation',authorize})
+    binding:{...binding(),identity:{...binding().identity,apiFormat:'unsupported'}},authorize})
    await assert.rejects(unsupported.initialize({...ctx,continuationRef:null},signal(),ctx.prepared.area.digest),AgentReasoningUnavailableError)
    const otherIdentity={ownerId:other,sessionId:'2',runId:'synthetic-other-owner-run'},otherRuntime=provider(),otherCtx=await context(otherIdentity)
    const otherRef=await otherRuntime.stageContinuation({identity:otherIdentity,modelIdentity:'selection',accessScopeHash:'scope',round:1,areaDigest:'other-source-area',
     value:{state_kind:'openai_responses_reasoning',reasoning_items:[{type:'reasoning',id:'rs-other-private'}]}})
    const target={...otherCtx,continuationRef:otherRef},otherService=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:otherRuntime,
-    binding:binding(otherIdentity),mode:'continuation',authorize})
+    binding:binding(otherIdentity),authorize})
    await db.query("INSERT INTO agent_run_leases VALUES($1,2,$2,$3,1,clock_timestamp()+interval '1 hour')",[other,otherIdentity.runId,lease.token])
    const otherStore=createPostgresAgentRunStore<CanonicalRunContext>(db,'synthetic-checkpoint-secret',{persistPrivateContext:otherService.checkpointHook,async writeHistory(){assert.fail('本回归不写成功历史')}})
    await otherStore.create({...checkpoint(0,target),identity:otherIdentity},lease,[])
@@ -159,17 +152,17 @@ test('隔离PG：真实Provider私有状态与checkpoint原子保存、重启精
   })
   await t.test('实际prepared工具Schema变化失效成功状态；工具集合排序不影响同一Schema版本',async()=>{
    const id={...identity,runId:'schema-producer'},producer=provider(),prepared={...await context(id),capabilities:capabilities()}
-   const persistence=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:producer,binding:binding(id),mode:'continuation',authorize})
+   const persistence=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:producer,binding:binding(id),authorize})
    assert.equal(await persistence.initialize(prepared,signal(),prepared.prepared.area.digest),null)
    const reference=await producer.stageContinuation({identity:id,modelIdentity:'selection',accessScopeHash:'scope',round:1,areaDigest:'schema-source-area',
     value:{state_kind:'openai_responses_reasoning',reasoning_items:[{type:'reasoning',id:'rs-schema-private'}]}})
    const client=await db.connect();try{await client.query('BEGIN');await persistence.commitSuccess(client,{...prepared,continuationRef:reference});await client.query('COMMIT')}finally{client.release()}
    const storedVersion=(await db.query('SELECT version FROM provider_reasoning_states')).rows[0].version
    const sameId={...id,runId:'schema-reorder'},same={...prepared,identity:sameId,capabilities:{toolNames:[...prepared.capabilities.toolNames].reverse(),tools:[...prepared.capabilities.tools].reverse()}}
-   const sameService=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:provider(),binding:binding(sameId),mode:'continuation',authorize})
+   const sameService=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:provider(),binding:binding(sameId),authorize})
    assert.ok(await sameService.initialize(same,signal(),same.prepared.area.digest))
    const changedId={...id,runId:'schema-changed'},changed={...prepared,identity:changedId,capabilities:capabilities('number')}
-   const changedService=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:provider(),binding:binding(changedId),mode:'continuation',authorize})
+   const changedService=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:provider(),binding:binding(changedId),authorize})
    assert.equal(await changedService.initialize(changed,signal(),changed.prepared.area.digest),null)
    const row=(await db.query('SELECT version,status,encrypted_payload FROM provider_reasoning_states')).rows[0]
    assert.equal(row.status,'invalidated');assert.equal(row.version,storedVersion+1);assert.equal(row.encrypted_payload,'')
@@ -177,7 +170,7 @@ test('隔离PG：真实Provider私有状态与checkpoint原子保存、重启精
   })
   await t.test('协议失效只CAS冻结成功版本，旧Run不能清新成功；保留active至真实失败终态再仅清本Run',async()=>{
    async function instance(runId:string){const id={...identity,runId},providerRuntime=provider(),input=await context(id)
-    const persistence=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:providerRuntime,binding:binding(id),mode:'continuation',authorize})
+    const persistence=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:providerRuntime,binding:binding(id),authorize})
     const ref=await persistence.initialize(input,signal(),input.prepared.area.digest)
     return{id,runtime:providerRuntime,persistence,context:{...input,continuationRef:ref}}
    }
@@ -216,16 +209,17 @@ test('隔离PG：真实Provider私有状态与checkpoint原子保存、重启精
    await db.query('UPDATE users SET is_active=true WHERE id=$1',[owner])
    assert.deepEqual((await db.query('SELECT version,encrypted_payload FROM provider_reasoning_states')).rows[0],before)
   })
-  await t.test('Anthropic/OpenAI/Ollama活动私有值在off与continuation下精确重启；仅Anthropic发布Python同形跨Run状态',async()=>{
-   for(const format of ['anthropic','openai','ollama'] as const)for(const mode of ['off','continuation'] as const){
+  await t.test('Anthropic/OpenAI/Ollama活动私有值精确重启；仅Anthropic发布Python同形跨Run状态',async()=>{
+   for(const format of ['anthropic','openai','ollama'] as const){
     await db.query('DELETE FROM provider_reasoning_states WHERE user_id=$1 AND session_id=1',[owner])
-    const id={...identity,runId:`synthetic-${format}-${mode}`},ctx=await context(id),first=provider()
+    const id={...identity,runId:`synthetic-${format}`},ctx=await context(id),first=provider()
     const trusted={...binding(id),identity:{...binding(id).identity,provider:format,apiFormat:format}}
-    let persistence=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:first,binding:trusted,mode,authorize})
+    let persistence=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:first,binding:trusted,authorize})
     assert.equal(await persistence.initialize(ctx,signal(),ctx.prepared.area.digest),null)
     const signature='synthetic-private-signature',thinking={type:'thinking',thinking:'合成私有推理',signature,_block_position:1}
     const payload={history_thinking_by_tool_id:{'synthetic-tool':[thinking]},tail_blocks:[{type:'redacted_thinking',data:'synthetic-private-redacted'}],
-     history_response_blocks_by_tool_id:{'synthetic-tool':[{type:'text',text:'合成片段'},thinking,{type:'tool_use',id:'synthetic-tool',name:'synthetic',input:{ratio:0.25}}]},
+     history_response_blocks_by_tool_id:{'synthetic-tool':[{type:'text',text:'合成片段'},thinking,{type:'tool_use',id:'synthetic-tool',name:'synthetic',input:{ratio:0.25}}],
+      'synthetic-sibling':[{type:'text',text:'合成片段'},thinking,{type:'tool_use',id:'synthetic-sibling',name:'synthetic',input:{}}]},
      tail_response_blocks:[{type:'text',text:'合成最终答复'}]}
     const value=format==='anthropic'?{state_kind:'anthropic_thinking_blocks',model_identity:ctx.modelIdentity,owner_id:owner,session_id:'1',access_scope_hash:'scope',provider:format,payload}
      :format==='openai'?{kind:'openai',reasoningByCall:{'synthetic-tool':signature}}
@@ -240,29 +234,29 @@ test('隔离PG：真实Provider私有状态与checkpoint原子保存、重启精
     assert.equal(encrypted.includes(Buffer.from(signature)),false)
     await first.close()
     const restarted=provider()
-    persistence=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:restarted,binding:trusted,mode,authorize})
+    persistence=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:restarted,binding:trusted,authorize})
     await persistence.ensure(active,signal())
     assert.deepEqual((await restarted.withStagedContinuation(active,async item=>item)).value,value,'活动值保留所有原块，包括非整数工具参数')
     const wrong={...trusted,identity:{...trusted.identity,apiFormat:format==='anthropic'?'openai':'anthropic'}}
-    const mismatched=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:restarted,binding:wrong,mode,authorize})
+    const mismatched=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:restarted,binding:wrong,authorize})
     await assert.rejects(mismatched.ensure(active,signal()),AgentReasoningUnavailableError)
     await targetStore.commit({identity:id,lease,expectedVersion:0,checkpoint:{...checkpoint(1,active),identity:id,status:'completed',phase:'idle'},events:[],interactionReceipt:null,
      history:{outcome:'success',context:active,text:'合成最终答复'}})
     assert.equal((await db.query('SELECT count(*)::int AS n FROM gugu_agent_active_reasoning WHERE user_id=$1 AND run_id=$2',[owner,id.runId])).rows[0].n,0)
     const published=(await db.query('SELECT * FROM provider_reasoning_states WHERE user_id=$1 AND session_id=1',[owner])).rows
-    assert.equal(published.length,format==='anthropic'&&mode==='continuation'?1:0)
-    if(format==='anthropic'&&mode==='continuation'){
+    assert.equal(published.length,format==='anthropic'?1:0)
+    if(format==='anthropic'){
      assert.equal(published[0].state_kind,'anthropic_thinking_blocks')
      assert.equal(JSON.stringify(published).includes(signature),false)
      const next={...id,runId:'synthetic-anthropic-next'},nextCtx={...await context(next),modelIdentity:'next-selection'},nextRuntime=provider()
      const nextBinding={...trusted,runId:next.runId,modelIdentity:nextCtx.modelIdentity}
-     const nextPersistence=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:nextRuntime,binding:nextBinding,mode,authorize})
+     const nextPersistence=createProviderReasoningPersistence({pool:db,secretKey:'synthetic-reasoning-secret',provider:nextRuntime,binding:nextBinding,authorize})
      const nextRef=await nextPersistence.initialize(nextCtx,signal(),nextCtx.prepared.area.digest)
      assert.ok(nextRef)
      const staged=await nextRuntime.withStagedContinuation({...nextCtx,continuationRef:nextRef},async item=>item)
      assert.equal(staged.round,0)
      assert.deepEqual(staged.value,{state_kind:'anthropic_thinking_blocks',model_identity:'next-selection',owner_id:owner,session_id:'1',access_scope_hash:'scope',provider:'anthropic',
-      payload:{history_thinking_by_tool_id:payload.history_thinking_by_tool_id,tail_blocks:payload.tail_blocks}})
+      payload:{history_thinking_by_tool_id:{...payload.history_thinking_by_tool_id,'synthetic-sibling':[thinking]},tail_blocks:payload.tail_blocks}})
     }
    }
   })

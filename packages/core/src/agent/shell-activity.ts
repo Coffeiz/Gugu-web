@@ -104,6 +104,16 @@ function outputLimiter(words: string[]) {
     || (args.length === 2 && (args[0] === '-n' || args[0] === '-c') && /^\d+$/u.test(args[1]!))
 }
 
+export const MAX_SHELL_DESCRIPTION_LENGTH = 80
+
+/** 只读取可作为单行展示的模型说明。 */
+export function shellOperationDescription(input: unknown): string | undefined {
+  const description = record(input).description
+  if (typeof description !== 'string' || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(description)) return
+  const text = description.trim()
+  return text && Array.from(text).length <= MAX_SHELL_DESCRIPTION_LENGTH ? text : undefined
+}
+
 export function describeShellActivity(input: unknown, output?: unknown): ShellActivity | undefined {
   const command = record(input).command
   if (typeof command !== 'string' || command.length > 4096 || /[\x00-\x08\x0b-\x1f]/u.test(command)) return

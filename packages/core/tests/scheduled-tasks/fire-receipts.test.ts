@@ -5,8 +5,7 @@ import { Pool } from 'pg'
 import { describe, expect, it } from 'vitest'
 import { tablesSql } from '../../src/data/schema.js'
 import { databaseTime } from '../../src/data/codec.js'
-import { createKyselyScheduledFireReceipts } from '../../src/scheduled-tasks/fire-receipts.js'
-import { createKyselyRepeatingTaskRepository } from '../../src/scheduled-tasks/repeating-repository.js'
+import { createKyselyRepeatingTaskRepository, createKyselyScheduledFireReceipts } from '../../src/tasks/schedule-storage.js'
 
 const url = process.env.GUGU_CORE_TEST_POSTGRES_URL
 describe.each(['sqlite', 'postgres'] as const)('定时触发收据 %s', backend => {

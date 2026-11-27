@@ -1,6 +1,7 @@
 import type { MindCanvas, MindCanvasItem, MindNote, MindRefSuggestItem, MindRelation } from '@/services/api'
 import type { MindAccess } from '@/services/mindAccess'
 import { desktopData, requestDesktopFile } from '../bridge/bridge'
+import { desktopSkillsApi } from '../resources/transport'
 
 export const desktopMindAccess: MindAccess = {
   async listNotes(limit = 50, offset = 0) {
@@ -16,14 +17,20 @@ export const desktopMindAccess: MindAccess = {
   deleteNote: desktopData.deleteNote,
   async refSuggest(text, limit = 6) {
     const query = text.trim().toLocaleLowerCase()
-    if (!query) return []
-    const [projects, events, files] = await Promise.all([
-      desktopData.projects(), desktopData.calendar(),
-      requestDesktopFile({ action: 'search', query }) as Promise<MindRefSuggestItem[]>,
+    const [clients, projects, events, files, skills] = await Promise.all([
+      desktopData.clients(),
+      query ? desktopData.projects() : [],
+      query ? desktopData.calendar() : [],
+      query ? requestDesktopFile({ action: 'search', query }) as Promise<MindRefSuggestItem[]> : [],
+      desktopSkillsApi.list(),
     ])
     return [
+      ...clients.filter(item => [item.name, item.email, item.phone].some(value => value?.toLocaleLowerCase().includes(query)))
+        .map(item => ({ type: 'client' as const, id: item.id, label: item.name })),
       ...projects.filter(item => item.name.toLocaleLowerCase().includes(query)).map(item => ({ type: 'project' as const, id: item.id, label: item.name })),
       ...files,
+      ...skills.skills.filter(item => [item.name, item.description_short].some(value => value?.toLocaleLowerCase().includes(query)))
+        .map(item => ({ type: 'skill' as const, id: item.id, label: item.name, subtitle: item.description_short })),
       ...events.filter(item => item.title.toLocaleLowerCase().includes(query)).map(item => ({ type: 'event' as const, id: item.id, label: item.title, subtitle: item.date })),
     ].slice(0, limit)
   },

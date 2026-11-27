@@ -49,7 +49,7 @@ description: Node.js/Fastify Web Host 与共享后端开发约定，涵盖 Core�
 | 画布放置与几何 | `packages/core/src/mind/canvas-layout.ts`：世界坐标/端点纯规则；`canvas-placement.ts`：借用事务创建canvas_note、引用和视图，复用原SQL服务，不在工具里复制数据库业务 |
 | Agent画布批量编辑 | `packages/core/src/mind/canvas-edits.ts`：布局、视图移除、画布便签字段更新复用原SQL服务和外层事务；工具组持久收据与Undo共同提交，事件在提交后发布 |
 | Agent画布候选和技能元数据目录 | `packages/core/src/mind/canvas-read.ts`：owner限定候选检索及旧分页探测；`packages/core/src/agent/skills/user-read.ts`：Markdown head定义和含停用项的用户Skill元数据，不使用可加载catalog替代管理目录 |
-| 用户 Skill 写入 | `packages/core/src/agent/skills/user-management.ts` 的准备端口供 Agent 把共享写入纳入 Run 收据事务，REST 使用同一管理器的创建和更新入口。Host 提供当前租约的事务内授权及提交后通知。 |
+| 用户 Skill 写入 | `packages/core/src/agent/tools/skill-management/file-port.ts` 将文件技能变更纳入 Run 收据事务；REST 使用同一文件文档与文件撤销存储。Host 提供当前租约的授权、文件操作和提交后通知。 |
 | Unicode 数字分类与转换 | `packages/core/src/shared/unicode-decimal.ts`：固定 Unicode 16 分类，区分 Nd 十进制和更宽泛的数字字符；工具整数/日期/行号与项目编号共用，不使用 Node 较新 Unicode 属性扩大可接受输入；Python 格式的代码生成脚本仅为维护工具，不是运行依赖 |
 
 | IM 身份与入站规则 | `packages/core/src/im/access.ts`、`inbound-preflight.ts`、`inbound-batch.ts`、`shortcut.ts`：可信 Bot 对照后的角色/工具/上下文、控制消息优先、批次排序和快捷意图；Host 必须提供当前权限、冻结的取消目标和真实消费事务，不能把纯规则当认证 |

@@ -125,6 +125,21 @@ function restoreThinking(history: readonly JsonObject[], input: ProviderInvocati
   return result
 }
 
+/** 跨 Run 只发布原生推理块，并让同批任何仍在历史中的调用能找回原位签名。 */
+export function anthropicCrossRunToolThinking(payload: unknown): Record<string, unknown> {
+  const state = record(payload)
+  const history = record(state.history_thinking_by_tool_id)
+  const additional = Object.entries(record(state.history_response_blocks_by_tool_id)).flatMap(([id, blocks]) => {
+    if (Object.hasOwn(history, id) || !Array.isArray(blocks)) return []
+    const signed = blocks.flatMap((value, position) => {
+      const block = record(value)
+      return block.type === 'thinking' || block.type === 'redacted_thinking' ? [{ ...block, _block_position: position }] : []
+    })
+    return signed.length ? [[id, signed] as const] : []
+  })
+  return { ...history, ...Object.fromEntries(additional) }
+}
+
 function captureThinking(blocks: readonly JsonObject[], input: ProviderInvocation): ThinkingState | undefined {
   const previous = thinkingState(input), history = clone(previous?.payload.history_thinking_by_tool_id ?? {})
   const responses = clone(previous?.payload.history_response_blocks_by_tool_id ?? {})

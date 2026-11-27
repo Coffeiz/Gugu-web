@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ActionButton from '@/components/common/controls/ActionButton.vue'
 import SelectPopup from '@/components/common/controls/SelectPopup.vue'
@@ -9,13 +9,13 @@ import type { ByokCommand, ByokSummary } from '@gugu/core/byok/contracts'
 
 const props = defineProps({ origin: { type: String, required: true }, accountId: { type: String, required: true } })
 const { t } = useI18n()
-const capabilities = [
-  { value: 'llm', label: '对话' },
-  { value: 'embedding', label: 'Embedding' },
-  { value: 'speech_to_text', label: '语音识别' },
-  { value: 'deep_research', label: '深度研究' },
-  { value: 'similar_image_search', label: '相似图搜索' },
-]
+const capabilities = computed(() => [
+  { value: 'llm', label: t('pageUi.dialogue') },
+  { value: 'embedding', label: t('pageUi.embedding') },
+  { value: 'speech_to_text', label: t('pageUi.speechRecognition') },
+  { value: 'deep_research', label: t('pageUi.deepResearch') },
+  { value: 'similar_image_search', label: t('pageUi.similarImageSearch') },
+])
 type Draft = Extract<ByokCommand, { action: 'create' }>['input']
 const blank = (): Draft => ({ capability: 'llm', provider: '', api_format: '', base_url: '', model: '', value: '' })
 const draft = reactive(blank())
@@ -33,7 +33,7 @@ function request(command: ByokCommand) {
 
 async function refresh() {
   const result = await request({ action: 'list' })
-  if (!result || !('items' in result)) throw new Error('服务器未返回凭据列表')
+  if (!result || !('items' in result)) throw new Error(t('pageUi.missingCredentialList'))
   items.value = result.items
   needsReconfigure.value = result.status === 'needs_reconfigure'
   ready.value = true
@@ -45,7 +45,7 @@ async function perform(operation: () => Promise<void>) {
   error.value = ''
   message.value = ''
   try { await operation() } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '远程凭据操作失败'
+    error.value = reason instanceof Error ? reason.message : t('pageUi.credentialOperationFailed')
   } finally { busy.value = false }
 }
 
@@ -77,15 +77,15 @@ function save() {
       : { action: 'update', id: editing.value, input: { ...fields, ...(value ? { value } : {}) } })
     edit()
     await refresh()
-    message.value = '已保存凭据'
+    message.value = t('pageUi.credentialSaved')
   })
 }
 
 function test(item: ByokSummary) {
   void perform(async () => {
     const result = await request({ action: 'test', id: item.id })
-    if (!result || !('ok' in result) || !result.ok) throw new Error('连接测试失败，请检查模型、地址和 Key')
-    message.value = '连接测试通过'
+    if (!result || !('ok' in result) || !result.ok) throw new Error(t('pageUi.connectionTestFailed'))
+    message.value = t('pageUi.connectionTestPassed')
   })
 }
 
@@ -98,7 +98,7 @@ function remove(item: ByokSummary) {
     await request({ action: 'delete', id: item.id })
     if (editing.value === item.id) edit()
     await refresh()
-    message.value = '已删除凭据'
+    message.value = t('pageUi.credentialDeleted')
   })
 }
 
@@ -107,34 +107,34 @@ onMounted(() => void perform(refresh))
 
 <template>
   <section class="byok">
-    <h2>服务器模型与凭据</h2>
+    <h2>{{ $t('pageUi.serverModels') }}</h2>
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-if="message" role="status">{{ message }}</p>
-    <p v-if="needsReconfigure" role="status">服务器上有凭据需要重新填写 Key。</p>
-    <ActionButton v-if="!ready" fit :disabled="busy" @click="perform(refresh)">{{ busy ? '正在读取…' : '重新读取' }}</ActionButton>
+    <p v-if="needsReconfigure" role="status">{{ $t('pageUi.missingKeys') }}</p>
+    <ActionButton v-if="!ready" fit :disabled="busy" @click="perform(refresh)">{{ busy ? $t('pageUi.reading') : $t('pageUi.reload') }}</ActionButton>
     <template v-else>
       <ul v-if="items.length" class="items">
         <li v-for="item in items" :key="item.id">
           <strong>{{ item.provider }} {{ item.model }}</strong>
           <span>{{ capabilities.find(entry => entry.value === item.capability)?.label }}</span>
           <div class="actions">
-            <ActionButton fit variant="secondary" :disabled="busy" @click="edit(item)">编辑</ActionButton>
-            <ActionButton fit variant="secondary" :disabled="busy" @click="test(item)">测试</ActionButton>
+            <ActionButton fit variant="secondary" :disabled="busy" @click="edit(item)">{{ $t('pageUi.edit') }}</ActionButton>
+            <ActionButton fit variant="secondary" :disabled="busy" @click="test(item)">{{ $t('pageUi.test') }}</ActionButton>
             <ActionButton fit variant="secondary" :disabled="busy" @click="remove(item)">{{ t('desktopByok.deleteTitle') }}</ActionButton>
           </div>
         </li>
       </ul>
       <form @submit.prevent="save">
-        <h3>{{ editing === null ? '添加凭据' : '编辑凭据' }}</h3>
-        <label>能力 <SelectPopup :model-value="draft.capability" @update:model-value="setCapability" :options="capabilities" :disabled="busy || editing !== null" /></label>
-        <label>Provider <input v-model.trim="draft.provider" required maxlength="64" :disabled="busy"></label>
-        <label>API 格式 <input v-model.trim="draft.api_format" maxlength="32" :disabled="busy"></label>
-        <label>Base URL <input v-model.trim="draft.base_url" type="url" maxlength="500" :disabled="busy"></label>
-        <label>模型 <input v-model.trim="draft.model" maxlength="200" :disabled="busy"></label>
-        <label>API Key <input v-model="draft.value" type="password" maxlength="20000" autocomplete="new-password" :disabled="busy" :placeholder="editing === null ? '' : '留空保留已保存的 Key'"></label>
+        <h3>{{ editing === null ? $t('pageUi.addCredential') : $t('pageUi.editCredential') }}</h3>
+        <label>{{ $t('pageUi.capabilities') }} <SelectPopup :model-value="draft.capability" @update:model-value="setCapability" :options="capabilities" :disabled="busy || editing !== null" /></label>
+        <label>{{ $t('pageUi.provider') }} <input v-model.trim="draft.provider" required maxlength="64" :disabled="busy"></label>
+        <label>{{ $t('pageUi.apiFormat') }} <input v-model.trim="draft.api_format" maxlength="32" :disabled="busy"></label>
+        <label>{{ $t('pageUi.baseUrl') }} <input v-model.trim="draft.base_url" type="url" maxlength="500" :disabled="busy"></label>
+        <label>{{ $t('pageUi.model') }} <input v-model.trim="draft.model" maxlength="200" :disabled="busy"></label>
+        <label>{{ $t('pageUi.apiKey') }} <input v-model="draft.value" type="password" maxlength="20000" autocomplete="new-password" :disabled="busy" :placeholder="editing === null ? '' : $t('pageUi.keepKey')"></label>
         <div class="actions">
-          <ActionButton fit type="submit" :disabled="busy">保存</ActionButton>
-          <ActionButton v-if="editing !== null" fit variant="secondary" :disabled="busy" @click="edit()">取消编辑</ActionButton>
+          <ActionButton fit type="submit" :disabled="busy">{{ $t('common.actions.save') }}</ActionButton>
+          <ActionButton v-if="editing !== null" fit variant="secondary" :disabled="busy" @click="edit()">{{ $t('pageUi.cancelEdit') }}</ActionButton>
         </div>
       </form>
     </template>

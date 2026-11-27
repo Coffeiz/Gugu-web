@@ -126,9 +126,6 @@ it('旧版归档按可移植 ID 恢复项目、日历与画布关系，并支持
         { items: [{ key: 1, text: '合成草稿' }] }, [relation('session', 'conversation', 'chat')]))
       add('records/scheduled_tasks.jsonl', 'scheduled_tasks', record('scheduled_task', 'task',
         { name: '合成提醒', payload: '提醒', cron: '0 8 * * *' }, [relation('event', 'calendar_event', 'event')]))
-      add('records/skills.jsonl', 'skills', { ...record('skill', 'skill',
-        { name: '合成技能', description_short: '说明', category: 'personal', body: '合成技能内容', related_tools: [] }),
-      record_schema: 'gugu.skill.v2' })
       add('records/feedback.jsonl', 'feedback', record('feedback', 'feedback', { category: 'other', content: '合成反馈' }))
       add('records/preferences.json', 'preferences', JSON.stringify(record('preferences', 'preferences', { data: { locale: 'zh-CN' } })), 1)
       add('memory/owner/memory.md', 'owner_memory', '合成个人记忆')
@@ -152,16 +149,17 @@ it('旧版归档按可移植 ID 恢复项目、日历与画布关系，并支持
       await writeFile(join(directory, '.agent/memories/profile.json'), JSON.stringify([{ text: '合成本地资料', weight: 1 }]))
       await writeFile(join(directory, '.agent/memories/pattern.json'), JSON.stringify([{ text: '合成本地偏好' }]))
       const plan = await importDesktopBusinessArchive(runtime.db, ownerId, file, undefined, undefined, memory)
-      expect(plan).toMatchObject({ added: 17, skipped: 1 })
+      // 归档导入不再把旧 Skill 记录写入 SQL；用户技能统一由文件包管理。
+      expect(plan).toMatchObject({ added: 16, skipped: 1 })
       expect(await runtime.db.selectFrom('mind_maps').select('id').execute()).toEqual([])
       expect(JSON.parse((await memory.readTarget('profile'))!)).toEqual([{ text: '合成本地资料', weight: 1 }])
-      expect(await importDesktopBusinessArchive(runtime.db, ownerId, file, plan.digest, undefined, memory)).toMatchObject({ added: 17, skipped: 1 })
+      expect(await importDesktopBusinessArchive(runtime.db, ownerId, file, plan.digest, undefined, memory)).toMatchObject({ added: 16, skipped: 1 })
       await memory.flush()
       await memory.flushImportedIm()
       const message = (await sql<{ content: string; conversation_seq: number }>`SELECT content,conversation_seq FROM conversation_messages`.execute(runtime.db)).rows[0]
       expect(message).toEqual({ content: '合成答复', conversation_seq: 1 })
       expect((await sql`SELECT enabled FROM scheduled_tasks`.execute(runtime.db)).rows).toEqual([{ enabled: 0 }])
-      expect((await sql`SELECT skill_id,enabled FROM user_skills`.execute(runtime.db)).rows).toEqual([{ skill_id: 'U1', enabled: 0 }])
+      expect((await sql`SELECT skill_id,enabled FROM user_skills`.execute(runtime.db)).rows).toEqual([])
       expect(await memory.readTarget('memory')).toBe('合成个人记忆')
       expect(JSON.parse((await memory.readTarget('profile'))!)).toEqual([{ text: '合成本地资料', weight: 1 }, { text: '合成归档资料' }])
       expect(JSON.parse((await memory.readTarget('pattern'))!)).toEqual([{ text: '合成本地偏好' }, { text: '合成归档偏好' }])
@@ -178,7 +176,7 @@ it('旧版归档按可移植 ID 恢复项目、日历与画布关系，并支持
       expect(canvas.project_id).toBe(project.id)
       expect(await runtime.db.selectFrom('mind_canvas_items').select(['canvas_id', 'node_id']).executeTakeFirstOrThrow())
         .toEqual({ canvas_id: canvas.id, node_id: node.id })
-      expect(await importDesktopBusinessArchive(runtime.db, ownerId, file, plan.digest, undefined, memory)).toMatchObject({ added: 0, skipped: 18 })
+      expect(await importDesktopBusinessArchive(runtime.db, ownerId, file, plan.digest, undefined, memory)).toMatchObject({ added: 0, skipped: 17 })
     } finally {
       await runtime.db.destroy()
     }

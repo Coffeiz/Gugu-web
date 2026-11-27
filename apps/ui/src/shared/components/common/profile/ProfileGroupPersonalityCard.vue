@@ -123,21 +123,21 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.group-personality { display: grid; gap: 10px; }
-.personality-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.personality-toggle { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.group-personality { display: grid; gap: var(--space-sm); }
+.personality-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
+.personality-toggle { display: flex; align-items: center; gap: var(--space-sm); flex: 0 0 auto; }
 .personality-enabled-label, .personality-status { color: var(--content-secondary); font-size: 12px; }
-.personality-file-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 14px; border: 1px solid var(--workspace-card-border); border-radius: var(--radius-sm); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.personality-file-card { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); padding: var(--space-md) var(--space-md); border: 1px solid var(--workspace-card-border); border-radius: var(--radius-sm); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .personality-file-card:hover { border-color: var(--theme-action-primary); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); }
 .personality-file-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: var(--action-soft); color: var(--action-primary); font: 700 10px var(--font-family-mono); }
 .personality-file-info { min-width: 0; flex: 1; }
 .personality-file-name { color: var(--content-primary); font-size: 13px; font-weight: 600; }
-.personality-file-meta { margin-top: 3px; color: var(--content-tertiary); font-size: 11px; }
-.personality-file-actions { display: flex; align-items: center; gap: 4px; }
+.personality-file-meta { margin-top: var(--space-xs); color: var(--content-tertiary); font-size: 11px; }
+.personality-file-actions { display: flex; align-items: center; gap: var(--space-xs); }
 .personality-file-input { display: none; }
 .personality-status { color: var(--status-success); }
 .personality-status.error { color: var(--status-danger); }
-.pm-text-button { padding: 6px 8px; border: 0; border-radius: var(--radius-compact); background: transparent; color: var(--content-secondary); font: 12px var(--font-sans); cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-text-button { padding: var(--space-xs) var(--space-sm); border: 0; border-radius: var(--radius-compact); background: transparent; color: var(--content-secondary); font: 12px var(--font-sans); cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
 .pm-text-button:hover:not(:disabled) { background: var(--action-soft); color: var(--action-primary); }
 .pm-text-button:disabled { opacity: .45; cursor: default; }
 </style>

@@ -44,3 +44,92 @@
 .card-link-btn:not(:disabled):hover { color: var(--text-primary); background: var(--action-soft); }
 .card-link-btn.danger:not(:disabled):hover { color: var(--status-danger); background: var(--status-danger-bg); }
 .card-link-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* 独立底部操作区。外层用 --card-actions-inset 提供卡片正文的水平内边距。 */
+.app-card-actions {
+  --card-actions-control-height: 34px;
+  --card-actions-padding-block: var(--card-close-inset);
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  min-block-size: calc(var(--card-actions-control-height) + 2 * var(--card-actions-padding-block) + 1px);
+  padding-block: calc(var(--card-actions-padding-block) + 1px) var(--card-actions-padding-block);
+  padding-inline: var(--card-close-inset);
+  margin-inline: calc(-1 * var(--card-actions-inset, 0px));
+}
+
+/* 卡片内的小型文字操作。 */
+.app-card-actions--compact {
+  --card-actions-control-height: 24px;
+  --card-actions-padding-block: 6px;
+}
+
+.app-card-actions::before {
+  content: '';
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  border-block-start: 1px solid var(--panel-divider, var(--border-strong));
+  pointer-events: none;
+}
+
+.app-card-actions > button,
+.app-card-actions .card-link-btn {
+  box-sizing: border-box;
+  block-size: var(--card-actions-control-height);
+  min-block-size: var(--card-actions-control-height);
+}
+
+/* 操作按钮保持占位或使用固定定位，只过渡可见度。 */
+.app-hover-actions > button.app-hover-action {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-hover-control) ease, background-color var(--motion-hover-control) ease;
+}
+
+.app-hover-actions:is(:hover, :focus-within) > button.app-hover-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .app-hover-actions > button.app-hover-action {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-hover-actions > button.app-hover-action { transition: none; }
+}
+
+@property --hover-action-fade-width {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* 通过遮罩淡化按钮下的正文，保持文字宽度和换行位置。 */
+.app-hover-actions > .app-hover-action-content {
+  --hover-action-fade-width: 0px;
+  --hover-action-fade-direction: to right;
+  mask-image: linear-gradient(var(--hover-action-fade-direction),
+    #000 calc(100% - var(--hover-action-fade-width)),
+    transparent calc(100% - var(--hover-action-fade-width) / 2));
+  transition: --hover-action-fade-width var(--motion-hover-control) ease;
+}
+.app-hover-action-content:dir(rtl) { --hover-action-fade-direction: to left; }
+.app-hover-actions:is(:hover, :focus-within) > .app-hover-action-content {
+  --hover-action-fade-width: 56px;
+}
+@media (hover: none) {
+  .app-hover-actions > .app-hover-action-content { --hover-action-fade-width: 56px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-hover-actions > .app-hover-action-content { transition: none; }
+}

@@ -172,16 +172,16 @@ test('飞书流式协议通过真实client与合成HTTP transport执行create/br
   } finally { await client.close() }
 })
 
-test('IM 流式卡片和工具回执使用动作标题，标题不包含命令和文件名', async () => {
+test('IM 流式卡片和工具回执使用共享操作说明，标题不包含命令和文件名', async () => {
   const projector = createFeishuRunEventProjector()
   const display = { shellActivity: { action: 'git_diff', target: '合成内部文件' },
-    toolInput: { command: 'git diff 合成内部文件' }, toolLabelOverride: '通用 Shell 标签' }
+    toolInput: { command: 'git diff 合成内部文件', description: '查看 Git 差异' }, toolLabelOverride: '通用 Shell 标签' }
   for (const [status, expected] of [
     ['success', '✅ 查看 Git 差异完成'], ['error', '⚠️ 查看 Git 差异未完成'],
   ]) {
     const payload = { name: 'shell', status, display }
     const [activity] = await projector.push(runEvent('tool_done', payload))
-    assert.deepEqual(activity, { type: 'tool_done', name: 'shell', status, label: '查看 Git 差异' })
+    assert.deepEqual(activity, { type: 'tool_done', name: 'shell', status, label: '查看 Git 差异', display })
     if (!activity || activity.type !== 'tool_done') assert.fail('缺少工具回执')
     assert.equal(formatImToolReceipt(activity, clean), expected)
     assert.equal(formatImToolReceipt(payload, clean), expected)

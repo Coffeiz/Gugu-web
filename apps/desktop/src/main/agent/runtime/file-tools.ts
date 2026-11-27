@@ -12,6 +12,7 @@ import { createSqliteToolConfirmation } from '#core-source/agent/interactions/sq
 export async function createDesktopFileTools(options: {
   db: SqlDataRuntime['db']
   interactive: boolean
+  workspaceDirectoryId?: string
   authorize: (identity: RunIdentity) => Promise<boolean>
   authorizeWrite: Parameters<typeof createSqliteToolConfirmation>[1]
   hostRequest: (method: string, params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>
@@ -99,7 +100,12 @@ export async function createDesktopFileTools(options: {
     } else if (!grant.permits()) return { error: '宿主机文件授权已过期' } as const
     return { target } as const
   }
-  const shell = interactive ? await createDesktopShellTool(db, shellConfirmation, digest, readHostAccess, undefined, undefined, moveShellTargetToTrash) : undefined
+  const readWorkspace = options.workspaceDirectoryId === undefined ? undefined : async () => {
+    const root = await hostRequest('agent.files.workspaceRoot', { directoryId: options.workspaceDirectoryId }, AbortSignal.timeout(5_000))
+    return root && typeof root === 'object' && 'path' in root && typeof root.path === 'string' && isAbsolute(root.path)
+      && 'identity' in root && typeof root.identity === 'string' ? { path: root.path, identity: root.identity } : null
+  }
+  const shell = interactive ? await createDesktopShellTool(db, shellConfirmation, digest, readHostAccess, readWorkspace, undefined, moveShellTargetToTrash) : undefined
   const presentFile: NonNullable<Parameters<typeof createOwnerToolRegistry>[0]['presentFile']> = {
     requiresHostConfirmation: true,
     async resolve(identity, selector, signal, { scope, call, batch }) {

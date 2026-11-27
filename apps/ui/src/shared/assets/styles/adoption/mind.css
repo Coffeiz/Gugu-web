@@ -21,7 +21,7 @@ html[data-theme='dark'][data-family='mono'] .ntp-new {
   --action-secondary-border: var(--border-strong);
   --action-secondary-border-hover: var(--border-strong);
 }
-html[data-family='mono'] .ntp-item {
+html[data-family='mono'] :is(.ntp-item, .mail-row, .contacts-row:where(:not(:hover, .selected))) {
   border-color: var(--border-strong);
 }
 html[data-theme][data-family] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
@@ -70,16 +70,16 @@ html[data-theme][data-family] .note-card::after {
 html[data-theme][data-family] .note-card:not(.editing):hover { box-shadow: var(--note-shadow-hover); }
 html[data-theme][data-family] .note-card:not(.editing):hover::after { background: var(--note-hover-overlay); }
 html[data-theme][data-family] .note-card.editing { background: var(--note-surface-editing); }
-html[data-theme][data-family] .note-card.tint-amber,
-html[data-theme][data-family] .note-card.canvas-mode.tint-amber { background: var(--note-paper-amber); }
-html[data-theme][data-family] .note-card.tint-coral,
-html[data-theme][data-family] .note-card.canvas-mode.tint-coral { background: var(--note-paper-coral); }
-html[data-theme][data-family] .note-card.tint-blue,
-html[data-theme][data-family] .note-card.canvas-mode.tint-blue { background: var(--note-paper-blue); }
-html[data-theme][data-family] .note-card.tint-teal,
-html[data-theme][data-family] .note-card.canvas-mode.tint-teal { background: var(--note-paper-teal); }
-html[data-theme][data-family] .note-card.canvas-mode:not(.tint-amber):not(.tint-coral):not(.tint-blue):not(.tint-teal) {
+html[data-theme][data-family] .note-card.canvas-mode:not(.palette-tint) {
   background: var(--note-paper-default-canvas);
+}
+.palette-tint, .tint-palette {
+  --note-tint-accent: oklch(from var(--note-palette-accent) l calc(c * var(--note-tint-saturation)) h);
+  --note-paper-palette: color-mix(in srgb, var(--note-tint-accent) var(--note-tint-strength), var(--surface-card-solid));
+}
+html[data-theme][data-family] .note-card.palette-tint,
+html[data-theme][data-family] .note-card.canvas-mode.palette-tint {
+  background: var(--note-paper-palette);
 }
 /* 画布便签去掉 ::after 的 1px 顶部 inset 高光：Glass 主题的 --card-shadow（--note-shadow）
    本身已含 inset 0 1px 0 顶部高光，加上真实 border 后顶部同一条边最多叠三层 1px 线，
@@ -116,10 +116,8 @@ html[data-theme][data-family] .cb-save {
 }
 html[data-theme][data-family] .cb-save:hover:not(:disabled) { background: var(--action-primary-bg-hover); }
 
-/* The inline toolbar is transparent by design; only the Teleported canvas toolbar owns a floating
-   surface. Its legacy light paint stays in NoteEditor.vue unchanged. Dark mode alone remaps that
-   surface to the existing Mind picker/popup contract, so there is one dark owner and no light regression. */
-html[data-theme='dark'][data-family] .ne-toolbar.ne-toolbar-floating {
+/* 画布便签和表格的浮动工具栏在暗色模式下统一使用笔记选择器材质。 */
+html[data-theme='dark'][data-family] .ne-toolbar:is(.ne-toolbar-floating, .ne-table-actions) {
   color: var(--content-primary);
   background: var(--mind-picker-bg);
   border-color: var(--mind-picker-border);
@@ -160,8 +158,15 @@ html[data-theme][data-family] .mind-cal-picker .dp-icon { color: var(--mind-cale
 html[data-theme][data-family] .mind-tab.on { color: var(--selection-fg); }
 
 /* Canvas toolbar/drawer controls use shared control surfaces. */
+:is(.canvas-toolbar button, .cd-toggle) {
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard),
+              color var(--motion-hover-control) var(--motion-ease-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.canvas-toolbar button, .cd-toggle) { transition: none; }
+}
+
 html[data-theme][data-family] .canvas-toolbar button:hover,
-html[data-theme][data-family] .np-head button:hover,
 html[data-theme][data-family] .cd-toggle:hover { background: var(--action-soft); }
 html[data-theme][data-family] .canvas-toolbar button.active,
 html[data-theme][data-family] .cd-toggle.active { background: var(--selection-bg); }

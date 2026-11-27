@@ -1,3 +1,4 @@
+import type { SelectionDraft } from '@/components/common/selection/selectionDraft'
 import type { ChatReference } from '@/components/common/gugu-chat/chatTypes'
 import type { DesktopReply } from '@gugu/core/desktop'
 
@@ -21,14 +22,14 @@ const desktop = window as Window & {
     panelEntered: () => void
     panelClosing: () => void
     panelClose: () => void
-    dropReferences: (references: readonly ChatReference[]) => void
-    onDroppedReferences: (listener: (references: ChatReference[]) => void) => () => void
+    dropReferences: (references: readonly ChatReference[], selection?: Omit<SelectionDraft, 'reference'>) => void
+    onDroppedReferences: (listener: (references: ChatReference[], selection?: Omit<SelectionDraft, 'reference'>) => void) => () => void
     onDroppedReference: (listener: (reply: DroppedReferenceReply) => void) => () => void
     onCloseChat: (listener: (animated: boolean) => void) => () => void
     setChatVisible: (visible: boolean) => void
     attach: () => Promise<boolean>
-    openMainReference: (type: ChatReference['type'], id: ChatReference['id']) => Promise<DesktopReply<null>>
-    onOpenMainReference: (listener: (type: ChatReference['type'], id: ChatReference['id']) => void) => () => void
+    openMainReference: (type: ChatReference['type'] | 'mail' | 'mail-draft', id: ChatReference['id']) => Promise<DesktopReply<null>>
+    onOpenMainReference: (listener: (type: ChatReference['type'] | 'mail' | 'mail-draft', id: ChatReference['id']) => void) => () => void
     onOpenChat: (listener: () => void) => () => void
     dragDockedBall: (action: Gesture, x: number, y: number) => void
     onBallDetached: (listener: (detached: boolean) => void) => () => void

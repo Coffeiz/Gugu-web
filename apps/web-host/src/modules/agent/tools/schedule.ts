@@ -1,8 +1,8 @@
-import type { TaskFilesystemRevokeEffects } from '@gugu/core/scheduled-task-filesystem-revoke'
+import type { TaskFilesystemRevokeEffects } from '@gugu/core/workspaces/task-filesystem-revoke'
 import type { SqlDataRuntime } from '@gugu/core/data'
 import { createScheduledTaskWriteTools } from '@gugu/core/tools'
-import { normalizeScheduledTaskChannels, normalizeScheduledTaskTools, ScheduledTaskReferenceError } from '@gugu/core/scheduled-task-write'
-import { parseScheduledTaskDeliveryTarget } from '@gugu/core/scheduled-task-run-now-read'
+import { normalizeScheduledTaskChannels, normalizeScheduledTaskTools, ScheduledTaskReferenceError } from '@gugu/scheduler/tasks'
+import { parseScheduledTaskDeliveryTarget } from '@gugu/core/tasks/execution-read'
 import { createBorrowedPostgresTaskWrites, type TaskWriteOptions } from '../../scheduled-tasks/store.js'
 import type { createWebAgentConfirmationAuthorization } from './confirm.js'
 

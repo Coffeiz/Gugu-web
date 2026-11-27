@@ -18,14 +18,19 @@ function volatile(value: unknown): boolean {
 }
 
 /** Anthropic历史只在稳定prefix放锚点，不改变原wire的native块或边界。 */
-export function prepareAnthropicCache(history: readonly JsonObject[], policy: ProviderPolicy, config: ProviderConfig, digest: (value: unknown) => string, stableCount: number, previous?: unknown) {
+export function prepareAnthropicCache(history: readonly JsonObject[], policy: ProviderPolicy, config: ProviderConfig, digest: (value: unknown) => string, stableCount: number, previous?: unknown, scopeDigest?: string, newRun = false) {
   const messages = strip(clone(history)) as JsonObject[]
   const strategy = policy.singleHistoryCacheAnchor(config) ? 'single' : 'multi'
   const old = record(previous), limit = Math.max(0, Math.min(stableCount, messages.length))
   const firstVolatile = messages.slice(0, limit).findIndex(volatile), stable = firstVolatile < 0 ? limit : firstVolatile
   const hashes = messages.slice(0, stable).map(item => digest(item))
   const compatible = old.provider === policy.name && old.api_format === 'anthropic' && old.model === config.model && old.strategy === strategy
-  let baseline = compatible ? hashes.indexOf(String(old.baseline_digest ?? '')) : -1
+  // 链式摘要绑定顺序和整个前缀，同时只遍历一次历史。
+  const prefixDigests: string[] = []
+  for (const hash of hashes) prefixDigests.push(digest([prefixDigests.at(-1) ?? '', hash]))
+  let baseline = -1
+  if (compatible) baseline = typeof old.baseline_prefix_digest === 'string'
+    ? prefixDigests.indexOf(old.baseline_prefix_digest) : hashes.indexOf(String(old.baseline_digest ?? ''))
   if (baseline < 0) {
     baseline = stable - 1
     for (let index = stable - 2; index >= 0; index--) {
@@ -34,7 +39,10 @@ export function prepareAnthropicCache(history: readonly JsonObject[], policy: Pr
       baseline = index; break
     }
   }
-  if (policy.capabilities(config).cache_mode === 'active') for (const index of new Set(policy.singleHistoryCacheAnchor(config) ? [stable - 1] : [baseline, stable - 1])) {
+  const carriedDigest = compatible ? newRun ? old.latest_prefix_digest : old.carried_prefix_digest : undefined
+  const carried = typeof carriedDigest === 'string' ? prefixDigests.indexOf(carriedDigest) : -1
+  const anchors = strategy === 'single' ? [stable - 1] : [baseline, carried, stable - 1]
+  if (policy.capabilities(config).cache_mode === 'active') for (const index of new Set(anchors)) {
     const row = messages[index]
     if (!row || index >= stable) continue
     const content = typeof row.content === 'string' ? [{ type: 'text', text: row.content }] : clone(row.content)
@@ -43,7 +51,11 @@ export function prepareAnthropicCache(history: readonly JsonObject[], policy: Pr
     if (last && typeof last === 'object' && !Array.isArray(last)) content[content.length - 1] = { ...last, cache_control: { type: 'ephemeral' } }
     row.content = content
   }
-  return { messages, anchor: { provider: policy.name, api_format: 'anthropic', model: config.model, strategy, baseline_digest: hashes[baseline] ?? digest([]) } }
+  return { messages, anchor: { provider: policy.name, api_format: 'anthropic', model: config.model, strategy, baseline_digest: hashes[baseline] ?? digest([]),
+    ...(scopeDigest ? { scope_digest: scopeDigest } : {}),
+    ...(prefixDigests[baseline] ? { baseline_prefix_digest: prefixDigests[baseline] } : {}),
+    ...(prefixDigests[stable - 1] ? { latest_prefix_digest: prefixDigests[stable - 1] } : {}),
+    ...(carried >= 0 ? { carried_prefix_digest: prefixDigests[carried] } : {}) } }
 }
 
 /** 同prefix只协调顺序，不复用模型答案；跨进程租约由共享runtime实现注入。 */

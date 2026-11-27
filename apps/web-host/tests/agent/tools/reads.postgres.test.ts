@@ -3,7 +3,7 @@ import { scheduledTaskMode } from '@gugu/database/postgres/migrations/0022_sched
 import { createNoteLifecyclePort } from '@gugu/core/tools'
 import { createCanvasCreationPort, createCanvasEditPort } from '@gugu/core/tools'
 import { createAgentPlaceableSearch } from '@gugu/core/mind'
-import { createBuiltinSkillDefinitions, createSkillMetadataReader } from '@gugu/core/skills'
+import { createBuiltinSkillDefinitions, createBuiltinSkillMetadataReader, createUserSkillBundle, withFileSkillMetadata } from '@gugu/core/skills'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import test from 'node:test'
@@ -422,18 +422,18 @@ test('画布候选/创建和技能目录经真实Host工具续轮及PG共享服�
  const pool=new Pool({connectionString:databaseUrl,options:'-c search_path='+schema,max:2})
  const core=await createPostgresRuntime({url:databaseUrl!,schema,maxConnections:3})
  const owner=randomUUID(),other=randomUUID(),names=['canvas_create','canvas_search_placeable','list_skills'];let allowed=true,publications=0
+ const skillRoot=await mkdtemp(join(tmpdir(),'gugu-agent-file-skills-'))
  try{
   await prepareAgentIndexJobs(pool,owner)
   const ddl=tablesSql('postgres')
   for(const table of [ddl.projects,ddl.receipts,ddl.undo,ddl.mindNodes,ddl.mindMaps,ddl.mindItems])await pool.query(table)
   await pool.query('CREATE TABLE files(id integer PRIMARY KEY,user_id uuid,display_name text,ext text,stage_name text,updated_at timestamptz,deleted_at timestamptz)')
   await pool.query('CREATE TABLE calendar_events(id integer PRIMARY KEY,user_id uuid,title text,description text,contact_name text,created_at timestamptz,deleted_at timestamptz)')
-  await pool.query('CREATE TABLE user_skills(owner_id uuid,skill_id text,name text,description_short text,category text,related_tools json,managed_by text,enabled boolean,source text)')
   await pool.query("INSERT INTO files VALUES(1,$1,'发布资料','md','准备',now(),NULL),(2,$2,'发布隐私','md','准备',now(),NULL)",[owner,other])
   await pool.query("INSERT INTO calendar_events VALUES(1,$1,'发布活动','发布说明','小北',now(),NULL)",[owner])
-  await pool.query("INSERT INTO user_skills VALUES($1,'U1','停用简报','摘要','personal','[]',NULL,false,'user'),($2,'U2','他人技能','隐私','personal','[]','user',true,'user')",[owner,other])
+  await createUserSkillBundle(skillRoot,owner,'disabled-brief','---\nname: 停用简报\ndescription: 摘要\nmetadata:\n  gugu:\n    enabled: false\n---\n不应返回正文')
   const defs=await createBuiltinSkillDefinitions([{name:'synthetic.md',read:async()=> '---\nname: 内置简报\ndescription: 摘要\nrelated_tools: canvas_create\n---\n不应返回正文'}],new AbortController().signal)
-  const options={core,canvasCreation:createCanvasCreationPort(core,async()=>{publications++}),canvasPlaceableSearch:createAgentPlaceableSearch(core.db,'postgres',async candidate=>candidate===owner?[{id:'path-safe',label:'发布资料'}]:[]),skillMetadata:createSkillMetadataReader(core.db,'postgres',defs),
+  const options={core,canvasCreation:createCanvasCreationPort(core,async()=>{publications++}),canvasPlaceableSearch:createAgentPlaceableSearch(core.db,'postgres',async candidate=>candidate===owner?[{id:'path-safe',label:'发布资料'}]:[]),skillMetadata:withFileSkillMetadata({dataRoot:skillRoot,list:createBuiltinSkillMetadataReader(defs),mapPath:()=>undefined}),
     authorize:async(identity:{ownerId:string},name:string)=>allowed&&identity.ownerId===owner&&names.includes(name)}
   const registry=createAgentToolRegistry(options)
   const calls=[{id:'new',name:'canvas_create',input:{title:'发布画布'}},{id:'placeable',name:'canvas_search_placeable',input:{query:'发布',limit:1}},{id:'skills',name:'list_skills',input:{}}]
@@ -442,7 +442,7 @@ test('画布候选/创建和技能目录经真实Host工具续轮及PG共享服�
   const candidates=result.wireResults.get('placeable') as {count:number;truncated:boolean;matches:Array<{ref_type:string;ref_id:number|string}>}
   assert.equal(candidates.count,2);assert.equal(candidates.truncated,true);assert.equal(candidates.matches[0]!.ref_type,'file');assert.equal(candidates.matches[0]!.ref_id,'path-safe')
   const skills=result.wireResults.get('skills') as {count:number;skills:Array<{id:string;enabled:boolean}>}
-  assert.equal(skills.count,2);assert.equal(skills.skills.find(row=>row.id==='U1')!.enabled,false)
+  assert.equal(skills.count,2);assert.equal(skills.skills.find(row=>row.id==='disabled-brief')!.enabled,false)
   assert.equal(JSON.stringify(skills).includes('不应返回正文'),false)
   assert.equal(publications,1)
   const rebuilt=createAgentToolRegistry(options)
@@ -455,7 +455,7 @@ test('画布候选/创建和技能目录经真实Host工具续轮及PG共享服�
   allowed=false;assert.deepEqual(await rebuilt.capabilities(result.identity),[])
   const absent=createAgentToolRegistry({core,authorize:async()=>true})
   assert.equal((await absent.capabilities(result.identity)).some(row=>names.includes(row.name)),false)
- }finally{await core.close();await pool.end();await admin.query('DROP SCHEMA "'+schema+'" CASCADE');await admin.end()}
+ }finally{await rm(skillRoot,{recursive:true,force:true});await core.close();await pool.end();await admin.query('DROP SCHEMA "'+schema+'" CASCADE');await admin.end()}
 })
 
 test('画布三种编辑经真实Host续轮与PG：布局、正文和移除视图分离并可恢复收据', {skip:!databaseUrl&&'需要隔离PG',timeout:30000},async()=>{

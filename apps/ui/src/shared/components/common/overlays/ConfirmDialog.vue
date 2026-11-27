@@ -16,7 +16,7 @@
           <p>{{ active.message }}</p>
         </div>
       </div>
-      <div class="confirm-dialog-actions">
+      <div class="confirm-dialog-actions app-card-actions">
         <button type="button" class="confirm-dialog-cancel" @click="settle(false)">{{ active.cancelText }}</button>
         <button type="button" class="confirm-dialog-confirm" @click="settle(true)">{{ active.confirmText }}</button>
       </div>
@@ -38,7 +38,7 @@ const { active, settle } = useConfirmDialog()
   display: flex;
   flex-direction: column;
   gap: var(--confirm-dialog-gap);
-  padding: var(--confirm-dialog-padding);
+  --card-actions-inset: var(--confirm-dialog-padding); padding: var(--confirm-dialog-padding) var(--card-actions-inset) 0;
   color: var(--confirm-dialog-fg);
 }
 .confirm-dialog-head { display: flex; gap: var(--confirm-dialog-gap); align-items: flex-start; }

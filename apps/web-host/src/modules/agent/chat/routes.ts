@@ -1,3 +1,4 @@
+import { selectionSnapshotSchema } from '@gugu/core/agent'
 import { Readable } from 'node:stream'
 import { encodeAgentChatSse } from '@gugu/core/agent/chat-sse'
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
@@ -15,7 +16,9 @@ const chatBody = z.object({
   pending_queue_item_key: z.number().int().positive().safe().nullish(),
   pending_queue_claim_token: z.string().max(128).nullish(),
   attachments: z.array(z.string()).nullish(),
-  references: z.array(z.record(z.string(), z.unknown())).nullish(),
+  references: z.array(z.record(z.string(), z.unknown()).refine(ref => ref.selection === undefined
+    || ((ref.type === 'file' || ref.type === 'canvas_note') && selectionSnapshotSchema.safeParse(ref.selection).success),
+  '选区引用无效')).max(50).nullish(),
   greeting: z.string().nullish(),
   interaction_prompt_id: z.number().int().safe().nullish(),
   interaction_token: z.string().nullish(),

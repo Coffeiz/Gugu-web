@@ -12,8 +12,8 @@ import { createAgentCalendarReader } from '../../../src/calendar/application/eve
 import { createKyselyCalendarAgentReadPort } from '../../../src/calendar/read-store.js'
 import { createAgentWorkspaceQueries } from '../../../src/workspaces/workspace-list.js'
 import { createKyselyAgentWorkspaceReader } from '../../../src/workspaces/workspace-list-store.js'
-import { createListEventsTool } from '../../../src/agent/tools/calendar.js'
-import { createWorkspaceReadTools } from '../../../src/agent/tools/workspaces.js'
+import { createListEventsTool } from '../../../src/agent/tools/calendar/index.js'
+import { createWorkspaceReadTools } from '../../../src/agent/tools/workspaces/index.js'
 import { createToolRegistry } from '../../../src/agent/tools/registry.js'
 import { collect, fixture } from '../run/fixtures.js'
 

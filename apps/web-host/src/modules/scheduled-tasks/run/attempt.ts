@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
 import { canonicalToolsUsed, type CanonicalRunContext, type RunIdentity } from '@gugu/core/agent'
 import { createScheduledTaskAgentAttempt, createScheduledTaskHarness,
-  type ScheduledTaskExecutionPorts } from '@gugu/core/scheduled-task-run-now'
+  type ScheduledTaskExecutionPorts } from '@gugu/core/agent/scenes/task'
 import type { createConfiguredWebAgentProviderBinding } from '../../agent/llm/configured.js'
 import { withPostgresTransaction } from '../../../adapters/database/postgres-transaction.js'
 import { recordAgentUsage } from '../../agent/run/usage.js'

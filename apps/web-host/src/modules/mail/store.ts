@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { mailStoredAccount } from '@gugu/core/mail/contracts'
-import type { MailStore } from '@gugu/core/mail/service'
+import { mailStoredAccount, summarizeMailAccount } from '@gugu/email/contracts'
+import type { MailStore } from '@gugu/email/service'
 import { createConfiguredByokEnvelope, resolveByokKeyFile, type ByokEnvelope } from '../byok/crypto.js'
 
 export function createWebMailStore(env: NodeJS.ProcessEnv): MailStore {
@@ -32,8 +32,7 @@ export function createWebMailStore(env: NodeJS.ProcessEnv): MailStore {
         .map(entry => get(owner, entry.slice(0, -5))))
       return accounts.flatMap(account => {
         if (!account) return []
-        const { password: _password, ...summary } = account
-        return [summary]
+        return [summarizeMailAccount(account)]
       })
     },
     async put(owner, account) {
@@ -59,6 +58,37 @@ export function createWebMailStore(env: NodeJS.ProcessEnv): MailStore {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
         throw error
       }
+    },
+  }
+}
+
+/** 每个 owner 的正文缓存独立加密存储。 */
+export function createWebMailCacheStore(env: NodeJS.ProcessEnv) {
+  const root = join(dirname(resolveByokKeyFile(env)), 'mail-read-cache')
+  const envelope = createConfiguredByokEnvelope(env)
+  const pathFor = (owner: string) => join(root, createHash('sha256').update(owner).digest('hex') + '.json')
+  return {
+    async read(owner: string) {
+      try {
+        const encrypted = JSON.parse(await readFile(pathFor(owner), 'utf8')) as ByokEnvelope
+        const payload = JSON.parse(await envelope.decrypt(encrypted))
+        if (payload.owner !== owner || !Array.isArray(payload.entries)) throw new Error('邮件缓存归属或格式无效')
+        return payload.entries as import('@gugu/email/read-cache').MailCacheEntry[]
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      }
+    },
+    async write(owner: string, entries: import('@gugu/email/read-cache').MailCacheEntry[]) {
+      const target = pathFor(owner)
+      const temporary = target + '.' + randomUUID()
+      const encrypted = await envelope.encrypt(JSON.stringify({ owner, entries }))
+      await mkdir(root, { recursive: true, mode: 0o700 })
+      try {
+        const file = await open(temporary, 'wx', 0o600)
+        try { await file.writeFile(JSON.stringify(encrypted)) } finally { await file.close() }
+        await rename(temporary, target)
+      } finally { await rm(temporary, { force: true }) }
     },
   }
 }

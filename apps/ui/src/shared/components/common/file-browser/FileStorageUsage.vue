@@ -14,6 +14,6 @@ defineProps({ used: { type: Number, default: 0 }, loaded: Boolean })
 
 <style scoped>
 /* 这里只保留存储进度条自身的结构；toolbar 文字颜色/字号/高度由统一文件工具栏契约负责。 */
-.storage-pill { display: flex; align-items: center; gap: 7px; padding: 0 4px; flex-shrink: 0; }
+.storage-pill { display: flex; align-items: center; gap: var(--space-sm); padding: 0 var(--space-xs); flex-shrink: 0; }
 .storage-text { white-space: nowrap; }
 </style>

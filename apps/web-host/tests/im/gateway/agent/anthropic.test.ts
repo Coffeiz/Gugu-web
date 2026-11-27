@@ -19,7 +19,7 @@ function stream(blocks:Record<string,unknown>[],tool:boolean){
  return response(events.map(value=>`data: ${JSON.stringify(value)}\n\n`).join(''))
 }
 
-test('正式Anthropic私有续接：真实工具轮/成功跨进程与跨Run，off失效旧成功但当前工具仍可完成且无签名外泄',{
+test('正式Anthropic私有续接：真实工具轮/成功跨进程与跨Run，旧 off 预设仍自动续接且无签名外泄',{
  skip:!(databaseUrl&&redisUrl&&python)&&'需专用隔离PG/Redis与离线ORM解释器；仅平台/Provider网络为替身',timeout:180000,
 },async()=>{
  const f=await createImProductionFixture({databaseUrl,python:python!}),redis=createRedisStreamCommands(redisUrl!)
@@ -28,7 +28,7 @@ test('正式Anthropic私有续接：真实工具轮/成功跨进程与跨Run，o
  const delivered:string[]=[],diagnostics:string[]=[],privateMarker='synthetic-private-anthropic-'
  try{
   const document=JSON.parse(await readFile(f.configPath,'utf8'))
-  document.ai={...document.ai,api_format:'anthropic',provider:'anthropic',reasoning_persistence:'continuation',thinking:true}
+  document.ai={...document.ai,api_format:'anthropic',provider:'anthropic',reasoning_persistence:'off',thinking:true}
   await writeFile(f.configPath,JSON.stringify(document))
   const provider:ProviderTransport={async request(request){
    const body=request.body as Record<string,unknown>
@@ -37,13 +37,13 @@ test('正式Anthropic私有续接：真实工具轮/成功跨进程与跨Run，o
    mainCalls++
    assert.ok((body.tools as Array<{name:string}>).some(tool=>tool.name==='get_current_time'))
    const wire=JSON.stringify(body.messages)
-   if(mainCalls===1||mainCalls===4)assert.equal(wire.includes(privateMarker),false)
+   if(mainCalls===1)assert.equal(wire.includes(privateMarker),false)
    if(mainCalls===2){assert.match(wire,/synthetic-private-anthropic-tool/);assert.equal((wire.match(/"type":"tool_use"/g)??[]).length,1);assert.match(wire,/"type":"tool_result"/)}
    if(mainCalls===3){assert.match(wire,/synthetic-private-anthropic-tool/);assert.match(wire,/synthetic-private-anthropic-tail-2/);assert.equal((wire.match(/"type":"tool_use"/g)??[]).length,1)}
-   if(mainCalls===5){assert.match(wire,/synthetic-private-anthropic-off/);assert.equal(wire.includes(`${privateMarker}tail-3`),false)}
-   assert.ok(mainCalls<=5,'不得因私有状态存储失败重发模型')
-   if(mainCalls===1||mainCalls===4)return stream([{type:'text',text:'合成工具前说明'},
-    {type:'thinking',thinking:'合成私有思考',signature:`${privateMarker}${mainCalls===1?'tool':'off'}`},
+   if(mainCalls===4){assert.match(wire,/synthetic-private-anthropic-tool/);assert.match(wire,/synthetic-private-anthropic-tail-3/)}
+   assert.ok(mainCalls<=4,'不得因私有状态存储失败重发模型')
+   if(mainCalls===1)return stream([{type:'text',text:'合成工具前说明'},
+    {type:'thinking',thinking:'合成私有思考',signature:`${privateMarker}tool`},
     {type:'tool_use',id:`synthetic-clock-${mainCalls}`,name:'get_current_time',input:{}}],true)
    return stream([{type:'redacted_thinking',data:`${privateMarker}redacted-${mainCalls}`},
     {type:'thinking',thinking:'合成最终推理',signature:`${privateMarker}tail-${mainCalls}`},{type:'text',text:`合成公开答复${phase}`}],false)
@@ -77,11 +77,11 @@ test('正式Anthropic私有续接：真实工具轮/成功跨进程与跨Run，o
   await runtime!.stop();phase=2;await start();await complete(2)
   assert.equal(mainCalls,3)
   assert.equal((await f.pool.query('SELECT version FROM provider_reasoning_states')).rows[0].version,2)
-  await runtime!.stop();document.ai.reasoning_persistence='off';await writeFile(f.configPath,JSON.stringify(document));phase=3
+  await runtime!.stop();phase=3
   await start();await complete(3)
-  assert.equal(mainCalls,5)
+  assert.equal(mainCalls,4)
   const successful=(await f.pool.query('SELECT * FROM provider_reasoning_states')).rows
-  assert.equal(successful[0].status,'invalidated');assert.equal(successful[0].version,3);assert.equal(successful[0].encrypted_payload,'')
+  assert.equal(successful[0].status,'active');assert.equal(successful[0].version,3);assert.ok(successful[0].encrypted_payload)
   assert.equal((await f.pool.query('SELECT count(*)::int AS n FROM gugu_agent_active_reasoning')).rows[0].n,0)
   const codec=createAgentRunCodec(f.secretKey)
   for(const row of(await f.pool.query('SELECT * FROM agent_run_checkpoints')).rows){

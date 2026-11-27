@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { initializeSqlite, openSqliteRuntime } from '@gugu/core/data'
 import { stableJson, type ContextSourceSelection, type RunIdentity } from '@gugu/core/agent'
-import { createSkillMetadataReader, createSkillRegistry } from '@gugu/core/skills'
+import { createBuiltinSkillMetadataReader, createSkillRegistry } from '@gugu/core/skills'
 import { createWebAgentRagResources } from '../../../src/modules/agent/run/reconstruct.js'
 import { createWebOwnerAgentKnowledgeReadPort } from '../../../src/modules/agent/tools/knowledge/list.js'
 import { createLocalAgentKnowledgeWritePort } from '../../../src/modules/agent/tools/knowledge/write.js'
@@ -92,7 +92,7 @@ test('Web RAG resource factory 将 search_conversations 与 owner read_knowledge
               }),
               async origin(identity) { if (identity.ownerId !== ownerId) throw new Error('技能来源无效'); return { source: 'builtin' as const } },
             },
-            skillMetadata: createSkillMetadataReader(core!.db, 'sqlite', []),
+            skillMetadata: createBuiltinSkillMetadataReader([]),
             knowledge: knowledgePort,
             knowledgeWrites: createLocalAgentKnowledgeWritePort(core!, directory, store),
             calendarCreate: {} as never,

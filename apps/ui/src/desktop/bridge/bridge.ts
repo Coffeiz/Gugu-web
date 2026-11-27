@@ -69,14 +69,13 @@ function createPreviewBridge(): DesktopBridge | undefined {
   if (previewBridge) return previewBridge
   const defaults = {
     appearance: { theme: 'light', themeFamily: 'glass', palette: 'neutral' },
-    onboarding: { should_show: false, guide: { enabled: false, current_step: '', completed_steps: [], dismissed: false, completed_at: null, should_show: false }, seed: {} },
     sandboxStatus: { supported: false, methods: [], checkAvailable: false, reason: '浏览器预览模式' },
   }
   previewBridge = new Proxy({} as DesktopBridge, {
     get: (_target, key: string) => {
       const endpoint = previewEndpoints.get(key)
       if (endpoint) return (...args: unknown[]) => callPreviewCore(endpoint, key, args)
-      return async () => ({ ok: true, result: key in defaults ? defaults[key as keyof typeof defaults] : key === 'clients' ? [] : null })
+      return async () => ({ ok: true, result: key in defaults ? defaults[key as keyof typeof defaults] : null })
     },
   })
   return previewBridge
@@ -222,7 +221,7 @@ export const desktopData = {
       throw new DesktopBridgeError('unsupported', '请更新桌面应用后打开本机文件')
     return bridge.openDroppedFileReference(id)
   }),
-  search: (queries: string[]) => call(bridge => bridge.search(queries)),
+  search: (queries: string[], expansion?: number) => call(bridge => expansion === undefined ? bridge.search(queries) : bridge.search(queries, expansion)),
   readLogs: (kind: Parameters<DesktopBridge['readLogs']>[0]) => call(bridge => bridge.readLogs(kind)),
   appearance: () => call(bridge => bridge.appearance()),
   agentUsage: () => call(bridge => bridge.agentUsage()),
@@ -230,7 +229,7 @@ export const desktopData = {
   clearAgentMemory: () => call(bridge => bridge.clearAgentMemory()),
   clearAgentAttachments: () => call(bridge => bridge.clearAgentAttachments()),
   updateAppearance: (patch: Partial<DesktopAppearancePreferences>) => call(bridge => bridge.updateAppearance(patch)),
-  onboarding: () => call(bridge => bridge.onboarding()),
+  onboarding: (patch?: Record<string, unknown>, reopen?: true) => call(bridge => bridge.onboarding(patch, reopen)),
   projects: () => call(bridge => bridge.projects()),
   createProject: (name: string) => call(bridge => bridge.createProject(name)),
   renameProject: (id: number, version: number, name: string) => call(bridge => bridge.renameProject(id, version, name)),
@@ -258,8 +257,9 @@ export const desktopData = {
   }),
   restoreBoardProject: (id: number) => callProjectBoard(bridge => bridge.restoreBoardProject(id)),
   clients: () => call(bridge => bridge.clients()),
-  createClient: (name: string) => call(bridge => bridge.createClient(name)),
-  renameClient: (id: number, name: string) => call(bridge => bridge.renameClient(id, name)),
+  clientRelated: (id: number) => call(bridge => bridge.clientRelated(id)),
+  createClient: (fields: Parameters<DesktopBridge['createClient']>[0]) => call(bridge => bridge.createClient(fields)),
+  renameClient: (id: number, fields: Parameters<DesktopBridge['renameClient']>[1]) => call(bridge => bridge.renameClient(id, fields)),
   deleteClient: (id: number) => call(bridge => bridge.deleteClient(id)),
   calendar: () => call(bridge => bridge.calendar()),
   createCalendarEvent: (title: string, date: string, details?: { time?: string | null; endTime?: string | null; description?: string | null }) => call(bridge => bridge.createCalendarEvent(title, date, details)),
@@ -277,7 +277,7 @@ export const desktopData = {
   bringCanvasItemToFront: (canvasId: number, id: number, body: { x: number; y: number }) => call(bridge => bridge.bringCanvasItemToFront(canvasId, id, body)),
   createCanvasRelation: (body: { canvasId: number; srcNodeId: number; dstNodeId: number; allowParallel?: boolean }) => call(bridge => bridge.createCanvasRelation(body)),
   deleteCanvasRelation: (canvasId: number, id: number) => call(bridge => bridge.deleteCanvasRelation(canvasId, id)),
-  createRefNode: (refType: 'project' | 'file' | 'event', refId: number) => call(bridge => bridge.createRefNode(refType, refId)),
+  createRefNode: (refType: 'project' | 'file' | 'event' | 'client', refId: number) => call(bridge => bridge.createRefNode(refType, refId)),
   canvasNoteLocation: (nodeId: number) => call(bridge => bridge.canvasNoteLocation(nodeId)),
   createCanvasNote: (canvasId: number, body: { title?: string; contentMd?: string; color?: string | null; x?: number; y?: number; w?: number | null; h?: number | null; z?: number }) => call(bridge => bridge.createCanvasNote(canvasId, body)),
   updateCanvasNote: (id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }) => call(bridge => bridge.updateCanvasNote(id, fields)),

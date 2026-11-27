@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg'
 import type { CanonicalRunContext, RunIdentity } from '@gugu/core/agent'
-import type { ProviderRuntime } from '@gugu/core/providers'
+import { crossRunProviderReasoning, type ProviderRuntime } from '@gugu/core/providers'
 import { commitReasoningState, loadReasoningState, type ReasoningIdentity } from './state.js'
 
 /** Host 必须在首次授权选模与读取版本时固定此公开元数据，随 run 持久化；不可从请求正文取得。 */
@@ -59,10 +59,11 @@ export async function commitStagedAnthropicReasoning(client: PoolClient, provide
   return provider.withStagedContinuation(context, async staged => {
     validatePrivateContinuation(staged.value, binding)
     if (!Number.isSafeInteger(staged.round) || staged.round < 1 || !staged.areaDigest) throw new Error('私有推理状态格式无效')
-    const payload = anthropicPayload((staged.value as Record<string, unknown>).payload)
+    const state = crossRunProviderReasoning(staged.value)
+    if (state?.state_kind !== 'anthropic_thinking_blocks') throw new Error('私有推理状态格式无效')
     return commitReasoningState(client, binding.identity, { expectedVersion: binding.expectedVersion,
       runId: context.identity.runId, roundId: `round-${staged.round}`, sequence: staged.round,
-      stateKind: 'anthropic_thinking_blocks', value: { history_thinking_by_tool_id: payload.history_thinking_by_tool_id, tail_blocks: payload.tail_blocks ?? null } }, key, keyVersion)
+      stateKind: 'anthropic_thinking_blocks', value: state.payload }, key, keyVersion)
   })
 }
 
@@ -71,12 +72,13 @@ export async function stageLoadedAnthropicReasoning(client: PoolClient, provider
   keyForVersion: (version: number) => string): Promise<{ continuationRef: string | null; version: number; unavailableReason: string | null }> {
   if (binding.identity.apiFormat !== 'anthropic' || identity.ownerId !== binding.identity.ownerId
     || identity.sessionId !== binding.identity.sessionId || identity.runId !== binding.runId || !areaDigest) throw new Error('推理状态运行身份不匹配')
-  const loaded = await loadReasoningState(client, binding.identity, 'continuation', keyForVersion)
+  const loaded = await loadReasoningState(client, binding.identity, keyForVersion)
   if (loaded.value === null) return { continuationRef: null, version: loaded.version, unavailableReason: loaded.unavailableReason }
   if (loaded.version !== binding.expectedVersion || loaded.stateKind !== 'anthropic_thinking_blocks') throw new Error('私有推理状态版本或格式无效')
-  const payload = anthropicPayload(loaded.value)
-  const value = { state_kind: 'anthropic_thinking_blocks', model_identity: binding.modelIdentity, owner_id: identity.ownerId,
-    session_id: identity.sessionId, access_scope_hash: binding.accessScopeHash, provider: binding.identity.provider, payload }
+  const state = crossRunProviderReasoning({ state_kind: loaded.stateKind, provider: binding.identity.provider, payload: anthropicPayload(loaded.value) })
+  if (state?.state_kind !== 'anthropic_thinking_blocks') throw new Error('私有推理状态格式无效')
+  const value = { ...state, model_identity: binding.modelIdentity, owner_id: identity.ownerId,
+    session_id: identity.sessionId, access_scope_hash: binding.accessScopeHash }
   const continuationRef = await provider.stageContinuation({ identity, round: 0, modelIdentity: binding.modelIdentity,
     accessScopeHash: binding.accessScopeHash, areaDigest, value })
   return { continuationRef, version: loaded.version, unavailableReason: null }
@@ -105,7 +107,9 @@ export async function commitStagedResponsesReasoning(client: PoolClient, provide
       || value.state_kind !== 'openai_responses_reasoning' || !('reasoning_items' in value)
       || !Number.isSafeInteger(staged.round) || staged.round < 1 || !staged.areaDigest)
       throw new Error('Responses 推理状态格式无效')
-    const items = reasoningItems(value.reasoning_items)
+    const state = crossRunProviderReasoning(value)
+    if (state?.state_kind !== 'openai_responses_reasoning') throw new Error('私有推理状态格式无效')
+    const items = reasoningItems(state.reasoning_items)
     return commitReasoningState(client, binding.identity, { expectedVersion: binding.expectedVersion,
       runId: context.identity.runId, roundId: `round-${staged.round}`, sequence: staged.round,
       stateKind: 'openai_responses_reasoning', value: { reasoning_items: items } }, key, keyVersion)
@@ -118,7 +122,7 @@ export async function stageLoadedResponsesReasoning(client: PoolClient, provider
   keyForVersion: (version: number) => string): Promise<{ continuationRef: string | null; version: number; unavailableReason: string | null }> {
   validateBinding(binding, identity, binding.modelIdentity, binding.accessScopeHash)
   if (!areaDigest) throw new Error('推理状态上下文指纹无效')
-  const loaded = await loadReasoningState(client, binding.identity, 'continuation', keyForVersion)
+  const loaded = await loadReasoningState(client, binding.identity, keyForVersion)
   if (loaded.value === null) return { continuationRef: null, version: loaded.version, unavailableReason: loaded.unavailableReason }
   if (loaded.version !== binding.expectedVersion) throw new Error('推理状态版本已变化')
   if (loaded.stateKind !== 'openai_responses_reasoning' || !loaded.value || typeof loaded.value !== 'object'

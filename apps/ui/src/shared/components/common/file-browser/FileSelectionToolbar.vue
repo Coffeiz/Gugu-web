@@ -97,8 +97,8 @@ const canBatchDownload = useFileOpenAccess()?.canBatchDownload !== false
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 10px 16px;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-lg);
   border: 1px solid var(--popup-surface-border);
   border-radius: var(--radius-sm);
   background: var(--popup-surface-bg);
@@ -110,12 +110,12 @@ const canBatchDownload = useFileOpenAccess()?.canBatchDownload !== false
 }
 .file-selection-toolbar.compact {
   bottom: 11px;
-  padding: 8px 14px;
-  gap: 8px;
+  padding: var(--space-sm) var(--space-md);
+  gap: var(--space-xs);
   border-radius: var(--radius-xs);
 }
 .file-selection-count {
-  margin-right: 3px;
+  margin-right: var(--space-xs);
   white-space: nowrap;
   font-size: 12px;
   color: var(--content-secondary);
@@ -124,8 +124,8 @@ const canBatchDownload = useFileOpenAccess()?.canBatchDownload !== false
 .file-selection-cancel {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 11px;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-md);
   border: 1px solid var(--control-border);
   border-radius: var(--control-radius);
   background: var(--control-bg);
@@ -141,7 +141,7 @@ const canBatchDownload = useFileOpenAccess()?.canBatchDownload !== false
 }
 .compact .file-selection-btn,
 .compact .file-selection-cancel {
-  padding: 5px 10px;
+  padding: var(--space-xs) var(--space-sm);
   font-size: 11px;
 }
 .file-selection-btn:hover,
@@ -172,12 +172,12 @@ const canBatchDownload = useFileOpenAccess()?.canBatchDownload !== false
 .file-selection-divider {
   width: 1px;
   height: 18px;
-  margin: 0 2px;
+  margin: 0 var(--space-xs);
   flex-shrink: 0;
   background: var(--popup-divider);
 }
 .file-selection-cancel {
-  margin-left: 1px;
+  margin-left: var(--space-xs);
   color: var(--content-secondary);
 }
 .file-selection-spinner {

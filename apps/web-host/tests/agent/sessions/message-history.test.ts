@@ -181,10 +181,10 @@ test('消息历史按可见行分页、旧到新返回，并排除摘要与纯 c
       CREATE TABLE users (id uuid PRIMARY KEY);
       CREATE TABLE conversation_sessions (
         id serial PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id), source text,
-        title text, chat_type text, workspace_id integer, session_context jsonb,
+        title text, title_locked boolean, chat_type text, workspace_id integer, session_context jsonb,
         execution_state text, pending_message_count integer, bot_id text
       );
-      CREATE TABLE workspaces (id serial PRIMARY KEY, name text, user_id uuid NOT NULL);
+      CREATE TABLE workspaces (id serial PRIMARY KEY, name text, user_id uuid NOT NULL, enabled boolean NOT NULL DEFAULT true);
       CREATE TABLE conversation_pending_queues (user_id uuid, queue_id text, items jsonb);
       CREATE TABLE interaction_prompts (id integer PRIMARY KEY,user_id uuid,session_id integer,kind text,title text,body text,schema_json jsonb,status text,expires_at timestamptz,created_at timestamptz);
       CREATE TABLE interaction_actions (id integer PRIMARY KEY,prompt_id integer,token_hash text,option_id text,status text,expires_at timestamptz);

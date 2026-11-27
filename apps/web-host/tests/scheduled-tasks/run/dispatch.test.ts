@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { dispatchRepeatingFire } from '@gugu/core/scheduled-task-run-now'
+import { dispatchRepeatingFire } from '@gugu/scheduler'
 
 test('重复触发只执行一次，执行结果不明时保留收据避免重放', async () => {
   const states = new Map<string, string>()

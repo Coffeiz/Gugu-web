@@ -25,7 +25,7 @@
       <div class="nav-divider"></div>
       <div class="nav-section">
         <span class="nav-label">{{ t('navigation.collaboration') }}</span>
-        <NavItem to="/mail" icon="admin.mail">{{ t('navigation.mail') }}</NavItem>
+        <NavItem to="/mail" icon="admin.mail">{{ t('navigation.mail') }}<template v-if="unreadTotal" #badge>{{ unreadTotal }}</template></NavItem>
         <div class="nav-item soon-item"><Icon name="communication.customer" class="nav-icon" size="sm" /><span class="nav-label-text">{{ t('navigation.customers') }}</span><span class="soon-badge">{{ t('common.states.comingSoon') }}</span></div>
         <div class="nav-item soon-item"><Icon name="communication.team" class="nav-icon" size="sm" /><span class="nav-label-text">{{ t('navigation.team') }}</span><span class="soon-badge">{{ t('common.states.comingSoon') }}</span></div>
       </div>
@@ -81,7 +81,7 @@
             <span class="notif-title">{{ t('navigation.notifications') }}</span>
             <div class="notif-header-actions">
               <button v-if="pushAvailable" class="notif-mark-all" :disabled="pushBusy"
-                @click="changePush">{{ pushEnabled ? '关闭推送' : '开启推送' }}</button>
+                @click="changePush">{{ pushEnabled ? $t('pageUi.disablePush') : $t('pageUi.enablePush') }}</button>
               <button class="notif-mark-all" @click="markAllRead">{{ t('layout.markAllRead') }}</button>
               <button class="notif-mark-all notif-clear" :disabled="!notifications.length || clearingNotifications" @click="clearNotifications">{{ t('layout.clearNotifications') }}</button>
             </div>
@@ -101,6 +101,7 @@
 </template>
 
 <script setup lang="ts">
+import { useMailInboxStatus } from '@/views/Mail/useMailInboxStatus'
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { createPressOutsideGuard } from '@/composables/shared/pressOutsideClose'
 import MarkdownView from '@/components/common/content/MarkdownView.vue'
@@ -137,6 +138,7 @@ const authStore = useAuthStore()
 const { preference, resolved, setTheme } = useTheme()
 const liveStore = useLiveStore()
 const { t } = useI18n()
+const { unreadTotal } = useMailInboxStatus()
 
 const userLabel = computed(() => authStore.user?.displayName || authStore.user?.username || t('layout.unknownUser'))
 const userInitial = computed(() => (userLabel.value[0] ?? '?').toUpperCase())
@@ -298,21 +300,14 @@ onUnmounted(() => {
 })
 </script>
 
+<style scoped src="./app-sidebar.css"></style>
+
 <style scoped>
-.sidebar { width:var(--sidebar-width); height:100vh; flex-shrink:0; background:rgba(255,255,255,.42); backdrop-filter:var(--popup-blur); -webkit-backdrop-filter:var(--popup-blur); border-right:1px solid rgba(255,255,255,.62); box-shadow:inset -1px 0 0 rgba(255,255,255,.65); display:flex; flex-direction:column; padding:16px 14px; position:relative; z-index:40; }
-.nav { flex:1; display:flex; flex-direction:column; gap:2px; overflow-y:auto; margin-right:-14px; padding-right:14px; scrollbar-gutter:auto; }
-.nav-section { display:flex; flex-direction:column; gap:2px; }
-.nav-divider { height:1px; background:var(--divider-line); margin:6px 4px; flex-shrink:0; }
-.nav-label { font-size:10px; font-weight:600; color:#6e7289; text-transform:uppercase; letter-spacing:.08em; padding:0 10px; margin-bottom:4px; }
 .notif-anchor { position:relative; }
 .notif-btn { width:100%; display:flex; align-items:center; gap:9px; padding:10px 12px; border-radius:var(--radius-xs); font-size:14px; font-family:var(--font-sans); color:#767980; background:none; border:1px solid transparent; cursor:pointer; text-align:left; transition:all .15s; }
 .notif-btn:hover { background:color-mix(in srgb, var(--action-primary) 8%, transparent); color:var(--text-primary); }
 .nav-icon { flex-shrink:0; }.nav-label-text { flex:1; }.badge { background:color-mix(in srgb, var(--action-primary) 42%, transparent); color:white; font-size:10px; font-weight:700; padding:1px 6px; border-radius:20px; min-width:18px; text-align:center; }
-.user-card { position:relative; display:flex; align-items:center; gap:8px; padding:8px; border-radius:var(--radius-sm); background:rgba(255,255,255,.44); border:1px solid rgba(255,255,255,.72); box-shadow:inset 0 1px 0 rgba(255,255,255,.95); cursor:pointer; transition:background .15s; margin-top:auto; }
-.user-card:hover { background:rgba(255,255,255,.38); }
-.avatar { --sidebar-avatar-bg:var(--action-primary); width:32px; height:32px; border-radius:50%; background:var(--sidebar-avatar-bg); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:var(--content-on-accent); flex-shrink:0; overflow:hidden; box-shadow:0 2px 6px color-mix(in srgb, var(--sidebar-avatar-bg) 20%, transparent); }
-.avatar--fallback { --sidebar-avatar-bg:var(--avatar-fallback-bg); }
-.avatar-img { width:100%; height:100%; object-fit:cover; border-radius:50%; }.user-info { flex:1; min-width:0; overflow:hidden; }.user-name { font-size:13px; font-weight:600; line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.avatar-img { width:100%; height:100%; object-fit:cover; border-radius:50%; }
 .theme-mode-quick { flex-shrink:0; display:flex; gap:2px; padding:2px; border:1px solid var(--border-subtle); border-radius:var(--radius-xs); background:var(--surface-soft); }
 .theme-mode-quick button { width:22px; height:22px; display:grid; place-items:center; border:0; border-radius:var(--radius-compact); color:var(--content-tertiary); background:transparent; cursor:pointer; transition:color var(--motion-hover-control) var(--motion-ease-standard),background-color var(--motion-hover-control) var(--motion-ease-standard),box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .theme-mode-quick button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }

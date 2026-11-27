@@ -1,16 +1,16 @@
+import { createScheduledTaskRunNow } from '@gugu/scheduler/tasks'
 import { randomUUID } from 'node:crypto'
 import type { Kysely } from 'kysely'
 import { configureRagJieba } from '@gugu/core/agent/rag'
-import { createScheduledTaskExecution, createScheduledTaskGroupMemoryReader, createScheduledTaskGroupMemoryAuthorizer, createScheduledTaskGroupTools, createScheduledTaskRunNow,
-  type RecurringStopExecution, type ScheduledTaskExecutionPorts } from '@gugu/core/scheduled-task-run-now'
+import { createScheduledTaskExecution, createScheduledTaskGroupMemoryReader, createScheduledTaskGroupMemoryAuthorizer, createScheduledTaskGroupTools,
+  type RecurringStopExecution, type ScheduledTaskExecutionPorts } from '@gugu/core/agent/scenes/task'
 import { createKyselyScheduledTaskExecutionReader, createKyselyScheduledTaskGroupScopeReader,
-  createKyselyScheduledTaskRunNowReader, type ScheduledTaskExecutionPlan } from '@gugu/core/scheduled-task-run-now-read'
-import { createKyselyOnceTaskRepository } from '@gugu/core/scheduled-task-once-repository'
-import { ScheduledTaskRunner, type AssertScheduledTaskLease } from '@gugu/core/scheduled-task-runner'
-import type { TaskFilesystemRevokeEffects } from '@gugu/core/scheduled-task-filesystem-revoke'
+  createKyselyScheduledTaskRunNowReader, type ScheduledTaskExecutionPlan } from '@gugu/core/tasks/execution-read'
+import { createKyselyOnceTaskRepository } from '@gugu/core/tasks/schedule-storage'
+import { createScheduledTaskTimer, ScheduledTaskRunner, type AssertScheduledTaskLease } from '@gugu/scheduler'
+import type { TaskFilesystemRevokeEffects } from '@gugu/core/workspaces/task-filesystem-revoke'
 import { createScheduledTaskRedisLease, type ScheduledTaskRedisCommands } from './lease.js'
 import { createRepeatingTaskWorker } from '../schedule/repeat.js'
-import { createScheduledTaskTimer } from '../schedule/repeat.js'
 import { createLocalAgentMemoryRagStore } from '../../agent/rag/memory.js'
 import { getAgentRagJieba } from '../../agent/rag/jieba.js'
 

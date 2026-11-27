@@ -2,14 +2,7 @@
    Canvas background follows the active page surface so palette changes are visible behind the
    cards; note values keep their intentional paper colours separately. */
 :root {
-  /* Keep a light canvas while adding a restrained same-hue gradient from the active palette.
-     The gradient is composed only from semantic surfaces and the current action colour, so it
-     does not introduce a fixed grey-blue cast shared by every palette. */
-  --mind-canvas-bg: linear-gradient(
-    160deg,
-    color-mix(in srgb, var(--action-primary) 1%, var(--surface-base)) 0%,
-    color-mix(in srgb, var(--action-primary) 4%, var(--surface-base)) 100%
-  );
+  --mind-canvas-bg: color-mix(in srgb, var(--action-primary) 3%, var(--surface-base));
   --mind-canvas-dot: color-mix(in srgb, var(--action-primary) 35%, transparent);
   --mind-toolbar-bg: var(--glass-card-background);
   --mind-toolbar-border: var(--glass-card-border);
@@ -42,11 +35,9 @@
   --note-hover-overlay: var(--card-hover-overlay);
   --note-new-highlight: color-mix(in srgb,var(--action-primary) 20%,var(--note-surface));
 
-  --note-paper-amber: rgb(255,246,231);
-  --note-paper-coral: rgb(255,236,233);
-  --note-paper-blue: rgb(224,239,251);
-  --note-paper-teal: rgb(229,248,250);
   --note-paper-default-canvas: rgba(255,252,238,.97);
+  --note-tint-strength: 15%;
+  --note-tint-saturation: 1.45;
 
   --capture-bg: color-mix(in srgb,var(--surface-glass) 88%,transparent);
   --capture-bg-expanded: var(--surface-raised);
@@ -113,10 +104,6 @@ html[data-theme='dark'][data-family] {
   /* Dark notes stay chromatic but are mixed mostly into the dark solid card surface; this avoids
      the light-mode pastel RGB values becoming glowing slabs at night. */
   --note-surface: color-mix(in srgb,var(--surface-card-solid) 94%,transparent);
-  --note-paper-amber: color-mix(in srgb,var(--project-sand) 20%,var(--surface-card-solid));
-  --note-paper-coral: color-mix(in srgb,var(--project-coral) 18%,var(--surface-card-solid));
-  --note-paper-blue: color-mix(in srgb,var(--project-blue) 20%,var(--surface-card-solid));
-  --note-paper-teal: color-mix(in srgb,var(--status-info) 20%,var(--surface-card-solid));
   --note-paper-default-canvas: color-mix(in srgb,var(--project-sand) 10%,var(--surface-card-solid));
   --capture-bg: color-mix(in srgb,var(--surface-base) 88%,transparent);
   --mind-timeline-bg: color-mix(in srgb,var(--surface-glass) 82%,transparent);
