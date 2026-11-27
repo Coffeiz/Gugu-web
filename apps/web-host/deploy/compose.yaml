@@ -11,6 +11,8 @@ services:
       GUGU_WEBUI_PORT: 9595
       GUGU_LOG_FILE: /data/logs/gugu.log
       GUGU_CONFIG_OVERRIDE_FILE: /data/config.override.json
+      STORAGE__LOCAL_PATH: /data/users
+      CREDENTIALS_MASTER_KEY_FILE: /data/keys/.byok-master-key
     ports:
       - "${GUGU_WEBUI_PUBLISHED_PORT:-9595}:9595"
     volumes:

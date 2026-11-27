@@ -121,7 +121,7 @@ export async function resolvePinnedTarget(raw: string, options: { allowLocal?: b
   }
   throwIfCancelled(options.signal)
   if (!targets.length || targets.some(item => !isIP(item.address))) throw new ProviderError('input_rejected')
-  if (options.proxyResolved) {
+  if (options.proxyResolved && localResolution === 'advisory') {
     // 代理端才是权威解析方：本地结果可能是合成地址，也可能被污染成看起来像私网的地址，
     // 用「非公网」当拒绝依据会误杀真实公网域名；只在结果明确指向内网时拒绝。
     if (!options.allowLocal && targets.some(item => isPrivateAddress(item.address))) throw new ProviderError('input_rejected')

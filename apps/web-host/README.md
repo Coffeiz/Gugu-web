@@ -58,7 +58,12 @@ curl -fsS http://127.0.0.1:9595/health/ready
 
 `GUGU_WEBUI_PUBLISHED_PORT` 可改变宿主机端口，容器内服务固定监听 9595。数据库必须允许容器网络连接。 这份 Compose 模板运行 Web Host 应用，Shell 沙盒还取决于容器环境是否实际提供独立运行根、用户命名空间和 systemd 用户 scope。
 
+Compose 将业务文件写入 `/data/users`，将自动生成的 BYOK 主密钥写入 `/data/keys/.byok-master-key`。两者均位于同一个命名卷。容器升级或重建时保留该卷。已有部署应先将原文件与原密钥迁入新路径，并核对持久配置中的 `storage.local_path`，它优先于环境变量。使用环境变量直接提供主密钥的部署需继续保留原密钥配置。
+
+仅运行 Node 的部署可按 `.env.example` 启用 IM。迁移部署应先停止旧 Python Gateway 和 IM Worker，再设置 Node 归属和两项停机断言。重启后检查 IM 运行状态，并用测试账号确认同一条入站消息只产生一次处理。再次重建容器后检查文件仍可读取、已保存的模型凭据仍可解密。
+
 ## 本地运行
+
 
 仓库要求 Node 26.13.x 与 pnpm 10.15：
 

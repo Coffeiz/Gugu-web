@@ -146,20 +146,20 @@ export class NodeProviderTransport implements ProviderTransport {
     const report = (timing: ProviderConnectionTiming) => {
       try { input.onTiming?.(timing) } catch { /* 诊断不影响请求。 */ }
     }
-    // 先决定是否走代理：代理承担连接与域名解析，本地只保留尽力校验。
-    // 否则 Fake IP 模式（Clash/TUN）返回的保留网段会在校验阶段被误判为非法目标。
+    // 普通代理由代理端解析域名以兼容 Fake IP；权威解析由本端固定目标地址。
     const requestedUrl = new URL(input.url)
     const proxy = this.options.resolveProxy
       ? await this.options.resolveProxy(requestedUrl, signal)
       : proxyFor(requestedUrl, this.options.proxy)
     report({ proxied: !!proxy })
+    const proxyResolvesTarget = !!proxy && this.options.localResolution !== 'authoritative'
     const { url, target } = await resolvePinnedTarget(input.url, {
       resolve: this.options.resolve,
       allowLocal: this.options.allowLocal === true && input.allowLocal === true,
       signal,
       // 代理模式下本地解析只是尽力而为的私网提示，不占用连接级超时预算。
-      timeoutMs: proxy !== undefined ? Math.min(this.options.connectTimeoutMs ?? 10_000, 2_000) : this.options.connectTimeoutMs,
-      // 代理模式下目标域名交由代理端解析；字面地址与本地解析出的私网地址仍然拒绝。
+      timeoutMs: proxyResolvesTarget ? Math.min(this.options.connectTimeoutMs ?? 10_000, 2_000) : this.options.connectTimeoutMs,
+      // 代理模式默认由代理解析，显式权威模式仍校验并固定本端解析结果。
       proxyResolved: proxy !== undefined,
       localResolution: this.options.localResolution,
     })
@@ -183,7 +183,7 @@ export class NodeProviderTransport implements ProviderTransport {
     report({ poolWaitMs: performance.now() - poolStarted })
     try {
     const tunnelStarted = performance.now()
-    const tunnel = proxy ? await openProxyTunnel(proxy, target, url, signal, { resolve: this.options.resolveProxy ? undefined : this.options.resolve, timeoutMs: this.options.connectTimeoutMs, ca: this.options.ca, useHostname: true }) : null
+    const tunnel = proxy ? await openProxyTunnel(proxy, target, url, signal, { resolve: this.options.resolveProxy ? undefined : this.options.resolve, timeoutMs: this.options.connectTimeoutMs, ca: this.options.ca, useHostname: proxyResolvesTarget }) : null
     if (tunnel) report({ proxyTunnelMs: performance.now() - tunnelStarted })
     const proxyAgent = tunnel ? secure ? new HttpsAgent({ keepAlive: false }) : new HttpAgent({ keepAlive: false }) : null
     // 代理隧道按请求关闭；不把不同目标/身份的隧道放入同一个keepalive origin池。
@@ -198,7 +198,7 @@ export class NodeProviderTransport implements ProviderTransport {
         pinnedAddress: target.address,
         agent: proxyAgent ?? (secure ? this.#https : this.#http),
         // hostname、Host与TLS SNI仍取原域名，lookup只返回已经校验的固定地址。
-        // 代理模式下隧道已接管连接，地址解析交由代理端完成，这里不做固定。
+        // 代理模式由隧道决定连接目标，权威解析模式使用已校验的 IP。
         ...(proxy ? {} : {
           lookup: (_hostname: string, lookupOptions: import('node:dns').LookupOptions, callback: (err: NodeJS.ErrnoException | null, address: string | import('node:dns').LookupAddress[], family?: number) => void) =>
             lookupOptions.all ? callback(null, [{ address: target.address, family: target.family }]) : callback(null, target.address, target.family),

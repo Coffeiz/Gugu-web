@@ -408,15 +408,23 @@ describe('真实Node HTTP与分片、取消和响应体', () => {
     }
     const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: failing, proxy: { http: { url: proxyUrl } } })
     const authoritative = createNodeProviderTransport({ trustEnvironment: false, resolve: failing, localResolution: 'authoritative', proxy: { http: { url: proxyUrl } } })
+    const pinned = createNodeProviderTransport({ trustEnvironment: false, localResolution: 'authoritative',
+      resolve: async hostname => hostname === 'proxy.example'
+        ? [{ address: '127.0.0.1', family: 4 }]
+        : [{ address: '93.184.216.34', family: 4 }],
+      proxy: { http: { url: proxyUrl } },
+    })
     const direct = createNodeProviderTransport({ trustEnvironment: false, resolve: failing })
     try {
       await expect(requestJson(deps(transport), { url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).resolves.toEqual({ proxied: true })
       expect(path).toBe(`provider.example:${new URL(target.base).port}`)
       // 显式权威模式（服务端 DoH 之类的唯一判定来源）必须 fail-closed。
       await expect(authoritative.request({ url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'network', options: { transportHop: 'dns' } })
+      await expect(requestJson(deps(pinned), { url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).resolves.toEqual({ proxied: true })
+      expect(path).toBe(`93.184.216.34:${new URL(target.base).port}`)
       // 直连时本地解析是唯一来源，失败必须拒绝。
       await expect(direct.request({ url: 'http://provider.example/v1', method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'network', options: { transportHop: 'dns' } })
-    } finally { await transport.close(); await authoritative.close(); await direct.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
+    } finally { await transport.close(); await authoritative.close(); await pinned.close(); await direct.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
   })
   it('直连模式下假IP目标仍然拒绝，代理语义不放宽直连边界', async () => {
     const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '198.18.3.4', family: 4 }] })

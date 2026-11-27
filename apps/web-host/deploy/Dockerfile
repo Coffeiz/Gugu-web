@@ -54,7 +54,7 @@ COPY --from=build --chown=node:node /workspace/packages/fs/dist ./packages/fs/di
 COPY --from=build --chown=node:node /workspace/packages/log/ ./packages/log/
 COPY --from=build --chown=node:node /workspace/packages/loopscope/ ./packages/loopscope/
 COPY --from=build --chown=node:node /workspace/apps/ui/dist ./apps/ui/dist
-RUN mkdir -p /data && chown node:node /data
+RUN mkdir -p /data/users /data/keys && chown -R node:node /data && chmod 700 /data/keys
 
 USER node
 EXPOSE 9595
