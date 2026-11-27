@@ -1476,7 +1476,7 @@
     "layer": "L0",
     "owner": "loopscope/frontend",
     "productionEntry": "loopscope/frontend/src/utils/assistantRunMapping.ts",
-    "keyBehavior": "按最新优先的运行列表关联历史助手消息，并避免把窗口外旧消息误配给新运行",
+    "keyBehavior": "仅按明确 runId 关联运行，并确保无 Run 的命令回复不继承相邻运行",
     "ci": "frontend-test"
   },
   "frontend/tests/loopscope/guguMessageRunId.test.ts": {

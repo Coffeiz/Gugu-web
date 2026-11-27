@@ -14,12 +14,12 @@ describe('LoopScope 历史消息 Run 关联', () => {
     sessionStorage.clear()
   })
 
-  it('保留 API 普通消息的 runId，使同一 Run 的多条助手消息仍绑定同一运行', async () => {
+  it('保留 API 消息的 runId，同一 Run 可复用且无 Run 命令回复不误关联', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       messages: [
         { id: 101, role: 'assistant', content: '第一轮', runId: 'run-a', timelineOrder: 101000 },
         { id: 102, role: 'assistant', content: '第二轮', runId: 'run-a', timelineOrder: 102000 },
-        { id: 103, role: 'assistant', content: '下一条运行', runId: 'run-b', timelineOrder: 103000 },
+        { id: 103, role: 'assistant', content: '当前会话未绑定工作区。', runId: null, timelineOrder: 103000 },
       ],
       timelineEvents: [],
       toolEvents: [],
@@ -27,11 +27,11 @@ describe('LoopScope 历史消息 Run 关联', () => {
     }), { headers: { 'Content-Type': 'application/json' } })))
 
     const page = await loadMessagePage(42)
-    const runsNewestFirst = [{ id: 'run-b' }, { id: 'run-a' }]
+    const runsNewestFirst = [{ id: 'run-a' }]
 
-    expect(page.messages.map(message => message.runId)).toEqual(['run-a', 'run-a', 'run-b'])
-    expect(runForAssistantMessage(0, page.messages, runsNewestFirst, {})).toBe(runsNewestFirst[1])
-    expect(runForAssistantMessage(1, page.messages, runsNewestFirst, {})).toBe(runsNewestFirst[1])
-    expect(runForAssistantMessage(2, page.messages, runsNewestFirst, {})).toBe(runsNewestFirst[0])
+    expect(page.messages.map(message => message.runId)).toEqual(['run-a', 'run-a', null])
+    expect(runForAssistantMessage(0, page.messages, runsNewestFirst, {})).toBe(runsNewestFirst[0])
+    expect(runForAssistantMessage(1, page.messages, runsNewestFirst, {})).toBe(runsNewestFirst[0])
+    expect(runForAssistantMessage(2, page.messages, runsNewestFirst, {})).toBeUndefined()
   })
 })

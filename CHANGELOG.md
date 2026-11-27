@@ -20,7 +20,7 @@
 - Reduce memory use while loading QQ quote reference indexes.
 - Keep LoopScope conversation history visible across the unified IM source and legacy platform source names.
 - Fix Vite development loading for source paths and prebundle Arco Design.
-- Watch shared Mermaid renderer sources for Vite development updates and associate LoopScope historical assistant messages with the correctly ordered runs.
+- Watch shared Mermaid renderer sources for Vite development updates and associate LoopScope history with runs only when messages have an explicit run ID.
 
 #### Fixes
 
@@ -48,7 +48,7 @@
 - 降低 QQ 引用索引加载时的内存占用。
 - 兼容 LoopScope 统一后的 IM 来源和旧平台来源名称，保证历史记录继续可见。
 - 修复 Vite 开发环境的源码路径加载，并预构建 Arco Design 依赖。
-- 监听 Mermaid 共享源码变化以触发 Vite 热更新，并修正 LoopScope 历史助手消息与运行记录的关联顺序。
+- 监听 Mermaid 共享源码变化以触发 Vite 热更新，并且仅在 LoopScope 消息含明确 Run ID 时关联运行记录。
 
 #### 修复
 

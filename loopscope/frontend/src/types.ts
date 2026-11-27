@@ -23,7 +23,7 @@ export interface ChatMessage {
   canonicalId?: number
   timelineOrder?: number
   pending?: boolean
-  runId?: string
+  runId?: string | null
   debugEvents?: ChatDebugEvent[]
   toolName?: string
   toolLabel?: string
