@@ -94,13 +94,12 @@ const emit = defineEmits<{
 .nav-group { position: relative; display: grid; gap: 3px; padding: 0 0 9px; }
 .nav-group::after { content: ""; position: absolute; inset: auto 4px 0; height: 1px; background: var(--divider-line); mask-image: var(--sidebar-divider-mask); pointer-events: none; }
 .nav-group-label { padding: 7px 12px 3px; color: var(--text-tertiary, var(--text-secondary)); font-size: 10px; font-weight: 650; letter-spacing: .04em; }
-.nav-item { display: flex; align-items: center; gap: 13px; width: 100%; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px; color: var(--content-secondary, var(--text-secondary)); background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease; }
+.nav-item { display: flex; align-items: center; gap: var(--space-sm); width: 100%; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid transparent; border-radius: 10px; color: var(--content-secondary, var(--text-secondary)); background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease; }
 .nav-item :deep(svg) { width: 18px; height: 18px; flex: 0 0 18px; }
 .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-item:hover:not(.active) { color: var(--content-primary, var(--text-primary)); background: var(--sidebar-item-hover); }
 .nav-item.active { color: var(--sidebar-item-active-fg); background: var(--sidebar-item-active); border-color: var(--sidebar-item-active-border); box-shadow: var(--sidebar-item-selected-shadow); font-weight: 650; }
 .nav-item.soon-item {
-  gap: 5px;
   height: auto;
   min-height: 38px;
   padding-block: 4px;
