@@ -1,6 +1,6 @@
 const IMAGE_EXTS  = new Set(['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP'])
 const TEXT_EXTS   = new Set([
-  'TXT', 'MD', 'JSON', 'CSV', 'JS', 'MJS', 'CJS', 'JSX', 'TS', 'MTS', 'CTS', 'TSX', 'VUE', 'CSS', 'HTML', 'HTM', 'PY', 'YAML', 'YML', 'XML', 'SH',
+  'TXT', 'EXAMPLE', 'MD', 'JSON', 'CSV', 'JS', 'MJS', 'CJS', 'JSX', 'TS', 'MTS', 'CTS', 'TSX', 'VUE', 'CSS', 'HTML', 'HTM', 'PY', 'YAML', 'YML', 'XML', 'SH',
   'LRC', 'SRT', 'ASS', 'SSA', 'VTT', 'SUB', 'SBV', 'SMI', 'TTML', 'DFXP', 'SCC',
   'CUE', 'M3U', 'M3U8', 'PLS',
 ])
@@ -60,7 +60,7 @@ export function isFloatingPreviewable(ext?: string | null, mime?: string | null)
 }
 
 export function isPreviewable(ext?: string | null, mime?: string | null) {
-  return PREVIEWABLE.has((ext ?? '').toUpperCase()) || isTextMime(mime) || isTextExt(ext, mime)
+  return PREVIEWABLE.has((ext ?? '').toUpperCase()) || isFloatingPreviewable(ext, mime)
     || isTextFallbackCandidate(ext, mime)
 }
 
@@ -68,6 +68,7 @@ export function isPreviewable(ext?: string | null, mime?: string | null) {
 export function shouldOpenFileInSystem(preference: 'preview' | 'system' | undefined, ext?: string | null, mime?: string | null,
   options?: { audioPlayerAvailable: boolean }) {
   // 有迷你播放器的界面直接播放音乐；用户仍可从文件菜单显式使用系统应用。
-  if (options?.audioPlayerAvailable && isAudioExt(ext)) return false
-  return preference === 'system' || !isFloatingPreviewable(ext, mime)
+  if (isAudioExt(ext)) return !options?.audioPlayerAvailable
+  if (preference === 'system') return true
+  return !isFloatingPreviewable(ext, mime) && !isTextFallbackCandidate(ext, mime)
 }

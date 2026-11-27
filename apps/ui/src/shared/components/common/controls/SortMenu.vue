@@ -95,6 +95,7 @@ defineExpose({ closeMenu })
 .sort-dir-icon { transition: transform 0.2s; }
 .sort-dir-icon.desc { transform: rotate(180deg); }
 /* 排序弹窗经 ContextMenu(Teleport 到 body) 渲染，外观与右键菜单完全一致 */
-.sort-check { flex-shrink: 0; margin-left: auto; color: var(--color-primary); }
+.sort-menu-item { position: relative; justify-content: center; padding-inline: 24px; }
+.sort-check { position: absolute; right: 8px; flex-shrink: 0; color: var(--color-primary); }
 .sort-check.desc { transform: rotate(180deg); }
 </style>

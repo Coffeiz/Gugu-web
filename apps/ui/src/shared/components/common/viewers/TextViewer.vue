@@ -242,7 +242,7 @@ const LANG_LOADERS: Record<string, () => Promise<any>> = {
 const EDITABLE_EXTS = new Set([
   'md', 'txt', 'json', 'csv', 'yaml', 'yml', 'log', 'py', 'js', 'mjs', 'cjs', 'ts', 'mts', 'cts', 'tsx', 'jsx',
   'vue', 'html', 'htm', 'css', 'scss', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'sh',
-  'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'tex', 'lrc', 'srt', 'ass', 'ssa', 'vtt',
+  'sql', 'xml', 'toml', 'ini', 'conf', 'env', 'example', 'tex', 'lrc', 'srt', 'ass', 'ssa', 'vtt',
   'sub', 'sbv', 'smi', 'ttml', 'dfxp', 'scc', 'cue', 'm3u', 'm3u8', 'pls',
 ])
 // 新增的歌词/字幕与未知扩展名支持只读预览；后端正文保存接口尚未开放这些扩展名。
@@ -324,7 +324,7 @@ const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isSt
 // 不看这个——它们不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
 // 无扩展名文件（.gitignore/.env 等点文件）同属纯文本：没有 ext 也没有 MIME 可判，直接放行。
 const isTextDocument = computed(() =>
-  !(props.ext || '').trim() ||
+  !!pathFile.value?.identity || !(props.ext || '').trim() ||
   EDITABLE_EXTS.has((props.ext || '').toLowerCase()) || isTextMime(props.fileContext?.mimeType))
 const editable = computed(() => isTextDocument.value && canEditContent.value)
 const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))

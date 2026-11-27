@@ -66,7 +66,7 @@
       <ImageViewer v-if="isImg" v-show="!error" :blobUrl="blobUrl ?? undefined" :upscale="isVector" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" :refresh-src="!win.file.attach_id ? refreshVideoSource : undefined" />
       <OfficeViewer v-else-if="isOffice && (!isCsv || !csvTextMode) && (blobUrl || (isXlsx && typeof win.file.filePath === 'string'))" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext ?? ''" :file-path="typeof win.file.filePath === 'string' ? win.file.filePath : undefined" :file-version="win.file.version" @content-size="onOfficeContentSize" @csv-render-failed="onCsvRenderFailed" />
-      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="!!win.textFallback || !!win.file.workspaceFile?.identity || !!win.file.contentUrl" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.workspaceFile ? JSON.stringify(win.file.workspaceFile) : win.file.filePath ?? (win.file.attach_id == null ? undefined : String(win.file.attach_id))" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
+      <TextViewer  v-else-if="isText && (!isCsv || csvTextMode) && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :read-only="(!!win.textFallback && !win.file.workspaceFile?.identity) || !!win.file.contentUrl" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.workspaceFile ? JSON.stringify(win.file.workspaceFile) : win.file.filePath ?? (win.file.attach_id == null ? undefined : String(win.file.attach_id))" :fileContext="win.file" @content-saved="onTextContentSaved" @refresh="refreshHtmlPreview" />
       <div v-if="loading && !placeholderReady" class="fpw-status fpw-loading">
         <div class="fpw-spinner"></div>
         <span>{{ t('viewerUi.loading') }}</span>
@@ -1012,7 +1012,7 @@ onUnmounted(() => {
 
 .fpw-actions {
   display: flex;
-  gap: 0;
+  gap: 1px;
   flex-shrink: 0;
   margin-left: 4px;
 }

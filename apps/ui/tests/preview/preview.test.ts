@@ -23,6 +23,12 @@ describe('文件预览类型判断', () => {
     expect(shouldOpenFileInSystem('preview', 'zip', null, options)).toBe(true)
   })
 
+  it('预览优先覆盖浮动预览及文本探测，排除抽屉预览', () => {
+    expect(shouldOpenFileInSystem('preview', 'pdf', 'application/pdf')).toBe(true)
+    expect(shouldOpenFileInSystem('preview', 'custom', 'application/octet-stream')).toBe(false)
+    expect(shouldOpenFileInSystem('system', 'custom', 'application/octet-stream')).toBe(true)
+  })
+
   it('允许未知扩展名通过文本 MIME 预览和编辑', () => {
     expect(isTextExt('custom', 'text/plain')).toBe(true)
     expect(isPreviewable('custom', 'text/plain')).toBe(true)
@@ -34,7 +40,7 @@ describe('文件预览类型判断', () => {
     expect(isPreviewable('custom', 'application/octet-stream')).toBe(true)
   })
 
-  it.each(['yml', 'yaml', 'mjs', 'cjs', 'mts', 'cts', 'jsx', 'tsx', 'VUE'])(
+  it.each(['yml', 'yaml', 'mjs', 'cjs', 'mts', 'cts', 'jsx', 'tsx', 'VUE', 'example'])(
     '%s 即使没有文本 MIME 也直接进入代码预览', ext => {
       expect(isTextExt(ext, 'application/octet-stream')).toBe(true)
       expect(isFloatingPreviewable(ext, null)).toBe(true)
