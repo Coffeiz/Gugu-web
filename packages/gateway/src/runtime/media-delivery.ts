@@ -33,6 +33,7 @@ type ImMediaInput = {
   file: { name: string; ext: string; mime: string }
   bytes: Uint8Array
   feishuChatId?: unknown
+  qqReplyMessageId?: string
   wechatContextToken?: unknown
   authorize(): Promise<boolean>
   signal?: AbortSignal
@@ -152,7 +153,8 @@ async function prepareQqMedia(input: QqMediaInput, recipient: string, name: stri
   if (typeof fileInfo !== 'string') return null
   return async () => {
     if (signal?.aborted || !await authorize()) return null
-    const receipt = await platform.sender.media({ id: recipient, chatType: scope.chatType },
+    const receipt = await platform.sender.media({ id: recipient, chatType: scope.chatType,
+      ...(input.qqReplyMessageId ? { messageId: input.qqReplyMessageId } : {}) },
       { fileInfo, image, filename: name }, signal, authorize, input.onQqMessageFailure)
     return { recipient, receipt }
   }

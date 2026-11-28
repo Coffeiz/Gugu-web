@@ -117,6 +117,7 @@ export function createImRunArtifactSender(options: {
       const last = Array.isArray(payload._batch_messages) ? payload._batch_messages.at(-1) : payload
       started = true
       const result = await sendImMedia({ platform: sender, scope, file: resolved, bytes: data,
+        qqReplyMessageId: scope.platform === 'qq' && typeof payload.message_id === 'string' ? payload.message_id : undefined,
         feishuChatId: object(last) ? last.chat_id : null, wechatContextToken: payload.context_token, signal, authorize: guard })
       if (!result) throw new Rejected()
       return imAcceptedEvidence({ scope, source: source!, ...result, kind: 'artifact', bytes: data })

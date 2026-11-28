@@ -40,10 +40,10 @@
           </span>
         </template>
         <span v-else key="chat-placeholder-title" class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : t('chatUi.gugu') }}</span>
-        <GuguChatWorkspace v-if="sessionId && currentSessionWorkspaceName && workspaceAccess && !previewOnly && !isGroupSession"
+        <GuguChatWorkspace v-if="sessionId && currentSessionWorkspaceName && workspaceAccess && !previewOnly"
           :key="sessionId" :session-id="sessionId" :name="currentSessionWorkspaceName"
           :access="workspaceAccess" :disabled="streaming || sessionSettling" @change="(id, name) => emit('workspace-change', id, name)" />
-        <span v-else-if="currentSessionWorkspaceName && !isGroupSession" class="chat-workspace-name" :class="{ 'is-compact': !expanded }">
+        <span v-else-if="currentSessionWorkspaceName" class="chat-workspace-name" :class="{ 'is-compact': !expanded }">
           · {{ currentSessionWorkspaceName }}
         </span>
         <button

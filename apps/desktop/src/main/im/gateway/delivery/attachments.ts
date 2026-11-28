@@ -75,7 +75,7 @@ export function createDesktopImAttachmentSender(directory: string,
       try {
         if (!await authorize()) return 'rejected'
         const sealed = await encryption.decryptStringAsync(Buffer.from(sealedEvent, 'base64'))
-        const envelope = JSON.parse(sealed.result) as { event: unknown; replyContext?: unknown; attachments?: unknown }
+        const envelope = JSON.parse(sealed.result) as { event: unknown; replyContext?: unknown }
         const event = parseImReceivedMessage(route.connection, envelope.event)
         if (desktopImEventKey(event) !== eventKey) return 'rejected'
         const group = route.group
@@ -102,9 +102,7 @@ export function createDesktopImAttachmentSender(directory: string,
           file = await readFile(filePath, active, maxBytes)
         } else {
           if (typeof attachId !== 'string' || !attachment || typeof attachment !== 'object') return 'rejected'
-          // 私聊附件已由 Core 按当前会话校验，群聊还须匹配本次入站附件。
-          if (event.scope.chatType === 'group'
-            && (!Array.isArray(envelope.attachments) || !envelope.attachments.includes(attachId))) return 'rejected'
+          // Core 已校验附件归属当前会话，群聊发送者权限由 authorizeGroupFile 复核。
           const received = await readDesktopAgentAttachmentContent(directory, attachId, attachment as Parameters<typeof readDesktopAgentAttachmentContent>[2], maxBytes)
           file = { ...received, name: received.displayName }
         }
@@ -115,6 +113,7 @@ export function createDesktopImAttachmentSender(directory: string,
         if (!file?.data.byteLength || !await canSend()) return 'rejected'
         started = true
         const sent = await sendImMedia({ platform: route.media, scope: event.scope, file, bytes: file.data,
+          qqReplyMessageId: event.scope.platform === 'qq' ? event.eventId : undefined,
           wechatContextToken: envelope.replyContext, feishuChatId: envelope.replyContext, signal: active, authorize: canSend, onQqUploadFailure, onQqMessageFailure })
         return sent?.receipt.outcome ?? 'rejected'
       } catch {

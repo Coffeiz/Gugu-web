@@ -625,7 +625,7 @@ export async function desktopImAttachmentDelivery(
       JOIN desktop_im_inbox i ON i.owner_id=im.owner_id AND i.platform=im.platform AND i.connection_id=im.connection_id
       WHERE a.user_id=${owner} AND a.session_id=${session} AND a.run_id=${identity.runId}
         AND (${attachId} IS NULL OR f.state='attached' AND f.storage_key=${`agent-attachments/${attachId}`}
-          AND source.id IS NOT NULL AND (coalesce(s.chat_type,'c2c')='c2c' OR source.id=m.id))
+          AND source.id IS NOT NULL)
         AND (i.run_id=a.run_id AND i.state='running' OR i.run_id IS NULL AND i.state='pending')
       ORDER BY (i.run_id IS NULL),i.received_at,i.rowid LIMIT 1`.execute(tx)
     const event = rows[0]

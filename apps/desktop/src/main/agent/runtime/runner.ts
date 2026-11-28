@@ -347,11 +347,13 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         throw new CoreError('invalid_request', '模型地址无效')
     }
     let workspaceBinding: Record<string, Json> | null = null
-    if (sessionId !== null && !groupChat) {
+    if (sessionId !== null) {
       const owner = dataContext(ownerId).ownerId.replaceAll('-', '')
       const { rows: [session] } = await sql<{ session_context: string | null }>`SELECT session_context FROM conversation_sessions
         WHERE user_id=${owner} AND id=${sessionId}
-          ${imChatType === 'c2c' ? sql`` : sql`AND (source IS NULL OR source='web')`}`.execute(db)
+          AND (source IS NULL OR source='web' OR EXISTS (
+            SELECT 1 FROM desktop_im_sessions im
+            WHERE im.session_id=conversation_sessions.id AND im.owner_id=conversation_sessions.user_id))`.execute(db)
       const context = readAgentSessionContext(session?.session_context, 'sqlite')
       const stored = context.workspace_binding
       const directoryId = stored && typeof stored === 'object' && !Array.isArray(stored)

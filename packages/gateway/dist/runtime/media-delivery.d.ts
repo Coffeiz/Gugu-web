@@ -46,6 +46,7 @@ type ImMediaInput = {
     };
     bytes: Uint8Array;
     feishuChatId?: unknown;
+    qqReplyMessageId?: string;
     wechatContextToken?: unknown;
     authorize(): Promise<boolean>;
     signal?: AbortSignal;
@@ -77,6 +78,6 @@ export declare function sendImGroupReplyCharts(input: Pick<ImMediaInput, 'platfo
 /** 上传最多预取一张，发送顺序及单件回执仍由原发送器决定。 */
 export declare function sendQqImageBatch(inputs: readonly QqMediaInput[]): AsyncGenerator<{
     index: number;
-    outcome: "unknown" | "rejected" | "accepted";
+    outcome: "accepted" | "rejected" | "unknown";
 }, void, unknown>;
 export {};

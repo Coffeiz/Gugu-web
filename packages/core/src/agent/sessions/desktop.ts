@@ -142,7 +142,6 @@ export async function manageDesktopSessionWorkspace(db: Kysely<Database>, owner:
     if (!scoped.rows.length) throw new CoreError('not_found', '会话不存在')
   }
   const directories = action === 'unlink' ? [] : sessionWorkspaceDirectories(await readDirectories?.() ?? [])
-  if (action === 'list') return { workspaces: directories }
   const selector = typeof directoryId === 'string' ? directoryId.trim() : ''
   const matches = action === 'bind' ? directories.filter(item => String(item.commandNumber ?? '') === selector || item.id === selector || item.name === selector
     || item.id.slice('desktop:'.length, 'desktop:'.length + 8) === selector.toLowerCase()) : []
@@ -150,9 +149,16 @@ export async function manageDesktopSessionWorkspace(db: Kysely<Database>, owner:
     throw new CoreError(matches.length ? 'conflict' : 'not_found', matches.length
       ? '找到多个工作区，请使用列表中的短 ID 或完整 ID' : '工作区不存在或已失效')
   const read = async (connection: Kysely<Database>) => (await sql<{
-    session_context: string | null; active_run_id: string | null; chat_type: string | null
-  }>`SELECT s.session_context,s.active_run_id,s.chat_type FROM conversation_sessions s
-      WHERE s.user_id=${user} AND s.id=${id} ${im ? sql`` : sql`AND (s.source IS NULL OR s.source='web')`}`.execute(connection)).rows[0]
+    session_context: string | null; active_run_id: string | null
+  }>`SELECT s.session_context,s.active_run_id FROM conversation_sessions s
+      WHERE s.user_id=${user} AND s.id=${id}
+      ${im ? sql`` : sql`AND (s.source IS NULL OR s.source='web' OR (
+        COALESCE(s.chat_type,'c2c') IN ('c2c','group') AND EXISTS (SELECT 1 FROM desktop_im_sessions d
+          WHERE d.session_id=s.id AND d.owner_id=s.user_id)))`}`.execute(connection)).rows[0]
+  if (action === 'list') {
+    if (!await read(db)) throw new CoreError('not_found', '会话不存在')
+    return { workspaces: directories }
+  }
   if (action === 'show') {
     const row = await read(db)
     if (!row) throw new CoreError('not_found', '会话不存在')
@@ -166,7 +172,6 @@ export async function manageDesktopSessionWorkspace(db: Kysely<Database>, owner:
   const update = async (tx: Kysely<Database>) => {
     const row = await read(tx)
     if (!row) throw new CoreError('not_found', '会话不存在')
-    if (row.chat_type === 'group') throw new CoreError('invalid_request', '群聊不能绑定工作区')
     if (row.active_run_id) throw new CoreError('conflict', '会话运行期间不能修改工作区绑定')
     const context = readAgentSessionContext(row.session_context, 'sqlite')
     if (action === 'unlink') delete context.workspace_binding

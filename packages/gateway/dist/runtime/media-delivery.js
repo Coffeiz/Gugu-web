@@ -133,7 +133,8 @@ async function prepareQqMedia(input, recipient, name, image, partConcurrencyLimi
     return async () => {
         if (signal?.aborted || !await authorize())
             return null;
-        const receipt = await platform.sender.media({ id: recipient, chatType: scope.chatType }, { fileInfo, image, filename: name }, signal, authorize, input.onQqMessageFailure);
+        const receipt = await platform.sender.media({ id: recipient, chatType: scope.chatType,
+            ...(input.qqReplyMessageId ? { messageId: input.qqReplyMessageId } : {}) }, { fileInfo, image, filename: name }, signal, authorize, input.onQqMessageFailure);
         return { recipient, receipt };
     };
 }

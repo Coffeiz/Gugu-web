@@ -252,12 +252,12 @@ export function createQqSender(options: {
       try {
         const send = async (actual: QqTarget) => {
           const result = await options.client.call('POST', path(actual), { body: { msg_type: 7, media: { file_info: uploaded.fileInfo }, msg_seq: await sequence(actual),
-            ...(actual.messageId ? { msg_id: actual.messageId } : {}), ...(!uploaded.image ? { content: uploaded.filename } : {}) }, signal,authorize })
+            ...(actual.messageId ? { msg_id: actual.messageId } : {}), content: uploaded.image ? ' ' : uploaded.filename }, signal,authorize })
           const id = messageId(result)
           if (!id) throw new QqApiError('message', 200, undefined, 'UNKNOWN')
           return id
         }
-        const id = target.chatType === 'group' ? await withPassiveFallback(target, send) : await send(target)
+        const id = await send(target)
         return { outcome: 'accepted', platformMessageIds: [id] }
       } catch (error) {
         onFailure?.(error instanceof QqApiError ? error.statusCode : undefined,

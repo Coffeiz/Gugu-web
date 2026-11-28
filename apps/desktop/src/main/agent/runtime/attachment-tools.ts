@@ -61,6 +61,8 @@ export function createDesktopAttachmentTools(options: {
     async save(identity, input, roundId, call, signal) {
       signal.throwIfAborted()
       if (!await authorize(identity)) return { kind: 'failed', error: '附件保存授权已失效' }
+      if (groupChat && input.space === 'workspace' && !await options.authorizeGroupImTool(identity, imFilePathPermission, signal))
+        return { kind: 'failed', error: '当前群聊身份没有工作区文件访问权限' }
       const workspaceDirectoryId = input.space === 'workspace' && workspaceBinding
         && typeof workspaceBinding.directory_id === 'string' ? workspaceBinding.directory_id : undefined
       if (input.space === 'workspace' && !workspaceDirectoryId)
