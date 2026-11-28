@@ -53,6 +53,7 @@ description: Node.js/Fastify Web Host 与共享后端开发约定，涵盖 Core�
 | Unicode 数字分类与转换 | `packages/core/src/shared/unicode-decimal.ts`：固定 Unicode 16 分类，区分 Nd 十进制和更宽泛的数字字符；工具整数/日期/行号与项目编号共用，不使用 Node 较新 Unicode 属性扩大可接受输入；Python 格式的代码生成脚本仅为维护工具，不是运行依赖 |
 
 | IM 身份与入站规则 | `packages/core/src/im/access.ts`、`inbound-preflight.ts`、`inbound-batch.ts`、`shortcut.ts`：可信 Bot 对照后的角色/工具/上下文、控制消息优先、批次排序和快捷意图；Host 必须提供当前权限、冻结的取消目标和真实消费事务，不能把纯规则当认证 |
+| IM 场景权限 | `packages/core/src/agent/scenes/im/`：`tools.ts` 统一工具策略，`owner/`、`member/` 放角色权限，`memory.ts` 统一记忆检索范围；Host 提供可信身份/配置并执行 owner 限定的数据访问，不能复制 Core 的角色/范围决策 |
 | IM 上下文、引用与检索 | `apps/web-host/src/modules/im/gateway/context-services.ts`、`context-reference-codec.ts`、`memory-search.ts`、`group-context.ts`：真实业务来源、附件归属、当前Run租约及群/记忆scope；检索Schema与执行复用同一ToolRegistry，成员白名单不能因端口可用而扩大 |
 | IM 注意力与成功送达 | `packages/core/src/im/attention/directive.ts`、`im/run-delivery.ts`：冻结决策/回复门与可携带证据的投递契约；Host `attention-runtime.ts`、`pending-ask-dispatch.ts`、`attention-ledger.ts` 提供真实覆盖/当前策略/内部唤醒/原子accepted事实，不能用assistant历史、入站布尔或缺失Redis证明补齐 |
 | IM 持久流式 | `gateway/platforms/feishu/persistent.ts`、`platforms/qq/persistent.ts`、`platforms/telegram/persistent.ts` 共用Run投递器及 `delivery/store.ts` 平台独立加密/CAS；QQ只用可信Markdown＋开关，不能在旧正文/流收据未决时切换发送器。TG draft不等同最终送达，保活与外层收据SQL共用FIFO，Host在释放投递租约前close排空。未知副作用不重发；投递表由统一数据库迁移显式创建，启动仅检查 |

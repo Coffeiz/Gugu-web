@@ -4,6 +4,7 @@ import {parseStructuredJson} from '@gugu/core/providers'
 import {strip} from '@gugu/core/shared/values'
 import {prepareOwnerDailyCompactionBatch,ownerDailyDatesPreserved,buildOwnerDailyReferenceQuery,renderOwnerDailyEventReferences} from '@gugu/core/owner-daily-compaction'
 import {normalizeGroupEventMemory,deduplicateGroupEventMemory} from '@gugu/core/im-group-daily-compaction'
+import {imOwnerMemoryMaintenanceAllowed} from '@gugu/core/agent/scenes/im'
 import {createImReflectionFiles,type ImReflectionFilePlan} from './files.js'
 import type {ImReflectionJob,ImReflectionRuntime} from './contracts.js'
 
@@ -24,7 +25,7 @@ export async function prepareImOwnerDailyPlan(input:{
  try{
   const{job,runtime,files}=input,signal=input.signal??new AbortController().signal
   async function current(){signal.throwIfAborted();await input.authorize();signal.throwIfAborted()}
-  if(job.scope.type!=='owner'||job.scope.id!==job.identity.sessionId||(job.actor.role!=='owner'&&!job.actor.verifiedOwner)||job.actor.ownerId!==job.identity.ownerId
+  if(job.scope.type!=='owner'||job.scope.id!==job.identity.sessionId||!imOwnerMemoryMaintenanceAllowed(job.actor.role,job.actor.verifiedOwner)||job.actor.ownerId!==job.identity.ownerId
    ||typeof input.prompt!=='string'||!strip(input.prompt)||Buffer.byteLength(input.prompt)>1048576||typeof input.readReferences!=='function'
    ||runtime.selection.modelIdentity!==job.modelIdentity||runtime.selection.accessScopeHash!==job.accessScopeHash||runtime.selection.contextWindow!==job.contextWindow)throw new ImOwnerDailyCompactionError()
   await current()

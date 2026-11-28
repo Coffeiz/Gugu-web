@@ -18,6 +18,7 @@ import { formatOwnerReflectionEvidence } from '#core-source/agent/scenes/reflect
 import { runPrivateReflection } from '#core-source/agent/memory/reflection.js'
 import { applyOwnerReflectionOutput } from '#core-source/agent/memory/owner-reflection.js'
 import { applyImMaintenanceOutput } from '#core-source/memory/im-maintenance-apply.js'
+import { imMemberCanReflectMemory, imOwnerCanReadGroupMemory, imOwnerMemoryMaintenanceAllowed } from '#core-source/agent/scenes/im/index.js'
 import { enqueueAgentRagRebuildInTransaction } from '#core-source/agent/rag/index.js'
 
 export function createDesktopReflectionWork(options: {
@@ -61,7 +62,7 @@ export function createDesktopReflectionWork(options: {
       { ...receipt, ownerId }, reflection.signal), ownerId)
     if (!authorization) return
     const actor = authorization.actor
-    if (!actor.verifiedOwner && actor.role === 'owner') return
+    if (!imOwnerMemoryMaintenanceAllowed(actor.role, actor.verifiedOwner)) return
     const owner = dataContext(identity.ownerId).ownerId.replaceAll('-', '')
     const { rows: [source] } = await sql<{ id: number; platform_user_id: string | null; content: string }>`
       SELECT m.id,m.platform_user_id,m.content FROM agent_run_admissions a
@@ -70,9 +71,9 @@ export function createDesktopReflectionWork(options: {
     if (!source || source.platform_user_id !== actor.platformUserId || source.content.length > 32_000) return
     const scopes: Array<{ type: 'owner' | 'group' | 'platform-user'; id: string }> = []
     if (authorization.groupMemoryEnabled) scopes.push({ type: 'group', id: actor.chatId! })
-    if (actor.role === 'member' && authorization.memberMemoryEnabled)
+    if (imMemberCanReflectMemory(actor.role, authorization.memberMemoryEnabled))
       scopes.push({ type: 'platform-user', id: `${actor.chatId}:${actor.platformUserId}` })
-    if (actor.role === 'owner' && actor.verifiedOwner && authorization.groupOwnerMemoryEnabled)
+    if (imOwnerCanReadGroupMemory(actor.role, actor.verifiedOwner, authorization.groupOwnerMemoryEnabled))
       scopes.push({ type: 'owner', id: owner })
     const observedAt = Date.now()
     if (!scopes.length) return
@@ -183,11 +184,11 @@ export function createDesktopReflectionWork(options: {
         const prefix = `${actor.chatId}:`
         const member = job.scope_id.startsWith(prefix) ? job.scope_id.slice(prefix.length) : ''
         const canReflectMember = (current: NonNullable<typeof context>) => current.memberMemoryEnabled && !!member
-          && (member === current.actor.platformUserId ? current.actor.role === 'member'
+          && (member === current.actor.platformUserId ? imMemberCanReflectMemory(current.actor.role, true)
             : current.groupMemoryEnabled && current.ownerPlatformUserId !== null && member !== current.ownerPlatformUserId)
         if (job.scope_type === 'group' && (!context.groupMemoryEnabled || job.scope_id !== actor.chatId)
           || job.scope_type === 'platform-user' && !canReflectMember(context)
-          || job.scope_type === 'owner' && (!context.groupOwnerMemoryEnabled || actor.role !== 'owner' || !actor.verifiedOwner))
+          || job.scope_type === 'owner' && !imOwnerCanReadGroupMemory(actor.role, actor.verifiedOwner, context.groupOwnerMemoryEnabled))
           throw new Error('reflection_authorization_changed')
         const { rows: [source] } = await sql<{ id: number; conversation_seq: number; content: string; platform_user_id: string | null; platform_user_name: string | null }>`
           SELECT m.id,m.conversation_seq,m.content,m.platform_user_id,m.platform_user_name FROM agent_run_admissions a
@@ -318,7 +319,8 @@ export function createDesktopReflectionWork(options: {
           || freshAuthorization.actor.role !== actor.role || freshAuthorization.actor.verifiedOwner !== actor.verifiedOwner
           || scope.type === 'group' && !freshAuthorization.groupMemoryEnabled
           || scope.type === 'platform-user' && !canReflectMember(freshAuthorization)
-          || scope.type === 'owner' && !freshAuthorization.groupOwnerMemoryEnabled)
+          || scope.type === 'owner' && !imOwnerCanReadGroupMemory(freshAuthorization.actor.role,
+            freshAuthorization.actor.verifiedOwner, freshAuthorization.groupOwnerMemoryEnabled))
           throw new Error('reflection_authorization_changed')
         if (scope.type === 'owner') {
           await db.transaction().execute(async tx => {

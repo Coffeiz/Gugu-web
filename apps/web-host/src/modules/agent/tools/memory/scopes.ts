@@ -3,6 +3,7 @@ import { type RunIdentity } from '@gugu/core/agent'
 import type { AuthorizedMemoryScope, MemorySearchScope } from '@gugu/core/agent/rag'
 import type { Pool } from 'pg'
 import { normalizeOwnerId } from '../../../../shared/owner-context.js'
+import { imMemorySearchPlan } from '@gugu/core/agent/scenes/im'
 
 export interface TrustedAgentImMemoryContext {
   platform: string
@@ -139,34 +140,28 @@ export function createPostgresAgentMemoryScopeResolver(db: unknown, options: {
     const isIm = imPlatforms.has(platform)
     const isGroup = isIm && chatType === 'group' && !!(chatId && botId)
 
-    if (requested === 'private_memory') {
-      if (isIm && (role !== 'owner' || chatType === 'group')) throw new MemorySearchAccessError('当前会话不能读取 owner 私人记忆')
+    const plan = imMemorySearchPlan({ isIm, chatType, role, requested, hasGroup: isGroup, hasMember: Boolean(memberId) })
+    if (plan.kind === 'deny') {
+      if (plan.reason === 'private_memory') throw new MemorySearchAccessError('当前会话不能读取 owner 私人记忆')
+      if (plan.reason === 'current_group') throw new MemorySearchAccessError('current_group 只能在群聊中使用')
+      throw new MemorySearchAccessError('当前身份没有可用的记忆召回范围')
+    }
+    if (plan.kind === 'owner') {
+      if (plan.includeOtherScopes) return [owner, ...await storedScopes({ identity,
+        platform: platform || undefined, botId: botId || undefined, limit: 3, signal })]
       return [owner]
     }
-    if (!isIm) return [owner]
-    if (requested === 'current_group' && !isGroup) throw new MemorySearchAccessError('current_group 只能在群聊中使用')
-
-    if (role === 'owner' && !isGroup) {
-      if (requested === 'auto' || requested === 'all_my_groups') {
-        return [owner, ...await storedScopes({ identity, platform: platform || undefined, botId: botId || undefined,
-          limit: 3, signal })]
-      }
-      return [owner]
+    if (plan.kind === 'member') {
+      return storedScopes({ identity, platform, botId, memberId, limit: 3, signal })
     }
-    if (!isGroup && role === 'member' && memberId) {
-      if (requested === 'auto' || requested === 'all_my_groups') {
-        return storedScopes({ identity, platform, botId, memberId, limit: 3, signal })
-      }
-      throw new MemorySearchAccessError('current_group 只能在群聊中使用')
-    }
-    if (isGroup) {
+    if (plan.kind === 'group') {
       const current: AuthorizedMemoryScope[] = [{ ownerId: identity.ownerId, type: 'group', id: chatId,
         platform, botId, groupId: chatId }]
-      if (role === 'member') current.push({ ownerId: identity.ownerId, type: 'member', id: `${chatId}:${memberId}`,
+      if (plan.includeMemberScope) current.push({ ownerId: identity.ownerId, type: 'member', id: `${chatId}:${memberId}`,
         platform, botId, groupId: chatId })
-      if (requested === 'all_my_groups') {
+      if (plan.includeOtherScopes) {
         current.push(...await storedScopes({ identity, platform, botId, excludeGroupId: chatId,
-          ...(role === 'member' && memberId ? { memberId } : {}), limit: 2, signal }))
+          ...(plan.includeMemberHistory ? { memberId } : {}), limit: 2, signal }))
       }
       return current
     }

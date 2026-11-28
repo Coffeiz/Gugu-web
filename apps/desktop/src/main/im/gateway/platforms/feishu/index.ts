@@ -86,6 +86,7 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
         if (!groupDeliveries.has(groupConnection)) {
           const work = dispatch({ connection, connectionId: groupConnection, signal: active, authorize: allow,
             group: { id: groupId, ownerPlatformUserId, authorizeMessage: allowMessage, authorizeFile: allowFile },
+            chartMedia: { platform: 'feishu', sender },
             ...(callback ? { async sendGroupPrompt(prompt: Parameters<typeof sender.interaction>[1], event: ImReceivedMessage) {
               const receipt = await sender.interaction(groupId, prompt, active, () => allowMessage(event))
               return receipt.outcome === 'accepted' && receipt.platformMessageIds.length === 1 ? receipt.platformMessageIds[0]! : null

@@ -1,11 +1,9 @@
-import { createVNode, render } from 'vue'
-import Icon from '@/components/common/icons/Icon.vue'
-import type { IconName } from '@/components/common/icons/iconRegistry'
 import { downloadMermaidPng } from './mermaidPng'
 import { openMermaidPreview } from './mermaidPreview'
 import {
   bindChartControls,
   createChartControl,
+  createChartControlIcon,
   createChartControls,
 } from './controls'
 
@@ -29,18 +27,13 @@ const bindings = new WeakMap<HTMLElement, MermaidBinding>()
 const MIN_SCALE = 0.5
 const MAX_SCALE = 3
 
-function makeButton(action: string, label: string, icon: string | { name: IconName }): HTMLButtonElement {
-  const button = createChartControl({
+function makeButton(action: string, label: string, path: string): HTMLButtonElement {
+  return createChartControl({
     action,
     label,
-    text: typeof icon === 'string' ? icon : undefined,
+    content: createChartControlIcon(path),
     data: { mermaidAction: action },
   })
-  if (typeof icon !== 'string') {
-    button.dataset.mermaidIcon = icon.name
-    render(createVNode(Icon, { name: icon.name, size: 16 }), button)
-  }
-  return button
 }
 
 class MermaidInteractionBinding implements MermaidBinding {
@@ -85,9 +78,6 @@ class MermaidInteractionBinding implements MermaidBinding {
     container.removeEventListener('pointerup', this.onPointerUp)
     container.removeEventListener('pointercancel', this.onPointerUp)
     container.removeEventListener('dblclick', this.onDoubleClick)
-    container.querySelectorAll<HTMLButtonElement>('.md-chart-controls--mermaid [data-mermaid-icon]').forEach(button => {
-      render(null, button)
-    })
     this.setSourceVisible(false)
     this.sourceView?.remove()
     this.sourceView = null
@@ -99,19 +89,19 @@ class MermaidInteractionBinding implements MermaidBinding {
   }
 
   private getSvg(): SVGSVGElement | null {
-    return this.container.querySelector('svg')
+    return this.container.querySelector(':scope > svg')
   }
 
   private ensureControls(): void {
     let controls = this.container.querySelector<HTMLElement>('.md-chart-controls--mermaid')
     if (!controls) {
       controls = createChartControls(['md-chart-controls--mermaid'], [
-        makeButton('zoom-out', this.labels.zoomOut, '−'),
-        makeButton('zoom-in', this.labels.zoomIn, '+'),
-        makeButton('reset', this.labels.resetZoom, '↺'),
-        makeButton('toggle-source', this.labels.showSource, '</>'),
-        makeButton('expand', this.labels.expand, '⛶'),
-        makeButton('download-png', this.labels.downloadPng, { name: 'action.download' }),
+        makeButton('zoom-out', this.labels.zoomOut, 'M6 12h12'),
+        makeButton('zoom-in', this.labels.zoomIn, 'M6 12h12m-6-6v12'),
+        makeButton('reset', this.labels.resetZoom, 'M4 11a8 8 0 1 1 2 6.3M4 5v6h6'),
+        makeButton('toggle-source', this.labels.showSource, 'm8 6-6 6 6 6m8-12 6 6-6 6m-2-15-4 18'),
+        makeButton('expand', this.labels.expand, 'M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5'),
+        makeButton('download-png', this.labels.downloadPng, 'M12 3v12m-5-5 5 5 5-5M5 17v3h14v-3'),
       ])
       controls.addEventListener('click', this.onControlClick)
       controls.addEventListener('dblclick', event => event.stopPropagation())

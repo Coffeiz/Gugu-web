@@ -4,6 +4,7 @@ import { QqMediaUploadError, type createQqMediaUploader } from '../platforms/qq/
 import type { createQqSender } from '../platforms/qq/sender.js';
 import type { createTelegramSender } from '../platforms/telegram/sender.js';
 import type { createWechatSender } from '../platforms/wechat/sender.js';
+import { type ImChartRenderer } from './chart-parser.js';
 type MediaSender = {
     platform: 'feishu';
     sender: Pick<ReturnType<typeof createFeishuSender>, 'file'>;
@@ -61,6 +62,14 @@ type QqMediaInput = ImMediaInput & {
         platform: 'qq';
     }>;
 };
+/** 只从平台出站正文中移除有明确发送回执的图表围栏。 */
+export declare function sendImGroupReplyCharts(input: Pick<ImMediaInput, 'platform' | 'scope' | 'authorize' | 'signal'> & {
+    text: string;
+    renderCharts: ImChartRenderer;
+}): Promise<{
+    text: string;
+    attempted: boolean;
+}>;
 /** 上传最多预取一张，发送顺序及单件回执仍由原发送器决定。 */
 export declare function sendQqImageBatch(inputs: readonly QqMediaInput[]): AsyncGenerator<{
     index: number;

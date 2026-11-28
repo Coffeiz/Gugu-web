@@ -150,7 +150,7 @@ export async function createImProductionDelivery(options: DeliveryOptions, input
   // 取消的Run仍须能创建Harness并提交终态；只有实际需要发送时才读取发送材料。
   let actual: ReturnType<typeof createImRunSender> | undefined
   const get = () => actual ??= createImRunSender({ ...common, controls: options.controls, publicAppUrl: options.publicAppUrl,
-    nativeInteraction: options.nativeInteraction })
+    nativeInteraction: options.nativeInteraction, renderCharts })
   const sender: ImAgentReconstructionResources['sender'] = {
     text: async value => (await get()).text(value), artifact: async value => (await get()).artifact(value),
     interaction: async value => (await get()).interaction(value),

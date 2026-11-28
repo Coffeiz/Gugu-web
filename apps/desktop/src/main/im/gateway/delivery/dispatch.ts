@@ -1,4 +1,6 @@
 import { resolveQqNoticeTarget, type QqNoticeKind } from '@gugu/gateway/qq'
+import { sendImGroupReplyCharts } from '@gugu/gateway'
+import { createDesktopImChartRenderer } from './projection.js'
 import { runDesktopWorkspaceExtra, type DesktopWorkspaceCommands } from '../../../agent/workspace-command.js'
 import type { DesktopImMediaRoute } from './attachments.js'
 import { createHash } from 'node:crypto'
@@ -89,6 +91,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
     sendPrompt?(prompt: Prompt, recipient: string): Promise<string | null>
     sendGroupPrompt?(prompt: Prompt, event: ImReceivedMessage): Promise<string | null>
     media?: DesktopImMediaRoute['media']
+    chartMedia?: DesktopImMediaRoute['media']
     authorize(): Promise<boolean>
     sendActiveNotice?(reply: NonNullable<ReturnType<typeof createImRequestedReply>>): Promise<Outcome>
     send(reply: NonNullable<ReturnType<typeof createImRequestedReply>>, replyContext?: string, senderName?: string): Promise<SendResult>
@@ -464,8 +467,27 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                 else {
                   const reply = makeReply(text, item.clientId)
                   if (reply && status === 'completed') {
-                    const sent = await sendReply(reply, Boolean(options.group))
-                    await update(sent.outcome, undefined, sent.replyFact)
+                    const group = options.group
+                    const chartMedia = options.chartMedia ?? options.media
+                    if (group && chartMedia) {
+                      const authorize = async () => !signal.aborted && await options.authorize()
+                        && await group.authorizeMessage(event)
+                      const sent = await sendImGroupReplyCharts({ platform: chartMedia, scope: event.scope, text: reply.text,
+                        signal, authorize, renderCharts: createDesktopImChartRenderer(host, authorize),
+                        async sendText(text) {
+                          const part = await sendReply({ ...reply, text }, true)
+                          return { outcome: part.outcome, platformMessageIds: part.replyFact?.platformMessageIds }
+                        },
+                      })
+                      const ids = sent.platformMessageIds
+                      await update(sent.outcome, undefined, sent.outcome === 'accepted' && ids?.length ? {
+                        platformMessageIds: [...ids], recipientSenderId: event.scope.platformUserId, sentAtMs: Date.now(),
+                        ...(envelope?.sourceAttentionKind ? { sourceAttentionKind: envelope.sourceAttentionKind } : {}),
+                      } : undefined)
+                    } else {
+                      const sent = await sendReply(reply, Boolean(group))
+                      await update(sent.outcome, undefined, sent.replyFact)
+                    }
                   } else await update('rejected')
                 }
               }

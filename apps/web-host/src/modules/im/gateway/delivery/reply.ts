@@ -1,6 +1,6 @@
 import { questionBatchText, readQuestionBatch } from '@gugu/core/agent'
 import { resolveQqNoticeTarget } from '@gugu/gateway/qq'
-import { createImRequestedReply } from '@gugu/gateway'
+import { createImRequestedReply, sendImGroupReplyCharts, type ImChartRenderer } from '@gugu/gateway'
 import { createHmac } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
@@ -47,6 +47,7 @@ export async function createImRunSender(options: ArtifactOptions & {
   nativeInteraction: ImRunDeliveryPorts<unknown>['sender']['interaction']
   controls: Pick<ReturnType<typeof createPostgresImControls>, 'authorizeNativeTarget'>
   publicAppUrl: string | null
+  renderCharts?: ImChartRenderer
 }): Promise<ImRunDeliveryPorts<unknown>['sender']> {
   const proof = createImRunScope(options), { identity, actor, scope, payload, binding } = proof
   const projection = createPostgresInteractionProjection(options.pool, options.secretKey)
@@ -70,35 +71,41 @@ export async function createImRunSender(options: ArtifactOptions & {
       const wire = options.sender(binding)
       if (!wire || wire.platform !== scope.platform) return 'rejected'
       const { recipient, originalMessageId: original } = reply
-      const evidence = (receipt: Parameters<typeof imAcceptedEvidence>[0]['receipt']) => kind === 'tool' || kind === 'compaction' ? receipt.outcome
-        : imAcceptedEvidence({ scope, source, recipient, kind, text: reply.text, receipt })
-      if (wire.platform === 'telegram') return evidence(await wire.sender.text({ chatId: recipient, chatType: scope.chatType,
-        ...(typeof original === 'string' ? { replyToMessageId: original } : {}) }, reply.text, { authorize }))
-      if (wire.platform === 'feishu') return evidence(await wire.sender.text(recipient, reply.text, undefined, authorize))
-      if (wire.platform === 'qq') {
-        const target = kind === 'tool' || kind === 'compaction'
-          ? resolveQqNoticeTarget(kind, original) : undefined
-        if (target?.mode === 'rejected') return 'rejected'
-        const members = scope.chatType === 'group' && /[@＠]/u.test(reply.text)
-          ? await options.pool.query<{ id: string; name: string | null }>(`SELECT id,name FROM (
-              SELECT DISTINCT ON (m.platform_user_id) m.platform_user_id AS id,
-                NULLIF(btrim(m.platform_user_name),'') AS name,m.conversation_seq
-              FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id
-              WHERE s.id=$1 AND s.user_id=$2 AND s.source='qq' AND s.bot_id=$3 AND s.chat_id=$4 AND s.chat_type='group'
-                AND m.role='user' AND m.platform_user_id IS NOT NULL AND m.im_sender_is_bot IS NOT TRUE
-              ORDER BY m.platform_user_id,m.conversation_seq DESC
-            ) members ORDER BY conversation_seq DESC LIMIT 256`,
-            [identity.sessionId, identity.ownerId, scope.botId, scope.chatId]).then(result => result.rows, () => [])
-          : []
-        const name = members.find(member => member.id === actor.platformUserId)?.name
-        const mentionUserName = name && members.filter(member => member.name === name).length === 1 ? name : undefined
-        return evidence(await wire.sender.text({ id: recipient, chatType: scope.chatType,
-          messageFormat: format!, messageId: target?.mode === 'active' ? undefined : original,
-          ...(scope.chatType === 'group' ? { mentionUserId: actor.platformUserId, mentionUserName,
-            knownMemberIds: members.map(member => member.id) } : {}) }, reply.text, undefined, authorize))
+      async function sendText(text: string): Promise<Parameters<typeof imAcceptedEvidence>[0]['receipt']> {
+        if (!wire || !await authorize()) return { outcome: 'rejected' }
+        if (wire.platform === 'telegram') return wire.sender.text({ chatId: recipient, chatType: scope.chatType,
+          ...(typeof original === 'string' ? { replyToMessageId: original } : {}) }, text, { authorize })
+        if (wire.platform === 'feishu') return wire.sender.text(recipient, text, undefined, authorize)
+        if (wire.platform === 'qq') {
+          const target = kind === 'tool' || kind === 'compaction'
+            ? resolveQqNoticeTarget(kind, original) : undefined
+          if (target?.mode === 'rejected') return { outcome: 'rejected' }
+          const members = scope.chatType === 'group' && /[@＠]/u.test(text)
+            ? await options.pool.query<{ id: string; name: string | null }>(`SELECT id,name FROM (
+                SELECT DISTINCT ON (m.platform_user_id) m.platform_user_id AS id,
+                  NULLIF(btrim(m.platform_user_name),'') AS name,m.conversation_seq
+                FROM conversation_messages m JOIN conversation_sessions s ON s.id=m.session_id
+                WHERE s.id=$1 AND s.user_id=$2 AND s.source='qq' AND s.bot_id=$3 AND s.chat_id=$4 AND s.chat_type='group'
+                  AND m.role='user' AND m.platform_user_id IS NOT NULL AND m.im_sender_is_bot IS NOT TRUE
+                ORDER BY m.platform_user_id,m.conversation_seq DESC
+              ) members ORDER BY conversation_seq DESC LIMIT 256`,
+              [identity.sessionId, identity.ownerId, scope.botId, scope.chatId]).then(result => result.rows, () => [])
+            : []
+          const name = members.find(member => member.id === actor.platformUserId)?.name
+          const mentionUserName = name && members.filter(member => member.name === name).length === 1 ? name : undefined
+          return wire.sender.text({ id: recipient, chatType: scope.chatType,
+            messageFormat: format!, messageId: target?.mode === 'active' ? undefined : original,
+            ...(scope.chatType === 'group' ? { mentionUserId: actor.platformUserId, mentionUserName,
+              knownMemberIds: members.map(member => member.id) } : {}) }, text, undefined, authorize)
+        }
+        if (scope.chatType !== 'c2c' || typeof payload.context_token !== 'string' || !payload.context_token) return { outcome: 'rejected' }
+        return wire.sender.text({ userId: scope.platformUserId, contextToken: payload.context_token }, text, undefined, authorize)
       }
-      if (scope.chatType !== 'c2c' || typeof payload.context_token !== 'string' || !payload.context_token) return 'rejected'
-      return evidence(await wire.sender.text({ userId: scope.platformUserId, contextToken: payload.context_token }, reply.text, undefined, authorize))
+      const presentation = kind === 'text' && options.renderCharts && scope.chatType === 'group'
+        ? await sendImGroupReplyCharts({ platform: wire, scope, text: reply.text, authorize, renderCharts: options.renderCharts, sendText })
+        : { ...await sendText(reply.text), text: reply.text }
+      return kind === 'tool' || kind === 'compaction' ? presentation.outcome
+        : imAcceptedEvidence({ scope, source, recipient, kind, text: presentation.text, receipt: presentation })
     } catch { return 'unknown' }
   }
   return {

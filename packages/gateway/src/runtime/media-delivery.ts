@@ -4,6 +4,7 @@ import { QqMediaUploadError, type createQqMediaUploader } from '../platforms/qq/
 import type { createQqSender } from '../platforms/qq/sender.js'
 import type { createTelegramSender } from '../platforms/telegram/sender.js'
 import type { createWechatSender } from '../platforms/wechat/sender.js'
+import { createImChartParser, type ImChartRenderer } from './chart-parser.js'
 
 type MediaSender =
   | { platform: 'feishu'; sender: Pick<ReturnType<typeof createFeishuSender>, 'file'> }
@@ -73,6 +74,68 @@ export async function sendImMedia(input: ImMediaInput) {
 }
 
 type QqMediaInput = ImMediaInput & { platform: Extract<MediaSender, { platform: 'qq' }> }
+
+type SegmentReceipt = { outcome: 'accepted' | 'rejected' | 'unknown'; platformMessageIds?: readonly string[] }
+
+/** 按源码顺序投递图文。部分送达后无法继续时，禁止整条回复重发。 */
+export async function sendImGroupReplyCharts(input: Pick<ImMediaInput, 'platform' | 'scope' | 'authorize' | 'signal'> & {
+  text: string
+  renderCharts: ImChartRenderer
+  sendText(text: string): Promise<SegmentReceipt>
+}): Promise<SegmentReceipt & { text: string }> {
+  if (input.scope.chatType !== 'group' || !input.scope.chatId || input.platform.platform === 'wechat'
+    || !/^ {0,3}`{3}[ \t]*(?:mermaid|tex|latex)(?:[ \t]|\r?$)/im.test(input.text))
+    return { ...await input.sendText(input.text), text: input.text }
+  let attempts = 0
+  const parser = createImChartParser({
+    signal: input.signal,
+    trackOffsets: true,
+    async renderCharts(request, signal) {
+      if (attempts++ >= 4 || signal?.aborted || !await input.authorize()) return []
+      return input.renderCharts(request, signal)
+    },
+  })
+  const ids = new Set<string>()
+  const visible: string[] = []
+  let cursor = 0, delivered = false
+  const result = (outcome: SegmentReceipt['outcome']) => ({
+    outcome: outcome === 'rejected' && delivered ? 'unknown' as const : outcome,
+    platformMessageIds: [...ids], text: visible.join('\n\n'),
+  })
+  const collect = (receipt: SegmentReceipt) => {
+    if (receipt.outcome === 'accepted') {
+      delivered = true
+      for (const id of receipt.platformMessageIds ?? []) ids.add(id)
+    }
+    return receipt.outcome
+  }
+  const sendText = async (source: string) => {
+    const text = source.trim()
+    if (!text) return 'accepted'
+    if (input.signal?.aborted || !await input.authorize()) return 'rejected'
+    const outcome = collect(await input.sendText(text))
+    if (outcome === 'accepted') visible.push(text)
+    return outcome
+  }
+  try {
+    for (const chart of [...await parser.append(input.text), ...await parser.finish()]) {
+      if (chart.offset === undefined) continue
+      const before = await sendText(input.text.slice(cursor, chart.offset))
+      if (before !== 'accepted') return result(before)
+      if (input.signal?.aborted || !await input.authorize()) return result('rejected')
+      const image = await sendImMedia({ ...input, bytes: chart.png,
+        file: { name: 'chart', ext: 'png', mime: 'image/png' } })
+      const outcome = image ? collect(image.receipt) : 'unknown'
+      if (outcome === 'unknown') return result(outcome)
+      if (outcome === 'rejected') {
+        const fallback = await sendText(chart.source)
+        if (fallback !== 'accepted') return result(fallback)
+      }
+      cursor = chart.offset + chart.source.length
+    }
+    return result(await sendText(input.text.slice(cursor)))
+  } catch { return result('unknown') }
+}
 
 async function prepareQqMedia(input: QqMediaInput, recipient: string, name: string, image: boolean, partConcurrencyLimit?: 5) {
   const { platform, scope, bytes, signal, authorize } = input

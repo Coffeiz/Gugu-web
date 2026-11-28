@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { stableJson } from '@gugu/core/agent';
 import { parseQqStreamSnapshot, qqStreamPrefix } from './sender.js';
+import { removeDeliveredImChart } from '../../runtime/chart-parser.js';
 const hash = (value) => createHash('sha256').update(stableJson(value)).digest('hex');
 const segment = z.object({ round: z.number().int().nonnegative().safe(), text: z.string(), source: z.string(), boundary: z.string().max(64), ids: z.array(z.string().min(1).max(256)).min(1) }).strict();
 const schema = z.object({ v: z.literal(1), target: z.string().regex(/^[a-f0-9]{64}$/), eventSequence: z.number().int().nonnegative().safe(), lastEventHash: z.string(),
@@ -196,15 +197,7 @@ export function createPersistentQqProjection(options) {
             const fullRaw = text !== undefined && !!state.rawRound && (text.trimEnd() === state.rawRound.trimEnd() || text.startsWith(state.rawRound));
             if (text !== undefined) {
                 for (const chart of state.charts.filter(value => value.round === state.round)) {
-                    const at = text.indexOf(chart.source);
-                    if (at >= 0) {
-                        let end = at + chart.source.length;
-                        if (text.slice(end, end + 2) === '\r\n')
-                            end += 2;
-                        else if (text[end] === '\n')
-                            end++;
-                        text = text.slice(0, at) + text.slice(end);
-                    }
+                    text = removeDeliveredImChart(text, chart.source);
                 }
                 if (fullRaw)
                     for (const part of state.visible.filter(value => value.round === state.round && value.boundary !== 'chart')) {

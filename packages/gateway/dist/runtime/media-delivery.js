@@ -1,4 +1,5 @@
 import { QqMediaUploadError } from '../platforms/qq/media-upload.js';
+import { createImChartParser, removeDeliveredImChart } from './chart-parser.js';
 export const imOutboundMediaLimits = Object.freeze({
     qq: 30 * 1024 * 1024,
     wechat: 20 * 1024 * 1024,
@@ -44,6 +45,40 @@ export async function sendImMedia(input) {
             return send ? send() : null;
         }
     }
+}
+/** 只从平台出站正文中移除有明确发送回执的图表围栏。 */
+export async function sendImGroupReplyCharts(input) {
+    if (input.scope.chatType !== 'group' || !input.scope.chatId || input.platform.platform === 'wechat'
+        || !/^ {0,3}`{3}[ \t]*(?:mermaid|tex|latex)(?:[ \t]|\r?$)/im.test(input.text))
+        return { text: input.text, attempted: false };
+    let attempts = 0;
+    const parser = createImChartParser({
+        signal: input.signal,
+        trackOffsets: true,
+        async renderCharts(request, signal) {
+            if (attempts++ >= 4 || signal?.aborted || !await input.authorize())
+                return [];
+            return input.renderCharts(request, signal);
+        },
+    });
+    let attempted = false;
+    let text = input.text;
+    for (const chart of [...await parser.append(input.text), ...await parser.finish()]) {
+        try {
+            if (input.signal?.aborted || !await input.authorize())
+                break;
+            attempted = true;
+            const result = await sendImMedia({ ...input, bytes: chart.png,
+                file: { name: 'chart', ext: 'png', mime: 'image/png' } });
+            if (!result || result.receipt.outcome !== 'accepted' || chart.offset === undefined)
+                break;
+            text = removeDeliveredImChart(text, chart.source, chart.offset - (input.text.length - text.length));
+        }
+        catch {
+            break;
+        }
+    }
+    return { text, attempted };
 }
 async function prepareQqMedia(input, recipient, name, image, partConcurrencyLimit) {
     const { platform, scope, bytes, signal, authorize } = input;

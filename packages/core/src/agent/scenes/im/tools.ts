@@ -16,7 +16,7 @@ export function imOwnerPrivate(actor: Pick<ImActor, 'role' | 'chatType' | 'verif
 
 /** 平台校验可信群事件和 Bot 绑定后，将发言者身份交给共享策略。 */
 export function desktopImGroupToolAllowed(platform: ImActor['platform'], verifiedOwner: boolean, configured: unknown, name: string): boolean {
-  if (name === imFilePathPermission) return verifiedOwner && publicPlatforms.has(platform)
+  if (name === imFilePathPermission) return isVerifiedImOwner({ role: verifiedOwner ? 'owner' : 'member', verifiedOwner }) && publicPlatforms.has(platform)
   return imCanUseTool({
     platform, chatType: 'group', role: verifiedOwner ? 'owner' : 'member', verifiedOwner,
     allowedToolNames: verifiedOwner ? null : normalizeUserBotTools(configured),

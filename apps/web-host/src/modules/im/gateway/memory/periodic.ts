@@ -1,6 +1,7 @@
 import type {Json} from '@gugu/core/agent'
 import {parseStructuredJson} from '@gugu/core/providers'
 import {checkOwnerPeriodicOutput,type OwnerPeriodicField} from '@gugu/core/owner-periodic'
+import {imOwnerMemoryMaintenanceAllowed} from '@gugu/core/agent/scenes/im'
 import {strip} from '@gugu/core/shared/values'
 import {reportedReflectionUsage} from './usage.js'
 import type {createImReflectionFiles,ImReflectionFilePlan} from './files.js'
@@ -26,7 +27,7 @@ export async function prepareImOwnerPeriodicPlan(input:{
  try{
   const{job,runtime,files,field}=input
   if(job.scope.type!=='owner'||job.scope.id!==job.identity.sessionId||job.actor.ownerId!==job.identity.ownerId
-   ||job.actor.role!=='owner'&&!job.actor.verifiedOwner||!['profile','pattern'].includes(field)
+   ||!imOwnerMemoryMaintenanceAllowed(job.actor.role,job.actor.verifiedOwner)||!['profile','pattern'].includes(field)
    ||runtime.selection.modelIdentity!==job.modelIdentity||runtime.selection.accessScopeHash!==job.accessScopeHash
    ||runtime.selection.contextWindow!==job.contextWindow||!Number.isFinite(input.attemptAt)||input.attemptAt<0)throw cancelled()
   if(typeof input.prompt!=='string'||!strip(input.prompt)||Buffer.byteLength(input.prompt)>1048576)throw new ImOwnerPeriodicError(usages)

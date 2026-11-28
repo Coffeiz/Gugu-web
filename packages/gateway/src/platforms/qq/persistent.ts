@@ -6,6 +6,7 @@ import {parseQqStreamSnapshot,qqStreamPrefix,type createQqSender,type QqTarget,t
 import type { ImConversationScope } from '../../ir/inbound.js'
 
 import type { ImPlatformProjectionStore } from '../../runtime/projection-store.js'
+import { removeDeliveredImChart } from '../../runtime/chart-parser.js'
 
 export interface QqChartProjection {
   prepare(events: AsyncIterable<RunEvent>): AsyncIterable<RunEvent>
@@ -161,8 +162,7 @@ export function createPersistentQqProjection(options:QqProjectionOptions):NonNul
    const fullRaw=text!==undefined&&!!state.rawRound&&(text.trimEnd()===state.rawRound.trimEnd()||text.startsWith(state.rawRound))
    if(text!==undefined){
     for(const chart of state.charts.filter(value=>value.round===state.round)){
-     const at=text.indexOf(chart.source)
-     if(at>=0){let end=at+chart.source.length;if(text.slice(end,end+2)==='\r\n')end+=2;else if(text[end]==='\n')end++;text=text.slice(0,at)+text.slice(end)}
+     text=removeDeliveredImChart(text,chart.source)
     }
     if(fullRaw)for(const part of state.visible.filter(value=>value.round===state.round&&value.boundary!=='chart')){if(text.startsWith(part.source))text=text.slice(part.source.length);else break}
    }

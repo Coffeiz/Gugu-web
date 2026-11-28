@@ -1,8 +1,16 @@
 const pngSignature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 export const validImChartPng = (bytes) => bytes instanceof Uint8Array && bytes.byteLength >= 8 && bytes.byteLength <= 3 * 1024 * 1024 && pngSignature.every((byte, index) => bytes[index] === byte);
+/** 仅移除已投递的源码块及紧随其后的换行。 */
+export function removeDeliveredImChart(text, source, offset = text.indexOf(source)) {
+    if (offset < 0 || !source || !text.startsWith(source, offset))
+        return text;
+    const end = offset + source.length;
+    return text.slice(0, offset) + text.slice(end).replace(/^\r?\n/u, '');
+}
 /** 增量跟踪顶层围栏；源码始终原样透传，渲染失败不能改写canonical正文。 */
 export function createImChartParser(options) {
     let line = '', outer = null;
+    let position = 0, chartOffset = 0;
     let chart = null;
     if (options.checkpoint !== undefined) {
         const raw = options.checkpoint;
@@ -26,7 +34,8 @@ export function createImChartParser(options) {
                     return [];
                 try {
                     const bytes = (await options.renderCharts({ charts: [{ type: completed.type, source: completed.body }], ...(options.theme ? { theme: options.theme } : {}) }, options.signal))[0];
-                    return bytes && validImChartPng(bytes) ? [{ type: 'chart_image', source, png: bytes }] : [];
+                    return bytes && validImChartPng(bytes) ? [{ type: 'chart_image', source, png: bytes,
+                            ...(options.trackOffsets ? { offset: chartOffset } : {}) }] : [];
                 }
                 catch {
                     return [];
@@ -50,8 +59,10 @@ export function createImChartParser(options) {
             return [];
         }
         const language = info.split(/\s+/)[0].toLowerCase();
-        if (terminated && marker === '`' && size === 3 && ['mermaid', 'tex', 'latex'].includes(language))
+        if (terminated && marker === '`' && size === 3 && ['mermaid', 'tex', 'latex'].includes(language)) {
+            chartOffset = position;
             chart = { type: language === 'mermaid' ? 'mermaid' : 'math', body: '', source: value };
+        }
         else
             outer = { marker, size };
         return [];
@@ -66,6 +77,7 @@ export function createImChartParser(options) {
                 const complete = line.slice(0, newline + 1);
                 line = line.slice(newline + 1);
                 result.push(...await completedLine(complete, true));
+                position += complete.length;
             }
             return result;
         },

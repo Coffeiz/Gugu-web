@@ -12,6 +12,7 @@ import type { ImReflectionRuntime, ImReflectionService, ImReflectionServiceOptio
 import { imProductionProvider } from '../agent/resources.js'
 import { createImRuntimeBindingStore } from '../agent/store.js'
 import { createWebOwnerMemorySearchPort } from '../../../agent/tools/memory/search.js'
+import { imOwnerMemoryMaintenanceAllowed } from '@gugu/core/agent/scenes/im'
 
 type Options = Omit<ImProductionResourcesOptions, 'reflection'>
 const digest = (value: unknown) => createHash('sha256').update(stableJson(value)).digest('hex')
@@ -99,7 +100,7 @@ export function createImProductionReflectionBindings(options: Options): Pick<ImR
           async release() { try { await provider.close() } finally { original.binding.release() } },
         }
         if(job.scope.type==='owner')result.readOwnerDailyReferences=async(query,currentSignal)=>{
-          if((actor.role!=='owner'&&!actor.verifiedOwner)||job.scope.id!==identity.sessionId||!await authorize())throw failed()
+          if(!imOwnerMemoryMaintenanceAllowed(actor.role,actor.verifiedOwner)||job.scope.id!==identity.sessionId||!await authorize())throw failed()
           if(!query.trim())return[]
           if(Array.from(query).length>2000)throw failed()
           const sameIdentity=(candidate:RunIdentity)=>candidate.ownerId===identity.ownerId&&candidate.sessionId===identity.sessionId&&candidate.runId===identity.runId

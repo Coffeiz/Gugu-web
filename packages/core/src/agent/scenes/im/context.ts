@@ -6,6 +6,7 @@ import { snapshotImMemory } from '../../../im/memory-context.js'
 import { agentContextPolicy } from '../source-policy.js'
 import type { ImActor, ImBotAccess } from '../../../im/access.js'
 import { imOwnerPrivate } from './tools.js'
+import { imOwnerCanReadGroupMemory } from './owner/memory.js'
 
 const blacklist = new Set(['smart_view', 'object_cards', 'app_deep_links', 'open_item_reference'])
 export function imAllowsPrompt(block: string): boolean { return !blacklist.has(block) }
@@ -30,7 +31,7 @@ export function imContextPolicy(actor: ImActor, bot: ImBotAccess | null, memoryE
 /** 群聊中的主人个人记忆只可在可信平台身份已验证且开关开启时召回。 */
 export function imCanUseGroupOwnerMemory(actor: ImActor, enabled: boolean): boolean {
   if (typeof enabled !== 'boolean') throw new TypeError('群主个人记忆开关必须由可信配置提供')
-  return actor.chatType === 'group' && actor.role === 'owner' && actor.verifiedOwner && enabled
+  return actor.chatType === 'group' && imOwnerCanReadGroupMemory(actor.role, actor.verifiedOwner, enabled)
 }
 
 
