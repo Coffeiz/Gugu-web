@@ -391,6 +391,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
           try {
             const files: DesktopImFile[] = []
             let faceImage = false
+            let quotedOversize = false
             const sourceIndices = new Map<number, number>()
             const budget = createImMediaBudget(MAX_DESKTOP_ATTACHMENT_BYTES, 16)
             async function appendFile(media: QqMediaRequirement, file: DesktopImFile) {
@@ -402,6 +403,7 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
             }
             const processed = await processQqMedia(parsed.mediaItems, budget, downloadSignal, {
               transport: mediaTransport, resolve, authorize, file: appendFile,
+              quotedOversize: () => { quotedOversize = true },
               async quote(media, sourcePlatformMessageId) {
                 if (!runtime?.references || !runtime.dataDirectory) return false
                 const id = await runtime.references.attachment(event.scope, sourcePlatformMessageId, media.attachmentIndex, downloadSignal)
@@ -420,8 +422,10 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
               },
             })
             if (!processed || !await authorize()) return
-            if (!files.length && !event.text.trim() && !event.quotedText) return
-            const incoming = parsed.splitFace.faceOnly && faceImage ? { ...event, text: '' }
+            if (!files.length && !event.text.trim() && !event.quotedText && !quotedOversize) return
+            const incoming = quotedOversize
+              ? { ...event, text: [event.text, '［引用附件超出大小限制，未载入，无法读取或保存该附件。］'].filter(Boolean).join('\n\n') }
+              : parsed.splitFace.faceOnly && faceImage ? { ...event, text: '' }
               : !event.text.trim() && files.length > 0 && files.every(file => !file.transcript && !/^(?:image\/|text\/)/u.test(file.mime))
               ? { ...event, text: '[QQ 附件]' } : event
             try {

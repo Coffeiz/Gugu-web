@@ -105,26 +105,34 @@ export async function processQqMedia(items, budget, signal, options) {
         if (options.authorize && !await options.authorize())
             return false;
         const quoted = media.source === 'quote';
-        if (quoted) {
-            if (media.sourcePlatformMessageId && await options.quote(media, media.sourcePlatformMessageId))
+        try {
+            if (quoted) {
+                if (media.sourcePlatformMessageId && await options.quote(media, media.sourcePlatformMessageId))
+                    continue;
+                const mime = String(media.item.content_type || media.item.type || '').split(';', 1)[0].trim().toLowerCase();
+                if (mime.includes('/') && mime !== 'application/octet-stream' && !mime.startsWith('image/'))
+                    continue;
+                if (!media.item.url && !media.item.file_url && !media.item.download_url)
+                    continue;
+                signal.throwIfAborted();
+                if (options.authorize && !await options.authorize())
+                    return false;
+            }
+            const file = await materializeQqMedia(media.item, budget, signal, options);
+            // 引用语音必须走同会话附件复用，保留原消息证明。
+            if (!file)
                 continue;
-            const mime = String(media.item.content_type || media.item.type || '').split(';', 1)[0].trim().toLowerCase();
-            if (mime.includes('/') && mime !== 'application/octet-stream' && !mime.startsWith('image/'))
-                continue;
-            if (!media.item.url && !media.item.file_url && !media.item.download_url)
-                continue;
-            signal.throwIfAborted();
-            if (options.authorize && !await options.authorize())
-                return false;
+            if (!quoted)
+                await options.file(media, { ...file, quoted }, index);
+            else if (imImageFormat(file.bytes))
+                await options.file(media, { ...file, quoted, voice: false }, index);
         }
-        const file = await materializeQqMedia(media.item, budget, signal, options);
-        // 引用语音必须走同会话附件复用，保留原消息证明。
-        if (!file)
-            continue;
-        if (!quoted)
-            await options.file(media, { ...file, quoted }, index);
-        else if (imImageFormat(file.bytes))
-            await options.file(media, { ...file, quoted, voice: false }, index);
+        catch (error) {
+            signal.throwIfAborted();
+            if (!quoted || !options.quotedOversize || !(error instanceof QqMediaIngressError) || error.code !== 'qq_media_size')
+                throw error;
+            options.quotedOversize();
+        }
     }
     signal.throwIfAborted();
     return true;
