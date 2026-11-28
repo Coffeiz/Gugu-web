@@ -2,7 +2,7 @@ import type { SqlDataRuntime } from '#core-source/data/runtime.js'
 import type { PreparedToolDefinition, RunIdentity } from '#core-source/agent/models.js'
 import type { ToolPort } from '#core-source/agent/ports.js'
 import type { ToolDefinition } from '#core-source/agent/tools/contracts.js'
-import type { BuiltinSkillDefinition } from '#core-source/agent/skills/builtin.js'
+import type { AgentSkillRuntimePorts } from '#core-source/agent/skills/runtime.js'
 import type { McpToolLookup } from '#core-source/mcp/tool-directory.js'
 import type { createDesktopMcpCrypto } from '#core-source/mcp/desktop-crypto.js'
 import type { createOwnerToolRegistry } from '#core-source/agent/tools/owner.js'
@@ -10,7 +10,6 @@ import { createNodeProviderTransport, desktopTransportOptions, type NodeProvider
 import { createDesktopMcpAgentRuntime } from '#core-source/mcp/desktop-agent-runtime.js'
 import { createMcpAgentToolPorts } from '#core-source/mcp/agent-tools.js'
 import { createToolRegistry } from '#core-source/agent/tools/registry.js'
-import { createSkillRegistry } from '#core-source/agent/skills/registry.js'
 import { createSearchToolsTool, createUseSkillTool } from '#core-source/agent/tools/meta/index.js'
 import { createTimeTool, type ToolClock } from '#core-source/agent/tools/time/index.js'
 import { createCallToolAdapter, rejectAdapterCall, resolveCallTool } from '#core-source/agent/tools/meta/call-adapter.js'
@@ -18,7 +17,7 @@ import { createGroupContextSearchTool } from '#core-source/agent/tools/im/group-
 import { createDesktopGroupContextSearch } from '#core-source/im/desktop-group-context.js'
 import { desktopImGroupRunEvent } from '#core-source/im/desktop-inbox.js'
 import { createHttpGetTool, type HttpGetPort } from '#core-source/agent/tools/web/index.js'
-import { imCanUseTool, imFilePathPermission, imSkillToolsAvailable, imUnavailableTool } from '#core-source/agent/scenes/im/index.js'
+import { imCanUseTool, imFilePathPermission, imUnavailableTool } from '#core-source/agent/scenes/im/index.js'
 import { canonicalAgentToolName } from '#core-source/agent/index.js'
 
 export function createDesktopToolRuntime(options: {
@@ -35,7 +34,7 @@ export function createDesktopToolRuntime(options: {
   hostRequest: (method: string, params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>
   configuredAgentTools: (names: readonly string[], signal?: AbortSignal) => Promise<string[]>
   desktopPrivateImOwner: (identity: RunIdentity, signal?: AbortSignal) => Promise<Parameters<typeof imCanUseTool>[0] | null>
-  sceneBuiltins: BuiltinSkillDefinition[]
+  skills: AgentSkillRuntimePorts
   agentClock: ToolClock
   groupScheduleList: ToolDefinition
   scheduleWrites: readonly ToolDefinition[]
@@ -51,7 +50,7 @@ export function createDesktopToolRuntime(options: {
   delegationTools: () => readonly ToolDefinition[]
 }) {
   const { db, ownerId, sessionId, interactive, imSession, groupChat, registry, mcpCrypto,
-    resolveProxy, authorize, hostRequest, configuredAgentTools, desktopPrivateImOwner, sceneBuiltins, agentClock,
+    resolveProxy, authorize, hostRequest, configuredAgentTools, desktopPrivateImOwner, skills, agentClock,
     groupScheduleList, scheduleWrites, scheduleImTarget, researchAvailable, imageSearchAvailable, deepResearch,
     similarImageSearch, webSearch, httpGet, sendFile, delegationTools } = options
   // 可用性只决定是否开放新调用。已有调用的收据查询保留原工具的参数校验与运行授权。
@@ -82,18 +81,15 @@ export function createDesktopToolRuntime(options: {
     const receipt = await desktopImGroupRunEvent(db, identity)
     return receipt !== null && await hostRequest('agent.im.authorizeGroupTool', { ...receipt, name }, signal) === true
   }
-  const groupSkillRegistry = createSkillRegistry({
-    skills: sceneBuiltins,
-    async authorize(identity, id) {
-      const skill = sceneBuiltins.find(candidate => candidate.id === id)
-      if (!skill || !await authorizeGroupTool(identity, 'use_skill')) return false
-      const available = new Set((await configuredTools(identity)).map(tool => tool.name))
-      return imSkillToolsAvailable(skill, available)
+  const groupSkillRegistry = {
+    async catalog(identity: RunIdentity) {
+      return (await configuredTools(identity)).some(tool => tool.name === 'use_skill')
+        ? skills.skills.catalog(identity) : []
     },
-  })
+  }
   const groupDefinitions = [
     createTimeTool(agentClock), createCallToolAdapter(), createSearchToolsTool(identity => configuredTools(identity)),
-    createUseSkillTool({ skills: groupSkillRegistry, async origin() { return { source: 'builtin' } } }),
+    createUseSkillTool(skills),
     groupScheduleList, ...scheduleWrites,
     createGroupContextSearchTool(createDesktopGroupContextSearch(db, identity => authorizeGroupTool(identity, 'group_context_search'))),
     ...(webSearch ? [webSearch] : []),

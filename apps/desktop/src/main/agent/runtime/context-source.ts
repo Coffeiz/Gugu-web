@@ -186,7 +186,7 @@ export function createDesktopRunContextLoader(options: {
   buildSystemPrompt: (preferences: Record<string, Json>, skillIndex?: string) => string
   sceneBuiltins: BuiltinSkillDefinition[]
   configuredTools: (identity: RunIdentity) => Promise<PreparedToolDefinition[]>
-  groupSkillRegistry: { catalog(identity: RunIdentity): Promise<readonly { id: string }[]> }
+  groupSkillRegistry: { catalog(identity: RunIdentity): Promise<readonly { id: string; name: string; description: string; source?: 'builtin' | 'user' }[]> }
   loadMailPrompt: (identity: RunIdentity, signal?: AbortSignal) => Promise<string>
   readMcpServices: (ownerId: string) => Promise<Parameters<typeof mcpServiceReminder>[0]>
   digest: (value: unknown) => string
@@ -208,8 +208,13 @@ export function createDesktopRunContextLoader(options: {
       }
       const loaded = await source.load(identity, signal)
       const tools = await configuredTools(identity)
-      const visibleSkills = new Set((await groupSkillRegistry.catalog(identity)).map(skill => skill.id))
-      contextState.systemPrompt = buildSystemPrompt(contextState.stylePreferences, formatBuiltinSkillIndex(sceneBuiltins.filter(skill => visibleSkills.has(skill.id)), false))
+      const catalog = await groupSkillRegistry.catalog(identity)
+      const visibleSkills = new Set(catalog.map(skill => skill.id))
+      const builtinIndex = formatBuiltinSkillIndex(sceneBuiltins.filter(skill => visibleSkills.has(skill.id)), false)
+      const userSkills = catalog.filter(skill => skill.source === 'user')
+      const userIndex = userSkills.length ? ['## 可用文件技能', ...userSkills.map(({ id, name, description }) =>
+        JSON.stringify({ id, name, description }))].join('\n') : ''
+      contextState.systemPrompt = buildSystemPrompt(contextState.stylePreferences, [builtinIndex, userIndex].filter(Boolean).join('\n\n'))
       const memberReminder = await readMemberReminder(identity, signal)
       return { ...loaded, capabilities: { toolNames: tools.map(tool => tool.name), tools },
         input: { ...loaded.input, systemPrompt: contextState.systemPrompt, fixedPrefix: [...loaded.input.fixedPrefix, ...memberReminder] } }

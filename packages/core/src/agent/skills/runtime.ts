@@ -18,6 +18,7 @@ export interface AgentSkillRuntimeOptions {
   readonly fileSkills?: readonly SkillDefinition[]
   readonly isFileSkillEnabled?: (ownerId: string, skillId: string, source?: SkillStorageSource) => Promise<boolean>
   readonly fingerprint: (ownerId: string) => string
+  readonly authorize?: (identity: RunIdentity) => Promise<boolean>
 }
 
 /**
@@ -38,7 +39,7 @@ export async function createAgentSkillRuntimePorts(options: AgentSkillRuntimeOpt
   const skills = createSkillRegistry({
     skills: [...options.builtins, ...(options.fileSkills ?? [])],
     async authorize(identity, id) {
-      if (identity.ownerId !== ownerId) return false
+      if (identity.ownerId !== ownerId || options.authorize && !await options.authorize(identity)) return false
       if (builtinIds.has(id)) return true
       const skill = options.fileSkills?.find(item => item.id === id)
       return fileIds.has(id) && !!skill && await options.isFileSkillEnabled!(ownerId, id, skill.storage_source)
@@ -48,7 +49,7 @@ export async function createAgentSkillRuntimePorts(options: AgentSkillRuntimeOpt
     skills,
     async origin(identity, id, signal) {
       signal.throwIfAborted()
-      if (identity.ownerId !== ownerId) throw new Error('技能来源无效')
+      if (identity.ownerId !== ownerId || options.authorize && !await options.authorize(identity)) throw new Error('技能来源无效')
       if (builtinIds.has(id)) return { source: 'builtin' }
       const skill = options.fileSkills?.find(item => item.id === id)
       if (!fileIds.has(id) || !skill || !await options.isFileSkillEnabled!(ownerId, id, skill.storage_source)) throw new Error('技能来源无效')

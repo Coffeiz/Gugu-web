@@ -381,7 +381,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     const scene: AgentScene = imSession ? 'im' : 'default'
     const sceneBuiltins = imSession ? builtins.filter(skill => imAllowsBuiltinSkill(skill.key)) : builtins
     const isFileSkillEnabled = (owner: string, id: string, source?: 'user' | 'clawhub') => isUserSkillBundleEnabled(knowledgeRoot, owner, id, source)
-    const fileSkills = groupChat ? [] : (await createFileSkillDefinitions({ dataRoot: knowledgeRoot, ownerId,
+    const fileSkills = (await createFileSkillDefinitions({ dataRoot: knowledgeRoot, ownerId,
       mapPath: path => path, isEnabled: isFileSkillEnabled })).definitions
     const fileSkillIndex = fileSkills.length ? ['## 可用文件技能', '按用途选择技能，使用 use_skill 读取正文；目录包含配套文件。',
       ...fileSkills.map(skill => JSON.stringify({ id: skill.id, name: skill.name, description: skill.description, path: skill.path }))].join('\n') : ''
@@ -568,12 +568,13 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       fingerprint: value => createHmac('sha256', secret).update(value).digest('hex'),
     })
     const builtinSkillMetadata = createBuiltinSkillMetadataReader(sceneBuiltins)
-    const skillMetadata = groupChat ? builtinSkillMetadata : withFileSkillMetadata({
+    const skillMetadata = withFileSkillMetadata({
       dataRoot: knowledgeRoot, list: builtinSkillMetadata, mapPath: path => path,
     })
     const skills = await createAgentSkillRuntimePorts({
       ownerId, builtins: sceneBuiltins,
       fileSkills, isFileSkillEnabled,
+      authorize: groupChat ? identity => authorizeGroupImTool(identity, 'use_skill') : undefined,
       fingerprint: owner => createHmac('sha256', secret).update(owner).digest('hex'),
     })
     const resolveDesktopFileReference = async (_owner: string, id: string, signal?: AbortSignal) => {
@@ -808,7 +809,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     const { tools, mcpRuntime, groupTools, groupSkillRegistry, delegation, configuredTools } =
       createDesktopToolRuntime({
         db, ownerId, sessionId, interactive, imSession: Boolean(imSession), groupChat, registry,
-        mcpCrypto, resolveProxy, authorize, hostRequest, configuredAgentTools, desktopPrivateImOwner, sceneBuiltins,
+        mcpCrypto, resolveProxy, authorize, hostRequest, configuredAgentTools, desktopPrivateImOwner, skills,
         agentClock, groupScheduleList, scheduleWrites, scheduleImTarget, researchAvailable, imageSearchAvailable,
         deepResearch, similarImageSearch, webSearch, httpGet, sendFile, memberSendFile,
         delegationTools: () => createSubagentServiceTools(desktopSubagents(secret)),
