@@ -1463,11 +1463,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.msg-voice .mv-dur) { font-size: 12.5px; color: var(--gugu-chat-voice-duration); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 /* 用户(右侧)发的附件卡：气泡尾巴翻到右下、左下回正常圆角、容器右对齐 */
 :deep(.msg.user .msg-files) { align-items: flex-end; }
-:deep(.msg.user .msg-voice) {
-  color: var(--gugu-chat-user-fg); background: var(--gugu-chat-user-bg);
-  border-color: transparent; border-bottom-left-radius: 14px; border-bottom-right-radius: 5px;
-  box-shadow: var(--gugu-chat-user-shadow);
-}
+:deep(.msg.user .msg-voice) { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
 :deep(.msg-footer) {
   display: flex; align-items: center; gap: 4px;
   margin-top: 3px; padding: 0 3px;

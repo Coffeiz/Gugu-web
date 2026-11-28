@@ -275,7 +275,7 @@ html[data-theme='dark'][data-family] .chat-window .mv-btn {
   background: var(--gugu-chat-send-bg);
 }
 html[data-theme='dark'][data-family] .chat-window .msg:is(.ai, .member) .msg-bubble,
-html[data-theme='dark'][data-family] .chat-window .msg:not(.user) .msg-voice {
+html[data-theme='dark'][data-family] .chat-window .msg-voice {
   color: var(--content-primary);
   background: var(--gugu-chat-assistant-bg);
   border-color: var(--border-subtle);
