@@ -1,5 +1,5 @@
 import { QqMediaUploadError } from '../platforms/qq/media-upload.js';
-import { createImChartParser, removeDeliveredImChart } from './chart-parser.js';
+import { createImChartParser } from './chart-parser.js';
 export const imOutboundMediaLimits = Object.freeze({
     qq: 30 * 1024 * 1024,
     wechat: 20 * 1024 * 1024,
@@ -46,11 +46,11 @@ export async function sendImMedia(input) {
         }
     }
 }
-/** 只从平台出站正文中移除有明确发送回执的图表围栏。 */
+/** 按源码顺序投递图文。部分送达后无法继续时，禁止整条回复重发。 */
 export async function sendImGroupReplyCharts(input) {
     if (input.scope.chatType !== 'group' || !input.scope.chatId || input.platform.platform === 'wechat'
         || !/^ {0,3}`{3}[ \t]*(?:mermaid|tex|latex)(?:[ \t]|\r?$)/im.test(input.text))
-        return { text: input.text, attempted: false };
+        return { ...await input.sendText(input.text), text: input.text };
     let attempts = 0;
     const parser = createImChartParser({
         signal: input.signal,
@@ -61,24 +61,58 @@ export async function sendImGroupReplyCharts(input) {
             return input.renderCharts(request, signal);
         },
     });
-    let attempted = false;
-    let text = input.text;
-    for (const chart of [...await parser.append(input.text), ...await parser.finish()]) {
-        try {
+    const ids = new Set();
+    const visible = [];
+    let cursor = 0, delivered = false;
+    const result = (outcome) => ({
+        outcome: outcome === 'rejected' && delivered ? 'unknown' : outcome,
+        platformMessageIds: [...ids], text: visible.join('\n\n'),
+    });
+    const collect = (receipt) => {
+        if (receipt.outcome === 'accepted') {
+            delivered = true;
+            for (const id of receipt.platformMessageIds ?? [])
+                ids.add(id);
+        }
+        return receipt.outcome;
+    };
+    const sendText = async (source) => {
+        const text = source.trim();
+        if (!text)
+            return 'accepted';
+        if (input.signal?.aborted || !await input.authorize())
+            return 'rejected';
+        const outcome = collect(await input.sendText(text));
+        if (outcome === 'accepted')
+            visible.push(text);
+        return outcome;
+    };
+    try {
+        for (const chart of [...await parser.append(input.text), ...await parser.finish()]) {
+            if (chart.offset === undefined)
+                continue;
+            const before = await sendText(input.text.slice(cursor, chart.offset));
+            if (before !== 'accepted')
+                return result(before);
             if (input.signal?.aborted || !await input.authorize())
-                break;
-            attempted = true;
-            const result = await sendImMedia({ ...input, bytes: chart.png,
+                return result('rejected');
+            const image = await sendImMedia({ ...input, bytes: chart.png,
                 file: { name: 'chart', ext: 'png', mime: 'image/png' } });
-            if (!result || result.receipt.outcome !== 'accepted' || chart.offset === undefined)
-                break;
-            text = removeDeliveredImChart(text, chart.source, chart.offset - (input.text.length - text.length));
+            const outcome = image ? collect(image.receipt) : 'unknown';
+            if (outcome === 'unknown')
+                return result(outcome);
+            if (outcome === 'rejected') {
+                const fallback = await sendText(chart.source);
+                if (fallback !== 'accepted')
+                    return result(fallback);
+            }
+            cursor = chart.offset + chart.source.length;
         }
-        catch {
-            break;
-        }
+        return result(await sendText(input.text.slice(cursor)));
     }
-    return { text, attempted };
+    catch {
+        return result('unknown');
+    }
 }
 async function prepareQqMedia(input, recipient, name, image, partConcurrencyLimit) {
     const { platform, scope, bytes, signal, authorize } = input;

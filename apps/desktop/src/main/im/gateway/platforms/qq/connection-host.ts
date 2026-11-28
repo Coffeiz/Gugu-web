@@ -1,16 +1,18 @@
-import { app, utilityProcess } from 'electron'
 import { fork } from 'node:child_process'
 import { join } from 'node:path'
 import type { QqConnectionPorts } from '@gugu/gateway/qq'
 import type { QqChildMessage, QqHostMessage } from './connection-child.js'
 
 /** Electron 持有账号与 Core 授权，子进程独占 QQ 长连接。 */
-export function createDesktopQqChildConnection(ports: QqConnectionPorts, executable?: string) {
-  const root = app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath()
+export function createDesktopQqChildConnection(ports: QqConnectionPorts, executable?: string,
+  electron?: Pick<typeof import('electron'), 'app' | 'utilityProcess'>) {
+  if (!executable && !electron) throw new Error('缺少 QQ 网关子进程运行时')
   const binary = executable ? fork('--gateway', ['qq'], {
     execPath: executable, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true,
   }) : undefined
-  const utility = binary ? undefined : utilityProcess.fork(join(root, 'dist/gateway/qq.cjs'), [], {
+  const utility = binary ? undefined : electron!.utilityProcess.fork(join(
+    electron!.app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked') : electron!.app.getAppPath(),
+    'dist/gateway/qq.cjs'), [], {
     serviceName: '咕咕 QQ 网关',
     stdio: 'ignore',
   })

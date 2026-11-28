@@ -15,7 +15,7 @@ const viteCli = resolve(ui, 'node_modules/vite/bin/vite.js')
 const electronCli = resolve(desktop, 'node_modules/electron/cli.js')
 const root = resolve(desktop, '../..')
 const tsc = resolve(desktop, 'node_modules/typescript/bin/tsc')
-const compiledPackages = ['scheduler', 'sandbox', 'database', 'email', 'auth', 'fs', 'search', 'gateway', 'core']
+const compiledPackages = ['scheduler', 'sandbox', 'database', 'email', 'auth', 'fs', 'search', 'core', 'gateway']
 const hostOutputs = [
   resolve(desktop, 'dist/main/index.cjs'),
   resolve(desktop, 'dist/preload/index.cjs'),

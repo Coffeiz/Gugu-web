@@ -75,6 +75,7 @@ import {
   screen,
   session,
   shell,
+  utilityProcess,
 } from 'electron'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { lstat, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
@@ -311,7 +312,7 @@ else {
         code => report('gateway.degraded', { code }), groupDisabledNotice, consumeGroupText)
       const qqPairing = createDesktopQqPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), () => qq?.refresh())
       const qqGateway = qq = createDesktopQqGateway(qqPairing, admitIm, dispatchIm, newImTransport,
-        ports => createDesktopQqChildConnection(ports, gatewayExecutable), callbackIm,
+        ports => createDesktopQqChildConnection(ports, gatewayExecutable, { app, utilityProcess }), callbackIm,
         (code, error) => report('gateway.degraded', { code, error }), { host, encryption: safeStorage, dataDirectory, voice: imVoice, observeUpload: uploadMetrics => report('gateway.qq_upload_timing', { uploadMetrics }), references: createDesktopQqReferences(dataDirectory, safeStorage) }, groupDisabledNotice,
         consumeGroupText)
       const scheduledIm = bindDesktopScheduledIm({ feishuPairing, qqPairing, wechatPairing, wechatReach, telegram: gateway, transport: newImTransport,

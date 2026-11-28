@@ -10,10 +10,6 @@ export function imAllowsTool(name: string, delivery?: 'app_card' | 'native'): bo
   return !imToolBlacklist.has(canonicalAgentToolName(name)) && !(name === 'send_item' && delivery === 'app_card')
 }
 
-export function imOwnerPrivate(actor: Pick<ImActor, 'role' | 'chatType' | 'verifiedOwner'>): boolean {
-  return isVerifiedImOwner(actor) && actor.chatType === 'c2c'
-}
-
 /** 平台校验可信群事件和 Bot 绑定后，将发言者身份交给共享策略。 */
 export function desktopImGroupToolAllowed(platform: ImActor['platform'], verifiedOwner: boolean, configured: unknown, name: string): boolean {
   if (name === imFilePathPermission) return isVerifiedImOwner({ role: verifiedOwner ? 'owner' : 'member', verifiedOwner }) && publicPlatforms.has(platform)

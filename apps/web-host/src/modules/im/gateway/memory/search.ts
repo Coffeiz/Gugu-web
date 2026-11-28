@@ -3,7 +3,7 @@ import type { SqlDataRuntime } from '@gugu/core/data'
 import { MemorySearchAccessError, type AuthorizedMemoryScope } from '@gugu/core/agent/rag'
 import type { AgentObservationPort, CanonicalRunPreparationPorts, RunIdentity } from '@gugu/core/agent'
 import type { ImActor, ImBotAccess } from '@gugu/core/im/access'
-import { imCanUseTool } from '@gugu/core/agent/scenes/im'
+import { imCanUseTool, imMemorySearchPlan } from '@gugu/core/agent/scenes/im'
 import { resolveImMemorySearchScopes, type ImMemorySearchPolicy } from '@gugu/core/im/memory-search-scopes'
 import type { MemorySearchPort } from '@gugu/core/tools'
 import { agentDispatchSource, type AgentDispatchLease } from '../../../agent/run/dispatch.js'
@@ -57,10 +57,13 @@ export function createPostgresImMemorySearch(options: {
   }
   async function scopes(requested: Parameters<typeof resolveImMemorySearchScopes>[1], signal: AbortSignal) {
     const current = await policy(signal), mixed = (actor.speakerRoles?.length ?? 0) > 1
-    const needsStored = !mixed && actor.role !== 'unknown' && (actor.chatType === 'group' ? requested === 'all_my_groups' : requested === 'auto' || requested === 'all_my_groups')
+    const plan = imMemorySearchPlan({ isIm: true, chatType: actor.chatType, role: actor.role, requested,
+      hasGroup: actor.chatType === 'group' && Boolean(actor.chatId), hasMember: Boolean(actor.platformUserId), mixed })
     const stored: AuthorizedMemoryScope[] = []
-    const type = actor.role === 'owner' ? 'group' : 'member'
-    if (needsStored && (type === 'group' ? current.groupMemoryEnabled : current.memberMemoryEnabled)) {
+    const type = plan.kind === 'deny' ? null : plan.storedScopeType
+    const enabled = type === 'group' ? current.groupMemoryEnabled : type === 'member' ? current.memberMemoryEnabled : false
+    const needsStored = plan.kind !== 'deny' && plan.includeOtherScopes
+    if (needsStored && type && enabled) {
       const rows = await options.pool.query(`SELECT owner_user_id::text,platform,bot_id,scope_type,scope_id FROM memory_reflection_cursors
         WHERE owner_user_id=$1 AND platform=$2 AND bot_id=$3 AND scope_type=$4 ORDER BY id LIMIT $5`,
       [identity.ownerId, actor.platform, actor.botId, type === 'group' ? 'group' : 'platform-user', type === 'group' ? 3 : 40])

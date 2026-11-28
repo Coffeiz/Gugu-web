@@ -62,17 +62,21 @@ type QqMediaInput = ImMediaInput & {
         platform: 'qq';
     }>;
 };
-/** 只从平台出站正文中移除有明确发送回执的图表围栏。 */
+type SegmentReceipt = {
+    outcome: 'accepted' | 'rejected' | 'unknown';
+    platformMessageIds?: readonly string[];
+};
+/** 按源码顺序投递图文。部分送达后无法继续时，禁止整条回复重发。 */
 export declare function sendImGroupReplyCharts(input: Pick<ImMediaInput, 'platform' | 'scope' | 'authorize' | 'signal'> & {
     text: string;
     renderCharts: ImChartRenderer;
-}): Promise<{
+    sendText(text: string): Promise<SegmentReceipt>;
+}): Promise<SegmentReceipt & {
     text: string;
-    attempted: boolean;
 }>;
 /** 上传最多预取一张，发送顺序及单件回执仍由原发送器决定。 */
 export declare function sendQqImageBatch(inputs: readonly QqMediaInput[]): AsyncGenerator<{
     index: number;
-    outcome: "accepted" | "rejected" | "unknown";
+    outcome: "unknown" | "rejected" | "accepted";
 }, void, unknown>;
 export {};

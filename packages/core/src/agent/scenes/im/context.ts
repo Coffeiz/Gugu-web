@@ -5,7 +5,7 @@ import type { ContextSourcePorts } from '../../ports.js'
 import { snapshotImMemory } from '../../../im/memory-context.js'
 import { agentContextPolicy } from '../source-policy.js'
 import type { ImActor, ImBotAccess } from '../../../im/access.js'
-import { imOwnerPrivate } from './tools.js'
+import { imOwnerPrivate } from './owner/tools.js'
 import { imOwnerCanReadGroupMemory } from './owner/memory.js'
 
 const blacklist = new Set(['smart_view', 'object_cards', 'app_deep_links', 'open_item_reference'])
