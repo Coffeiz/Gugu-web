@@ -18,6 +18,7 @@ function run(label, command, args, cwd) {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
+run('共享 FS 回归', 'pnpm', ['--filter', '@gugu/fs', 'test'], root)
 run('Node Core 快速隔离回归', 'pnpm', ['--filter', '@gugu/core', 'test:unit'], root)
 run('Python compileall', python, ['-m', 'compileall', '-q', 'app', 'agent'], path.join(root, 'backend'))
 run('ownership 守卫', python, ['scripts/checks/check_ownership.py'], path.join(root, 'backend'))

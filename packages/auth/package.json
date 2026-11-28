@@ -1,0 +1,26 @@
+{
+  "name": "@gugu/auth",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./postgres": "./dist/postgres.js",
+    ".": "./dist/index.js",
+    "./client": "./dist/client.js",
+    "./contracts": "./dist/contracts.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@gugu/database": "workspace:*",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}

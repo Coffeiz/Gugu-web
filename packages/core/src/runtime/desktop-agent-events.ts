@@ -1,0 +1,115 @@
+import { isImInternalDelegationTool } from '../agent/scenes/im/index.js'
+import type { Kysely } from 'kysely'
+import type { Database } from '../data/schema.js'
+import { CoreError } from '../contracts/index.js'
+import { MAX_AGENT_RESPONSE, type DesktopAgentEventPage } from '../contracts/desktop.js'
+import { reconstructionStatusEvent, startupFailureEvent } from '../agent/run/event-stream.js'
+import { projectPersistentToolInput } from '../agent/runner/tool-projection.js'
+import { projectAgentRunEvent } from '../agent/run/event-projection.js'
+import { createSqliteAgentAdmission } from '../agent/run/sqlite-admission.js'
+import { createSqliteAgentRunCoordination } from '../agent/run/sqlite-coordination.js'
+import { loadSqliteAgentRunSecret } from '../agent/run/sqlite-secret.js'
+import { createSqliteAgentRunStore } from '../agent/run/sqlite-store.js'
+import { settleClosedSqliteInteraction } from '../agent/run/sqlite-recovery.js'
+import { createSqliteInteractionProjection } from '../agent/interactions/sqlite-projection.js'
+
+/** 宿主可按运行和游标补读已提交的展示事件。 */
+export function createDesktopAgentEventReader(db: Kysely<Database>, databasePath: string, ownerId: string) {
+  const admission = createSqliteAgentAdmission(db)
+  let reader: Awaited<ReturnType<typeof openReader>> | undefined
+  async function openReader() {
+    const secret = await loadSqliteAgentRunSecret(db, databasePath)
+    const store = createSqliteAgentRunStore(db, secret, {
+      async writeHistory() { throw new Error('事件读取端口不能写入历史') },
+    })
+    const { readState } = createSqliteAgentRunCoordination(db, {
+      readEventsAfter: store.readEventsAfter,
+      async read(identity) {
+        const checkpoint = await store.read(identity)
+        // 界面继续观察原 Run，内部执行器仍按持久等待状态释放执行槽。
+        if (checkpoint?.status === 'waiting' && (checkpoint.subagentWaitChildId || checkpoint.agentInboxWaiting))
+          return { sequence: checkpoint.sequence, status: 'running' }
+        return checkpoint
+      },
+    })
+    return { store, readState,
+      projection: createSqliteInteractionProjection(db, secret) }
+  }
+  return async (sessionId: number, runId: string | undefined, after: number, stateOnly = false, imDelivery = false, imStream = false, reportAgentWait = false, imFeishuToolDetails = false): Promise<DesktopAgentEventPage> => {
+    if (runId === undefined && after !== 0) throw new CoreError('invalid_request', '续读事件必须指定运行')
+    const active = await admission.active(ownerId, sessionId, runId)
+    if (!active || (runId !== undefined && !active.identity)) throw new CoreError('not_found', '会话或运行不存在')
+    const identity = active.identity
+    if (!identity) return { runId: null, events: [], cursor: 0, status: 'idle', hasMore: false,
+      ...(stateOnly ? { executionState: active.executionState } : {}) }
+    await settleClosedSqliteInteraction(db, databasePath, identity)
+    const { store, readState, projection } = reader ??= await openReader()
+    if (stateOnly) {
+      if (reportAgentWait) {
+        const checkpoint = await store.read(identity)
+        if (checkpoint?.status === 'waiting' && (checkpoint.subagentWaitChildId || checkpoint.agentInboxWaiting))
+          return { runId: identity.runId, status: 'waiting_agent', events: [], cursor: checkpoint.sequence, hasMore: false }
+      }
+      const state = await readState(identity)
+      return { runId: identity.runId, executionState: active.executionState, status: state?.status ?? 'preparing',
+        events: [], cursor: state?.sequence ?? 0, hasMore: false }
+    }
+    const events: DesktopAgentEventPage['events'] = []
+    let cursor = after
+    let size = 0
+    const saved = await store.readEventsAfter(identity, after)
+    for (const event of saved) {
+      // 子任务报告属于应用内会话，IM 投递只读取主 Agent 的回复与工具状态。
+      const displayEvent = imDelivery && event.type === 'round_start' && Array.isArray(event.payload.subagentDisplays)
+        ? { ...event, payload: { ...event.payload, subagentDisplays: [] } } : event
+      const internalTool = imDelivery && (event.type === 'tool_call' || event.type === 'tool_done')
+        && isImInternalDelegationTool(event.payload.name)
+      const projected: DesktopAgentEventPage['events'] = internalTool ? [] : await projectAgentRunEvent(displayEvent, projection)
+      if (imDelivery) {
+        if (event.type === 'compaction')
+          projected.push({ type: 'im_compaction', sequence: event.sequence, phase: event.payload.phase, applied: event.payload.applied,
+            ...(imStream && event.payload.phase === 'started' ? { runEvent: { ...event, payload: { phase: 'started' } } } : {}) })
+        else if (event.type === 'round_end' && typeof event.payload.text === 'string')
+          projected.push({ type: 'im_round_end', sequence: event.sequence, text: event.payload.text })
+        else if (event.type === 'final' && event.payload.status === 'completed' && typeof event.payload.text === 'string')
+          projected.push({ type: 'im_final_text', text: event.payload.text })
+      }
+      if (imStream && (!internalTool || event.type === 'tool_call') && ['token', 'text_end', 'tool_call', 'tool_done', 'round_end', 'final', 'interaction_required', 'interaction_resolved', 'run_waiting', 'run_resumed'].includes(event.type)) {
+        const { text, status, toolCallId, name } = event.payload
+        const tool = !internalTool && (event.type === 'tool_call' || event.type === 'tool_done')
+        const display = tool && imDelivery && event.payload.display
+          && typeof event.payload.display === 'object' && !Array.isArray(event.payload.display)
+          ? event.payload.display as Record<string, unknown> : undefined
+        const toolDisplay = display?.kind === 'tool' && display.toolCallId === toolCallId ? display : undefined
+        const details = imFeishuToolDetails ? toolDisplay : undefined
+        projected.push({ type: 'im_stream', runEvent: {
+          id: event.id, identity: event.identity, sequence: event.sequence, round: event.round, type: event.type,
+          payload: { ...(['token', 'text_end', 'round_end', 'final'].includes(event.type) && typeof text === 'string' ? { text } : {}),
+            ...((event.type === 'final' || tool) && typeof status === 'string' ? { status } : {}),
+            ...(tool && typeof toolCallId === 'string' ? { toolCallId } : {}),
+            ...(tool && typeof name === 'string' ? { name } : {}),
+            ...(typeof toolDisplay?.toolDurationMs === 'number' ? { toolDurationMs: toolDisplay.toolDurationMs } : {}),
+            ...(details?.toolInput === undefined ? {} : { input: projectPersistentToolInput(details.toolInput) }),
+            ...(details?.toolResult === undefined ? {} : { result: projectPersistentToolInput(details.toolResult) }) },
+        } })
+      }
+      const bytes = Buffer.byteLength(JSON.stringify(projected))
+      if (size + bytes > MAX_AGENT_RESPONSE - 512) {
+        if (cursor === after) throw new CoreError('storage_error', '运行事件超出桌面协议限制')
+        break
+      }
+      events.push(...projected)
+      size += bytes
+      cursor = event.sequence
+    }
+    const state = await readState(identity)
+    const hasMore = (state?.sequence ?? 0) > cursor
+    if (!hasMore) {
+      const reconstruction = reconstructionStatusEvent(identity, cursor, state?.status)
+      if (reconstruction) events.push(...await projectAgentRunEvent(reconstruction, projection))
+      else if (state?.status === 'startup_failed')
+        events.push(...await projectAgentRunEvent(startupFailureEvent(identity, cursor), projection))
+    }
+    return { runId: identity.runId, events, cursor, status: state?.status ?? 'preparing', hasMore }
+  }
+}

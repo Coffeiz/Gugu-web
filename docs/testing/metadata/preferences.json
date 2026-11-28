@@ -1,0 +1,26 @@
+{
+  "apps/web-host/tests/preferences/preferences-smtp-store.test.ts": {
+    "domain": "preferences",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/smtp.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "隔离 PostgreSQL 上的 SMTP 密码加密、保留、清除及用户隔离",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/preferences/document-store.test.ts": {
+    "domain": "preferences",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences/document-store.ts",
+    "productionEntry": "packages/core/src/preferences/service.ts",
+    "keyBehavior": "正式 SQLite 升级备份、owner 限制及 PostgreSQL 偏好文档隔离",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/preferences/smtp.test.ts": {
+    "domain": "preferences",
+    "layer": "L2",
+    "owner": "packages/core/src/preferences",
+    "productionEntry": "packages/core/src/preferences/smtp.ts",
+    "keyBehavior": "双库 SMTP 设置 owner 隔离、密文保留及失败回滚",
+    "ci": "core-node"
+  }
+}

@@ -1,0 +1,27 @@
+.desktop-boot-icon {
+  display: grid;
+  place-items: center;
+  inline-size: 88px;
+  block-size: 88px;
+  --boot-bird-color: rgb(from var(--text-primary, light-dark(#45454a, #fff)) r g b / 50%);
+  --boot-bird-highlight: rgb(from light-dark(#9499a2, #fff) r g b / 75%);
+}
+
+.desktop-boot-icon::before {
+  content: '';
+  inline-size: 64px;
+  block-size: 64px;
+  background: linear-gradient(115deg,
+    var(--boot-bird-color) 35%, var(--boot-bird-highlight) 50%, var(--boot-bird-color) 65%) 100% center / 260% 100%;
+  mask: url('/brand/bird-solid.svg') center / contain no-repeat;
+  animation: desktop-boot-highlight 1.65s ease-in-out infinite;
+}
+
+@keyframes desktop-boot-highlight {
+  0%, 14% { background-position-x: 100%; }
+  76%, 100% { background-position-x: 0%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-boot-icon::before { animation: none; }
+}

@@ -1,0 +1,192 @@
+import assert from 'node:assert/strict'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { Pool, type PoolClient } from 'pg'
+import test from 'node:test'
+import { RegistrationRequestError } from '../../src/modules/auth/registration/routes.js'
+import { createPostgresRegistrationOperations } from '../../src/modules/auth/registration/store.js'
+
+import { checkDatabaseReadiness } from '../../src/database.js'
+import { migratePostgres } from '@gugu/database/postgres'
+
+const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
+
+async function createFixture(options: {
+  failCommit?: boolean
+  consumeCode?: boolean
+} = {}) {
+  const schema = `gugu_registration_${randomUUID().replaceAll('-', '')}`
+  const adminPool = new Pool({ connectionString: databaseUrl, max: 1 })
+  await adminPool.query(`CREATE SCHEMA "${schema}"`)
+  const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 2 })
+  const root = await mkdtemp(join(tmpdir(), 'gugu-register-'))
+  assert.equal(await migratePostgres(pool, 'apply'), 'applied')
+  await pool.query('DROP TABLE project_file_counts')
+  await checkDatabaseReadiness(statement => pool.query(statement))
+
+  const calls: string[] = []
+  const restorationTtls: number[] = []
+  const failedPool = options.failCommit ? wrapFailingCommit(pool) : pool
+  const operations = createPostgresRegistrationOperations(failedPool, {
+    registrationCodes: {
+      async remainingTtlMs(email) {
+        calls.push(`ttl:${email}`)
+        return 60_000
+      },
+      async consume(email, code) {
+        calls.push(`consume:${email}:${code}`)
+        return options.consumeCode ?? true
+      },
+      async restore(email, code, ttlMs) {
+        calls.push(`restore:${email}:${code}`)
+        restorationTtls.push(ttlMs)
+      },
+    },
+    onCodeRestoreFailure(error) {
+      calls.push(`restoreError:${error instanceof Error ? error.name : 'unknown'}`)
+    },
+  })
+
+  return {
+    schema, pool, adminPool, root, calls, restorationTtls, operations,
+    async qualifiedCount(table: 'users' | 'user_preferences' | 'workspace_directories' | 'workspaces') {
+      const result = await adminPool.query<{ count: string }>(`SELECT count(*)::text AS count FROM "${schema}"."${table}"`)
+      return Number(result.rows[0]?.count ?? 0)
+    },
+    async seedUser(username: string, email: string) {
+      await pool.query(`INSERT INTO users
+        (id, username, email, hashed_password, display_name, is_active, account_status,
+         security_version, created_at, email_subscribed, is_developer)
+        VALUES ($1, $2, $3, 'synthetic-hash', $2, true, 'active', 1, CURRENT_TIMESTAMP, false, false)`,
+      [randomUUID(), username, email])
+    },
+    async close() {
+      await pool.end()
+      await adminPool.query(`DROP SCHEMA "${schema}" CASCADE`)
+      await adminPool.end()
+      await rm(root, { recursive: true, force: true })
+    },
+  }
+}
+
+function wrapFailingCommit(pool: Pool) {
+  return {
+    query: pool.query.bind(pool),
+    async connect() {
+      const client = await pool.connect()
+      let failed = false
+      return new Proxy(client, {
+        get(target, property) {
+          if (property === 'query') {
+            return (...args: Parameters<PoolClient['query']>) => {
+              const command = typeof args[0] === 'string' ? args[0].trim().toUpperCase() : ''
+              if (command === 'COMMIT' && !failed) {
+                failed = true
+                return Promise.reject(new Error('synthetic commit failure'))
+              }
+              return Reflect.apply(target.query, target, args)
+            }
+          }
+          const value = Reflect.get(target, property, target) as unknown
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+    },
+  }
+}
+
+const input = {
+  username: '合成新用户',
+  email: 'new@example.test',
+  hashedPassword: 'synthetic-bcrypt-hash',
+  displayName: '合成新用户',
+  emailSubscribed: true,
+  locale: 'zh-CN' as const,
+}
+
+test('PostgreSQL registration atomically creates user, locale preference without creating a workspace', {
+  skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL registration integration',
+}, async () => {
+  const fixture = await createFixture()
+  try {
+    assert.equal(await fixture.operations.userExists(input.username, input.email), false)
+    assert.equal(await fixture.operations.emailIsOccupied(input.email), false)
+    const user = await fixture.operations.registerUser(input, { email: input.email, code: '123456' })
+
+    assert.equal(user.username, input.username)
+    assert.equal(user.email, input.email)
+    assert.equal(user.displayName, input.username)
+    assert.equal(user.isActive, true)
+    assert.equal(user.securityVersion, 1)
+    assert.equal(user.emailSubscribed, true)
+    assert.equal((await fixture.pool.query<{ is_developer: boolean }>(
+      'SELECT is_developer FROM users WHERE id = $1', [user.id],
+    )).rows[0]?.is_developer, false)
+    assert.equal(user.createdAt instanceof Date || typeof user.createdAt === 'string', true)
+    await assert.rejects(stat(join(fixture.root, user.id, 'workspace')), { code: 'ENOENT' })
+    assert.deepEqual(fixture.calls, [
+      `ttl:${input.email}`,
+      `consume:${input.email}:123456`,
+    ])
+    assert.deepEqual(fixture.restorationTtls, [])
+    assert.equal(await fixture.operations.userExists(input.username, input.email), true)
+    assert.equal(await fixture.operations.emailIsOccupied(input.email.toUpperCase()), true)
+    assert.equal(await fixture.qualifiedCount('users'), 1)
+    assert.equal(await fixture.qualifiedCount('user_preferences'), 1)
+    assert.equal(await fixture.qualifiedCount('workspace_directories'), 0)
+    assert.equal(await fixture.qualifiedCount('workspaces'), 0)
+
+    const prefs = await fixture.pool.query<{ data_json: string }>(
+      'SELECT data_json FROM user_preferences WHERE user_id = $1', [user.id],
+    )
+    assert.deepEqual(JSON.parse(prefs.rows[0]!.data_json), { locale: 'zh-CN' })
+    assert.equal(await fixture.operations.userExists('别名', input.email.toUpperCase()), true)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('a concurrent or replaced verification code aborts the PostgreSQL registration transaction', {
+  skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL registration integration',
+}, async () => {
+  const fixture = await createFixture({ consumeCode: false })
+  try {
+    await assert.rejects(
+      fixture.operations.registerUser(input, { email: input.email, code: '123456' }),
+      (error: unknown) => error instanceof RegistrationRequestError
+        && error.statusCode === 400 && error.message === '验证码错误或已过期',
+    )
+    assert.equal(await fixture.qualifiedCount('users'), 0)
+    assert.equal(await fixture.qualifiedCount('user_preferences'), 0)
+    assert.equal(await fixture.qualifiedCount('workspace_directories'), 0)
+    assert.equal(await fixture.qualifiedCount('workspaces'), 0)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('a PostgreSQL commit failure rolls back rows and restores only the remaining verification TTL', {
+  skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL registration integration',
+}, async () => {
+  const fixture = await createFixture({ failCommit: true })
+  try {
+    await assert.rejects(
+      fixture.operations.registerUser(input, { email: input.email, code: '123456' }),
+      /synthetic commit failure/,
+    )
+    assert.equal(await fixture.qualifiedCount('users'), 0)
+    assert.equal(await fixture.qualifiedCount('user_preferences'), 0)
+    assert.equal(await fixture.qualifiedCount('workspace_directories'), 0)
+    assert.equal(await fixture.qualifiedCount('workspaces'), 0)
+    assert.equal(fixture.restorationTtls.length, 1)
+    assert.ok(fixture.restorationTtls[0]! > 0 && fixture.restorationTtls[0]! <= 60_000)
+    assert.deepEqual(fixture.calls.slice(0, 1), [`ttl:${input.email}`])
+    assert.deepEqual(fixture.calls.slice(-2), [
+      `consume:${input.email}:123456`, `restore:${input.email}:123456`,
+    ])
+  } finally {
+    await fixture.close()
+  }
+})

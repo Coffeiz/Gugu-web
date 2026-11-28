@@ -1105,10 +1105,10 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         if p_add is not None or p_rem is not None:
             p_add, staged_profile_events = _split_profile_adds(p_add or [])
             daily_note = _merge_daily_note(daily_note, staged_profile_events)
-            cur_p = await store.read_profile_list(user_id)
-            new_p = store.apply_profile_ops(cur_p, p_add, p_rem or [])
+            cur_p, new_p = await store.mutate_owner_memory_list(
+                user_id, "profile", lambda current: store.apply_profile_ops(current, p_add, p_rem or []),
+            )
             if new_p != cur_p:
-                await store.write_profile_list(user_id, new_p)
                 from agent import events
                 events.publish(events.types.MemoryUpdated(
                     user_id=user_id, added=len(p_add), removed=len(p_rem or []), source="reflection"))
@@ -1118,12 +1118,12 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         f_add, f_rem = out.get("pattern_add"), out.get("pattern_remove")
         legacy = out.get("facts")   # 旧 prompt 回显整份 facts（灰度兼容）→ 当 inferred 增量并入
         if f_add is not None or f_rem is not None or legacy:
-            cur = await store.read_pattern_list(user_id)
             adds = f_add if f_add is not None else (legacy or [])
-            new = store.apply_pattern_ops(cur, adds, f_rem or [])
+            cur, new = await store.mutate_owner_memory_list(
+                user_id, "pattern", lambda current: store.apply_pattern_ops(current, adds, f_rem or []),
+            )
             if new != cur:
-                await store.write_pattern_list(user_id, new)
-                await store.sync_pattern_vecs(user_id, new)   # 增量补向量缓存（embedding 未启用=no-op）
+                await store.sync_pattern_vecs(user_id, new, require_current=True)
                 from agent import events
                 events.publish(events.types.MemoryUpdated(
                     user_id=user_id, added=len(adds or []), removed=len(f_rem or []), source="reflection"))

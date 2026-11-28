@@ -255,7 +255,9 @@ def _handle_card_action(data, owner: str, services: _EventServices, bot_id: str 
             completed_card = build_completed_card_payload("操作未能完成，请重新发起该操作。")
         else:
             message = "已收到选择。"
-        if option_id == "input_credentials":
+        if status == "awaiting_text":
+            message = completed_message = "请直接发送你的回复，咕咕会继续处理。"
+        elif option_id == "input_credentials":
             completed_message = "已确认凭据输入；请在当前私聊逐项发送字段值，回复“取消”可终止。"
         elif option_id == "cancel":
             completed_message = "已确认取消。"

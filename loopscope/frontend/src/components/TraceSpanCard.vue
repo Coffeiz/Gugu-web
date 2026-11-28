@@ -1,16 +1,16 @@
 <template>
   <article class="span-card ls-card" :class="{ child: depth > 0 }">
     <header class="span-head">
-      <span class="kind-rail" :data-kind="span.kind"></span>
+      <span class="kind-rail" :data-kind="displayKind"></span>
       <div class="span-title">
         <div class="title-line">
-          <span class="kind" :data-kind="span.kind">{{ span.kind }}</span>
-          <strong>{{ span.name }}</strong>
+          <span class="kind" :data-kind="displayKind">{{ displayKind }}</span>
+          <strong>{{ displayName }}</strong>
           <span v-if="contextLabel" class="context-label">{{ contextLabel }}</span>
           <span v-if="mcpDetails" class="mcp-label">MCP · {{ mcpDetails.server }} / {{ mcpDetails.tool }}</span>
           <span class="status" :data-status="span.status">{{ span.status }}</span>
         </div>
-        <div v-if="codeLabel" class="code-line" title="Python source">
+        <div v-if="codeLabel" class="code-line" title="Source location">
           <span>⌁</span><code>{{ codeLabel }}</code>
         </div>
       </div>
@@ -34,6 +34,17 @@
       <button v-if="hasAttributes" :class="{ active: open.attributes }" @click="toggle('attributes')">Attributes</button>
     </div>
 
+    <section v-if="requestTimings.length" class="panel">
+      <div v-for="timing in requestTimings" :key="timing.attempt" class="assembly-grid">
+        <div><span>模型请求</span><strong>第 {{ timing.attempt }} 次 · {{ timingOutcome[timing.outcome] }}</strong></div>
+        <div v-if="typeof timing.proxied === 'boolean'">
+          <span>连接</span><strong>{{ timing.proxied ? '代理' : '直连' }}{{ timing.reusedSocket === true ? ' · 复用' : timing.reusedSocket === false ? ' · 新建' : '' }}</strong>
+        </div>
+        <template v-for="[key, label] in timingFields" :key="key">
+          <div v-if="typeof timing[key] === 'number'"><span>{{ label }}</span><strong>{{ fmtMs(timing[key]) }}</strong></div>
+        </template>
+      </div>
+    </section>
     <section v-if="open.content && sourceContent" class="panel content-panel">
       <div class="panel-label">Included content</div>
       <pre>{{ sourceContent }}</pre>
@@ -44,6 +55,8 @@
         <div><span>Reuse</span><strong>{{ assembly.system?.reused ? `round ${assembly.system.source_round || 1}` : 'inline' }}</strong></div>
         <div><span>Digest</span><code>{{ assembly.system?.digest || '—' }}</code></div>
         <div><span>Messages</span><strong>{{ assembly.messages?.count ?? '—' }}</strong></div>
+        <div v-if="prefixStable !== null"><span>{{ t('trace.cachePrefix') }}</span>
+          <strong>{{ prefixStable ? t('trace.unchanged') : t('trace.disconnected') }}</strong></div>
       </div>
       <p class="assembly-note">{{ t('trace.assemblyNote') }}</p>
     </section>
@@ -142,6 +155,10 @@
         </article>
       </div>
       <pre v-else>{{ pretty(inputWithoutSystemPrompt) }}</pre>
+      <article v-if="providerOptions && Object.keys(providerOptions).length" class="input-message provider-options">
+        <div class="input-message-label"><span>{{ t('trace.providerOptions') }}</span></div>
+        <pre>{{ pretty(providerOptions) }}</pre>
+      </article>
     </section>
     <section v-if="open.output" class="panel">
       <div class="panel-label">Output</div>
@@ -174,6 +191,24 @@ const props = withDefaults(defineProps<{ span: TraceSpan; previousSpan?: TraceSp
 const open = reactive<Record<string, boolean>>({ content: false, assembly: false, diagnostics: false, schema: false, input: false, output: false, source: false, attributes: false })
 const inputMessageList = ref<HTMLElement | null>(null)
 const comparisonOpen = ref(false)
+const legacyChatProvider = computed(() => props.span.kind === 'provider'
+  && props.span.attributes?.purpose !== 'branch'
+  && (props.span.name === 'Provider request' || props.span.attributes?.round !== undefined))
+const displayKind = computed(() => legacyChatProvider.value ? 'llm' : props.span.kind)
+const displayName = computed(() => legacyChatProvider.value
+  ? `LLM round ${props.span.attributes?.round ?? props.span.id.match(/:round:(\d+)(?::provider)?$/)?.[1] ?? 1}` : props.span.name)
+
+const requestTimings = computed(() => Array.isArray(props.span.attributes?.request_timings)
+  ? props.span.attributes.request_timings : [])
+const timingOutcome: Record<string, string> = {
+  completed: '完成', retry: '将重试', error: '失败', cancelled: '取消',
+}
+const timingFields = [
+  ['dnsMs', 'DNS 解析与校验'], ['poolWaitMs', '连接池等待'],
+  ['proxyTunnelMs', '代理隧道建立（含握手）'], ['tcpConnectMs', 'TCP 建连'], ['tlsHandshakeMs', 'TLS 握手'],
+  ['responseHeadersMs', '请求至响应头'], ['firstStreamEventMs', '请求至首个流事件'],
+  ['firstVisibleTokenMs', '请求至首个可见文本'], ['streamEndMs', '请求至流处理结束'],
+] as const
 
 function toggle(key: string) {
   open[key] = !open[key]
@@ -207,23 +242,45 @@ const sourceContent = computed(() => {
 const systemPrompt = computed(() => {
   const input = props.span.input
   if (!input || typeof input !== 'object') return ''
-  const value = (input as Record<string, unknown>).system_prompt
-  return typeof value === 'string' ? value : ''
+  const record = input as Record<string, unknown>
+  const body = record.input && typeof record.input === 'object' && !Array.isArray(record.input)
+    ? record.input as Record<string, unknown> : record
+  const value = record.system_prompt ?? body.system ?? body.instructions ?? body.messages
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    const system = value.find((message: any) => message?.role === 'system')
+    return system ? messageText(system.content) : value.map(messageText).filter(Boolean).join('\n\n')
+  }
+  if (value && typeof value === 'object' && 'content' in value)
+    return messageText((value as Record<string, unknown>).content)
+  return ''
 })
 const snapshotContent = computed(() => {
   const input = props.span.input
   if (!input || typeof input !== 'object') return ''
   const snapshot = (input as Record<string, unknown>).snapshot
   if (typeof snapshot === 'string') return snapshot
-  if (!snapshot || typeof snapshot !== 'object') return ''
-  const content = (snapshot as Record<string, unknown>).content
-  return typeof content === 'string' ? content : ''
+  if (snapshot && typeof snapshot === 'object') {
+    const content = (snapshot as Record<string, unknown>).content
+    if (typeof content === 'string') return content
+  }
+  return rawMessagesFrom(props.span).map((message: any) => messageText(message?.content)).find(content => content.startsWith('[system-reminder]')) ?? ''
 })
 const assembly = computed(() => {
   const input = props.span.input as any
   return input && typeof input === 'object' && input.assembly ? input.assembly : null
 })
+const providerOptions = computed(() => {
+  const input = props.span.input
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const value = (input as Record<string, unknown>).provider_options
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+})
 const diagnostics = computed(() => {
+  if (props.span.attributes?.context_source === 'rag_retrieval') {
+    const value = props.span.output
+    return value && typeof value === 'object' ? value : null
+  }
   const value = assembly.value?.canonical_context
   return value && typeof value === 'object' ? value : null
 })
@@ -256,7 +313,7 @@ const firstDiff = computed(() => {
   const limit = Math.min(previousMessages.length, currentMessages.length)
   let index = 0
   while (index < limit && stableStringify(previousMessages[index]) === stableStringify(currentMessages[index])) index += 1
-  if (index === limit && previousMessages.length === currentMessages.length) return null
+  if (index === previousMessages.length) return null
   const previous = previousMessages[index]
   const current = currentMessages[index]
   const previousRepresentation = messageRepresentation(previous)
@@ -268,7 +325,12 @@ const firstDiff = computed(() => {
     current: { shape: { representation: currentRepresentation } },
   }
 })
-const prefixStable = computed(() => diagnostics.value?.prefix_integrity?.stable === true)
+const prefixStable = computed(() => {
+  const recorded = diagnostics.value?.prefix_integrity?.stable
+  if (typeof recorded === 'boolean') return recorded
+  if (!props.previousSpan || !previousInputMessages.value.length || !inputMessages.value.length) return null
+  return firstDiff.value === null
+})
 const diffReasonLabel = computed(() => {
   const labels: Record<string, string> = {
     wrapper_changed: 'trace.changedWrapper',
@@ -284,15 +346,30 @@ const diffReasonLabel = computed(() => {
 const inputMessages = computed(() => messagesFrom(props.span))
 const previousInputMessages = computed(() => messagesFrom(props.previousSpan))
 function messagesFrom(span?: TraceSpan) {
+  const messages = rawMessagesFrom(span)
+  const snapshotIndex = messages.findIndex((message: any) => message?.role !== 'system'
+    && messageText(message?.content).startsWith('[system-reminder]'))
+  return messages.filter((message: any, index) => message?.role !== 'system' && index !== snapshotIndex)
+}
+function rawMessagesFrom(span?: TraceSpan) {
   const input = span?.input
   if (!input || typeof input !== 'object') return []
   const messages = (input as Record<string, unknown>).messages
-  return Array.isArray(messages) ? messages : []
+  const body = (input as Record<string, unknown>).input
+  const nested = body && typeof body === 'object' && !Array.isArray(body)
+    ? (body as Record<string, unknown>).messages ?? (body as Record<string, unknown>).input : undefined
+  return Array.isArray(messages) ? messages : Array.isArray(nested) ? nested : []
+}
+function messageText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map((part: any) => typeof part?.text === 'string' ? part.text : '').filter(Boolean).join('\n')
+  return value && typeof value === 'object' && typeof (value as Record<string, unknown>).text === 'string'
+    ? String((value as Record<string, unknown>).text) : ''
 }
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
   if (value && typeof value === 'object') {
-    return `{${Object.keys(value as Record<string, unknown>).sort().map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(',')}}`
+    return `{${Object.keys(value as Record<string, unknown>).filter(key => key !== 'cache_control').sort().map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(',')}}`
   }
   return JSON.stringify(value)
 }
@@ -301,7 +378,6 @@ function messageRepresentation(message: any): string {
   if (typeof content === 'string') {
     const value = content.trimStart()
     if (value.startsWith('<compacted-summary>')) return 'compacted-summary'
-    if (value.startsWith(t('trace.legacySummary'))) return 'legacy-summary-header'
     if (value.startsWith('[system-reminder]')) return 'system-reminder-text'
     return 'text'
   }
@@ -319,7 +395,8 @@ const inputForDisplay = computed(() => {
 const inputWithoutSystemPrompt = computed(() => {
   const input = inputForDisplay.value
   if (!systemPrompt.value || !input || typeof input !== 'object' || Array.isArray(input)) return input
-  const { system_prompt: _systemPrompt, snapshot: _snapshot, ...rest } = input as Record<string, unknown>
+  const { system_prompt: _systemPrompt, snapshot: _snapshot, system: _system, instructions: _instructions,
+    messages: _messages, provider_options: _providerOptions, provider_request: _providerRequest, ...rest } = input as Record<string, unknown>
   return rest
 })
 const hasSource = computed(() => !!(props.span.code?.file || props.span.code?.function || props.span.attributes?.path))
@@ -334,6 +411,7 @@ const contextLabel = computed(() => {
     skill_index: 'trace.skillIndex',
     skill_body: 'trace.skillBody',
     shell_policy: 'trace.shellPolicy',
+    rag_retrieval: 'trace.ragRetrieval',
   }
   const key = labels[String(source)]
   return key ? t(key) : t('trace.contextInjection')
@@ -350,9 +428,17 @@ const tokenChips = computed(() => {
   const u = props.span.usage ?? {}
   const t = props.span.token_impact ?? {}
   const chips: string[] = []
-  if (u.input) chips.push(`in ${fmtTokens(u.input)}`)
+  const input = Number(u.input ?? 0)
+  const cacheRead = Number(u.cache_read ?? 0)
+  const cacheWrite = Number(u.cache_write ?? 0)
+  const legacyNodeUsage = u.context_input !== undefined || input < cacheRead + cacheWrite
+  const totalInput = legacyNodeUsage ? Number(u.fresh_input ?? input) + cacheRead + cacheWrite : input
+  const fresh = u.fresh_input !== undefined ? Number(u.fresh_input) : Math.max(totalInput - cacheRead - cacheWrite, 0)
+  if (totalInput) chips.push(`in ${fmtTokens(totalInput)}`)
   if (u.output) chips.push(`out ${fmtTokens(u.output)}`)
-  if (u.cache_read) chips.push(`cache hit ${fmtTokens(u.cache_read)}`)
+  if (cacheRead) chips.push(`cache hit ${fmtTokens(cacheRead)}`)
+  if (cacheWrite) chips.push(`cache write ${fmtTokens(cacheWrite)}`)
+  if (fresh && totalInput && fresh !== totalInput) chips.push(`fresh ${fmtTokens(fresh)}`)
   if (t.prompt_tokens_actual && t.prompt_tokens_source === 'provider') chips.push(`prompt ${fmtTokens(t.prompt_tokens_actual)}`)
   return chips.slice(0, 4)
 })
@@ -363,7 +449,7 @@ const tokenChips = computed(() => {
 .span-card.child { margin-left:20px; box-shadow:none; background:color-mix(in srgb,var(--surface-card) 82%,transparent); }
 .span-head { display:grid; grid-template-columns:4px minmax(0,1fr) auto; gap:11px; align-items:stretch; min-height:58px; }
 .kind-rail { background:var(--trace-context); }
-.kind-rail[data-kind="llm"]{background:var(--trace-llm)}
+.kind-rail[data-kind="llm"],.kind-rail[data-kind="provider"]{background:var(--trace-llm)}
 .kind-rail[data-kind="tool"]{background:var(--trace-tool)}
 .kind-rail[data-kind="guard"]{background:var(--trace-guard)}
 .kind-rail[data-kind="output"]{background:var(--trace-output)}
@@ -418,15 +504,18 @@ pre { margin:0; max-height:420px; overflow:auto; white-space:pre-wrap; overflow-
 .comparison-column.is-current { border-color:color-mix(in srgb,var(--action-primary) 42%,var(--border-subtle)); }
 .comparison-label { padding:6px 8px; color:var(--content-secondary); background:var(--surface-soft); font-size:9px; }
 .comparison-column pre { max-height:360px; padding:8px; }
-.input-message-list { display:grid; gap:7px; max-height:600px; overflow:auto; padding-right:2px; }
-.input-snapshot { margin-top:10px; border:1px solid color-mix(in srgb,var(--action-primary) 32%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:color-mix(in srgb,var(--action-primary) 5%,var(--surface-card)); }
+.input-message-list { display:flex; flex-direction:column; align-items:stretch; gap:7px; max-height:600px; overflow:auto; padding-right:2px; }
+.input-panel { display:flex; flex-direction:column; gap:12px; }
+.input-panel > .panel-label { margin-bottom:0; }
+.input-snapshot { border:1px solid color-mix(in srgb,var(--action-primary) 32%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:color-mix(in srgb,var(--action-primary) 5%,var(--surface-card)); }
 .input-snapshot pre { max-height:420px; padding:8px; }
-.input-message { border:1px solid var(--border-subtle); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
+.input-message { flex:0 0 auto; min-width:0; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
+.provider-options { margin-top:7px; }
 .input-message.is-first-diff { border-color:var(--status-warning); box-shadow:0 0 0 2px color-mix(in srgb,var(--status-warning) 18%,transparent); }
 .input-message-label { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 8px; color:var(--content-tertiary); background:var(--surface-soft); font:9px var(--font-mono); }
 .input-message-label b { color:var(--status-warning); font:9px var(--font-sans); }
-.input-message pre { max-height:none; padding:8px; }
-.input-system-prompt { margin-bottom:9px; border:1px solid color-mix(in srgb,var(--trace-context) 45%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
+.input-message pre { display:block; min-height:2em; max-height:none; padding:8px; }
+.input-system-prompt { border:1px solid color-mix(in srgb,var(--trace-context) 45%,var(--border-subtle)); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
 .input-system-prompt .input-message-label { color:var(--action-primary); }
 .input-system-prompt .input-message-label b { color:var(--content-tertiary); font-weight:400; }
 .input-system-prompt pre { max-height:600px; padding:9px; background:color-mix(in srgb,var(--trace-context) 5%,var(--surface-card)); }

@@ -8,7 +8,7 @@ import pytest
 from agent.context.history import build_history_parts
 from agent.context.session_history import load_session_history
 from agent.context.references import build_reference_context
-from app.models import ConversationMessage, ConversationSession, File, Folder, MindNode
+from app.models import ConversationMessage, ConversationSession, File, Folder, MindNode, UserMcpServer
 
 
 @pytest.fixture
@@ -135,6 +135,51 @@ async def test_conversation_reference_uses_message_id_and_checks_session_owner(d
     assert await build_reference_context(
         db, user_b.id, [{"type": "conversation", "id": message.id, "label": "原消息"}],
     ) == ""
+
+
+async def test_mcp_reference_is_owner_scoped_and_excludes_endpoint_credentials(db, user_a, user_b):
+    server = UserMcpServer(
+        user_id=user_a.id,
+        scope="user",
+        name="知识服务",
+        transport="http",
+        endpoint="https://mcp.example.invalid/?api_key=synthetic-secret",
+        command="",
+        enabled=False,
+        tool_allowlist=["lookup"],
+    )
+    db.add(server)
+    await db.commit()
+
+    context = await build_reference_context(db, user_a.id, [{"type": "mcp", "id": str(server.id)}])
+    assert "[MCP 服务]" in context
+    assert f"MCP 服务 id：{server.id}" in context
+    assert "知识服务" in context
+    assert "已停用" in context
+    assert "lookup" in context
+    assert "mcp.example.invalid" not in context
+    assert "synthetic-secret" not in context
+    assert await build_reference_context(db, user_b.id, [{"type": "mcp", "id": str(server.id)}]) == ""
+
+
+async def test_platform_mcp_reference_is_visible_without_private_user_id(db, user_a):
+    server = UserMcpServer(
+        user_id=None,
+        scope="platform",
+        name="平台只读服务",
+        transport="http",
+        endpoint="https://platform.example.invalid/private",
+        command="",
+        enabled=True,
+        tool_allowlist=[],
+    )
+    db.add(server)
+    await db.commit()
+
+    context = await build_reference_context(db, user_a.id, [{"type": "mcp", "id": str(server.id)}])
+    assert "平台只读服务" in context
+    assert "全部工具" in context
+    assert "platform.example.invalid" not in context
 
 
 async def test_old_message_replays_reference_context_from_references_json(

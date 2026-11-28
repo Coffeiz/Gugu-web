@@ -1,0 +1,197 @@
+<template>
+  <div ref="stripRef" class="date-scrub" @pointerdown="onDown" @pointermove="onHover" @pointerleave="onLeave">
+    <div class="ds-track" :style="trackStyle">
+      <button
+        v-for="tick in visibleTicks" :key="tick.group.date"
+        class="dsb-tick" :data-idx="tick.index"
+        :style="tickStyle(tick.index)"
+      >
+        <span class="dsb-bar" :style="barStyle(tick.index)"></span>
+        <span class="dsb-tip" :class="{ 'no-transition': dragging || animating }" :style="tipStyle(tick.index)">{{ fmtLabel(tick.group.date) }}</span>
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { localDayKey } from '@/utils/dateAttribution'
+import { useDateScrubberMotion } from '@/composables/mind/useDateScrubberMotion'
+import { clampScrubberPosition, pitchAt, positionForIndex, tickVisual } from '../utils/dateScrubberMath'
+
+const props = defineProps<{
+  groups: { date: string; count: number }[]
+  centerFrac: number
+}>()
+const { t, locale } = useI18n()
+const emit = defineEmits<{
+  (e: 'scrub', frac: number): void
+  (e: 'snap', date: string): void
+}>()
+
+const stripRef = ref<HTMLElement | null>(null)
+const hoverIndex = ref<number | null>(null)
+const DRAG_RATIO = 0.45
+let removeGestureListeners: (() => void) | null = null
+
+const motion = useDateScrubberMotion({
+  getCount: () => props.groups.length,
+  onPosition: frac => emit('scrub', frac),
+  onSettled: index => {
+    const date = props.groups[index]?.date
+    if (date) emit('snap', date)
+  },
+})
+const { visualPosition, dragging, animating } = motion
+
+const visibleTicks = computed(() => {
+  const center = Math.round(clampScrubberPosition(visualPosition.value, props.groups.length))
+  const start = Math.max(0, center - 10)
+  const end = Math.min(props.groups.length, center + 11)
+  return props.groups.slice(start, end).map((group, offset) => ({ group, index: start + offset }))
+})
+const trackStyle = computed(() => ({
+  transform: `translate3d(${-positionForIndex(visualPosition.value, visualPosition.value, props.groups.length)}px,0,0)`,
+}))
+
+watch(() => props.centerFrac, position => motion.syncExternal(position), { immediate: true })
+watch(() => props.groups, async () => {
+  await nextTick()
+  motion.syncExternal(props.centerFrac)
+}, { immediate: true })
+
+function visual(index: number) {
+  return tickVisual(index, visualPosition.value, props.groups.length, hoverIndex.value)
+}
+function tickStyle(index: number) {
+  return { left: `${visual(index).left}px` }
+}
+function barStyle(index: number) {
+  const value = visual(index)
+  return {
+    height: `${value.barHeight}px`, width: `${value.barWidth}px`,
+    opacity: `${value.barOpacity}`,
+    // alpha 只交给 opacity 一次；此前 background 和 opacity 都带同一份 alpha，非选中条被平方后过淡。
+    background: 'var(--action-primary)',
+  }
+}
+function tipStyle(index: number) {
+  const value = visual(index)
+  return {
+    opacity: `${value.tipOpacity}`,
+    top: value.tipOffsetY ? `calc(100% + ${value.tipOffsetY}px)` : '',
+    color: value.emphasized ? 'var(--action-primary)' : 'var(--text-secondary)',
+    fontWeight: value.emphasized ? '600' : '400',
+  }
+}
+
+function fractionNear(clientX: number): number | null {
+  const root = stripRef.value
+  if (!root || !visibleTicks.value.length) return null
+  const rect = root.getBoundingClientRect()
+  const trackX = clientX - (rect.left + rect.width / 2) + positionForIndex(visualPosition.value, visualPosition.value, props.groups.length)
+  const ticks = visibleTicks.value
+  const first = ticks[0].index
+  if (trackX <= positionForIndex(first, visualPosition.value, props.groups.length)) return first
+  for (let offset = 0; offset < ticks.length - 1; offset++) {
+    const from = ticks[offset].index
+    const to = ticks[offset + 1].index
+    const fromX = positionForIndex(from, visualPosition.value, props.groups.length)
+    const toX = positionForIndex(to, visualPosition.value, props.groups.length)
+    if (trackX <= toX) return from + (trackX - fromX) / (toX - fromX) * (to - from)
+  }
+  return ticks[ticks.length - 1].index
+}
+
+function onDown(event: PointerEvent) {
+  event.preventDefault()
+  removeGestureListeners?.()
+  removeGestureListeners = null
+  const fraction = fractionNear(event.clientX)
+  const startPitch = pitchAt(Math.floor(clampScrubberPosition(visualPosition.value, props.groups.length)), visualPosition.value)
+  hoverIndex.value = null
+  motion.begin(event.clientX, startPitch)
+  const target = event.currentTarget as HTMLElement
+  const pointerId = event.pointerId
+  target.setPointerCapture(event.pointerId)
+  const onMove = (moveEvent: PointerEvent) => {
+    if (moveEvent.pointerId === pointerId) motion.move(moveEvent.clientX, DRAG_RATIO)
+  }
+  const cleanup = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onCancel)
+    window.removeEventListener('blur', onBlur)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+    target.removeEventListener('lostpointercapture', onLostPointerCapture)
+    removeGestureListeners = null
+  }
+  const finish = (clickedIndex: number | null) => {
+    cleanup()
+    if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
+    motion.end(clickedIndex)
+  }
+  const onUp = (upEvent: PointerEvent) => {
+    if (upEvent.pointerId !== pointerId) return
+    finish(fraction === null ? null : Math.round(fraction))
+  }
+  const onCancel = (cancelEvent: PointerEvent) => {
+    if (cancelEvent.pointerId === pointerId) finish(null)
+  }
+  const onBlur = () => finish(null)
+  const onVisibilityChange = () => { if (document.visibilityState === 'hidden') finish(null) }
+  const onLostPointerCapture = () => finish(null)
+  removeGestureListeners = cleanup
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onCancel)
+  window.addEventListener('blur', onBlur)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  target.addEventListener('lostpointercapture', onLostPointerCapture)
+}
+function onHover(event: PointerEvent) {
+  if (dragging.value || animating.value || event.pointerType !== 'mouse') return
+  const fraction = fractionNear(event.clientX)
+  hoverIndex.value = fraction === null ? null : Math.round(clampScrubberPosition(fraction, props.groups.length))
+}
+function onLeave() { hoverIndex.value = null }
+
+onBeforeUnmount(() => {
+  removeGestureListeners?.()
+})
+
+defineExpose({
+  settleTo: (index: number) => motion.settleTo(index),
+  stopMotion: motion.stopMotion,
+})
+
+const today = localDayKey(new Date())
+function fmtLabel(iso: string) {
+  const date = new Date(iso + 'T00:00:00')
+  const days = Math.round((new Date(today + 'T00:00:00').getTime() - new Date(iso + 'T00:00:00').getTime()) / 86400000)
+  if (days === 0) return t('mindUi.today')
+  if (days === 1) return t('mindUi.yesterday')
+  if (days === 2) return t('mindUi.dayBeforeYesterday')
+  if (days > 2 && days <= 7) return new Intl.DateTimeFormat(locale.value, { weekday: 'short' }).format(date)
+  const options: Intl.DateTimeFormatOptions = today.slice(0, 4) === iso.slice(0, 4)
+    ? { month: 'numeric', day: 'numeric' }
+    : { year: 'numeric', month: 'numeric', day: 'numeric' }
+  return new Intl.DateTimeFormat(locale.value, options).format(date)
+}
+</script>
+
+<style scoped>
+.date-scrub {
+  position: relative; flex-shrink: 0; height: 46px; overflow: hidden; cursor: grab;
+  touch-action: pan-y; user-select: none; -webkit-user-select: none;
+  mask-image: linear-gradient(to right, transparent, #000 5%, #000 95%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 5%, #000 95%, transparent);
+}
+.date-scrub:active { cursor: grabbing; }
+.ds-track { position: absolute; top: 4px; left: 50%; width: 0; height: 22px; will-change: transform; }
+.dsb-tick { position: absolute; display: flex; align-items: flex-start; justify-content: center; width: 14px; height: 22px; padding: 0; transform: translateX(-50%); border: none; background: none; cursor: inherit; }
+.dsb-bar { width: 3px; height: 12px; border-radius: 99px; will-change: height, width, opacity, background; }
+.dsb-tip { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 4px; font-size: 10px; white-space: nowrap; color: var(--text-secondary); pointer-events: none; transition: opacity .15s ease; }
+.dsb-tip.no-transition { transition: none; }
+</style>

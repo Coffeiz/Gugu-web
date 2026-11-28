@@ -73,6 +73,8 @@ export const TraceRunFinishSchema = z.object({
   duration_ms: z.number().nonnegative(),
 })
 
+export const TraceImPlatformSchema = z.enum(['feishu', 'qq', 'wechat', 'telegram'])
+
 export const TraceSessionSchema = z.object({
   session_key: z.string(),
   external_session_id: z.string().optional(),
@@ -80,6 +82,7 @@ export const TraceSessionSchema = z.object({
   title: z.string(),
   created_at: z.number(),
   updated_at: z.number(),
+  im_platform: TraceImPlatformSchema.optional(),
   run_count: z.number().optional(),
   error_count: z.number().optional(),
 })

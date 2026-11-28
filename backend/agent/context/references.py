@@ -34,11 +34,11 @@ def prepend_reference_context(content, text: str):
     return [block, {"type": "text", "text": str(content or "")}]
 
 
-def _parse_reference_id(kind: str, raw_id) -> int | str | None:
-    """按引用类型解析 id：mcp 是 UUID 字符串，其余是 int 自增；无效返回 None。"""
+def _parse_reference_id(kind: str, raw_id) -> int | UUID | None:
+    """按引用类型解析 id：mcp 使用 UUID 对象，其余是 int 自增；无效返回 None。"""
     if kind == "mcp":
         try:
-            return str(UUID(str(raw_id)))
+            return UUID(str(raw_id))
         except (TypeError, ValueError, AttributeError):
             return None
     try:

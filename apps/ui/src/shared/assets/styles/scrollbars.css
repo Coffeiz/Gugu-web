@@ -1,0 +1,194 @@
+/* Unified scrollbar contract.
+ *
+ * Visual rule: transparent track, thumb only. Chromium/WebKit track margins keep the thumb away
+ * from rounded top/bottom edges. Application scroll surfaces hide the native scrollbar entirely,
+ * so overflow never changes content width. The design preview opts back into the visual sample.
+ */
+/* Firefox 没有 WebKit 伪元素，只在非 WebKit 内核启用 scrollbar-color；
+ * Chromium 若同时设置两套属性会忽略 thumb:hover 的颜色。 */
+@supports not selector(::-webkit-scrollbar) {
+  html[data-theme][data-family] * {
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+}
+
+/* 原生滚动条与浮层滑块共享同一套颜色和过渡节奏，避免 hover 时突然变深。 */
+html[data-theme][data-family] *::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background-color: var(--scrollbar-thumb);
+  background-clip: padding-box;
+  transition: background-color var(--scrollbar-overlay-transition);
+}
+html[data-theme][data-family] *::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+html[data-theme][data-family] *::-webkit-scrollbar,
+html[data-theme][data-family] *::-webkit-scrollbar-track {
+  background: transparent;
+}
+html[data-theme][data-family] *::-webkit-scrollbar-track {
+  margin-block: var(--scrollbar-safe-inset);
+}
+html[data-theme][data-family] *::-webkit-scrollbar {
+  width: calc(var(--scrollbar-size-default) + 2px);
+  height: calc(var(--scrollbar-size-default) + 2px);
+}
+
+html[data-theme][data-family] .scroll-surface,
+html[data-theme][data-family] .page-content,
+html[data-theme][data-family] .task-grid,
+html[data-theme][data-family] .col-body {
+  scrollbar-gutter: auto;
+  scrollbar-width: none;
+}
+
+/* 应用滚动面隐藏原生滚动条，不占用内容宽度；可见滑块由独立浮层绘制。 */
+html[data-theme][data-family] .scroll-surface:not(.scroll-surface--hidden):not(.scrollbar-preview),
+html[data-theme][data-family] .page-content,
+html[data-theme][data-family] .task-grid,
+html[data-theme][data-family] .col-body {
+  overflow-y: auto;
+}
+
+html[data-theme][data-family] .scroll-surface:not(.scroll-surface--hidden):not(.scrollbar-preview)::-webkit-scrollbar,
+html[data-theme][data-family] .page-content::-webkit-scrollbar,
+html[data-theme][data-family] .task-grid::-webkit-scrollbar,
+html[data-theme][data-family] .col-body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* 独立浮层滑块：不参与滚动内容布局，也不会压缩卡片。 */
+html[data-theme][data-family] .overlay-scroll-host {
+  position: relative;
+}
+
+html[data-theme][data-family] [data-overlay-scrollbar-thumb] {
+  position: fixed;
+  z-index: var(--scrollbar-overlay-z-index);
+  width: var(--scrollbar-size-default);
+  min-height: var(--scrollbar-min-thumb);
+  border-radius: var(--radius-pill);
+  background-color: var(--scrollbar-thumb);
+  /* 浮层滑块需要接收指针，才能在悬停时进入同一套 hover 颜色过渡。 */
+  pointer-events: auto;
+  cursor: default;
+  transition: background-color var(--scrollbar-overlay-transition);
+}
+
+/* 滑块本体很窄，扩大透明命中区但不改变实际绘制宽度。 */
+html[data-theme][data-family] [data-overlay-scrollbar-thumb]::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  background: transparent;
+}
+
+html[data-theme][data-family] [data-overlay-scrollbar-thumb]:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* 无局部宿主时，视口滑块留在普通页面绘制层，不能覆盖有独立层级的窗口。 */
+html[data-theme][data-family] body > [data-overlay-scrollbar-thumb] {
+  z-index: auto;
+}
+
+/* 浮层宿主内的滑块共享宿主层级，并随宿主的 transform/淡出动画同步移动。 */
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--owner {
+  position: absolute;
+}
+
+/* 通知中心的滑块挂在弹窗根节点内，跟随弹窗的进入/退出 transform，且位于内容表面之上。 */
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--notif {
+  position: absolute;
+  z-index: 1;
+}
+
+/* 画布抽屉是独立浮动面板，滑块必须在 shell 内定位，跟随抽屉的宽度/位移动画。 */
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--drawer {
+  position: absolute;
+  --scrollbar-overlay-right-offset: 4px;
+}
+
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--compact {
+  width: var(--scrollbar-size-compact);
+}
+
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--editor {
+  width: var(--scrollbar-size-editor);
+}
+
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--column {
+  --scrollbar-overlay-right-offset: var(--scrollbar-column-right-offset);
+}
+
+/* 设计令牌预览保留真实 CSS 滑块，避免文档页无法展示滚动条样式。 */
+html[data-theme][data-family] .scrollbar-preview {
+  scrollbar-width: auto;
+}
+
+html[data-theme][data-family] .design-page,
+html[data-theme][data-family] .scrollbar-preview {
+  scrollbar-width: auto;
+}
+
+html[data-theme][data-family] .design-page::-webkit-scrollbar,
+html[data-theme][data-family] .scrollbar-preview::-webkit-scrollbar {
+  width: var(--scrollbar-size-default);
+  height: var(--scrollbar-size-default);
+  background: transparent;
+}
+
+html[data-theme][data-family] .scrollbar-preview::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  margin-block: var(--scrollbar-safe-inset);
+  margin-inline: var(--scrollbar-safe-inset);
+}
+
+html[data-theme][data-family] .scrollbar-preview::-webkit-scrollbar-thumb {
+  min-height: var(--scrollbar-min-thumb);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background-color: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+html[data-theme][data-family] .scrollbar-preview::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+html[data-theme][data-family] .scrollbar-preview::-webkit-scrollbar-corner,
+html[data-theme][data-family] .scrollbar-preview::-webkit-scrollbar-button {
+  background: var(--scrollbar-corner);
+}
+
+html[data-theme][data-family] .scrollbar-preview::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+html[data-theme][data-family] .scrollbar-preview.scroll-surface--compact::-webkit-scrollbar {
+  width: var(--scrollbar-size-compact);
+  height: var(--scrollbar-size-compact);
+}
+
+html[data-theme][data-family] .scrollbar-preview.scroll-surface--editor::-webkit-scrollbar {
+  width: var(--scrollbar-size-editor);
+  height: var(--scrollbar-size-editor);
+}
+
+html[data-theme][data-family] .scroll-surface--hidden {
+  scrollbar-width: none;
+}
+
+html[data-theme][data-family] .scroll-surface--hidden::-webkit-scrollbar {
+  display: none;
+}

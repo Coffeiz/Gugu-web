@@ -1,0 +1,56 @@
+<template>
+  <BaseModal :show="props.show" width="460px" background="var(--panel-bg)" @close="emit('close')">
+    <div class="filesystem-auth-dialog">
+      <div class="dialog-heading">
+        <div>
+          <h2>{{ t('common.filesystemAuthTitle') }}</h2>
+          <p v-if="props.subjectName">{{ props.subjectName }}</p>
+        </div>
+        <CloseButton :title="t('common.actions.close')" :disabled="props.busy" @click="emit('close')" />
+      </div>
+      <p class="dialog-message">{{ t(props.subjectType === 'session' ? 'common.filesystemAuthSessionMessage' : 'common.filesystemAuthMessage') }}</p>
+      <div class="scope-box">
+        <strong>{{ t('common.filesystemAuthScope') }}</strong>
+        <span>/workspace · /personal · /project</span>
+      </div>
+      <div class="dialog-actions app-card-actions">
+        <ActionButton variant="secondary" :disabled="props.busy" @click="emit('close')">
+          {{ t('common.filesystemAuthCancel') }}
+        </ActionButton>
+        <ActionButton :disabled="props.busy" @click="emit('confirm')">
+          {{ props.busy ? t('common.status.saving') : t('common.filesystemAuthConfirm') }}
+        </ActionButton>
+      </div>
+    </div>
+  </BaseModal>
+</template>
+
+<script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+
+const props = defineProps<{
+  show: boolean
+  busy?: boolean
+  subjectName?: string
+  subjectType?: 'session' | 'scheduled_task'
+}>()
+const emit = defineEmits<{
+  (event: 'close'): void
+  (event: 'confirm'): void
+}>()
+const { t } = useI18n()
+</script>
+
+<style scoped>
+.filesystem-auth-dialog { --card-actions-inset: 20px; padding: 20px var(--card-actions-inset) 0; }
+.dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+h2 { margin: 0; color: var(--content-primary); font: 700 18px/1.35 var(--font-sans); }
+.dialog-heading p { margin: 5px 0 0; color: var(--content-secondary); font-size: 12px; }
+.dialog-message { margin: 18px 0 12px; color: var(--content-primary); font-size: 13px; line-height: 1.6; }
+.scope-box { display: flex; flex-direction: column; gap: 5px; padding: 12px; border: 1px solid var(--option-border); border-radius: var(--radius-xs); background: var(--option-bg); color: var(--content-secondary); font-size: 12px; }
+.scope-box strong { color: var(--content-primary); }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+</style>

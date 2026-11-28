@@ -1,16 +1,16 @@
 #!/usr/bin/env node
+import { loadMetadata } from './test-metadata.mjs'
 
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
 const root = path.resolve(import.meta.dirname, '../..')
-const metadataPath = path.join(root, 'docs/testing/test-metadata.json')
-const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
+const metadata = loadMetadata()
 const testPattern = /(^|\/)(test_[^/]+\.py|[^/]+_test\.py|[^/]+\.(test|spec)\.(ts|js))$/
 
 function git(args) {
-  return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+  return execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }).trim()
 }
 
 let base = process.env.GITHUB_BASE_SHA?.trim()
@@ -37,7 +37,10 @@ const added = new Set()
 for (const line of names) {
   const parts = line.split('\t')
   const file = parts.at(-1)
-  if (file && testPattern.test(file)) added.add(file)
+  if (file && testPattern.test(file)) {
+    const current = file.replace(/^gugu-core\//, 'packages/core/').replace(/^gugu-desktop\//, 'apps/desktop/').replace(/^gugu-webui\//, 'apps/web-host/').replace(/^frontend\//, 'apps/ui/')
+    if (fs.existsSync(path.join(root, current))) added.add(current)
+  }
 }
 
 const tracked = new Set(git(['ls-files']).split('\n').filter(Boolean))
@@ -45,7 +48,11 @@ const trackedTests = [...tracked].filter(file => testPattern.test(file))
 const deletedFrontendTests = trackedTests.filter(file =>
   /^frontend\/(?:src|test)\//.test(file) && !fs.existsSync(path.join(root, file)),
 )
-const untrackedTests = git(['ls-files', '-o', '--exclude-standard']).split('\n')
+// 只让Git返回测试候选，避免旧构建产物/字体清单耗尽子进程输出缓冲区。
+const untrackedTests = git(['ls-files', '-o', '--exclude-standard', '--',
+  ':(glob)**/test_*.py', ':(glob)**/*_test.py', ':(glob)**/*.test.ts', ':(glob)**/*.test.js',
+  ':(glob)**/*.spec.ts', ':(glob)**/*.spec.js', ':(glob,exclude)**/node_modules/**',
+  ':(glob,exclude)**/.tools/**', ':(glob,exclude)**/.venv/**', ':(glob,exclude)**/site-packages/**']).split('\n')
   .filter(file => testPattern.test(file) && !tracked.has(file))
 
 // 本地搬迁尚未暂存时，Git 会把新路径列为 untracked、旧路径列为 deleted。
@@ -56,7 +63,7 @@ for (const file of deletedFrontendTests) {
   const name = path.basename(file)
   deletedByName.set(name, [...(deletedByName.get(name) || []), file])
 }
-for (const file of untrackedTests.filter(item => item.startsWith('frontend/tests/'))) {
+for (const file of untrackedTests.filter(item => item.startsWith('apps/ui/tests/'))) {
   const name = path.basename(file)
   untrackedByName.set(name, [...(untrackedByName.get(name) || []), file])
 }
@@ -74,7 +81,7 @@ const errors = []
 for (const file of added) {
   const item = metadata[file]
   if (!item) {
-    errors.push(`${file}: 缺少 docs/testing/test-metadata.json 条目`)
+    errors.push(`${file}: 缺少 docs/testing/metadata 条目`)
     continue
   }
   for (const field of required) {

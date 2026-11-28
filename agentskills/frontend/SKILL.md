@@ -10,9 +10,9 @@ description: 前端开发约定。Vue 3 script setup、TypeScript 严格模式�
 - Vue 3 使用 `<script setup>`；新增代码保持现有渐进式 TypeScript 风格。
 - `defineProps` 使用运行时对象写法，需要复杂类型时使用 `PropType`。
 - 模板中的 `$event.target` 访问 DOM 属性时显式转型。
-- 日期相减使用 `.getTime()`；日期归属复用 `frontend/src/utils/dateAttribution.ts`。
+- 日期相减使用 `.getTime()`；日期归属复用 `apps/ui/src/shared/utils/dateAttribution.ts`。
 - 空的 `ref(new Set())`、`ref([])` 显式标注元素类型。
-- 已加入 `frontend/tsconfig.strict.json` 的文件不得降回宽松类型。
+- 已加入 `apps/ui/tsconfig.strict.json` 的文件不得降回宽松类型。
 
 ## 文件组织
 
@@ -20,7 +20,7 @@ description: 前端开发约定。Vue 3 script setup、TypeScript 严格模式�
 - UI 交互放在 `components/`，状态和异步流程放在 `composables/`，请求放在 `api/` 或 service，纯逻辑放在 `utils/`。
 - 新功能不要继续堆进入口文件；已有大文件按功能逐步收口。
 - 复用现有组件、Store、设计变量和设计文档，不要重复实现。
-- 单选下拉统一复用 `frontend/src/components/common/controls/SelectPopup.vue`；Admin 页面通过 `AdminSelect` 使用它，Provider 等特殊选择器也只能在此基础上扩展。不要在页面中重新实现原生 `<select>` 或单独的列表弹窗。
+- 单选下拉统一复用 `apps/ui/src/shared/components/common/controls/SelectPopup.vue`；Admin 页面通过 `AdminSelect` 使用它，Provider 等特殊选择器也只能在此基础上扩展。不要在页面中重新实现原生 `<select>` 或单独的列表弹窗。
 - `AdminSelect` 的加载中、不可用状态统一通过 `disabled` 传入；公共组件负责阻止交互和呈现禁用态，业务页面不重复编写禁用样式。
 
 ### 异步任务状态更新
@@ -28,7 +28,7 @@ description: 前端开发约定。Vue 3 script setup、TypeScript 严格模式�
 - 长时间运行且需要在页面展示进度/终态的任务，优先订阅现有用户级 SSE/live 状态事件；收到事件后更新本地状态，或按事件携带的资源/版本失效标记重新读取权威状态。不要为已有推送事件的任务另加固定间隔 `setInterval` 轮询。
 - 页面首次打开、切回前台或 SSE 重连后读取一次持久化状态，弥补连接前和断线期间的状态变化。推送是刷新触发器，服务端持久化状态/API 响应才是事实来源。
 - 只有上游没有可接入的推送渠道、且状态端点本身提供低成本检查时才采用轮询；使用退避/合理间隔，保证同一任务至多一个请求在途，页面隐藏时降频或暂停，并在卸载、取消及终态时停止计时器。不要用高频轮询掩盖丢失的状态事件。
-- 复用 `frontend/src/stores/live.ts` 和既有资源订阅/失效模式；需要新事件类型时先确认后端事件协议和重连补刷行为，不在组件里另开重复长连接。
+- 复用 `apps/ui/src/shared/stores/live.ts` 和既有资源订阅/失效模式；需要新事件类型时先确认后端事件协议和重连补刷行为，不在组件里另开重复长连接。
 
 ### Admin 页面拆分
 
@@ -49,14 +49,24 @@ Runtime 管理的元素，其业务或主题 CSS 不得使用 `!important` 强�
 
 ## 玻璃表面两种实现与 hover 契约
 
-- 常驻内容面板默认使用半透明 tint、边框和阴影，不采样背景；`--glass-card-blur: none`。应用/Admin 侧边导航与 Mind 笔记 glass 是明确例外，可显式启用 blur。顶栏直接绘制 `.glass-card` tint，不挂载独立 `GlassBg`。
+- 常驻内容面板默认使用半透明 tint、边框和阴影，不采样背景；`--glass-card-blur: none`。应用/Admin 侧边导航可显式启用 blur，笔记主面板沿用常驻 Glass。顶栏直接绘制 `.glass-card` tint，不挂载独立 `GlassBg`。
 - `GlassBg`（`.glass-bg > .gb-tint`，无 backdrop-filter）只用于明确选择 faux glass 的工具栏等表面；真实 blur 留给弹窗、菜单、预览窗口等确实浮在页面内容上的临时 surface，并通过 popup/modal token 或组件自身样式显式启用。
 - 仿玻璃宿主的 hover tint 规则只能放全局样式表（component-theme-refinements.css 的 `.glass-card:hover .gb-tint` 切 `--surface-glass-hover`）；写在组件 scoped style 里（含 `:global` 写法）会被编译器丢弃 `.gb-tint` 后代部分而静默失效。
 - 不想要 hover 的面板用 opt-out 契约：`--glass-card-background-hover` / `--glass-card-shadow-hover` 自映射回静止值（技能页、终端页先例）；禁止恢复主题层「暗色一刀切 hover 屏蔽」。暗色 hover 高亮幅度在 theme-refinements.css 暗色段标定（现 7% 白）。
 
+## 页面骨架与加载态
+
+- **统一等待 150 ms**。Web 和桌面页面使用共享的 `SkeletonGate`，路由占位复用同一个延迟常量。加载立即开始，短于门槛时直接显示结果。路由交接沿用本次导航的剩余时间，不另起一段延迟。页面复用已有 L2 外壳，快速切页取消旧占位。
+
+- Web 和桌面端应先渲染目标页面的 L2 玻璃面板，再在相应位置填充内容占位。路由模块尚未加载时也按目标页选用骨架，保留导航等已就绪的外壳。
+- 页面首次加载与路由等待使用共享 `PageLoadingState` 居中展示图标、文字和呼吸动效，减少动态效果偏好下关闭动画。`SkeletonGate` 保留 150ms 延迟，后台刷新保留内容。旧骨架仅用于保留 L2 外壳，不新增页面专属骨架内容。
+- 历史骨架按加载完成后的布局绘制。工具栏、主栏、侧栏、文件卡片和列表行的位置、尺寸、列数、间距与断点应与正式页面一致。优先复用正式布局的容器、样式和设计令牌；Web 与桌面端布局相同时复用骨架组件。
+- 后台刷新保留已显示的内容。首批数据返回后直接切换到内容、空态或错误态，无需为骨架设置最低展示时间。
+- 验收时分别延迟路由模块和首批数据，检查玻璃面板是否先出现，以及骨架切换到正式内容时是否发生布局跳动。视觉规则见 [前台设计规范](../design/references/frontend-design.md#页面骨架与加载态)。
+
 ## HTML 与组件边界
 
-- 不可信 HTML 必须经过 `frontend/src/utils/markdown.ts` 的消毒函数，禁止直接使用 `v-html`。
+- 不可信 HTML 必须经过 `apps/ui/src/shared/utils/markdown.ts` 的消毒函数，禁止直接使用 `v-html`。
 - 不手写未经转义的 HTML 字符串来拼接链接、属性或错误提示。
 - 组件卸载后不要依赖 `emit()` 传递异步收尾事件；改用直接传入的函数引用。
 
@@ -66,13 +76,19 @@ Runtime 管理的元素，其业务或主题 CSS 不得使用 `!important` 强�
 - 标题、名称、来源、状态和操作文案不能被容器边界直接裁掉；长英文串、数字串和中英文混排都要按实际卡片宽度检查，必要时换行、省略或提供可访问的完整文本。
 - 使用 `overflow: hidden` 做单行省略时，行高必须覆盖实际字体字形范围（包括 `g`、`p`、`q` 等下伸部分）；不能用过紧的 `line-height` 让字形在省略容器内被垂直裁切。
 - 卡片内联重命名沿用共享 ghost sizer：单输入模式由隐藏 ghost 的自然行盒决定高度，input 绝对定位覆盖其上；不要给共享单输入 sizer 强制 `1lh` 高度或 `appearance: none`。输入框继承名称行行高，若内容盒空间不足，只扩展绝对定位 input 的上下边界到名称行预留留白；不得压低 `line-height` 或改变 sizer 流式高度。分段布局只增加容器规则，文件夹、文件名与后缀输入继续共用同一输入样式。窄控件需实测 `g`、`p`、`q` 等下伸字形及基线，避免 input 内容区裁切。
-- 文件、文件夹等同类重命名输入必须复用同一基础 class、CSS 规则和 design token；分段布局只增加容器布局规则，不复制输入框外观或叠画第二层焦点光晕。输入框不得覆盖元信息或撑高卡片；焦点态沿用标准描边与光晕。窄控件需在浏览器用含下伸字母的值（如 `gg`）实测字形、基线、焦点样式和相邻元信息间距。
+- 文件、文件夹等同类重命名输入必须复用同一基础 class、CSS 规则和 design token；分段布局只增加容器布局规则，不复制输入框外观或重复绘制焦点描边。输入框不得覆盖元信息或撑高卡片；焦点态沿用标准高亮描边。窄控件需在浏览器用含下伸字母的值（如 `gg`）实测字形、基线、焦点样式和相邻元信息间距。
 
 ## 输入框标题交互
 
 - 这是全站输入设计规范：字段标题与文本、数字、日期、邮箱、URL、密码等输入控件分开布局，标题点击不得使输入框获得焦点；不要用包裹输入框的 `<label>` 或指向输入框的 `<label for>` 实现布局。使用 `aria-label` 或 `aria-labelledby` 为控件提供可访问名称。复选框和单选框仍可使用 label 作为可点击区域。
-- 每次新增或修改表单时检查该约束；全局回归测试 `frontend/tests/forms/field-label-focus.test.ts` 扫描所有 Vue 页面，禁止文本输入控件被 label 激活。功能目录中的组件测试只覆盖该功能自身行为，不替代全局规范测试。
-- 输入框使用公共 `.form-input` 样式与 `--input-*` 焦点令牌，包含背景、描边、焦点光晕及淡入淡出过渡；页面局部样式只负责尺寸和布局，不得另画瞬时 outline 或覆盖标准焦点状态。
+- 每次新增或修改表单时检查该约束；全局回归测试 `apps/ui/tests/forms/field-label-focus.test.ts` 扫描所有 Vue 页面，禁止文本输入控件被 label 激活。功能目录中的组件测试只覆盖该功能自身行为，不替代全局规范测试。
+- 输入框使用公共 `.form-input` 样式与 `--input-*` 焦点令牌，包含背景、高亮描边及淡入淡出过渡；页面局部样式只负责尺寸和布局，不得另画瞬时 outline 或覆盖标准焦点状态。
+
+## 多行输入框缩放
+
+- Web、桌面和 Admin 的多行输入框如需手动调整高度，统一添加 `.control-resizable`。公共表单样式负责拖动方向，右下角手柄统一使用 `--control-resizer-bg` 令牌。
+- 页面只设置输入框尺寸及布局，禁止局部声明可拖动的 `resize`、`::-webkit-resizer` 或覆写手柄背景。固定高度和自动增高的输入框保持无手柄。
+- 验收时在内容未溢出和出现滚动条两种状态下检查手柄外观，并验证可拖动调整高度。
 
 ## 验证
 

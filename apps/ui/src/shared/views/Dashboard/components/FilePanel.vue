@@ -1,0 +1,368 @@
+<template>
+  <div class="glass-card file-panel" ref="panelRef">
+    <div class="section-header">
+      <span class="section-title">{{ t('dashboardUi.recentFiles') }}</span>
+    </div>
+
+    <div class="file-grid">
+      <FileCard
+        v-for="f in files"
+        :key="f.id"
+        :ext="f.ext" :display-name="f.name" :has-thumb="isImageExt(f.ext)"
+        :icon-size="80" :icon-lift="18" :area-height="80" :lift="false"
+        @click="openFile(f)"
+      >
+        <template #thumb>
+          <img :src="thumbMap[f.id]?.tiny ?? undefined" class="fc-thumb-tiny" decoding="async" draggable="false" alt="" />
+          <img :src="thumbMap[f.id]?.card ?? undefined" class="fc-thumb-full"
+            :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }"
+            decoding="async" draggable="false" alt=""
+            @load="cardBlobReadyIds.add(f.id)"
+            @error="($event.target as HTMLElement).style.display='none'" />
+        </template>
+        <template #name>
+          <RenameInput v-if="renamingId === f.id" v-model="renameText" :extension="f.ext.toUpperCase() === 'FILE' || !f.name ? undefined : renameExtension" @update:extension="renameExtension = $event"
+            @commit="commitRename(f)" @cancel="cancelRename" />
+          <template v-else>{{ f.name }}</template>
+        </template>
+        <template #meta>
+          <span class="fc-proj-dot" :style="{ background: f.projectColor }"></span>
+          {{ f.project }} · {{ f.size }}
+        </template>
+
+        <div class="file-card-hover-actions">
+          <button class="file-card-btn" :title="renamingId === f.id ? t('sharedUi.confirm') : t('sharedUi.rename')"
+            @mousedown.prevent @click.stop="renamingId === f.id ? commitRename(f) : startRename(f)">
+            <Icon name="status.success" v-if="renamingId === f.id" :size="11" />
+            <Icon name="action.edit" v-else :size="11" />
+          </button>
+          <button class="file-card-btn" :title="t('sharedUi.download')" @click.stop="downloadFile(f)">
+            <Icon name="action.download" :size="11" />
+          </button>
+          <button class="file-card-btn del" :title="t('sharedUi.moveToTrash')" @click.stop="deleteFile(f)">
+            <Icon name="action.delete" :size="11" />
+          </button>
+        </div>
+      </FileCard>
+
+      <!-- 上传区 -->
+      <label
+        class="fc-upload"
+        @dragover.prevent="dragging = true"
+        @dragleave="dragging = false"
+        @drop.prevent="dragging = false; openUpload()"
+        :class="{ dragging }"
+        @click.prevent="openUpload"
+      >
+        <Icon name="action.upload" :size="22" style="opacity:0.4" />
+        <span class="fc-upload-text">{{ t('common.actions.upload') }}</span>
+      </label>
+    </div>
+  </div>
+
+  <Teleport to="body">
+    <UploadModal
+      :show="uploadOpen"
+      :projects="projects"
+      @close="uploadOpen = false"
+      @uploaded="onUploaded"
+    />
+  </Teleport>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, shallowRef, watch, onMounted, onUnmounted, nextTick, type PropType } from 'vue'
+import { filesApi, type FileSummaryResponse } from '@/services/api'
+import { InteractionSync } from '@/interaction/sync/InteractionSync'
+import { useFilesCacheStore } from '@/stores/filesCache'
+import { useProjectStore } from '@/stores/projects'
+import { usePreviewStore, isPreviewable } from '@/stores/preview'
+import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/shared/useThumbCache'
+import { isImageExt, normalizeEditableExtension } from '@/utils/fileTypes'
+import { useI18n } from 'vue-i18n'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import { showAppError } from '@/composables/core/useAppToast'
+import FileCard from '@/components/common/file-browser/FileCard.vue'
+import RenameInput from '@/components/common/file-browser/RenameInput.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import UploadModal from '@/views/Files/UploadModal.vue'
+
+const panelRef      = ref<HTMLElement | null>(null)
+const props = defineProps({
+  files: { type: Array as PropType<FileSummaryResponse['recentFiles']>, default: () => [] },
+})
+const emit = defineEmits<{ (event: 'refresh'): void }>()
+const colCount      = ref(4) // ResizeObserver 更新后覆盖
+const displayCount  = computed(() => Math.max(1, colCount.value - 1)) // 1 行，上传按钮占 1 格
+const cardVisible   = ref(false) // 面板是否已进入视口（触发过 card 加载）
+// 使用模块级 cardBlobReadyIds：首次 @load 后写入，session 内二次访问直接显示跳过动画
+const dragging      = ref(false)
+const uploadOpen    = ref(false)
+// Dashboard 只消费后端限量返回的最近文件；不为展示几张卡片初始化全局文件索引。
+const store         = useFilesCacheStore()
+const { t } = useI18n()
+const rawFiles      = computed(() => [...props.files].sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
+const thumbMap      = shallowRef<Record<string, { version?: number; tiny?: string | null; card?: string | null }>>({}) // 路径 → 当前正文版本的缩略图，shallowRef 批量更新减少 trigger 次数
+const renamingId    = ref<number | string | null>(null)
+const renameText    = ref('')
+const renameExtension = ref('')
+const projectStore  = useProjectStore()
+const previewStore  = usePreviewStore()
+const projects      = computed(() => projectStore.projects)
+
+// 只加载 tiny，card 延迟到面板进入视口后再加载
+function loadThumbs(list: any[]) {
+  const imgFiles = list.filter(f => isImageExt(f.ext))
+  const snap = { ...thumbMap.value }
+  imgFiles.forEach(f => {
+    const previous = thumbMap.value[f.id]
+    const sameVersion = previous?.version === f.version
+    snap[f.id] = {
+      version: f.version,
+      tiny: getCachedThumb(f.id, 'tiny', f.version),
+      card: sameVersion ? previous?.card ?? null : null,
+    }
+  })
+  thumbMap.value = snap
+  imgFiles.forEach(f => {
+    if (snap[f.id]?.tiny) return
+    getThumb(f.id, 'tiny', f.version).then((url: any) => {
+      if (url) thumbMap.value = { ...thumbMap.value, [f.id]: { ...thumbMap.value[f.id], version: f.version, tiny: url } }
+    })
+  })
+}
+
+// 面板进入视口后调用，加载 card 缩略图
+function loadCards(list: any[]) {
+  const imgFiles = list.filter(f => isImageExt(f.ext))
+  const snap = { ...thumbMap.value }
+  let hasNew = false
+  imgFiles.forEach(f => {
+    const cached = getCachedThumb(f.id, 'card', f.version)
+    if (cached && snap[f.id]?.card !== cached) {
+      snap[f.id] = { ...snap[f.id], version: f.version, card: cached }
+      hasNew = true
+    }
+  })
+  if (hasNew) { thumbMap.value = snap; preDecodeBlobs(snap) }
+
+  const uncached = imgFiles.filter(f => !snap[f.id]?.card)
+  if (uncached.length) {
+    Promise.all(uncached.map(f => getThumb(f.id, 'card', f.version).then((url: any) => ({ id: f.id, url }))))
+      .then(results => {
+        const m = { ...thumbMap.value }
+        for (const { id, url } of results) {
+          const file = imgFiles.find(item => item.id === id)
+          if (url) m[id] = { ...m[id], version: file?.version, card: url }
+        }
+        thumbMap.value = m
+        preDecodeBlobs(m)
+      })
+  }
+}
+
+function preDecodeBlobs(map: Record<number, { version?: number; tiny?: string | null; card?: string | null }>) {
+  for (const entry of Object.values(map)) {
+    for (const url of [entry?.tiny, entry?.card]) {
+      if (url) { const i = new Image(); i.src = url; i.decode().catch(() => {}) }
+    }
+  }
+}
+
+// 文件类型判断统一收口到 @/utils/fileTypes（isImageExt，见顶部 import）；图标/主色现在由
+// components/common/FileCard.vue 内部处理，这里不用再重复调 fileIconColor/fileListIcon。
+
+function openUpload() { uploadOpen.value = true }
+function openFile(f: any) {
+  if (renamingId.value === f.id) return
+  if (isPreviewable(f.ext, f._raw?.mimeType)) previewStore.open(f._raw)
+}
+
+async function startRename(f: any) {
+  renamingId.value = f.id
+  const isLegacyDotfile = !f.name && f.ext.toUpperCase() !== 'FILE'
+  renameText.value = isLegacyDotfile ? `.${f.ext.toLowerCase()}` : f.name
+  renameExtension.value = isLegacyDotfile || f.ext.toUpperCase() === 'FILE' ? '' : f.ext.toLowerCase()
+}
+
+async function commitRename(f: any) {
+  const name = renameText.value.trim()
+  const normalizedExtension = normalizeEditableExtension(renameExtension.value)
+  const isLegacyDotfile = !f.name && f.ext.toUpperCase() !== 'FILE'
+  if (!name) { cancelRename(); return }
+  if (normalizedExtension == null) {
+    showAppError(t('filesUi.extensionInvalid'))
+    await nextTick()
+    panelRef.value?.querySelector<HTMLInputElement>('.rename-file-extension-input')?.focus()
+    return
+  }
+  const extension = isLegacyDotfile
+    ? 'FILE'
+    : normalizedExtension || (f.ext.toUpperCase() === 'FILE' ? undefined : 'FILE')
+  const nextExtension = extension ?? f.ext
+  renamingId.value = null
+  renameText.value = ''
+  renameExtension.value = ''
+  if (name === f.name && nextExtension === f.ext) return
+  const previous = store.getFile(f.id)
+  const snapshot = previous ?? f._raw
+  try {
+    await InteractionSync.execute({
+      scope: 'file.dashboard-rename', entityKey: `file:${f.id}`,
+      apply: () => store.updateFile(f.id, { displayName: name, ext: nextExtension }),
+      rollback: () => store.updateFile(f.id, { displayName: snapshot.displayName, ext: snapshot.ext }),
+      request: async mutation => {
+        const updated = await filesApi.update(f.id, {
+          version: snapshot.version,
+          displayName: name,
+          ...(extension ? { ext: extension } : {}),
+        }, { mutationId: mutation.mutationId })
+        store.updateFile(f.id, updated)
+        return updated
+      },
+    })
+    emit('refresh')
+  } catch { /* 统一事务已回滚 */ }
+}
+
+function cancelRename() {
+  renamingId.value = null
+  renameText.value = ''
+  renameExtension.value = ''
+}
+
+async function downloadFile(f: any) {
+  await filesApi.download(f.id, `${f.name}.${f.ext}`)
+}
+
+async function deleteFile(f: any) {
+  if (!await confirmDialog({
+    title: t('filesViewUi.deleteFileTitle'),
+    message: t('filesViewUi.deleteFileMessage', { name: f.name }),
+    tone: 'danger',
+    confirmText: t('filesViewUi.moveToTrash'),
+  })) return
+  const previous = store.getFile(f.id) ?? f._raw
+  try {
+    await InteractionSync.execute({
+      scope: 'file.dashboard-delete', entityKey: `file:${f.id}`,
+      apply: () => store.removeFile(f.id),
+      rollback: () => store.addFile(previous),
+      request: mutation => filesApi.delete(f.id, { mutationId: mutation.mutationId }),
+      onCommit: () => clearThumbCache(f.id),
+    })
+    emit('refresh')
+  } catch { /* 统一事务已回滚 */ }
+}
+
+async function onUploaded() {
+  uploadOpen.value = false
+  emit('refresh')
+}
+
+// minmax(130px, 1fr) + gap:8px + padding:20px*2 → cols = floor((w - 40 + 8) / 138)
+function calcCols(width: number) { return Math.max(1, Math.floor((width - 32) / 138)) }
+
+// 最近文件变化时只为当前可见卡片加载缩略图，不预热整个账户的图片。
+watch(rawFiles, (list) => {
+  if (!list?.length) return
+  const visible = list.slice(0, displayCount.value)
+  preloadTinyThumbs(visible)
+  loadThumbs(visible)
+  if (cardVisible.value) loadCards(visible)
+}, { immediate: true })
+
+// 面板变宽时 displayCount 增大，补加载新出现文件的缩略图
+watch(displayCount, (newCount, oldCount) => {
+  if (newCount <= oldCount) return
+  const list = rawFiles.value
+  if (!list?.length) return
+  loadThumbs(list.slice(oldCount, newCount))
+  if (cardVisible.value) loadCards(list.slice(oldCount, newCount))
+})
+
+let _panelObs: ResizeObserver | null = null
+let _resizeObs: ResizeObserver | null = null
+onMounted(() => {
+  if (panelRef.value) {
+    colCount.value = calcCols(panelRef.value.offsetWidth)
+    _resizeObs = new ResizeObserver(([entry]) => {
+      colCount.value = calcCols(entry.contentRect.width)
+    })
+    _resizeObs.observe(panelRef.value)
+  }
+
+  // card 等面板接近视口时再加载，避免屏幕外批量解码
+  _panelObs = new IntersectionObserver(([entry]) => {
+    if (!entry.isIntersecting) return
+    _panelObs?.disconnect(); _panelObs = null
+    cardVisible.value = true
+    const cur = rawFiles.value
+    if (cur?.length) loadCards(cur.slice(0, displayCount.value))
+  }, { rootMargin: '300px' })
+  if (panelRef.value) _panelObs.observe(panelRef.value)
+})
+
+onUnmounted(() => {
+  _panelObs?.disconnect(); _panelObs = null
+  _resizeObs?.disconnect(); _resizeObs = null
+})
+
+const files = computed(() =>
+  rawFiles.value.slice(0, displayCount.value).map(f => ({
+    id:           f.filePath,
+    _raw:         f,
+    name:         f.displayName,
+    ext:          f.ext,
+    size:         f.size || '—',
+    project:      f.projectName ?? '未分类',
+    projectColor: f.projectColor ?? '#8a8fa8',
+  }))
+)
+</script>
+
+<style scoped>
+.file-panel { padding: 20px; flex-shrink: 0; }
+
+.file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+
+/* .fc-card 基础视觉（底色/边框/角标/图标区/缩略图区/标题元信息）已挪进
+   components/common/FileCard.vue；这里只留缩略图两层（插槽内容）、meta 里的项目色点、
+   悬浮操作这几处本面板专属的部分。 */
+.fc-thumb-tiny { filter: blur(10px); }
+.fc-thumb-full { opacity: 0; transition: opacity 0.4s ease; }
+.fc-thumb-full.fc-loaded { opacity: 1; }
+
+/* .fc-meta 是 FileCard.vue 自己模板里包 #meta 插槽的容器 div，不是本组件插的槽内容本身
+   （slot 内容才带本组件 scope），要用 :deep() 才能扎进子组件根节点以外的这层。 */
+:deep(.fc-meta) {
+  display: flex; align-items: center; gap: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fc-proj-dot {
+  width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; opacity: 0.8;
+}
+
+.fc-upload {
+  min-height: 110px; border-radius: 14px;
+  border: 1.5px dashed rgba(0,0,0,0.1);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
+  color: var(--text-secondary); cursor: pointer;
+  background: rgba(255,255,255,0.2);
+  transition: all 0.18s;
+}
+.fc-upload:hover, .fc-upload.dragging {
+  border-color: color-mix(in srgb, var(--action-primary) 45%, transparent);
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--action-primary) 4%, transparent);
+}
+.fc-upload-text { font-size: 10px; font-weight: 600; }
+
+/* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用） */
+</style>

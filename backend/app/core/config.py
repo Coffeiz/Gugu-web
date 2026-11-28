@@ -576,6 +576,11 @@ class AppSettings(BaseSettings):
     gugu_site_icp_number: str = Field("", description="站点备案号；为空时前端不显示备案信息")
     gugu_site_icp_url: str = Field("https://beian.miit.gov.cn/", description="站点备案信息链接")
     debug: bool = False
+    rag_index_worker_owner: Literal["python", "node"] = Field(
+        "python",
+        validation_alias="AGENT__RAG_INDEX_WORKER_OWNER",
+        description="持久 RAG 任务的唯一消费者；必须与 Node Web Host 使用同一个环境变量",
+    )
     secret_key: str = Field("change-me-in-production", description="JWT 签名密钥")
     access_token_expire_minutes: int = Field(10080, description="Token 有效期（分钟）")
     admin_username: str = Field("admin", description="后台管理员用户名（env ADMIN_USERNAME）")

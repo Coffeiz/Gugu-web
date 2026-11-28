@@ -1,0 +1,88 @@
+// @vitest-environment node
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  clearPreviewBlobCacheForTests,
+  previewBlobCacheKey,
+  usePreviewBlobCache,
+  withPreviewCacheBust,
+} from '@/composables/shared/usePreviewBlobCache'
+import { beginAccountBoundary, getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+
+describe('usePreviewBlobCache', () => {
+  it('普通预览保留 URL，显式刷新时根据现有查询串追加同一时间版本', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1234)
+    try {
+      expect(withPreviewCacheBust('/preview?token=example', false)).toBe('/preview?token=example')
+      expect(withPreviewCacheBust('/preview', true)).toBe('/preview?_t=1234')
+      expect(withPreviewCacheBust('/preview?size=card', true)).toBe('/preview?size=card&_t=1234')
+    } finally { now.mockRestore() }
+  })
+
+  beforeEach(() => {
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(),
+      revokeObjectURL: vi.fn(),
+    })
+    clearPreviewBlobCacheForTests()
+    vi.mocked(URL.revokeObjectURL).mockClear()
+  })
+
+  it('按文件路径区分库文件，聊天附件仍按暂存 ID 区分，并命中后刷新 LRU 顺序', () => {
+    expect(previewBlobCacheKey({ filePath: '/personal/计划.md' })).toBe(`account:${getAccountBoundaryEpoch()}:file:/personal/计划.md:0`)
+    expect(previewBlobCacheKey({ attach_id: 'a-7', filePath: '/personal/计划.md' })).toBe(`account:${getAccountBoundaryEpoch()}:attach:a-7`)
+
+    const cache = usePreviewBlobCache()
+    cache.put('file:1', 'blob:1')
+    cache.put('file:2', 'blob:2')
+    expect(cache.get('file:1')).toBe('blob:1')
+    cache.put('file:3', 'blob:3')
+    expect(cache.get('file:2')).toBe('blob:2')
+  })
+
+  it('文件正文版本变化时使用不同缓存键', () => {
+    expect(previewBlobCacheKey({ filePath: '/personal/计划.md', version: 1 })).toBe(`account:${getAccountBoundaryEpoch()}:file:/personal/计划.md:1`)
+    expect(previewBlobCacheKey({ filePath: '/personal/计划.md', version: 2 })).toBe(`account:${getAccountBoundaryEpoch()}:file:/personal/计划.md:2`)
+  })
+
+  it('超过 20 条时只释放最久未使用的 blob，缓存中的 URL 不随组件卸载释放', () => {
+    const cache = usePreviewBlobCache()
+    for (let i = 0; i < 20; i += 1) cache.put(`file:${i}`, `blob:${i}`)
+    expect(cache.get('file:0')).toBe('blob:0')
+    cache.put('file:20', 'blob:20')
+
+    expect(cache.get('file:1')).toBeNull()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:1')
+    expect(cache.get('file:0')).toBe('blob:0')
+    cache.release('file:0', 'blob:0')
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:0')
+    cache.release('', 'blob:unmanaged')
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:unmanaged')
+  })
+
+  it('强制刷新后用新 blob 替换同一文件的旧缓存', () => {
+    const cache = usePreviewBlobCache()
+    cache.put('file:1', 'blob:v1')
+    cache.put('file:1', 'blob:v2')
+
+    expect(cache.get('file:1')).toBe('blob:v2')
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:v1')
+  })
+
+  it('账号边界清空旧预览元数据并拒绝迟到的旧账号下载', () => {
+    const cache = usePreviewBlobCache()
+    const oldEpoch = getAccountBoundaryEpoch()
+    const oldKey = cache.keyOf({ filePath: '/personal/报告.txt', version: 1 })
+    cache.put(oldKey, 'blob:account-a', oldEpoch)
+    cache.rememberFile({ filePath: '/personal/报告.txt', version: 1 }, 0, oldEpoch)
+
+    beginAccountBoundary()
+    cache.clear()
+
+    expect(cache.get(oldKey)).toBeNull()
+    expect(cache.getFile('/personal/报告.txt')).toBeNull()
+    expect(cache.put(oldKey, 'blob:late-account-a', oldEpoch)).toBe(false)
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:account-a')
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:late-account-a')
+    expect(cache.keyOf({ filePath: '/personal/报告.txt', version: 1 })).not.toBe(oldKey)
+  })
+})

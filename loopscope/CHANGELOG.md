@@ -22,7 +22,7 @@ LoopScope 的用户可见能力、Trace 协议和持久化结构变更记录。
 
 ### Added
 
-- Span Code Provenance：记录 Python `file / module / function / qualname / line`。
+- Span Code Provenance：记录源码 `file / module / function / qualname / line`。
 - Context Provenance：Context Assembly 下可看到 DB loader、Memory、Prompt Markdown、渲染后的业务上下文、稳定缓存前缀和动态后缀。
 - Prompt 文件独立内容查看：`persona.md`、`skills.md`、`policy.md`、当前 profile 模板可单独展开。
 - Run / LLM Span token usage：input、output、cache read、fresh input、total。

@@ -1,0 +1,493 @@
+import { ClientRequest, createServer } from 'node:http'
+import { createServer as createSecureServer } from 'node:https'
+import type { Server, IncomingMessage, ServerResponse } from 'node:http'
+import { once } from 'node:events'
+import { gzipSync } from 'node:zlib'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve as absolute } from 'node:path'
+import { connect } from 'node:net'
+import type { Duplex } from 'node:stream'
+import { describe, expect, it, vi } from 'vitest'
+import { createNodeProviderTransport, createNodeProviderTransportFactory } from '../../../src/agent/providers/transport/node.js'
+import { embedRagQuery } from '../../../src/agent/rag/query-embedding.js'
+import { ProviderRuntime } from '../../../src/agent/providers/runtime.js'
+import { isPublicAddress, resolvePinnedTarget } from '../../../src/agent/providers/transport/network.js'
+import { requestEvents, requestJson } from '../../../src/agent/providers/http.js'
+import type { ProviderConnectionTiming, ProviderDriverDependencies } from '../../../src/agent/providers/contracts.js'
+import { proxyFor, proxyOptionsFromEnvironment } from '../../../src/agent/providers/transport/proxy.js'
+import { syntheticCertificate } from './tls-fixture.js'
+import { digest, invocation } from './openai-fixtures.js'
+import { providerSelection } from '../../../src/agent/providers/registry.js'
+
+async function server(handler: (request: IncomingMessage, response: ServerResponse) => void) {
+  const value = createServer(handler)
+  return listen(value)
+}
+async function listen(value: Server) {
+  value.listen(0, '127.0.0.1'); await once(value, 'listening')
+  const address = value.address()
+  if (!address || typeof address === 'string') throw new Error('合成HTTP服务未监听')
+  return { value, base: `http://provider.example:${address.port}` }
+}
+async function close(value: Server) { value.closeAllConnections(); await new Promise<void>((resolve, reject) => value.close(error => error ? reject(error) : resolve())) }
+const deps = (transport: ProviderDriverDependencies['transport']): ProviderDriverDependencies => ({ transport, digest: () => 'synthetic-network-digest' })
+
+it('连接被拒绝时，已排队的 POST 正文仍可安全重试', async () => {
+  const { value, base } = await server((_request, response) => response.end())
+  await close(value)
+  const transport = createNodeProviderTransport({ allowLocal: true, trustEnvironment: false,
+    resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+  try {
+    await expect(requestJson(deps(transport), { url: base, method: 'POST', headers: {}, body: { synthetic: true },
+      allowLocal: true }, new AbortController().signal)).rejects.toMatchObject({
+      code: 'network', options: { requestStarted: false, retryable: true, transportCode: 'ECONNREFUSED' },
+    })
+  } finally { await transport.close() }
+})
+
+it('飞书卡片所需PUT与PATCH经过同一固定目标传输并保留正文，不绕过网络授权', async () => {
+  const received: { method: string; body: string }[] = []
+  const { value, base } = await server((request, response) => {
+    let body = ''
+    request.setEncoding('utf8')
+    request.on('data', chunk => { body += chunk })
+    request.on('end', () => { received.push({ method: request.method!, body }); response.end('{"ok":true}') })
+  })
+  const transport = createNodeProviderTransport({ allowLocal: true, trustEnvironment: false,
+    resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+  try {
+    for (const method of ['PUT', 'PATCH'] as const) {
+      const response = await transport.request({ method, url: `${base}/card`, headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode('{"合成":"卡片"}'), allowLocal: true }, new AbortController().signal)
+      for await (const _chunk of response.body) { /* 完整消费响应后释放连接。 */ }
+      await response.cancel()
+    }
+    expect(received).toEqual([{ method: 'PUT', body: '{"合成":"卡片"}' }, { method: 'PATCH', body: '{"合成":"卡片"}' }])
+    await expect(transport.request({ method: 'PUT', url: `${base}/card`, headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+    expect(received).toHaveLength(2)
+  } finally { await transport.close?.(); await close(value) }
+})
+
+it('RAG 查询 embedding 经真实受控传输读取向量且不跟随重定向',async()=>{
+ let calls=0,redirect=false,authorization='',encoding='',accept='',body=''
+ const {value,base}=await server((request,response)=>{
+  calls++;authorization=String(request.headers.authorization||'');encoding=String(request.headers['accept-encoding']||'');accept=String(request.headers.accept||'');request.setEncoding('utf8')
+  request.on('data',chunk=>{body+=chunk});request.on('end',()=>{
+   if(redirect){response.writeHead(302,{location:'/unexpected'});response.end();return}
+   response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({data:[{embedding:[0.2,0.8]}]}))
+  })
+ })
+ const transport=createNodeProviderTransport({trustEnvironment:false,allowLocal:true,resolve:async()=>[{address:'127.0.0.1',family:4}]})
+ const settings={provider:'local',baseUrl:`${base}/v1`,model:'synthetic-model',apiKey:'synthetic-key',dimensions:2,allowLocal:true}
+ try{
+  expect(await embedRagQuery(settings,'合成查询',transport,new AbortController().signal)).toEqual({vector:[0.2,0.8],outcome:'success',httpStatus:200})
+  expect(authorization).toBe('Bearer synthetic-key');expect(encoding).toBe('identity');expect(accept).toBe('application/json');expect(JSON.parse(body)).toMatchObject({model:'synthetic-model',input:'合成查询'})
+  expect(await embedRagQuery({...settings,provider:'openai',allowLocal:false},'云端服务不得访问本地地址',transport,new AbortController().signal)).toEqual({vector:[],outcome:'network_error'})
+  expect(calls).toBe(1)
+  redirect=true;body=''
+  expect(await embedRagQuery(settings,'其他查询',transport,new AbortController().signal)).toEqual({vector:[],outcome:'http_error',httpStatus:302})
+  expect(calls).toBe(2)
+ }finally{await transport.close();await close(value)}
+})
+
+describe('外连地址与DNS固定', () => {
+  it('DNS等待可立即取消且晚到解析结果不继续请求，连接预算包含解析阶段', async () => {
+    const controller = new AbortController()
+    const resolve = vi.fn(() => new Promise<readonly { address: string; family: 4 }[]>(() => undefined))
+    const waiting = resolvePinnedTarget('https://provider.example', { resolve, signal: controller.signal })
+    controller.abort()
+    await expect(waiting).rejects.toMatchObject({ code: 'cancelled' })
+    await expect(resolvePinnedTarget('https://provider.example', { resolve, timeoutMs: 20 })).rejects.toMatchObject({ code: 'timeout', options: { timeoutPhase: 'connect' } })
+  })
+  it.each(['127.0.0.1', '10.0.0.1', '100.64.0.1', '169.254.169.254', '192.0.2.1', '224.0.0.1', '::1', '::ffff:127.0.0.1', 'fd00::1', '2001:db8::1'])('拒绝非公网地址%s及IPv4映射绕过', address => {
+    expect(isPublicAddress(address)).toBe(false)
+  })
+  it.each(['1.1.1.1', '8.8.8.8', '93.184.216.34', '2606:4700:4700::1111'])('正常公网地址%s不能被其他地址族的保留网段误拒', address => {
+    expect(isPublicAddress(address)).toBe(true)
+  })
+  it.each(['::ffff:1.1.1.1', '::ffff:8.8.8.8', '::ffff:10.0.0.1', '::ffff:192.168.0.1', '::ffff:198.51.100.1', '::ffff:169.254.169.254'])('IPv4映射地址%s仍然拒绝，不扩大IPv6可访问集合', address => {
+    expect(isPublicAddress(address)).toBe(false)
+  })
+  it('可信DNS的纯公网IPv4通过并固定地址，混合映射私网仍拒绝', async () => {
+    const result = await resolvePinnedTarget('https://provider.example/v1', { resolve: async () => [{ address: '1.1.1.1', family: 4 }] })
+    expect(result.target).toEqual({ address: '1.1.1.1', family: 4 })
+    await expect(resolvePinnedTarget('https://provider.example/v1', { resolve: async () => [{ address: '1.1.1.1', family: 4 }, { address: '::ffff:127.0.0.1', family: 6 }] })).rejects.toMatchObject({ code: 'input_rejected' })
+  })
+  it('混合公私DNS整体拒绝，凭据/fragment/query密钥不进入连接', async () => {
+    const resolve = vi.fn(async () => [{ address: '1.1.1.1', family: 4 as const }, { address: '127.0.0.1', family: 4 as const }])
+    await expect(resolvePinnedTarget('https://provider.example/v1', { resolve })).rejects.toMatchObject({ code: 'input_rejected' })
+    for (const url of ['https://name:secret@provider.example', 'https://provider.example/#fragment', 'https://provider.example/?api_key=synthetic'])
+      await expect(resolvePinnedTarget(url, { resolve })).rejects.toMatchObject({ code: 'input_rejected' })
+    expect(resolve).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('真实Node HTTP与分片、取消和响应体', () => {
+  it.each(['buffer', 'stream'] as const)('服务端读完%s请求后断连仍标记可能已发送，禁止当作未发送安全重试', async kind => {
+    let received = ''
+    const test = await server((request, _response) => {
+      request.setEncoding('utf8')
+      request.on('data', chunk => { received += chunk })
+      request.on('end', () => request.socket.destroy())
+    })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true,
+      resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    const bytes = new TextEncoder().encode('合成请求')
+    const body = kind === 'buffer' ? bytes : (async function* () { yield bytes.subarray(0, 3); yield bytes.subarray(3) })()
+    try {
+      await expect(transport.request({ url: test.base, method: 'POST', headers: {}, body, allowLocal: true },
+        new AbortController().signal)).rejects.toMatchObject({ options: { requestStarted: true } })
+      expect(received).toBe('合成请求')
+    } finally { await transport.close(); await close(test.value) }
+  })
+  it('Runtime池身份来自实际环境快照，环境改变后新建真实client且未变化时复用', async () => {
+    const test = await server((_request, response) => response.end('{"choices":[{"message":{"content":"完成"},"finish_reason":"stop"}]}'))
+    let environment = { NO_PROXY: 'first.example' }, serial = 0, created = 0
+    const node = createNodeProviderTransportFactory({ environment: () => environment, allowLocal: true, resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    const runtime = new ProviderRuntime({ digest, nextId: () => `node-call-${++serial}`,
+      prepareRequest: async () => ({ prefix: [], dynamicTail: [] }), references: { hydrate: async entry => entry.message, dehydrate: async entry => entry.message },
+      resolve: async () => ({ modelIdentity: 'model', accessScopeHash: 'scope', systemPrompt: '', config: { provider: 'local', model: 'synthetic', base_url: test.base } }),
+      transportFactory: { snapshot: config => { const snapshot = node.snapshot(config); return { ...snapshot, create: () => { created++; return snapshot.create() } } } },
+    })
+    const identity = { ownerId: 'owner', sessionId: 'session', runId: 'run' }
+    try {
+      expect(await runtime.completeText(identity, 'model', '合成甲')).toBe('完成')
+      expect(await runtime.completeText(identity, 'model', '合成乙')).toBe('完成'); expect(created).toBe(1)
+      const frozen = node.snapshot({ model: 'synthetic' })
+      environment = { NO_PROXY: 'second.example' }
+      const after = node.snapshot({ model: 'synthetic' }); expect(after.networkIdentity).not.toBe(frozen.networkIdentity)
+      const old = frozen.create()
+      expect(await requestJson(deps(old), { url: test.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)).toHaveProperty('choices')
+      await old.close()
+      expect(await runtime.completeText(identity, 'model', '合成丙')).toBe('完成'); expect(created).toBe(2)
+    } finally { await runtime.close(); await close(test.value) }
+  })
+  it.each(['SSL_CERT_FILE', 'SSL_CERT_DIR'])('%s实际加载可信合成CA且内容改变使网络身份失效，坏文件不能悄悄回落', async setting => {
+    const directory = mkdtempSync(join(tmpdir(), 'gugu-provider-ca-'))
+    const roots = join(directory, 'roots'); mkdirSync(roots)
+    writeFileSync(join(roots, 'unrelated.txt'), '合成无关目录项不参与CA装载')
+    const path = setting === 'SSL_CERT_FILE' ? join(directory, 'roots.pem') : join(roots, '00000000.0')
+    const certificate = syntheticCertificate(); writeFileSync(path, certificate.cert)
+    const test = await listen(createSecureServer(certificate, (_request, response) => response.end('{"trusted":true}')))
+    const factory = createNodeProviderTransportFactory({ allowLocal: true, environment: () => ({ [setting]: setting === 'SSL_CERT_FILE' ? path : roots }), resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    const frozen = factory.snapshot({ model: 'synthetic' }), transport = frozen.create()
+    const input = { url: test.base.replace('http:', 'https:'), method: 'GET' as const, headers: {}, allowLocal: true }
+    try {
+      expect(await requestJson(deps(transport), input, new AbortController().signal)).toEqual({ trusted: true })
+      writeFileSync(path, '合成坏证书')
+      expect(() => factory.snapshot({ model: 'synthetic' })).toThrow('模型拒绝了当前输入')
+      writeFileSync(path, syntheticCertificate().cert)
+      expect(factory.snapshot({ model: 'synthetic' }).networkIdentity).not.toBe(frozen.networkIdentity)
+      // 原快照的创建动作不会读取后来替换的证书，网络身份和实际信任根保持一致。
+      const original = frozen.create()
+      try { expect(await requestJson(deps(original), input, new AbortController().signal)).toEqual({ trusted: true }) }
+      finally { await original.close() }
+    } finally {
+      await transport.close(); await close(test.value)
+      if (dirname(directory) !== absolute(tmpdir()) || !directory.includes('gugu-provider-ca-')) throw new Error('合成CA清理路径无效')
+      rmSync(directory, { recursive: true })
+    }
+  })
+  it('完整JSON读取后复用真实TCP连接，空闲过期后新建连接而非只复用fake对象', async () => {
+    const sockets = new Set<unknown>()
+    const test = await server((request, response) => { sockets.add(request.socket); response.end('{"ok":true}') })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, idleTimeoutMs: 30, resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    let timing: ProviderConnectionTiming = {}
+    const input = { url: test.base, method: 'GET' as const, headers: {}, allowLocal: true, onTiming: (sample: ProviderConnectionTiming) => Object.assign(timing, sample) }
+    try {
+      await requestJson(deps(transport), input, new AbortController().signal)
+      expect(timing).toMatchObject({ proxied: false, reusedSocket: false, dnsMs: expect.any(Number), poolWaitMs: expect.any(Number), tcpConnectMs: expect.any(Number), responseHeadersMs: expect.any(Number) })
+      timing = {}
+      await requestJson(deps(transport), input, new AbortController().signal)
+      expect(sockets.size).toBe(1)
+      expect(timing.reusedSocket).toBe(true)
+      expect(timing).not.toHaveProperty('tcpConnectMs')
+      await new Promise(resolve => setTimeout(resolve, 70))
+      await requestJson(deps(transport), input, new AbortController().signal)
+      expect(sockets.size).toBe(2)
+    } finally { await transport.close(); await close(test.value) }
+  })
+  it('四协议实际请求共用五分钟读空闲及10秒连接/写、5秒池等待默认预算', async () => {
+    const test = await server((_request, response) => { response.writeHead(200); response.flushHeaders() })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, maxSockets: 1, resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    const reads = vi.spyOn(ClientRequest.prototype, 'setTimeout'), timers = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      for (const format of ['openai', 'responses', 'anthropic', 'ollama']) {
+        const selected = providerSelection({ provider: format === 'ollama' ? 'ollama' : 'local', api_format: format === 'ollama' ? 'openai' : format, model: 'synthetic', base_url: test.base, ollama_api_mode: format === 'ollama' ? 'native' : 'openai' })
+        const request = selected.driver.buildRequest(invocation({ ...selected, history: [{ role: 'user', content: '合成输入' }] }), deps(transport), false)
+        const response = await transport.request(request, new AbortController().signal)
+        const controller = new AbortController()
+        const waiting = transport.request(request, controller.signal)
+        // 让DNS准备和池排队落定，检查真实创建的计时器，随后立即取消，不等待五分钟。
+        await new Promise<void>(resolve => setImmediate(resolve))
+        controller.abort(); await expect(waiting).rejects.toMatchObject({ code: 'cancelled' })
+        await response.cancel()
+      }
+      expect(reads.mock.calls.map(call => call[0])).toEqual([300_000, 300_000, 300_000, 300_000])
+      expect(timers.mock.calls.some(call => call[1] === 10_000)).toBe(true)
+      expect(timers.mock.calls.filter(call => call[1] === 5000)).toHaveLength(4)
+    } finally { reads.mockRestore(); timers.mockRestore(); await transport.close(); await close(test.value) }
+  })
+  it('不支持的响应编码拒绝后释放连接配额，下一请求不会卡在pool', async () => {
+    let count = 0
+    const test = await server((_request, response) => { if (++count === 1) response.setHeader('content-encoding', 'synthetic-unknown'); response.end('{"ok":true}') })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, maxSockets: 1, poolTimeoutMs: 30, resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    const input = { url: test.base, method: 'GET' as const, headers: {}, allowLocal: true }
+    try {
+      await expect(requestJson(deps(transport), input, new AbortController().signal)).rejects.toMatchObject({ code: 'protocol' })
+      expect(await requestJson(deps(transport), input, new AbortController().signal)).toEqual({ ok: true })
+    } finally { await transport.close(); await close(test.value) }
+  })
+  it('连接池已满时使用独立pool预算，不把排队算成连接或整个Run超时', async () => {
+    const test = await server((_request, response) => { response.writeHead(200); response.flushHeaders() })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, maxSockets: 1, poolTimeoutMs: 20, connectTimeoutMs: 1000, resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    let first: Awaited<ReturnType<typeof transport.request>> | undefined
+    try {
+      first = await transport.request({ url: test.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)
+      await expect(transport.request({ url: test.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)).rejects.toMatchObject({ code: 'timeout', options: { timeoutPhase: 'pool' } })
+    } finally { await first?.cancel(); await transport.close(); await close(test.value) }
+  })
+  it('HTTPS代理隧道仍校验目标TLS域名和可信CA，SNI不被固定IP替换', async () => {
+    const certificate = syntheticCertificate()
+    const target = await listen(createSecureServer(certificate, (_request, response) => response.end('{"tls":true}')))
+    const proxy = await listen(createSecureServer(certificate, (_request, response) => { response.writeHead(500); response.end() }))
+    const sockets = new Set<Duplex>()
+    proxy.value.on('connect', (_request, socket, head) => {
+      const upstream = connect({ host: '127.0.0.1', port: Number(new URL(target.base).port) })
+      sockets.add(socket); sockets.add(upstream)
+      socket.on('error', () => upstream.destroy()); upstream.on('error', () => socket.destroy())
+      upstream.once('connect', () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) upstream.write(head); socket.pipe(upstream); upstream.pipe(socket) })
+      socket.once('close', () => upstream.destroy())
+    })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, ca: certificate.cert, resolve: async () => [{ address: '127.0.0.1', family: 4 }],
+      proxy: { https: { url: proxy.base.replace('http:', 'https:').replace('provider.example', 'proxy.example'), ca: certificate.cert } } })
+    try {
+      const base = target.base.replace('http:', 'https:')
+      await expect(requestJson(deps(transport), { url: base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)).resolves.toEqual({ tls: true })
+      await expect(requestJson(deps(transport), { url: base.replace('provider.example', 'mismatch.example'), method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)).rejects.toMatchObject({ code: 'network', options: { retryable: false } })
+    } finally { await transport.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
+  })
+  it('真实代理CONNECT把目标域名交给代理端解析，代理认证不转发目标，NO_PROXY按域及端口绕过', async () => {
+    let path = '', authorization = '', targetProxyHeader: string | undefined
+    const target = await server((request, response) => { targetProxyHeader = request.headers['proxy-authorization'] as string | undefined; response.end('{"proxied":true}') })
+    const sockets = new Set<Duplex>(), proxy = await server((_request, response) => { response.writeHead(500); response.end() })
+    proxy.value.on('connect', (request, socket, head) => {
+      path = request.url ?? ''; authorization = request.headers['proxy-authorization'] as string
+      const upstream = connect({ host: '127.0.0.1', port: Number(new URL(target.base).port) })
+      sockets.add(socket); sockets.add(upstream)
+      socket.on('error', () => upstream.destroy()); upstream.on('error', () => socket.destroy())
+      upstream.once('connect', () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) upstream.write(head); socket.pipe(upstream); upstream.pipe(socket) })
+      socket.once('close', () => upstream.destroy())
+    })
+    const proxyUrl = proxy.base.replace('provider.example', 'proxy.example')
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, resolve: async () => [{ address: '127.0.0.1', family: 4 }], proxy: { http: { url: proxyUrl, authorization: 'synthetic-proxy-authorization' } } })
+    try {
+      await expect(requestJson(deps(transport), { url: target.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)).resolves.toEqual({ proxied: true })
+      // 代理端负责解析目标域名：本地 DNS 可能只返回假 IP 或被污染的地址。
+      expect(path).toBe(`provider.example:${new URL(target.base).port}`)
+      expect(authorization).toBe('synthetic-proxy-authorization'); expect(targetProxyHeader).toBeUndefined()
+      const environmentUrl = new URL(proxyUrl); environmentUrl.username = 'synthetic'; environmentUrl.password = 'proxy'
+      const baseOptions = { allowLocal: true, resolve: async () => [{ address: '127.0.0.1', family: 4 as const }], environment: () => ({ HTTP_PROXY: environmentUrl.toString() }) }
+      const ambient = createNodeProviderTransport(baseOptions), controlled = createNodeProviderTransport({ ...baseOptions, trustEnvironment: false })
+      try {
+        expect(await requestJson(deps(ambient), { url: target.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)).toEqual({ proxied: true })
+        expect(authorization).toBe(`Basic ${Buffer.from('synthetic:proxy').toString('base64')}`); expect(targetProxyHeader).toBeUndefined()
+        path = ''
+        expect(await requestJson(deps(controlled), { url: target.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)).toEqual({ proxied: true })
+        expect(path).toBe('')
+      } finally { await ambient.close(); await controlled.close() }
+      let useSystemProxy = false
+      const desktop = createNodeProviderTransport({
+        ...baseOptions, trustEnvironment: false,
+        resolveProxy: async () => useSystemProxy ? { url: proxyUrl.replace('proxy.example', '127.0.0.1') } : undefined,
+      })
+      try {
+        for (const enabled of [false, true, false]) {
+          useSystemProxy = enabled
+          path = ''
+          await requestJson(deps(desktop), { url: target.base, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)
+          expect(path).toBe(enabled ? `provider.example:${new URL(target.base).port}` : '')
+        }
+      } finally { await desktop.close() }
+      expect(proxyFor(new URL('https://api.provider.example'), { https: { url: 'https://proxy.example' }, noProxy: '.provider.example:443' })).toBeUndefined()
+      const environment = proxyOptionsFromEnvironment({ HTTPS_PROXY: 'http://synthetic:proxy@proxy.example:8080', NO_PROXY: 'localhost' })
+      expect(environment.https?.url).not.toContain('synthetic'); expect(environment.https?.authorization).toMatch(/^Basic /)
+    } finally { await transport.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
+  })
+  it('代理模式下本地解析只得到假IP时仍把目标交给代理端解析，请求能到达代理', async () => {
+    let path = ''
+    const target = await server((_request, response) => response.end('{"proxied":true}'))
+    const sockets = new Set<Duplex>(), proxy = await server((_request, response) => { response.writeHead(500); response.end() })
+    proxy.value.on('connect', (request, socket, head) => {
+      path = request.url ?? ''
+      const upstream = connect({ host: '127.0.0.1', port: Number(new URL(target.base).port) })
+      sockets.add(socket); sockets.add(upstream)
+      socket.on('error', () => upstream.destroy()); upstream.on('error', () => socket.destroy())
+      upstream.once('connect', () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) upstream.write(head); socket.pipe(upstream); upstream.pipe(socket) })
+      socket.once('close', () => upstream.destroy())
+    })
+    const proxyUrl = proxy.base.replace('provider.example', 'proxy.example')
+    // 本地 DNS 被代理接管后只返回假IP段地址，不能据此把目标判成非法；代理自身仍在本地。
+    const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: async (hostname: string) => hostname === 'proxy.example' ? [{ address: '127.0.0.1', family: 4 }] : [{ address: '198.18.3.4', family: 4 }], proxy: { http: { url: proxyUrl } } })
+    try {
+      await expect(requestJson(deps(transport), { url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).resolves.toEqual({ proxied: true })
+      expect(path).toBe(`provider.example:${new URL(target.base).port}`)
+    } finally { await transport.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
+  })
+  it('代理模式下字面私网与回环地址仍被拒绝，不会转交给代理', async () => {
+    let path = ''
+    const proxy = await server((_request, response) => { response.writeHead(500); response.end() })
+    proxy.value.on('connect', (request, socket) => { path = request.url ?? ''; socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); socket.destroy() })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, proxy: { http: { url: proxy.base.replace('provider.example', 'proxy.example') } } })
+    try {
+      for (const url of ['http://169.254.169.254/latest/meta-data/', 'http://127.0.0.1:22/', 'http://192.168.110.1/', 'http://[::1]/'])
+        await expect(transport.request({ url, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+      expect(path).toBe('')
+    } finally { await transport.close(); await close(proxy.value) }
+  })
+  it('代理模式下解析到私网地址的域名与本机主机名仍被拒绝', async () => {
+    const privateTarget = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '10.0.0.5', family: 4 }], proxy: { http: { url: 'http://proxy.example:8080' } } })
+    const synthetic = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '198.18.3.4', family: 4 }], proxy: { http: { url: 'http://proxy.example:8080' } } })
+    try {
+      // 正常公网形态的域名解析到私网地址：靠地址判定拒绝，不能只靠主机名后缀。
+      await expect(privateTarget.request({ url: 'https://service.corp.example.org/v1', method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+      for (const url of ['http://localhost:8080/', 'http://service.internal/', 'http://printer.local/'])
+        await expect(synthetic.request({ url, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+    } finally { await privateTarget.close(); await synthetic.close() }
+  })
+  it('代理模式下本机主机名与单标签主机名被拒绝，真实公网域名不受影响', async () => {
+    const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '198.18.3.4', family: 4 }], proxy: { http: { url: 'http://proxy.example:8080' } } })
+    try {
+      for (const url of ['http://intranet/', 'http://router/', 'http://foo.localhost/', 'http://service.internal/', 'http://printer.local/', 'http://box.home.arpa/'])
+        await expect(transport.request({ url, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+      // 测试基础设施用的假域名与真实公网域名都不能被主机名守卫误伤（走 http 代理，目标是 http）。
+      const publicError = await transport.request({ url: 'http://provider.example/v1', method: 'GET', headers: {} }, new AbortController().signal).then(() => undefined, (error: any) => error)
+      expect(publicError?.code).not.toBe('input_rejected')
+    } finally { await transport.close() }
+  })
+  it('代理模式下本地解析返回被污染的地址时不再误杀真实公网目标', async () => {
+    let path = ''
+    const target = await server((_request, response) => response.end('{"proxied":true}'))
+    const sockets = new Set<Duplex>(), proxy = await server((_request, response) => { response.writeHead(500); response.end() })
+    proxy.value.on('connect', (request, socket, head) => {
+      path = request.url ?? ''
+      const upstream = connect({ host: '127.0.0.1', port: Number(new URL(target.base).port) })
+      sockets.add(socket); sockets.add(upstream)
+      socket.on('error', () => upstream.destroy()); upstream.on('error', () => socket.destroy())
+      upstream.once('connect', () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) upstream.write(head); socket.pipe(upstream); upstream.pipe(socket) })
+      socket.once('close', () => upstream.destroy())
+    })
+    const proxyUrl = proxy.base.replace('provider.example', 'proxy.example')
+    // 本地 DNS 被污染时返回的既不是合成地址也不是私网地址，不能据此把真实公网域名判成非法。
+    const transport = createNodeProviderTransport({ trustEnvironment: false,
+      resolve: async (hostname: string) => hostname === 'proxy.example' ? [{ address: '127.0.0.1', family: 4 }] : [{ address: '157.240.17.36', family: 4 }, { address: '2001::9df0:1412', family: 6 }],
+      proxy: { http: { url: proxyUrl } } })
+    try {
+      await expect(requestJson(deps(transport), { url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).resolves.toEqual({ proxied: true })
+      expect(path).toBe(`provider.example:${new URL(target.base).port}`)
+    } finally { await transport.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
+  })
+  it('代理模式下本地解析失败不阻断请求，权威模式与直连模式仍然拒绝', async () => {
+    let path = ''
+    const target = await server((_request, response) => response.end('{"proxied":true}'))
+    const sockets = new Set<Duplex>(), proxy = await server((_request, response) => { response.writeHead(500); response.end() })
+    proxy.value.on('connect', (request, socket, head) => {
+      path = request.url ?? ''
+      const upstream = connect({ host: '127.0.0.1', port: Number(new URL(target.base).port) })
+      sockets.add(socket); sockets.add(upstream)
+      socket.on('error', () => upstream.destroy()); upstream.on('error', () => socket.destroy())
+      upstream.once('connect', () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) upstream.write(head); socket.pipe(upstream); upstream.pipe(socket) })
+      socket.once('close', () => upstream.destroy())
+    })
+    const proxyUrl = proxy.base.replace('provider.example', 'proxy.example')
+    // 目标域名只能由代理端解析时，本地解析失败只是没有信息量。
+    const failing = async (hostname: string) => {
+      if (hostname === 'proxy.example') return [{ address: '127.0.0.1', family: 4 }]
+      throw new Error('ENOTFOUND')
+    }
+    const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: failing, proxy: { http: { url: proxyUrl } } })
+    const authoritative = createNodeProviderTransport({ trustEnvironment: false, resolve: failing, localResolution: 'authoritative', proxy: { http: { url: proxyUrl } } })
+    const pinned = createNodeProviderTransport({ trustEnvironment: false, localResolution: 'authoritative',
+      resolve: async hostname => hostname === 'proxy.example'
+        ? [{ address: '127.0.0.1', family: 4 }]
+        : [{ address: '93.184.216.34', family: 4 }],
+      proxy: { http: { url: proxyUrl } },
+    })
+    const direct = createNodeProviderTransport({ trustEnvironment: false, resolve: failing })
+    try {
+      await expect(requestJson(deps(transport), { url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).resolves.toEqual({ proxied: true })
+      expect(path).toBe(`provider.example:${new URL(target.base).port}`)
+      // 显式权威模式（服务端 DoH 之类的唯一判定来源）必须 fail-closed。
+      await expect(authoritative.request({ url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'network', options: { transportHop: 'dns' } })
+      await expect(requestJson(deps(pinned), { url: target.base, method: 'GET', headers: {} }, new AbortController().signal)).resolves.toEqual({ proxied: true })
+      expect(path).toBe(`93.184.216.34:${new URL(target.base).port}`)
+      // 直连时本地解析是唯一来源，失败必须拒绝。
+      await expect(direct.request({ url: 'http://provider.example/v1', method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'network', options: { transportHop: 'dns' } })
+    } finally { await transport.close(); await authoritative.close(); await pinned.close(); await direct.close(); for (const socket of sockets) socket.destroy(); await close(proxy.value); await close(target.value) }
+  })
+  it('直连模式下假IP目标仍然拒绝，代理语义不放宽直连边界', async () => {
+    const transport = createNodeProviderTransport({ trustEnvironment: false, resolve: async () => [{ address: '198.18.3.4', family: 4 }] })
+    try {
+      await expect(transport.request({ url: 'https://provider.example/v1', method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+    } finally { await transport.close() }
+  })
+  it('对端停读的大请求由write超时终止，end入队不能误判已经发完', async () => {
+    const test = await server((request, _response) => request.pause())
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, writeTimeoutMs: 20, resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    try {
+      // 持续分块到socket真正背压，避免固定小体积已被系统发送缓冲完整接收。
+      const chunk = new Uint8Array(1024 * 1024)
+      const body = (async function* () { while (true) yield chunk })()
+      await expect(transport.request({ url: test.base, method: 'POST', headers: {}, allowLocal: true, timeoutMs: 5000, body }, new AbortController().signal)).rejects.toMatchObject({ code: 'timeout', options: { timeoutPhase: 'write' } })
+    } finally { await transport.close(); await close(test.value) }
+  })
+  it('合成域名只解析一次并实际连接固定IP，Host保留原域名；本地授权需双开关', async () => {
+    let host = '', requests = 0
+    const test = await server((request, response) => { requests++; host = request.headers.host ?? ''; response.end('{"ok":true}') })
+    const resolve = vi.fn(async () => [{ address: '127.0.0.1', family: 4 as const }])
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, resolve })
+    try {
+      await expect(requestJson(deps(transport), { url: test.base, method: 'GET', headers: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'input_rejected' })
+      expect(requests).toBe(0)
+      resolve.mockClear()
+      await expect(requestJson(deps(transport), { url: test.base, method: 'POST', headers: {}, body: { query: '合成' }, allowLocal: true }, new AbortController().signal)).resolves.toEqual({ ok: true })
+      expect(resolve).toHaveBeenCalledTimes(1); expect(host).toBe(new URL(test.base).host); expect(requests).toBe(1)
+    } finally { await transport.close(); await close(test.value) }
+  })
+  it('拒绝自动跟随重定向，gzip解压后的字节进入JSON与响应预算', async () => {
+    let targetHits = 0
+    const test = await server((request, response) => {
+      if (request.url === '/redirect') { response.writeHead(302, { location: '/target' }); response.end(); return }
+      if (request.url === '/target') targetHits++
+      response.setHeader('content-encoding', 'gzip'); response.end(gzipSync(JSON.stringify({ text: '合成'.repeat(500) })))
+    })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    try {
+      const call = (path: string) => requestJson(deps(transport), { url: test.base + path, method: 'GET', headers: {}, allowLocal: true }, new AbortController().signal)
+      await expect(call('/redirect')).rejects.toMatchObject({ code: 'upstream' }); expect(targetHits).toBe(0)
+      await expect(call('/gzip')).resolves.toEqual({ text: '合成'.repeat(500) })
+    } finally { await transport.close(); await close(test.value) }
+  })
+  it('UTF8和CRLF逐字节切分仍保持SSE顺序，消费者return关闭底层响应', async () => {
+    const encoder = new TextEncoder(), bytes = encoder.encode('event: content\r\ndata: {"text":"合成"}\r\n\r\ndata: [DONE]\n\n')
+    let pulls = 0
+    const cancel = vi.fn()
+    const transport = { request: async () => ({ status: 200, headers: {}, cancel, body: (async function* () { for (const byte of bytes) { pulls++; yield Uint8Array.of(byte) } })() }) }
+    const stream = requestEvents(deps(transport), { url: 'https://provider.example/v1', method: 'GET', headers: {} }, new AbortController().signal)
+    expect((await stream.next()).value).toEqual({ event: 'content', data: { text: '合成' } })
+    expect(pulls).toBeLessThan(bytes.length)
+    await stream.return(undefined); expect(cancel).toHaveBeenCalledTimes(1)
+  })
+  it('真实连接的读空闲超时和主动取消关闭流，不用总时限截断持续数据', async () => {
+    const test = await server((_request, response) => { response.writeHead(200); response.flushHeaders() })
+    const transport = createNodeProviderTransport({ trustEnvironment: false, allowLocal: true, resolve: async () => [{ address: '127.0.0.1', family: 4 }] })
+    try {
+      const controller = new AbortController()
+      const first = requestJson(deps(transport), { url: test.base, method: 'GET', headers: {}, allowLocal: true, timeoutMs: 30 }, controller.signal)
+      await expect(first).rejects.toMatchObject({ code: 'timeout' })
+      const next = new AbortController(), second = requestJson(deps(transport), { url: test.base, method: 'GET', headers: {}, allowLocal: true }, next.signal)
+      next.abort(); await expect(second).rejects.toMatchObject({ code: 'cancelled' })
+    } finally { await transport.close(); await close(test.value) }
+  })
+})

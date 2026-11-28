@@ -9,61 +9,73 @@ backend/.venv/
 backend/*.egg-info/
 backend/build/
 backend/dist/
-gugu-core/.venv/
-gugu-core/build/
-gugu-core/dist/
-gugu-core/node_modules/
+packages/core/.venv/
+packages/core/build/
+packages/core/dist/
+packages/core/node_modules/
+packages/database/node_modules/
+packages/database/dist/
+packages/fs/node_modules/
+packages/fs/dist/
+packages/sandbox/node_modules/
+packages/sandbox/dist/
 compat/core-python/build/
 compat/core-python/dist/
 compat/core-python/src/*.egg-info/
 compat/desktop-python/build/
 compat/desktop-python/python/*.egg-info/
-gugu-core/src/*.egg-info/
-gugu-desktop/.tools/
-gugu-desktop/node_modules/
-gugu-desktop/build/
-gugu-desktop/dist/
-gugu-webui/node_modules/
-gugu-webui/dist/
-gugu-webui/.env
-gugu-webui/.env.local
-gugu-webui/.env.*.local
-gugu-desktop/resources/
-gugu-desktop/release/
-gugu-desktop/python/*.egg-info/
+packages/core/src/*.egg-info/
+apps/desktop/.tools/
+apps/desktop/node_modules/
+apps/desktop/build/
+apps/desktop/dist/
+apps/web-host/node_modules/
+apps/web-host/dist/
+apps/web-host/.env
+apps/web-host/.env.local
+apps/web-host/.env.*.local
+/apps/web-host/config.override.json
+/apps/web-host/config.override.json.*.tmp
+/apps/web-host/config.override.json.bak-*
+/apps/web-host/.config.override.json.lock
+/apps/web-host/logs/
+apps/desktop/resources/
+apps/desktop/release/
+apps/desktop/python/*.egg-info/
 backend/env/
 backend/.env
 # 误将 venv 示例路径作为真实目录创建时产生的本地虚拟环境
 backend/path/
-/node_modules/
+node_modules/
 *.sqlite
 *.db
 .pytest_cache/
 .coverage
 htmlcov/
 backend/mutants/
-frontend/.stryker-report/
-frontend/.stryker-tmp/
+apps/ui/.stryker-report/
+apps/ui/.stryker-tmp/
 .mypy_cache/
 .ruff_cache/
 
 # ===== Node / Frontend =====
-frontend/node_modules/
-frontend/dist/
-frontend/dist-desktop/
-frontend/dist.zip
-frontend/build/
-frontend/.vite/
-frontend/.env
-frontend/.env.local
-frontend/.env.*.local
-frontend/npm-debug.log*
-frontend/yarn-debug.log*
-frontend/yarn-error.log*
-frontend/pnpm-debug.log*
-frontend/.pnpm-store/
+apps/ui/node_modules/
+apps/ui/dist/
+apps/ui/dist-desktop/
+apps/ui/dist-admin/
+apps/ui/dist.zip
+apps/ui/build/
+apps/ui/.vite/
+apps/ui/.env
+apps/ui/.env.local
+apps/ui/.env.*.local
+apps/ui/npm-debug.log*
+apps/ui/yarn-debug.log*
+apps/ui/yarn-error.log*
+apps/ui/pnpm-debug.log*
+apps/ui/.pnpm-store/
 # 根目录的 package-lock.json 是误操作产物（误在根目录跑 npm install 会留下空 lockfile，
-# 还会让 npm 误判项目根），前端真锁在 frontend/package-lock.json 里
+# 还会让 npm 误判项目根），前端真锁在 apps/ui/package-lock.json 里
 /package-lock.json
 
 # ===== 通用 =====
@@ -107,6 +119,11 @@ Gugu-data/
 backup/
 
 # 构建产物 / 大字体资源
+/apps/desktop/apps/desktop/.tools/
+/packages/auth/dist/
+/packages/email/dist/
+/packages/search/dist/
+*.tsbuildinfo
 gugu-backend-*.tar.gz
 docs/smiley-sans/
 # pip install -e 产生的 egg-info（LoopScope 后端本地安装产物）
@@ -116,7 +133,7 @@ loopscope/backend/*.egg-info/
 /logs/
 Trace-*.json
 # 前端开发日志
-frontend/nohup.out
+apps/ui/nohup.out
 # RAG 压测生成的本地 Embedding 缓存（按当前模型可重建）
 backend/scripts/.bench_rag_embeddings.json
 # 真实用户 RAG/LoopScope 诊断输出，只允许留在本机或 devserver
@@ -145,3 +162,19 @@ backend.zip
 # 运行配置时间戳备份（用户数据，只留本地磁盘）
 backend/config.override.json.bak-*
 backend/.env.bak-*
+
+# 终端重定向误操作产物（`git diff > -` 之类会把大文件写到名为 - 的文件）
+/-
+
+# Agent 工具运行态目录
+/.mavis/
+
+# 临时脚本与锁文件
+apps/ui/.check-mermaid.mjs
+/apps/web-host/src/.config.override.json.lock
+
+# `:memory:` sqlite 误落盘
+**/:memory:
+
+# 构建产物
+/packages/users/dist/

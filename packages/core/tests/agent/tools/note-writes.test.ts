@@ -1,0 +1,97 @@
+import { randomUUID } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { expect, it } from 'vitest'
+import { dataContext } from '../../../src/contracts/index.js'
+import { initializeSqlite, openSqliteRuntime } from '../../../src/data/sqlite.js'
+import { createNoteWritePort, createNoteWriteTools } from '../../../src/agent/tools/note/index.js'
+import { createToolRegistry } from '../../../src/agent/tools/registry.js'
+
+it('笔记 Markdown 引用必须归属当前 owner，创建和行编辑一次提交并按调用收据重放', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'gugu-note-writes-'))
+  try {
+    const path = join(folder, 'core.db')
+    await initializeSqlite(path)
+    const { runtime: core, ownerId } = await openSqliteRuntime(path)
+    try {
+      const identity = { ownerId, sessionId: '21', runId: 'synthetic-note-run' }
+      const outsider = randomUUID()
+      const project = await core.transaction(dataContext(ownerId), db => db.projects.create({ name: '合成项目' }))
+      const foreign = await core.transaction(dataContext(outsider), db => db.projects.create({ name: '他人项目' }))
+      let published = 0
+      let allowed = true
+      const port = createNoteWritePort(core, {
+        now: () => new Date('2026-11-18T15:00:00Z'), timezone: 'Asia/Shanghai',
+        async validateFileReference(owner, id) { return owner === ownerId && id === 'path-synthetic' },
+        async publish() { published++ },
+      })
+      const registry = createToolRegistry({
+        authorize: async candidate => allowed && candidate.ownerId === ownerId,
+        groups: [{ id: 'mind', name: '笔记', tools: createNoteWriteTools(port) }],
+      })
+      const dispatch = (id: string, name: string, input: unknown, owner = ownerId) => registry.tools.dispatch({ id, name, input }, {
+        identity: { ...identity, ownerId: owner }, roundId: '1', signal: new AbortController().signal,
+        resolution: null, async execute() { throw new Error('笔记工具不调用执行器') },
+      })
+
+      const projectLink = (id: number) => `[引用项目](gugu://open-object/project/${id})`
+      expect(await dispatch('foreign', 'note_create', { markdown: projectLink(foreign.id) }))
+        .toMatchObject({ successful: false, mutated: false, value: { error: '引用对象不存在' } })
+      expect(await dispatch('retired-file', 'note_create', { markdown: '[旧文件](gugu://open-object/file/42)' }))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('文件引用无效') } })
+      expect(await dispatch('foreign-file', 'note_create', { markdown: '[其他文件](gugu://open-object/file/path-foreign)' }))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('文件引用无效') } })
+      const input = { markdown: `# 标题\n\n${projectLink(project.id)}`, captured_at: '11月17日' }
+      const created = await dispatch('create', 'note_create', input)
+      expect(created).toMatchObject({ successful: true, mutated: true, value: {
+        note: { origin: 'gugu', kind: 'note', content_md: `# 标题\n\n[[project:${project.id}|引用项目]]` },
+      } })
+      if (created.kind !== 'completed') throw new Error('创建结果无效')
+      const id = (created.value as { note: { node_id: number; captured_at: string } }).note.node_id
+      expect(new Date((created.value as { note: { captured_at: string } }).note.captured_at).toISOString()).toBe('2026-11-17T04:00:00.000Z')
+      expect(await dispatch('create', 'note_create', input)).toMatchObject({ successful: true, mutated: false, value: created.value })
+      const edit = (expected: string) => ({ node_id: id, captured_at: '2026-11-17T04:00:00.123456Z', line_edits: [{ target_lines: '1', content: '# 新标题', expected }] })
+      expect(await dispatch('stale', 'note_update', edit('过时'))).toMatchObject({
+        successful: false, mutated: false, value: { error: expect.stringMatching(/target_lines 1-1.*expected 不一致.*numbered_content/) },
+      })
+      expect(await dispatch('foreign-update', 'note_update', edit('# 标题'), outsider)).toMatchObject({ successful: false })
+      expect(await dispatch('update', 'note_update', edit('# 标题'))).toMatchObject({
+        successful: true, mutated: true, value: { note: { captured_at: '2026-11-17T04:00:00.123456+00:00', content_md: `# 新标题\n\n[[project:${project.id}|引用项目]]` } },
+      })
+      expect(await dispatch('update', 'note_update', edit('# 标题'))).toMatchObject({ successful: true, mutated: false })
+      expect(await core.db.selectFrom('mind_nodes').select(['id', 'version', 'origin']).execute()).toEqual([{ id, version: 2, origin: 'gugu' }])
+      expect(await core.db.selectFrom('undo_operations').select('action').orderBy('action').execute()).toEqual([{ action: 'create' }, { action: 'update' }])
+      expect(published).toBe(2)
+      const replace = (find: string, replacement: string) => ({ node_id: id, find_replace: { find, replace: replacement } })
+      expect(await dispatch('mixed', 'note_update', { ...replace('新标题', '改写'), append_markdown: '不得追加' }))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('只能选一种') } })
+      expect(await dispatch('absent', 'note_update', replace('新标题 ', '改写')))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('未找到原文') } })
+      expect(await dispatch('stale-version', 'note_update', { ...replace('新标题', '改写'), expected_version: 1 }))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('版本已变化') } })
+      const replacement = { ...replace('新标题', '$&重复重复重复'), expected_version: 2 }
+      expect(await dispatch('replace', 'note_update', replacement)).toMatchObject({
+        successful: true, mutated: true, value: { note: { content_md: `# $&重复重复重复\n\n[[project:${project.id}|引用项目]]` } },
+      })
+      expect(await dispatch('replace', 'note_update', replacement)).toMatchObject({ successful: true, mutated: false })
+      expect(await dispatch('ambiguous', 'note_update', replace('重复重复', '改写')))
+        .toMatchObject({ successful: false, mutated: false, value: { error: expect.stringContaining('匹配多处') } })
+      expect(await dispatch('delete-fragment', 'note_update', replace('$&', ''))).toMatchObject({
+        successful: true, mutated: true, value: { note: { content_md: `# 重复重复重复\n\n[[project:${project.id}|引用项目]]` } },
+      })
+      expect(published).toBe(4)
+      const fileLink = '[文档](gugu://open-object/file/path-synthetic)'
+      const example = '\`[示例](gugu://open-object/file/42)\`'
+      const code = '\`\`\`md\n[示例](gugu://open-object/file/42)\n\`\`\`'
+      expect(await dispatch('append-ref', 'note_update', { node_id: id, append_markdown: [fileLink, example, code].join('\n\n') }))
+        .toMatchObject({ successful: true, value: { note: { content_md: expect.stringContaining(`[[file:path-synthetic|文档]]\n\n${example}\n\n${code}`) } } })
+      expect(await dispatch('recolor', 'note_update', { node_id: id, color: 'sky' }))
+        .toMatchObject({ successful: true, value: { note: { color: 'project:sky' } } })
+      expect(await dispatch('clear-color', 'note_update', { node_id: id, color: null }))
+        .toMatchObject({ successful: true, value: { note: { color: null } } })
+      allowed = false
+      expect(await dispatch('revoked', 'note_update', { node_id: id, append_markdown: '无权写入' })).toMatchObject({ successful: false })
+    } finally { await core.close() }
+  } finally { await rm(folder, { recursive: true, force: true }) }
+})

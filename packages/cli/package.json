@@ -1,0 +1,12 @@
+{
+  "name": "@gugu/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=26.13.0 <27" },
+  "files": ["dist", "README.md", "skills"],
+  "bin": { "gugu": "./dist/bin.js" },
+  "exports": { ".": "./dist/index.js" },
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit" },
+  "devDependencies": { "typescript": "6.0.3", "@types/node": "26.6.6" }
+}

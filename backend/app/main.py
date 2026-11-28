@@ -271,7 +271,10 @@ async def lifespan(app: FastAPI):
     filesync_task = asyncio.create_task(_filesync_outbox_loop())
     log_task   = asyncio.create_task(flush_log_queue())
     from agent.events.bus import start_rag_index_recovery, stop_rag_index_recovery
-    start_rag_index_recovery()
+    if settings.rag_index_worker_owner == "python":
+        start_rag_index_recovery()
+    else:
+        logger.info("持久 RAG 任务由 Node Worker 负责；Python 恢复器未启动")
     yield
     task.cancel()
     if retry_task is not None:

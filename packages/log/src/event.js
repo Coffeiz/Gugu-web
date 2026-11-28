@@ -1,0 +1,45 @@
+import { writeLogRecord } from './jsonl.js'
+import { errorFrames, failureCode, runFields, runPhase } from './redact.js'
+
+const runtimeFailures = new Set([
+  'publish_failed', 'release_failed', 'unsubscribe_failed',
+  'context_release_failed', 'finalization_hook_failed',
+])
+
+/** 两端使用同一事件投影。宿主提供指纹密钥及两个独立的日志出口。 */
+export function createAgentLog({ regular, diagnostic, fingerprint, now = Date.now }) {
+  const runId = ({ ownerId, sessionId, runId }) => fingerprint(JSON.stringify([ownerId, sessionId, runId])).slice(0, 16)
+  return {
+    log: {
+      write({ identity, at, level, event, round, attributes }) {
+        const fields = runFields(attributes)
+        writeLogRecord(regular, {
+          time: new Date(at).toISOString(), level, event, run: runId(identity),
+          ...(round === undefined ? {} : { round }),
+          ...(Object.keys(fields).length ? { attributes: fields } : {}),
+        })
+      },
+    },
+    diagnose(code, failure) {
+      const time = new Date(now()).toISOString()
+      if (code === 'finalization_hook_failed' && failure) {
+        // 可见日志已有收尾警告；异常细节只保留白名单字段和脱敏堆栈。
+        writeLogRecord(diagnostic, { time, level: 'warn', event: 'agent.run.finalization_failed',
+          run: runId(failure.identity),
+          attributes: { phase: runPhase(failure.phase), errorCode: failureCode(failure.error) },
+          frames: errorFrames(failure.error) })
+        return
+      }
+      if (code !== 'run_failed' || !failure) {
+        writeLogRecord(regular, { time, level: 'error', event: 'agent.runtime.failure',
+          attributes: { errorCode: runtimeFailures.has(code) ? code : 'internal_error' } })
+        return
+      }
+      const run = runId(failure.identity)
+      const attributes = { phase: runPhase(failure.phase), errorCode: failureCode(failure.error) }
+      const entry = { time, level: 'error', event: 'agent.run.failure', run, attributes }
+      writeLogRecord(regular, entry)
+      writeLogRecord(diagnostic, { ...entry, frames: errorFrames(failure.error) })
+    },
+  }
+}

@@ -1,0 +1,26 @@
+.is-choice .interaction-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-xs); }
+.is-choice .interaction-actions :deep(.interaction-option) {
+  width: 100%; padding: 8px 10px; min-height: 38px;
+  justify-content: flex-start; text-align: start; color: var(--content-primary);
+  border-color: var(--content-divider); background: var(--surface-soft);
+  transition: background-color var(--motion-hover-control), border-color var(--motion-hover-control), opacity var(--motion-hover-control);
+}
+.is-choice .interaction-actions :deep(.interaction-option:hover:not(:disabled)),
+.is-choice .interaction-actions :deep(.interaction-option.is-selected) {
+  background: var(--action-soft); border-color: var(--action-outline); box-shadow: none;
+}
+.is-choice .interaction-actions :deep(.interaction-option .app-action-button-content) {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%;
+}
+.interaction-choice-marker {
+  display: grid; place-items: center; inline-size: 18px; block-size: 18px;
+  box-sizing: border-box; border: 1px solid var(--border-default); border-radius: 50%;
+  color: var(--action-primary);
+}
+.is-selected .interaction-choice-marker { border-color: var(--action-outline); background: var(--action-soft); }
+.is-custom-choice .interaction-choice-marker { border: 0; background: transparent; }
+.interaction-choice-label { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.interaction-choice-arrow { color: var(--content-secondary); }
+.is-multiple-choice .interaction-option:not(.is-custom-choice) .interaction-choice-marker {
+  border-radius: var(--radius-xs);
+}

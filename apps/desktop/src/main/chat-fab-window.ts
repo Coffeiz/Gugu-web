@@ -1,0 +1,932 @@
+import { mailDraftLocation } from '@gugu/email/contracts'
+import { chatPanelContentGutter as gutter } from '@gugu/desktop-contracts'
+import { BrowserWindow, ipcMain, screen, type Point, type Rectangle } from 'electron'
+import { chatFabChannels as channels } from '../chat-fab-channels.js'
+import { DesktopError, desktopReply } from './core-host.js'
+import { desktopPlatform } from './platform/index.js'
+import { createChatFabGeometryStore, secureWindow, trustedCaller, windowOptions } from './windows.js'
+
+// 为悬停缩放后的阴影预留原生透明画布。
+const extent = 128
+const ballDiameter = 50
+const ballGutter = (extent - ballDiameter) / 2
+const dockClearance = 28
+const ballHitRadius = 28
+const snapDuration = 220
+const panelResizeDuration = 420
+const floatingWidthRatio = 0.68
+const compactGap = 6
+const runtimeReferenceTypes = new Set(['project', 'file', 'folder', 'event', 'canvas_note'])
+type SelectionSnapshot = { content: string; location: string; unsaved?: boolean; rendered?: boolean; version?: number }
+
+function isSelectionSnapshot(value: unknown): value is SelectionSnapshot {
+  if (!value || typeof value !== 'object') return false
+  const { content, location, unsaved, rendered, version } = value as Partial<SelectionSnapshot>
+  return typeof content === 'string' && content.length > 0 && content.length <= 8000
+    && typeof location === 'string' && location.length <= 4096
+    && (unsaved === undefined || typeof unsaved === 'boolean')
+    && (rendered === undefined || typeof rendered === 'boolean')
+    && (version === undefined || typeof version === 'number' && Number.isSafeInteger(version) && version >= 0)
+}
+
+type RuntimeReference = { type: string; id: number | string; label: string }
+
+function isRuntimeReference(value: unknown): value is RuntimeReference {
+  if (!value || typeof value !== 'object') return false
+  const { type, id, label } = value as Partial<RuntimeReference>
+  if (typeof type !== 'string' || !runtimeReferenceTypes.has(type) || typeof label !== 'string' || label.length > 4096) return false
+  return type === 'file' || type === 'folder'
+    ? typeof id === 'string' && /^(path|drop)-[A-Za-z0-9_-]{1,24000}$/u.test(id)
+    : typeof id === 'number' && Number.isSafeInteger(id) && id > 0
+}
+
+export function registerChatFabWindow(options: {
+  dataDirectory?: string
+  uiUrl: string
+  preload: string
+  panelPreload: string
+  trustsSelectionSource?: (event: Parameters<typeof trustedCaller>[0]) => boolean
+  mainWindow: () => BrowserWindow | undefined
+  enabled: () => boolean
+  prewarm?: boolean
+  createDroppedReference?: (path: string) => Promise<{ type: 'file' | 'folder'; id: string; label: string }>
+}) {
+  const platform = desktopPlatform().createFloatingChat(options.preload)
+  const address = new URL(options.uiUrl)
+  address.searchParams.set('chatFab', '1')
+  const panelAddress = new URL(options.uiUrl)
+  panelAddress.searchParams.set('chatFabPanel', '1')
+  let panel: BrowserWindow | undefined
+  let panelResizeTimer: ReturnType<typeof setTimeout> | undefined
+  let geometryId = 0
+  let panelVisualBounds: Rectangle | undefined
+  let panelHitTimer: ReturnType<typeof setInterval> | undefined
+  let ignorePanelMouse = false
+  let nativeResizeAnchor: Point | undefined
+  let panelNativeChange: 'move' | 'resize' | undefined
+  let panelDetached: boolean | undefined
+  let panelOffset: Point = { x: 0, y: 0 }
+  let jointMotion: { frame: Point; visual: Point } | undefined
+  let finishPanelGeometry: (() => void) | undefined
+  let warmTimer: ReturnType<typeof setTimeout> | undefined
+  let droppedPaths: string[] = []
+  let droppedReferences: RuntimeReference[] = []
+  let pendingSelections: Array<{ reference: RuntimeReference; selection: SelectionSnapshot }> = []
+  let panelReady = false
+  let expanded = false
+  const geometryStore = options.dataDirectory ? createChatFabGeometryStore(options.dataDirectory) : undefined
+  let { detachedPosition, expandedSize: floatingSize } = geometryStore?.read() ?? {}
+  let panelRequested = false
+  let panelOpenSent = false
+  let panelEntered = false
+  let reopenDockedChat = false
+  let panelFocusRequested = false
+  let ball: BrowserWindow | undefined
+  let ballHitTimer: ReturnType<typeof setInterval> | undefined
+  let ignoreBallMouse = false
+  let loading: Promise<boolean> | undefined
+  let resolveReady: ((ready: boolean) => void) | undefined
+  let mode: 'docked' | 'detached' | 'dragging' | 'snapping' = 'docked'
+  let gesture: { cursor: Point; origin: Point; previous: 'docked' | 'detached'; fromMain: boolean } | undefined
+  let snapTimer: ReturnType<typeof setInterval> | undefined
+  let mainChatVisible = false
+
+  let stopFullscreenWatch: (() => void) | undefined
+  let fullscreenArea: Rectangle | undefined
+
+  function saveGeometry() {
+    if (mode === 'detached' && ball) {
+      const { x, y } = ball.getBounds()
+      detachedPosition = { x, y }
+    } else if (mode === 'docked') {
+      detachedPosition = undefined
+    }
+    try {
+      geometryStore?.save({ detachedPosition, expandedSize: floatingSize })
+    } catch {
+      console.warn('无法保存咕咕窗口位置和尺寸')
+    }
+  }
+
+  function detach(position: Point) {
+    if (!ball) return
+    if (ball.getParentWindow()) ball.setParentWindow(null)
+    platform.preventActivation?.(ball)
+    ball.setAlwaysOnTop(true, 'floating')
+    const center = { x: position.x + extent / 2, y: position.y + extent / 2 }
+    const { workArea } = screen.getDisplayNearestPoint(center)
+    moveBallAndPanel(
+      Math.max(workArea.x, Math.min(position.x, workArea.x + workArea.width - extent)),
+      Math.max(workArea.y, Math.min(position.y, workArea.y + workArea.height - extent)),
+    )
+    jointMotion = undefined
+    mode = 'detached'
+    if (platform.watchFullscreen && !stopFullscreenWatch) {
+      stopFullscreenWatch = platform.watchFullscreen(bounds => {
+        if (!stopFullscreenWatch) return
+        fullscreenArea = bounds ? screen.screenToDipRect(null, bounds) : undefined
+        syncDetachedBall()
+      })
+    }
+    syncDetachedBall()
+    options.mainWindow()?.webContents.send(channels.ballDetached, true)
+    saveGeometry()
+  }
+
+  function syncDetachedBall() {
+    if (mode !== 'detached' || !ball) return
+    const { x, y, width, height } = ballContentBounds(ball)
+    const area = fullscreenArea
+    const covered = area && x < area.x + area.width && x + width > area.x
+      && y < area.y + area.height && y + height > area.y
+    if (covered) {
+      if (ball.isVisible()) ball.hide()
+      if (panel?.isVisible()) panel.hide()
+    } else {
+      if (!ball.isVisible()) ball.showInactive()
+      syncPanelWindow()
+    }
+  }
+
+  function stopWatchingFullscreen() {
+    stopFullscreenWatch?.()
+    stopFullscreenWatch = undefined
+    fullscreenArea = undefined
+  }
+
+  function trustsPanel(event: Parameters<typeof trustedCaller>[0]) {
+    return !!panel && trustedCaller(event, [panel], panelAddress.href)
+  }
+
+  function stopPanelResize() {
+    clearTimeout(panelResizeTimer)
+    panelResizeTimer = undefined
+    finishPanelGeometry = undefined
+  }
+
+  function ballContentBounds(window: BrowserWindow): Rectangle {
+    const { x, y } = window.getBounds()
+    return { x: x + ballGutter, y: y + ballGutter, width: ballDiameter, height: ballDiameter }
+  }
+
+  function syncBallHitArea() {
+    if (!ball || ball.isDestroyed() || !ball.isVisible()) return
+    const { x, y, width, height } = ballContentBounds(ball)
+    const cursor = screen.getCursorScreenPoint()
+    const ignore = gesture?.fromMain === true || !gesture && Math.hypot(cursor.x - x - width / 2, cursor.y - y - height / 2) > ballHitRadius
+    if (ignore === ignoreBallMouse) return
+    ignoreBallMouse = ignore
+    ball.setIgnoreMouseEvents(ignore)
+  }
+
+  function syncPanelHitArea() {
+    if (!panel || panel.isDestroyed()) return
+    const bounds = panelVisualBounds
+    const cursor = screen.getCursorScreenPoint()
+    const ignore = !!bounds && panelOpenSent && !(expanded && mode === 'detached') && !finishPanelGeometry && panel.isVisible()
+      && (cursor.x < bounds.x + 4 || cursor.x >= bounds.x + bounds.width - 4
+        || cursor.y < bounds.y + 4 || cursor.y >= bounds.y + bounds.height - 4)
+    if (ignore === ignorePanelMouse) return
+    ignorePanelMouse = ignore
+    panel.setIgnoreMouseEvents(ignore)
+  }
+
+  function setPanelBounds(window: BrowserWindow, target: Rectangle, frame: Rectangle, resizable: boolean,
+    minWidth: number, minHeight: number, animate: boolean) {
+    stopPanelResize()
+    const from = panelVisualBounds ?? target
+    panelVisualBounds = target
+    panelNativeChange = undefined
+    const id = ++geometryId
+    let reframe = false
+    const finish = () => {
+      stopPanelResize()
+      if (resizable && (frame.x !== target.x || frame.y !== target.y ||
+        frame.width !== target.width || frame.height !== target.height)) {
+        // 动画视口可能大于可见面板；结束后让系统缩放边缘贴合面板。
+        window.setBounds(target)
+        frame = window.getBounds()
+        panelOffset = { x: target.x - frame.x, y: target.y - frame.y }
+        reframe = true
+      }
+      window.setMinimumSize(minWidth, minHeight)
+      window.setResizable(resizable)
+      window.webContents.send(channels.panelGeometry, { id, settled: true, target, frame, reframe })
+      syncPanelHitArea()
+    }
+    const current = window.getBounds()
+    if (current.x !== frame.x || current.y !== frame.y || current.width !== frame.width || current.height !== frame.height) {
+      reframe = true
+      window.setMinimumSize(1, 1)
+      panelNativeChange = undefined
+      window.setBounds(frame)
+    }
+    frame = window.getBounds()
+    panelOffset = { x: target.x - frame.x, y: target.y - frame.y }
+    if (!animate || !window.isVisible() || !panelEntered) {
+      finish()
+      return
+    }
+    window.setResizable(false)
+    finishPanelGeometry = finish
+    syncPanelHitArea()
+    window.webContents.send(channels.panelGeometry, { id, from, target, frame, duration: panelResizeDuration })
+    panelResizeTimer = setTimeout(finish, panelResizeDuration + 600)
+  }
+
+  function positionPanel(animate = false, preserveCompactFrame = false) {
+    syncPanelDragRegion()
+    if (!ball || !panel || panel.isDestroyed()) return
+    const anchor = ballContentBounds(ball)
+    const area = screen.getDisplayNearestPoint({ x: anchor.x + anchor.width / 2, y: anchor.y + anchor.height / 2 }).workArea
+    const main = options.mainWindow()
+    const docked = mode === 'docked' && main && !main.isDestroyed()
+    const minWidth = Math.min(480, area.width)
+    const minHeight = Math.min(360, area.height)
+    const right = anchor.x + anchor.width + gutter
+    const bottom = anchor.y + anchor.height + gutter
+    const desired = floatingSize ?? { width: Math.round(area.height * floatingWidthRatio), height: Math.round(area.height * 0.78) }
+    const wide = Math.min(area.width, Math.max(minWidth, floatingSize ? desired.width : Math.min(desired.width, right - area.x)))
+    const tall = Math.min(area.height, Math.max(minHeight, floatingSize ? desired.height : Math.min(desired.height, bottom - area.y)))
+    let large = {
+      x: Math.max(area.x, Math.min(right - wide, area.x + area.width - wide)),
+      y: Math.max(area.y, Math.min(bottom - tall, area.y + area.height - tall)),
+      width: wide, height: tall,
+    }
+    if (docked) {
+      const bounds = main.getContentBounds()
+      const left = Math.max(232, Math.round(bounds.width * 0.4 - 12))
+      large = { x: bounds.x + left, y: bounds.y + 12,
+        width: Math.max(1, bounds.width - left - 12), height: Math.max(1, bounds.height - 24) }
+    }
+
+    const top = Math.max(area.y, Math.min(anchor.y, area.y + area.height - anchor.height))
+    const above = top - compactGap - area.y
+    const below = area.y + area.height - top - anchor.height - compactGap
+    const placeAbove = above >= 300 || above >= below
+    const height = Math.min(580, Math.max(1, placeAbove ? above : below))
+    const compactY = placeAbove ? top - compactGap - height : top + anchor.height + compactGap
+    const compact = {
+      x: Math.max(area.x, Math.min(right - minWidth, area.x + area.width - minWidth)),
+      y: Math.max(area.y, Math.min(compactY, area.y + area.height - height)),
+      width: minWidth, height,
+    }
+    // 紧凑与展开共用同一个原生视口，避免系统在新坐标重绘上一帧。
+    const previous = animate ? panelVisualBounds : undefined
+    const x = Math.min(compact.x, large.x, previous?.x ?? Infinity)
+    const y = Math.min(compact.y, large.y, previous?.y ?? Infinity)
+    let frame = { x, y,
+      width: Math.max(compact.x + compact.width, large.x + large.width, previous ? previous.x + previous.width : -Infinity) - x,
+      height: Math.max(compact.y + compact.height, large.y + large.height, previous ? previous.y + previous.height : -Infinity) - y }
+    const bounds = panel.getBounds()
+    const contains = (outer: Rectangle, inner: Rectangle) =>
+      inner.x >= outer.x && inner.y >= outer.y &&
+      inner.x + inner.width <= outer.x + outer.width && inner.y + inner.height <= outer.y + outer.height
+    if (preserveCompactFrame && !expanded && panelVisualBounds && panel.isVisible() && contains(bounds, frame)) {
+      const previous = panelVisualBounds
+      // 交接期间保留原生视口，避免短暂用新边界裁切旧内容。
+      setPanelBounds(panel, compact, bounds, false, 1, 1,
+        previous.x !== compact.x || previous.y !== compact.y ||
+        previous.width !== compact.width || previous.height !== compact.height)
+      return
+    }
+    if (docked && !expanded && !animate) {
+      // 在停靠的小窗中预留脱离后的展开空间，松手时无需再扩大视口。
+      const maxHeight = Math.max(...screen.getAllDisplays().map(display => display.workArea.height))
+      const reserve = floatingSize ?? { width: Math.round(maxHeight * floatingWidthRatio), height: Math.round(maxHeight * 0.78) }
+      const left = Math.min(frame.x, right - Math.max(minWidth, reserve.width))
+      const top = Math.min(frame.y, bottom - Math.max(minHeight, reserve.height))
+      frame = {
+        x: left, y: top,
+        width: Math.max(frame.x + frame.width, right) - left,
+        height: Math.max(frame.y + frame.height, bottom) - top,
+      }
+    }
+    if (animate && contains(bounds, frame)) frame = bounds
+    const resizable = expanded && !docked
+    setPanelBounds(panel, expanded ? large : compact, frame, resizable,
+      resizable ? minWidth : 1, resizable ? minHeight : 1, animate)
+  }
+
+  function showPanel() {
+    if (!panel || !panelReady || !panelRequested || mainChatVisible) return
+    syncPanelWindow()
+    if (!panelOpenSent) {
+      positionPanel()
+      panelOpenSent = true
+      panel.webContents.send(channels.openChat)
+      syncPanelHitArea()
+    }
+    focusPanel()
+    if (droppedReferences.length) {
+      panel.webContents.send(channels.droppedReferences, droppedReferences)
+      droppedReferences = []
+    }
+    for (const { reference, selection } of pendingSelections)
+      panel.webContents.send(channels.droppedReferences, [reference], selection)
+    pendingSelections = []
+    const paths = droppedPaths
+    droppedPaths = []
+    if (paths.length) void deliverDroppedPaths(panel, paths, () => panelRequested)
+  }
+
+  async function deliverDroppedPaths(target: BrowserWindow, paths: string[], isActive: () => boolean) {
+    const createReference = options.createDroppedReference
+    if (!createReference) return
+    for (const path of paths) {
+      const reply = await desktopReply(true, () => createReference(path))
+      if (target.isDestroyed() || !isActive()) return
+      target.webContents.send(channels.droppedReference, reply)
+    }
+  }
+
+  function focusPanel() {
+    if (!panel || !panelEntered || !panelFocusRequested || mode === 'dragging' || !panel.isVisible()) return
+    panelFocusRequested = false
+    if (platform.canFocus(mode === 'detached')) panel.focus()
+  }
+
+  function syncPanelWindow() {
+    if (!panel || !panelReady || !panelRequested || (mode === 'detached' && ball && !ball.isVisible())) return
+    const main = options.mainWindow()
+    const parent = mode === 'docked' && main && !main.isDestroyed() ? main : null
+    if (parent) panel.setAlwaysOnTop(false)
+    if (panel.getParentWindow() !== parent) {
+      const position = panel.getBounds()
+      panel.setParentWindow(parent)
+      const current = panel.getBounds()
+      if (current.x !== position.x || current.y !== position.y) panel.setPosition(position.x, position.y)
+    }
+    if (parent) {
+      if (parent.isMinimized() || !parent.isVisible()) {
+        panel.hide()
+        return
+      }
+    } else {
+      panel.setAlwaysOnTop(true, 'floating', 1)
+    }
+    if (!panel.isVisible()) panel.showInactive()
+    syncPanelHitArea()
+  }
+
+  function openPanel(requestFocus = true) {
+    clearTimeout(warmTimer)
+    panelRequested = true
+    if (requestFocus) panelFocusRequested = mode !== 'dragging'
+    if (panel) showPanel()
+    else createPanel()
+  }
+
+  function syncPanelDragRegion() {
+    const detached = mode === 'detached'
+    if (!panel || !panelReady || detached === panelDetached) return
+    panelDetached = detached
+    panel.webContents.send(channels.panelDetached, detached)
+  }
+
+  function createPanel() {
+    const window = new BrowserWindow({
+      ...platform.windowOptions,
+      width: 480, height: 580, frame: false, transparent: true, backgroundColor: '#00000000',
+      hasShadow: false, resizable: false, show: false, skipTaskbar: true, fullscreenable: false,
+      webPreferences: windowOptions(options.panelPreload).webPreferences,
+      title: '咕咕聊天',
+    })
+    panel = window
+    secureWindow(window, undefined, { uiUrl: panelAddress.href, ...desktopPlatform().microphone })
+    platform.configureWindow?.(window)
+    window.on('show', () => {
+      clearInterval(panelHitTimer)
+      panelHitTimer = setInterval(syncPanelHitArea, 16)
+    })
+    window.on('hide', () => clearInterval(panelHitTimer))
+    window.on('will-move', () => {
+      if (mode === 'detached' && !finishPanelGeometry && panelNativeChange !== 'resize') panelNativeChange = 'move'
+    })
+    window.on('will-resize', (event, bounds) => {
+      if (!expanded || mode !== 'detached' || finishPanelGeometry) return
+      const current = window.getBounds()
+      if (bounds.width === current.width && bounds.height === current.height) {
+        event.preventDefault()
+        return
+      }
+      if (panelNativeChange !== 'resize' && ball && panelVisualBounds) {
+        const anchor = ball.getBounds()
+        const visual = panelVisualBounds
+        nativeResizeAnchor = { x: anchor.x - visual.x - visual.width, y: anchor.y - visual.y - visual.height }
+        window.webContents.send(channels.panelGeometry, { id: ++geometryId, settled: true, target: current, frame: current })
+      }
+      panelNativeChange = 'resize'
+    })
+    const followNativePanel = () => {
+      if (!ball || !panelVisualBounds || !panelNativeChange || mode !== 'detached') return
+      const current = window.getBounds()
+      const previous = panelVisualBounds
+      const resizing = panelNativeChange === 'resize'
+      if (resizing && current.width === previous.width && current.height === previous.height) return
+      const target = resizing ? current : {
+        ...previous,
+        x: current.x + panelOffset.x, y: current.y + panelOffset.y,
+      }
+      const bx = target.x + target.width - previous.x - previous.width
+      const by = target.y + target.height - previous.y - previous.height
+      panelVisualBounds = target
+      if (resizing) {
+        floatingSize = { width: target.width, height: target.height }
+        panelOffset = { x: 0, y: 0 }
+      }
+      const anchor = ball.getBounds()
+      if (resizing && nativeResizeAnchor) {
+        const x = target.x + target.width + nativeResizeAnchor.x
+        const y = target.y + target.height + nativeResizeAnchor.y
+        if (x !== anchor.x || y !== anchor.y) ball.setPosition(x, y)
+      } else {
+        ball.setPosition(anchor.x + bx, anchor.y + by)
+      }
+    }
+    window.on('move', followNativePanel)
+    window.on('resize', followNativePanel)
+    window.on('moved', () => {
+      if (panelNativeChange !== 'move') return
+      panelNativeChange = undefined
+      saveGeometry()
+    })
+    window.on('resized', () => {
+      if (panelNativeChange === 'resize') saveGeometry()
+      panelNativeChange = undefined
+      nativeResizeAnchor = undefined
+    })
+    window.once('closed', () => {
+      stopPanelResize()
+      clearInterval(panelHitTimer)
+      ignorePanelMouse = false
+      panelVisualBounds = undefined
+      panelDetached = undefined
+      panelNativeChange = undefined
+      panel = undefined
+      droppedPaths = []
+      droppedReferences = []
+      pendingSelections = []
+      expanded = false
+      panelReady = false
+      panelRequested = false
+      panelOpenSent = false
+      panelEntered = false
+      panelFocusRequested = false
+    })
+    window.webContents.once('render-process-gone', () => { if (!window.isDestroyed()) window.destroy() })
+    positionPanel()
+    void window.loadURL(panelAddress.href).catch(() => { if (!window.isDestroyed()) window.destroy() })
+  }
+
+  ipcMain.on(channels.panelGeometryDone, (event, id: unknown) => {
+    if (trustsPanel(event) && id === geometryId) finishPanelGeometry?.()
+  })
+  ipcMain.on(channels.panelExpanded, (event, value: unknown) => {
+    if (!trustsPanel(event) || typeof value !== 'boolean' || expanded === value) return
+    expanded = value
+    positionPanel(true)
+  })
+  ipcMain.on(channels.panelReady, event => {
+    if (!trustsPanel(event)) return
+    panelReady = true
+    showPanel()
+  })
+  ipcMain.on(channels.panelEntered, event => {
+    if (!trustsPanel(event) || !panelRequested) return
+    panelEntered = true
+    focusPanel()
+  })
+  ipcMain.on(channels.panelClosing, event => {
+    if (!trustsPanel(event)) return
+    panelOpenSent = false
+    panelEntered = false
+    panelFocusRequested = false
+    if (reopenDockedChat) {
+      reopenDockedChat = false
+      const main = options.mainWindow()
+      if (mode === 'docked' && main && !main.isDestroyed()) main.webContents.send(channels.openChat)
+    }
+    syncPanelHitArea()
+  })
+  ipcMain.on(channels.panelClose, event => {
+    if (!trustsPanel(event) || panelOpenSent) return
+    panelRequested = false
+    panelOpenSent = false
+    panelEntered = false
+    panelFocusRequested = false
+    panel?.hide()
+  })
+
+  function dockPoint(main: BrowserWindow): Point {
+    const { x, y, width, height } = main.getContentBounds()
+    return { x: x + width - ballDiameter - ballGutter - dockClearance, y: y + height - ballDiameter - ballGutter - dockClearance }
+  }
+
+  function setGlass(enabled: boolean) {
+    if (!ball || !platform.setGlass) return
+    const applied = platform.setGlass(ball, enabled)
+    ball.webContents.send(channels.material, enabled && applied)
+  }
+
+  function moveBallAndPanel(x: number, y: number) {
+    if (!ball) return
+    if (!jointMotion && panel?.isVisible() && panelVisualBounds) {
+      const origin = ball.getBounds()
+      const frame = panel.getBounds()
+      jointMotion = {
+        frame: { x: frame.x - origin.x, y: frame.y - origin.y },
+        visual: { x: frame.x + panelOffset.x - origin.x, y: frame.y + panelOffset.y - origin.y },
+      }
+    }
+    ball.setPosition(x, y)
+    if (!panel?.isVisible() || !panelVisualBounds || !jointMotion) return
+    const anchor = ball.getBounds()
+    const desiredX = anchor.x + jointMotion.frame.x
+    const desiredY = anchor.y + jointMotion.frame.y
+    const previousFrame = panel.getBounds()
+    if (previousFrame.x !== desiredX || previousFrame.y !== desiredY) {
+      panelNativeChange = undefined
+      panel.setPosition(desiredX, desiredY)
+    }
+    const frame = panel.getBounds()
+    const target = {
+      ...panelVisualBounds,
+      x: anchor.x + jointMotion.visual.x,
+      y: anchor.y + jointMotion.visual.y,
+    }
+    panelVisualBounds = target
+    const offset = { x: target.x - frame.x, y: target.y - frame.y }
+    // macOS 可能限制原生窗的实际坐标。用实测边界推导内容偏移，避免逐帧累计误差。
+    if (offset.x !== panelOffset.x || offset.y !== panelOffset.y) {
+      panelOffset = offset
+      panel.webContents.send(channels.panelGeometry, { id: ++geometryId, settled: true, target, frame })
+    }
+  }
+
+  function dock() {
+    const main = options.mainWindow()
+    if (!ball || !main || main.isDestroyed()) return
+    const docking = mode !== 'docked'
+    if (docking) stopWatchingFullscreen()
+    if (docking) setGlass(false)
+    ball.setAlwaysOnTop(false)
+    if (ball.getParentWindow() !== main) ball.setParentWindow(main)
+    const { x, y } = dockPoint(main)
+    if (docking) moveBallAndPanel(x, y)
+    else ball.setPosition(x, y)
+    jointMotion = undefined
+    mode = 'docked'
+    if (docking) saveGeometry()
+    ball.hide()
+    main.webContents.send(channels.ballDetached, false)
+    if (docking && panelRequested) {
+      panelRequested = false
+      panel?.hide()
+      reopenDockedChat = panelOpenSent
+      if (reopenDockedChat) panel?.webContents.send(channels.closeChat, false)
+      else main.webContents.send(channels.openChat)
+    }
+    syncPanelWindow()
+    positionPanel(docking, docking)
+  }
+
+  function stopSnap() {
+    clearInterval(snapTimer)
+    snapTimer = undefined
+  }
+
+  function watchMain(main: BrowserWindow) {
+    const sync = () => { if (mode === 'docked' && !loading) dock() }
+    main.on('move', sync)
+    main.on('resize', sync)
+    main.on('show', sync)
+    main.on('hide', sync)
+    main.on('minimize', sync)
+    main.on('restore', sync)
+    main.on('enter-full-screen', sync)
+    main.on('leave-full-screen', sync)
+    main.once('closed', () => {
+      mainChatVisible = false
+      reopenDockedChat = false
+      if (mode === 'detached') syncPanelWindow()
+      if (mode === 'snapping') {
+        stopSnap()
+        mode = 'detached'
+      }
+    })
+  }
+
+  async function create(main: BrowserWindow) {
+    const mainContents = main.webContents
+    const window = new BrowserWindow({
+      ...platform.windowOptions,
+      width: extent, height: extent, frame: false, transparent: true, backgroundColor: '#00000000',
+      hasShadow: false, resizable: false, show: false, skipTaskbar: true, focusable: false,
+      fullscreenable: false, parent: main, title: '咕咕聊天',
+      webPreferences: windowOptions(options.preload).webPreferences,
+    })
+    ball = window
+    ignoreBallMouse = false
+    window.on('show', () => {
+      clearInterval(ballHitTimer)
+      syncBallHitArea()
+      ballHitTimer = setInterval(syncBallHitArea, 16)
+    })
+    window.on('hide', () => clearInterval(ballHitTimer))
+    secureWindow(window)
+    platform.configureWindow?.(window)
+    window.webContents.once('render-process-gone', () => { if (!window.isDestroyed()) window.destroy() })
+    window.once('closed', () => {
+      resolveReady?.(false)
+      stopSnap()
+      clearTimeout(warmTimer)
+      stopWatchingFullscreen()
+      clearInterval(ballHitTimer)
+      ball = undefined
+      gesture = undefined
+      jointMotion = undefined
+      if (panel && !panel.isDestroyed()) panel.destroy()
+      mode = 'docked'
+      if (options.mainWindow() === main && !main.isDestroyed() && !mainContents.isDestroyed()) mainContents.send(channels.ballDetached, false)
+    })
+    const ready = new Promise<boolean>(resolve => { resolveReady = resolve })
+    const timeout = setTimeout(() => resolveReady?.(false), 10_000)
+    try {
+      void window.loadURL(address.href).catch(() => resolveReady?.(false))
+      if (!await ready || window.isDestroyed()) {
+        if (!window.isDestroyed()) window.destroy()
+        return false
+      }
+      if (detachedPosition) detach(detachedPosition)
+      else dock()
+      if (options.prewarm !== false) {
+        warmTimer = setTimeout(() => {
+          if (ball && !panel && options.enabled()) createPanel()
+        }, 500)
+      }
+      return true
+    } finally {
+      clearTimeout(timeout)
+      resolveReady = undefined
+    }
+  }
+
+  ipcMain.handle(channels.attach, async event => {
+    const main = options.mainWindow()
+    if (!options.enabled() || !main || !trustedCaller(event, [main], options.uiUrl)) return false
+    if (loading) return loading
+    if (ball) {
+      main.webContents.send(channels.ballDetached, mode === 'detached')
+      return true
+    }
+    loading = create(main).finally(() => { loading = undefined })
+    return loading
+  })
+
+  function snap(main: BrowserWindow) {
+    if (!ball) return
+    const { x, y } = ball.getBounds()
+    const start = Date.now()
+    mode = 'snapping'
+    snapTimer = setInterval(() => {
+      if (!ball || main.isDestroyed()) {
+        stopSnap()
+        jointMotion = undefined
+        mode = 'detached'
+        return
+      }
+      if (main.isMinimized() || !main.isVisible()) {
+        stopSnap()
+        dock()
+        return
+      }
+      const progress = Math.min(1, (Date.now() - start) / snapDuration)
+      const eased = 1 - (1 - progress) ** 3
+      const target = dockPoint(main)
+      moveBallAndPanel(Math.round(x + (target.x - x) * eased), Math.round(y + (target.y - y) * eased))
+      if (progress === 1) {
+        stopSnap()
+        dock()
+      }
+    }, 16)
+  }
+
+  function move(cursor: Point) {
+    if (!gesture || !ball) return
+    const dx = cursor.x - gesture.cursor.x
+    const dy = cursor.y - gesture.cursor.y
+    if (mode !== 'dragging') {
+      if (Math.hypot(dx, dy) < 5) return
+      finishPanelGeometry?.()
+      mode = 'dragging'
+      setGlass(true)
+    }
+    moveBallAndPanel(Math.round(gesture.origin.x + dx), Math.round(gesture.origin.y + dy))
+  }
+
+  function release(cursor: Point, cancelled: boolean) {
+    if (!ball || !gesture) return
+    if (!cancelled) move(cursor)
+    const { previous, origin, fromMain } = gesture
+    gesture = undefined
+    if (mode !== 'dragging') {
+      if (!cancelled && !fromMain) toggleChat()
+      return
+    }
+    const main = options.mainWindow()
+    const { x, y } = ball.getBounds()
+    const destination = cancelled ? origin : { x, y }
+    const center = { x: destination.x + extent / 2, y: destination.y + extent / 2 }
+    const bounds = main?.getContentBounds()
+    const dropPoint = fromMain ? cursor : center
+    const inside = main && main.isVisible() && !main.isMinimized() && bounds
+      && dropPoint.x >= bounds.x && dropPoint.x < bounds.x + bounds.width
+      && dropPoint.y >= bounds.y && dropPoint.y < bounds.y + bounds.height
+    // 改父窗口会中断部分平台的指针捕获，等松手处理完落点再做。
+    if (ball.getParentWindow()) ball.setParentWindow(null)
+    platform.preventActivation?.(ball)
+    ball.setAlwaysOnTop(true, 'floating')
+    if (main && (cancelled ? previous === 'docked' : inside)) {
+      if (fromMain) dock()
+      else snap(main)
+    }
+    else {
+      detach(destination)
+      // 脱离时就预留展开视口，避免第一次展开同时改变原生视口和内容布局。
+      positionPanel(expanded && previous === 'docked', true)
+      if (previous === 'docked' && mainChatVisible && main && !main.isDestroyed()) {
+        main.webContents.send(channels.closeChat)
+        openPanel()
+      }
+    }
+  }
+
+  function toggleChat() {
+    const main = options.mainWindow()
+    if (mainChatVisible && main && !main.isDestroyed()) {
+      main.webContents.send(channels.closeChat, true)
+      return
+    }
+    if (panelOpenSent || (!panelReady && panelRequested)) {
+      if (!panelRequested) return
+      panelRequested = false
+      droppedPaths = []
+      droppedReferences = []
+      pendingSelections = []
+      panelFocusRequested = false
+      if (panelOpenSent) panel?.webContents.send(channels.closeChat, true)
+      return
+    }
+    openPanel()
+  }
+
+  ipcMain.on(channels.chatVisible, (event, visible: unknown) => {
+    const main = options.mainWindow()
+    if (!main || !trustedCaller(event, [main], options.uiUrl) || typeof visible !== 'boolean') return
+    mainChatVisible = visible
+    if (!visible) showPanel()
+    else if (panelOpenSent) {
+      panelRequested = false
+      panel?.hide()
+      panel?.webContents.send(channels.closeChat)
+    }
+  })
+
+  ipcMain.handle(channels.openMainReference, (event, type: unknown, id: unknown) =>
+    desktopReply(trustsPanel(event), async () => {
+      const validId = (typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
+        || (typeof id === 'string' && /^[1-9][0-9]{0,15}$/u.test(id) && Number.isSafeInteger(Number(id)))
+      switch (type) {
+        case 'mail-draft': {
+          if (typeof id !== 'string' || id.length > 1024) throw new DesktopError('invalid_request', '草稿引用无效')
+          let reference: unknown
+          try { reference = JSON.parse(id) } catch { throw new DesktopError('invalid_request', '草稿引用无效') }
+          if (!mailDraftLocation.safeParse(reference).success) throw new DesktopError('invalid_request', '草稿引用无效')
+          break
+        }
+        case 'mail':
+          if (typeof id === 'string' && id.length <= 254 && /^[^\s<>,;@/?#]+@[^\s<>,;@/?#]+\.[^\s<>,;@/?#]+$/u.test(id)) break
+          throw new DesktopError('invalid_request', '收件地址无效')
+        case 'client':
+        case 'event':
+        case 'canvas_note':
+        case 'scheduled_task':
+          if (validId) break
+          throw new DesktopError('invalid_request', '引用标识无效')
+        case 'folder':
+          if (typeof id === 'string' && /^path-[A-Za-z0-9_-]{1,24000}$/u.test(id)) break
+          throw new DesktopError('invalid_request', '文件夹引用无效')
+        case 'skill':
+        case 'mcp':
+          if (typeof id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/u.test(id)) break
+          throw new DesktopError('invalid_request', '资源引用无效')
+        default:
+          throw new DesktopError('invalid_request', '引用类型无效')
+      }
+      const main = options.mainWindow()
+      if (!main || main.isDestroyed()) throw new DesktopError('not_found', '主窗口不可用')
+      if (main.isMinimized()) main.restore()
+      main.webContents.send(channels.openMainReference, type, id)
+      if (main.isVisible()) main.focus()
+      else main.show()
+      return null
+    }),
+  )
+
+  ipcMain.on(channels.dropReferences, (event, references: unknown, selection: unknown) => {
+    if (selection !== undefined) {
+      const main = options.mainWindow()
+      if (!options.enabled() || !main || main.isDestroyed()
+        || !(trustedCaller(event, [main], options.uiUrl) || options.trustsSelectionSource?.(event))
+        || !isSelectionSnapshot(selection) || !Array.isArray(references) || references.length !== 1
+        || !isRuntimeReference(references[0])) return
+      const snapshot = { content: selection.content, location: selection.location, unsaved: selection.unsaved, ...(selection.rendered === undefined ? {} : { rendered: selection.rendered }), ...(selection.version === undefined ? {} : { version: selection.version }) }
+      if (mode !== 'detached') {
+        if (main.isMinimized()) main.restore()
+        main.show()
+        main.focus()
+        main.webContents.send(channels.droppedReferences, references, snapshot)
+      } else {
+        pendingSelections = [...pendingSelections, { reference: references[0], selection: snapshot }].slice(-50)
+        openPanel()
+      }
+      return
+    }
+    const main = options.mainWindow()
+    if (!options.enabled() || !ball || !main || !trustedCaller(event, [main], options.uiUrl)
+      || !Array.isArray(references) || !references.length || references.length > 50
+      || !references.every(isRuntimeReference)) return
+    if (mainChatVisible) {
+      main.webContents.send(channels.droppedReferences, references)
+      return
+    }
+    droppedReferences = [...droppedReferences, ...references].slice(0, 50)
+    openPanel(false)
+  })
+
+  ipcMain.on(channels.dropFiles, (event, paths: unknown) => {
+    if (!options.enabled() || !ball || !options.createDroppedReference || !trustedCaller(event, [ball], address.href)
+      || !Array.isArray(paths) || !paths.length || paths.length > 50
+      || !paths.every(path => typeof path === 'string' && path.length > 0 && path.length <= 4096)) return
+    const main = options.mainWindow()
+    if (mode === 'docked' && mainChatVisible && main && !main.isDestroyed()) {
+      void deliverDroppedPaths(main, paths, () => mainChatVisible)
+      return
+    }
+    droppedPaths = [...droppedPaths, ...paths].slice(0, 50)
+    openPanel()
+  })
+
+  ipcMain.on(channels.gesture, (event, action: unknown, x: unknown, y: unknown) => {
+    if (!options.enabled() || !ball) return
+    const main = options.mainWindow()
+    const fromMain = !!main && trustedCaller(event, [main], options.uiUrl)
+    if (!fromMain && !trustedCaller(event, [ball], address.href)) return
+    if (fromMain && (action === 'ready' || action === 'open' || (action === 'down' && mode !== 'docked'))) return
+    if (action === 'ready') {
+      resolveReady?.(true)
+      return
+    }
+    if (loading) return
+    if (action === 'open') { toggleChat(); return }
+    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) return
+    const cursor = { x, y }
+    if (action === 'down' && !gesture) {
+      const previous = mode === 'docked' ? 'docked' : 'detached'
+      if (mode === 'snapping') {
+        stopSnap()
+        mode = 'detached'
+      }
+      const { x, y } = ball.getBounds()
+      gesture = { cursor, origin: { x, y }, previous, fromMain }
+    }
+    if (gesture && gesture.fromMain !== fromMain) return
+    if (fromMain && (action === 'move' || action === 'up') && gesture) {
+      const bounds = main!.getContentBounds()
+      const outside = cursor.x < bounds.x || cursor.y < bounds.y ||
+        cursor.x >= bounds.x + bounds.width || cursor.y >= bounds.y + bounds.height
+      if (outside) {
+        if (ball.getParentWindow()) ball.setParentWindow(null)
+        ball.setAlwaysOnTop(true, 'floating')
+        if (action === 'move') move(cursor)
+        if (mode === 'dragging' && !ball.isVisible()) {
+          ball.showInactive()
+          syncBallHitArea()
+        }
+        if (action === 'move') return
+      } else if (ball.isVisible()) ball.hide()
+    }
+    if (action === 'move') move(cursor)
+    if (action === 'up' || action === 'cancel') release(cursor, action === 'cancel')
+  })
+
+  return {
+    watchMain,
+    hasVisibleDetachedWindow: () => mode === 'detached' && Boolean(ball?.isVisible() || panel?.isVisible()),
+    trustsPanel,
+    sendToPanel: (channel: string, ...args: unknown[]) => {
+      if (panel && !panel.isDestroyed()) panel.webContents.send(channel, ...args)
+    },
+  }
+}

@@ -17,11 +17,12 @@ from jsonschema.exceptions import SchemaError, ValidationError
 MAX_VALIDATION_ISSUES = 5
 _INTEGER_TEXT = re.compile(r"^[+-]?\d+$")
 _NOTE_SCHEMA_HINTS = [
-    "请重新生成完整的 blocks/append_blocks 数组，不要只改报错字段。",
-    "note_create 必须把块数组作为顶层 blocks 数组传入；不要把 Markdown 正文或 JSON 字符串放在 content 字段。",
+    "普通笔记优先使用 markdown/append_markdown 字符串；只有需要引用或结构化块时才重建 blocks/append_blocks 数组。",
+    "note_create 的 markdown 与 blocks 二选一；note_update 的 append_markdown、append_blocks、line_edits、find_replace 一次最多传一个。",
     "paragraph/heading 使用 content 数组；bullet_list/ordered_list/task_list 使用 items 数组；blockquote 使用 paragraphs 数组。",
     "列表和待办只支持扁平项：列表项只能是 {content:[{type:text/reference,...}]}，待办项只能是 {checked:boolean,content:[{type:text/reference,...}]}。",
-    "note_update 的 line_edits 使用 {target_lines,expected,content}：数字 target_lines 必须匹配 note_get.numbered_content 的原始物理行，整篇才使用 all；content 为空表示删除指定行；不要与 append_blocks 同时传。",
+    "note_update 的 line_edits 使用 {target_lines,expected,content}：数字 target_lines 必须匹配 note_get.numbered_content 的原始物理行，整篇才使用 all；content 为空表示删除指定行；不要与其他正文更新方式同时传。",
+    "局部替换可传 find_replace 对象，包含 find（从 note_get.content_md 逐字复制的非空原文）和 replace（新文字）。只在唯一匹配时写入。",
     "行内对象必须带 type；不要在列表项内嵌套列表、content 或 paragraphs，也不要把数组包装成 {item:[...]}。",
 ]
 
@@ -737,7 +738,10 @@ def invalid_input_payload(
             '多文件示例：{"edits":[{"file_id":1,"mode":"find_replace","find":"旧","replace":"新"},{"file_id":2,"mode":"append","content":"追加"}]}。',
         ]
     if tool_name in {"note_create", "note_update"}:
-        payload["next_action"] = "笔记结构错误，请按 schema_hints 重建完整 blocks；不要沿用原来的嵌套结构或 item 包装。"
+        payload["next_action"] = (
+            "普通文字笔记改用 markdown/append_markdown 字符串；需要结构化内容时才按 schema_hints 重建完整数组，"
+            "不要重复沿用 item 包装。"
+        )
         hints = [*hints, *_NOTE_SCHEMA_HINTS]
     if tool_name == "note_update":
         missing_node_id = any(
@@ -761,17 +765,23 @@ def invalid_input_payload(
             ]
         if missing_node_id and invalid_append_blocks:
             payload["next_action"] = (
-                "更新未执行：先取得目标笔记的真实 node_id，再按 schema_hints 重建完整 append_blocks；"
-                "目标不明确时询问用户，不要重复提交当前参数。"
+                "更新未执行：先取得目标笔记的真实 node_id；普通文字改用 append_markdown 字符串，"
+                "结构化内容才重建 append_blocks。目标不明确时询问用户，不要重复提交当前参数。"
             )
         elif missing_node_id:
             payload["next_action"] = (
                 "更新未执行：先从 note_search/note_get 结果取得真实 node_id；目标不明确时询问用户，"
                 "不要猜 ID 或重复提交。"
             )
+        elif any(item.get("rule") == "not" for item in bounded):
+            payload["next_action"] = (
+                "更新未执行：append_markdown、append_blocks、line_edits、find_replace 互斥。"
+                "本次只传一种；如果还要进行另一种正文编辑，请分开调用。"
+            )
         elif invalid_append_blocks:
             payload["next_action"] = (
-                "更新未执行：按 schema_hints 重建完整 append_blocks 数组后重试，不要沿用 item 包装。"
+                "更新未执行：普通文字改用 append_markdown 字符串；结构化内容才按 schema_hints 重建完整 append_blocks 数组，"
+                "不要沿用 item 包装。"
             )
     properties = schema.get("properties") if isinstance(schema, dict) else None
     has_boolean_for_string = (

@@ -20,7 +20,7 @@ services:
   frontend:
     build: ./frontend
     environment:
-      GUGU_API_TARGET: "${GUGU_API_TARGET:-http://host.docker.internal:8000}"
+      GUGU_API_TARGET: "${GUGU_API_TARGET:-http://host.docker.internal:9595}"
     ports:
       - "4319:4319"
     extra_hosts:

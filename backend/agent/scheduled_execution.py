@@ -163,7 +163,7 @@ async def run_scheduled_once(
             stop_context,
         )
         modelctx.set_usage_context(
-            user_id, scenario="mcp" if has_mcp_tools else "chat",
+            user_id, scenario="mcp" if has_mcp_tools else "scheduled",
         )
 
         async with _sess._SessionLocal() as policy_db:
@@ -231,6 +231,7 @@ async def run_scheduled_once(
                 cache_read=cache_read,
                 cache_write=cache_write,
                 tools_used=meta.get("tool_names") or None,
+                scenario="scheduled",
             )
         except Exception as exc:
             from app.core.redaction import diag_log

@@ -1,0 +1,226 @@
+{
+  "backend/tests/storage/files/test_video_path_transport.py": {
+    "domain": "media-video",
+    "layer": "L1",
+    "owner": "backend/agent/media/video_source.py",
+    "productionEntry": "backend/agent/tools/media_reader.py 与 backend/agent/chat/attachments.py",
+    "keyBehavior": "大视频分块上传不改原件；上传失败不回退大载荷；引用缓存按用户及配置隔离，文件变化不缓存；取消不泄漏预算；摘要契约不变",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_phase1.py": {
+    "domain": "filesync",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/targeted.py 与 watcher.py",
+    "keyBehavior": "实时文件投影在删除和原子替换竞态后不提交过期指纹且后续事件收敛；扫描证据失效与权限故障仍保留拒绝，未知异常只在受限日志记录堆栈",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/files/test_file_stream_preview.py": {
+    "domain": "file-preview",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/files.py",
+    "productionEntry": "backend/app/api/v1/files.py:get_stream_url",
+    "keyBehavior": "单文件预览同时返回文件元数据与流地址，跨用户和已删除文件均拒绝且不生成地址",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_inventory.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/inventory.py",
+    "keyBehavior": "File/Folder 只按绑定范围与活动状态分页入清单，重复活动路径完整保留以便归并时标歧义",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_live_shell.py": {
+    "domain": "filesync-live-events",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync/watcher.py",
+    "productionEntry": "backend/app/services/filesync/targeted.py:project_path_events",
+    "keyBehavior": "临时目录真实 Shell 创建、等长覆盖、原子替换与短命文件删除后，File 和 journal 收敛到最终事实，不依赖手动整树核对",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_periodic.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/periodic.py",
+    "keyBehavior": "每周完整核对只排入活跃窗口内到期绑定，任务幂等且失败限频，默认不自动软删除 DB 行",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_reconcile_jobs.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/jobs.py",
+    "keyBehavior": "Admin 对账入口受保护、同绑定幂等排队、同用户串行执行、权限跳过不清除未完成状态且失联不自动重试",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_run_migration.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "alembic/versions/20261007000003_add_manual_filesync_runs.py",
+    "keyBehavior": "任务表迁移遇到历史重复活动文件路径时仍保留原记录并成功建表",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_runner.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/runner.py",
+    "keyBehavior": "初始化与修复只恢复无旧记录的空根并校正指纹，保留旧内容；更新/移动/删除、失败部分结果、dry-run 无副作用及临时产物清理/进度有界符合任务契约",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_scan.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/scan.py",
+    "keyBehavior": "完整磁盘清单与 File/Folder 有界归并检测新增/更新/缺失；重复路径或类型冲突不得误删，路径段排序保证目录后代连续，扫描取消/超时须等待线程退出",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_schema_retirement.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "alembic/versions/20261007000001_retire_filesync_snapshot_schema.py",
+    "keyBehavior": "清理快照重构结构保留绑定、journal 与其他功能数据；活动任务阻止清理，重复执行安全",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_watcher_health.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/health.py",
+    "keyBehavior": "监听恢复只更新健康状态，历史缺口保持待人工核对且迁移默认保护已有绑定",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/trash/test_trash_purge_jobs.py": {
+    "domain": "trash-purge",
+    "layer": "L1",
+    "owner": "backend/app/services/files/trash_purge.py",
+    "productionEntry": "backend/app/services/files/trash_purge.py:run_trash_purge_worker",
+    "keyBehavior": "清空任务全局限并发、用户隔离、完成冷却、提交后唤醒、向所有者推送进度及通知失败恢复",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/data_portability/test_data_portability_import_delete_api.py": {
+    "domain": "data-portability",
+    "layer": "L1",
+    "owner": "backend/services/data_portability",
+    "productionEntry": "backend/app/api/v1/data_portability.py:delete_import",
+    "keyBehavior": "仅任务所有者可删除已结束导入并清理其私有暂存对象",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/files/test_file_listing_scope.py": {
+    "domain": "storage",
+    "layer": "L1",
+    "owner": "backend/app/services/files",
+    "productionEntry": "backend/app/services/files/browser.py",
+    "keyBehavior": "工作区根目录仅返回直属存活文件，子目录查询严格限定父目录并排除其他工作区",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_filesync_ts_sidecar.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/ts_sidecar.py",
+    "keyBehavior": "TS sidecar 文件与目录事件可解析，输出拥塞保留恢复信号且进程退出不得报告健康",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_watcher_permissions.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "backend/app/services/filesync/watcher.py",
+    "keyBehavior": "权限缺口经授权 Sandboxd IPC 修复后重建 watcher，修复失败仍暴露缺口并安排核对",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/test_config_reconcile.py": {
+    "domain": "storage-audit",
+    "layer": "L2",
+    "owner": "backend/app/api/v1/config.py",
+    "productionEntry": "backend/app/api/v1/config.py:_import_orphan",
+    "keyBehavior": "存储核对保护运行时命名空间，仅导入可归属的孤儿文件，并在路径、所有权或物理校验失败时安全拒绝",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/test_file_active_storage_key_uniqueness.py": {
+    "domain": "storage",
+    "layer": "L1",
+    "owner": "backend/app/models",
+    "productionEntry": "backend/app/models/__init__.py:File",
+    "keyBehavior": "同一用户同一活动 storage key 唯一，不同用户和软删除历史记录可保留相同 key",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/test_quota_periodic.py": {
+    "domain": "storage",
+    "layer": "L2",
+    "owner": "backend/app/services/storage",
+    "productionEntry": "backend/app/services/storage/quota_periodic.py",
+    "keyBehavior": "周期配额核对只处理到期活跃用户并遵循单轮批次上限",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/test_storage_quota_ledger.py": {
+    "domain": "storage",
+    "layer": "L2",
+    "owner": "backend/app/services/storage",
+    "productionEntry": "backend/app/services/storage/quota_ledger.py",
+    "keyBehavior": "文件与 Shell 用量按权威计量入账，增量核对不覆盖并发变更且配额上限隔离正确",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/files/test_upload_stream.py": {
+    "domain": "file-upload",
+    "layer": "L1",
+    "owner": "backend/app/core",
+    "productionEntry": "app/core/upload_stream.py",
+    "keyBehavior": "上传校验复用 multipart 临时流、限制实际读取量并在异常时关闭流",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_inotify_limitd.py": {
+    "domain": "filesync-watcher-capacity",
+    "layer": "L1",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "scripts/runtime/inotify_limitd.py 与 app/services/filesync",
+    "keyBehavior": "Watcher 容量按阈值分档扩展并严格受 Admin 硬上限约束，管理服务的策略热更新和连接超时可靠",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/files/test_file_listing_pagination.py": {
+    "domain": "file-library",
+    "layer": "L1",
+    "owner": "backend/app/api/v1/files.py",
+    "productionEntry": "backend/app/services/files/pagination.py",
+    "keyBehavior": "文件、文件夹与回收站分页稳定且游标绑定查询范围，不能跨用户复用或篡改",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/test_project_file_counts_postgres.py": {
+    "domain": "project-file-counts",
+    "layer": "L2",
+    "owner": "backend/app/db",
+    "productionEntry": "backend/app/db/project_file_counts.py:PROJECT_FILE_COUNT_PROJECTION_SQL",
+    "keyBehavior": "PostgreSQL 触发器在文件创建、移动、软删/恢复和批量删除后保持计数，并可通过重建与源表对账",
+    "ci": "手动启用 PostgreSQL 集成测试"
+  },
+  "backend/tests/storage/test_oss_copy_fingerprint.py": {
+    "domain": "storage",
+    "layer": "L2",
+    "owner": "backend/app/services/storage",
+    "productionEntry": "backend/app/services/storage/__init__.py:OSSStorageBackend.copy_with_fingerprint",
+    "keyBehavior": "OSS 源对象在摘要读取与复制之间变化时使用 ETag 条件复制并重试，确保目标内容与返回指纹一致",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_missing_batch.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/missing_batch.py",
+    "keyBehavior": "批量缺失预览仅限绑定；恢复文件、版本变化、根目录替换与跨用户预览不得删除；未确认不修改记录",
+    "ci": "backend-pytest"
+  },
+  "backend/tests/storage/filesync/test_linux_watcher.py": {
+    "domain": "filesync",
+    "layer": "L2",
+    "owner": "backend/app/services/filesync",
+    "productionEntry": "app/services/filesync/linux_watcher.py、health.py、periodic.py",
+    "keyBehavior": "原生内核溢出必须上报缺口；ready保留溢出原因；仅根身份已记录且匹配时允许周期删除补偿；递归事件不跟随符号链接；意外失效的内核监听报告缺口并触发重建，主动解除保持静默",
+    "ci": "backend-pytest"
+  }
+}

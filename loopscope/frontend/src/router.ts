@@ -9,6 +9,7 @@ export default createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', component: PlaygroundView },
+    { path: '/subagents', component: PlaygroundView, props: { subagents: true } },
     { path: '/tokens', component: TokensView },
     { path: '/reflections', component: ReflectionsView },
     { path: '/changelog', component: ChangelogView },

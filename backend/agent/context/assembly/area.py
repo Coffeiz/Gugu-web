@@ -269,6 +269,10 @@ class MessageArea:
         conversation = values[self.fixed_prefix_size:]
         canonical = []
         for message in conversation:
+            if message.get("_compacted_summary"):
+                # 使用与数据库恢复相同的摘要角色，避免普通 user 渲染加上正文信封。
+                canonical.append({"role": "summary", "content": message["content"]})
+                continue
             normalized = canonicalize_tool_messages([message])
             canonical.extend(normalized or [message])
         self.replace_baseline(canonical, expected_revision=expected_revision)

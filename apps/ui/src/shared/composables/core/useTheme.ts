@@ -1,0 +1,156 @@
+import { computed, ref } from 'vue'
+import { preferencesApi } from '@/services/api'
+
+export type ThemePreference = 'light' | 'dark' | 'system'
+export type ResolvedTheme = 'light' | 'dark'
+export type ThemeFamily = 'glass' | 'mono'
+export type ThemePalette = 'cafe' | 'neutral' | 'red' | 'blue' | 'green'
+export type ThemePreferencePatch = {
+  theme?: ThemePreference
+  themeFamily?: ThemeFamily
+  palette?: ThemePalette
+}
+type ThemePreferenceWriter = (patch: ThemePreferencePatch) => Promise<unknown>
+
+// 偏好必须在版本门执行后再读取，避免模块导入顺序让旧 localStorage 状态进入内存。
+const preference = ref<ThemePreference>('light')
+const resolved = ref<ResolvedTheme>('light')
+const family = ref<ThemeFamily>('glass')
+const palette = ref<ThemePalette>('neutral')
+let hydrated = false
+let mediaQuery: MediaQueryList | null = null
+
+function readPreference(): ThemePreference {
+  const value = localStorage.getItem('gugu-theme')
+  return value === 'dark' || value === 'system' ? value : 'light'
+}
+
+function readFamily(): ThemeFamily {
+  const value = localStorage.getItem('gugu-theme-family')
+  if (value === 'v2') {
+    // 只做一次性迁移，运行时和后续写入都不再保留旧 family 名称。
+    localStorage.setItem('gugu-theme-family', 'mono')
+    return 'mono'
+  }
+  return value === 'mono' ? 'mono' : 'glass'
+}
+
+function readPalette(): ThemePalette {
+  const value = localStorage.getItem('gugu-palette')
+  const next = normalizePalette(value)
+  if (next !== value) localStorage.setItem('gugu-palette', next)
+  return next
+}
+
+function normalizePalette(value: unknown): ThemePalette {
+  if (value === 'cafe' || value === 'neutral' || value === 'red' || value === 'blue' || value === 'green') return value
+  return 'neutral'
+}
+
+function resolve(value: ThemePreference): ResolvedTheme {
+  if (value !== 'system') return value
+  return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function applyResolvedTheme(theme: ResolvedTheme) {
+  resolved.value = theme
+  document.documentElement.dataset.theme = resolved.value
+  document.documentElement.dataset.family = family.value
+  document.documentElement.dataset.palette = palette.value
+  document.documentElement.style.colorScheme = resolved.value
+}
+
+function apply() {
+  applyResolvedTheme(resolve(preference.value))
+}
+
+function watchSystem() {
+  mediaQuery?.removeEventListener('change', apply)
+  mediaQuery = preference.value === 'system' ? window.matchMedia('(prefers-color-scheme: dark)') : null
+  mediaQuery?.addEventListener('change', apply)
+}
+
+function hydrate() {
+  if (hydrated) return
+  preference.value = readPreference()
+  resolved.value = resolve(preference.value)
+  family.value = readFamily()
+  palette.value = readPalette()
+  hydrated = true
+}
+
+export function initializeTheme(forcedTheme?: ResolvedTheme, forcedFamily?: ThemeFamily, forcedPalette?: ThemePalette) {
+  hydrate()
+  if (forcedTheme) {
+    if (forcedFamily) family.value = forcedFamily
+    if (forcedPalette) palette.value = normalizePalette(forcedPalette)
+    applyResolvedTheme(forcedTheme)
+    mediaQuery?.removeEventListener('change', apply)
+    mediaQuery = null
+    return
+  }
+  apply()
+  watchSystem()
+}
+
+export function initializeDesktopTheme() {
+  hydrate()
+  preference.value = 'system'
+  family.value = 'mono'
+  apply()
+  watchSystem()
+}
+
+export function applyThemePalette(nextPalette: unknown) {
+  palette.value = normalizePalette(nextPalette)
+  localStorage.setItem('gugu-palette', palette.value)
+  apply()
+}
+
+export function applyServerTheme(nextTheme: unknown, nextFamily: unknown, nextPalette: unknown) {
+  hydrate()
+  preference.value = nextTheme === 'dark' || nextTheme === 'system' ? nextTheme : 'light'
+  family.value = nextFamily === 'mono' ? 'mono' : 'glass'
+  localStorage.setItem('gugu-theme', preference.value)
+  localStorage.setItem('gugu-theme-family', family.value)
+  applyThemePalette(nextPalette)
+  watchSystem()
+}
+
+export function useTheme(writePreference?: ThemePreferenceWriter) {
+  function setTheme(value: ThemePreference) {
+    preference.value = value
+    localStorage.setItem('gugu-theme', value)
+    apply()
+    watchSystem()
+    return writePreference
+      ? writePreference({ theme: value })
+      : preferencesApi.update({ theme: value } as any).catch(() => {})
+  }
+
+  function setFamily(value: ThemeFamily) {
+    family.value = value
+    localStorage.setItem('gugu-theme-family', value)
+    apply()
+    return writePreference
+      ? writePreference({ themeFamily: value })
+      : preferencesApi.update({ themeFamily: value } as any).catch(() => {})
+  }
+
+  function setPalette(value: ThemePalette) {
+    applyThemePalette(value)
+    return writePreference
+      ? writePreference({ palette: palette.value })
+      : preferencesApi.update({ palette: palette.value } as any).catch(() => {})
+  }
+
+  return {
+    preference: computed(() => preference.value),
+    resolved: computed(() => resolved.value),
+    family: computed(() => family.value),
+    palette: computed(() => palette.value),
+    setTheme,
+    setFamily,
+    setPalette,
+  }
+}

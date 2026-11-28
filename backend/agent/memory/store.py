@@ -29,6 +29,8 @@ import logging
 import re
 import secrets
 import time
+from collections.abc import Callable
+from typing import Literal
 
 from app.services.storage import get_storage
 
@@ -212,51 +214,47 @@ def _migrate_md(md: str) -> list[dict]:
     return out
 
 
+def _parse_pattern_list(raw: str) -> list[dict] | None:
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, list):
+        return None
+    return [
+        item for item in data if isinstance(item, dict)
+        and isinstance(item.get("text"), str) and item["text"].strip()
+    ]
+
+
 async def read_pattern_list(user_id) -> list[dict]:
-    """读结构化 pattern。pattern.json 不存在 → 依次找旧 facts.json(2026-07-08 前的名字)、
-    再旧的 facts.md，找到就迁移并写回 pattern.json(一次性)；旧文件保留不删，但不再写。"""
+    """读当前档案，只有确认未创建主文件时才将旧 facts 写回。"""
     pattern_key = _key(user_id, PATTERN_FILE)
     raw = await _read(pattern_key)
-    # 空文件不是合法的 pattern 快照：通常是进程在旧式截断写入期间退出留下的残骸。
-    # 既然目标文件已经存在，就把它视为用户明确的空状态，不再回退读取旧 facts，避免
-    # “清空后下一次读取又复活旧数据”；只写入规范 JSON，不恢复任何历史内容。
-    if not raw.strip():
-        try:
-            storage = get_storage()
-            if await storage.exists(pattern_key):
-                async with _list_write_lock(pattern_key):
-                    current = await storage.get(pattern_key)
-                    if not current.decode("utf-8", errors="replace").strip():
-                        await storage.put(pattern_key, b"[]", "application/json")
-                        vector_key = _key(user_id, PATTERN_VEC_FILE)
-                        if await storage.exists(vector_key):
-                            # pattern 文本已明确重置，旧向量只可能是孤儿缓存，不能再参与检索。
-                            await storage.put(vector_key, b"{}", "application/json")
-                        _log.info("pattern 空文件已规范化为 JSON 空数组 user_fp=%s", hashlib.sha256(str(user_id).encode()).hexdigest()[:8])
-                        return []
-        except Exception as exc:
-            # 保持记忆读取的 best-effort 语义；失败不伪造迁移成功，后续写入仍会重试。
-            _log.warning("pattern 空文件规范化失败 error_type=%s", type(exc).__name__)
-        # 文件不存在时才允许继续走旧 facts 迁移链。
-    if not raw.strip():
-        raw = await _read(_key(user_id, "facts.json"))   # 拆分前的旧名字，一次性兼容
     if raw.strip():
-        try:
-            data = json.loads(raw)
-            if isinstance(data, list):
-                patterns = [item for item in data if isinstance(item, dict) and (item.get("text") or "").strip()]
-                if patterns:
-                    await write_pattern_list(user_id, patterns)   # 落到新文件名，下次直接命中
-                return patterns
-        except Exception:
-            pass
-    md = (await _read(_key(user_id, "facts.md"))).strip()
-    if md:
-        patterns = _migrate_md(md)
-        if patterns:
-            await write_pattern_list(user_id, patterns)
-        return patterns
-    return []
+        return _parse_pattern_list(raw) or []
+
+    try:
+        storage = get_storage()
+        async with _list_write_lock(pattern_key):
+            if await storage.exists(pattern_key):
+                current = (await storage.get(pattern_key)).decode("utf-8", errors="replace")
+                if current.strip():
+                    return _parse_pattern_list(current) or []
+                await storage.put(pattern_key, b"[]", "application/json")
+                vector_key = _key(user_id, PATTERN_VEC_FILE)
+                if await storage.exists(vector_key):
+                    await storage.put(vector_key, b"{}", "application/json")
+                return []
+            previous = _parse_pattern_list(await _read(_key(user_id, "facts.json")))
+            if previous is None:
+                previous = _migrate_md(await _read(_key(user_id, "facts.md")))
+            if previous:
+                await _write(pattern_key, json.dumps(previous, ensure_ascii=False, indent=2))
+            return previous
+    except Exception as exc:
+        _log.warning("读取或迁移 pattern 文件失败 error_type=%s", type(exc).__name__)
+        return []
 
 
 async def write_pattern_list(user_id, patterns: list[dict]) -> None:
@@ -383,6 +381,28 @@ def _normalize_profile_item(item, *, keep_ts: bool) -> dict | None:
     return result
 
 
+class MemoryListConflict(RuntimeError):
+    """档案在提交时连续发生变化。"""
+
+
+async def mutate_owner_memory_list(
+    user_id, target: Literal["profile", "pattern"],
+    edit: Callable[[list[dict]], list[dict]], *, write_unchanged: bool = False,
+) -> tuple[list[dict], list[dict]]:
+    """用最新档案重放增删意图，避免直接写回过时的列表。"""
+    if target == "profile":
+        read, digest, write = read_profile_list, profile_list_digest, write_profile_list_if_unchanged
+    else:
+        read, digest, write = read_pattern_list, pattern_list_digest, write_pattern_list_if_unchanged
+    for _ in range(3):
+        before = await read(user_id)
+        expected = digest(before)
+        after = edit(before)
+        if (not write_unchanged and after == before) or await write(user_id, expected, after):
+            return before, after
+    raise MemoryListConflict("记忆档案正在更新，请稍后重试")
+
+
 def render_profile(profile: list[dict]) -> str:
     """用户画像 → 注入用 markdown。
 
@@ -443,7 +463,7 @@ async def write_pattern_vecs(user_id, vecs: dict) -> None:
 
 
 async def sync_pattern_vecs(
-    user_id, patterns: list[dict], force: bool = False, *, strict: bool = False,
+    user_id, patterns: list[dict], force: bool = False, *, strict: bool = False, require_current: bool = False,
 ) -> int:
     """给 pattern 增量补向量缓存：只 embed 新模式或换模型后的模式，已删模式顺带清掉。
     `force=True`（重建 job 用）→ 无视 tag 全部重算。
@@ -474,7 +494,16 @@ async def sync_pattern_vecs(
                 written += 1
             elif strict:
                 raise RuntimeError("pattern 向量生成失败")
-        if changed:
+        if changed and require_current:
+            key = _key(user_id, PATTERN_FILE)
+            async with _list_write_lock(key):
+                current = _parse_pattern_list(await _read(key))
+                if current is None or pattern_list_digest(current) != pattern_list_digest(patterns):
+                    if strict:
+                        raise MemoryListConflict("模式已更新，暂存向量不能发布")
+                    return 0
+                await write_pattern_vecs(user_id, vecs)
+        elif changed:
             await write_pattern_vecs(user_id, vecs)
         return written
     except Exception:

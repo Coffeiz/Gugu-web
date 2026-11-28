@@ -1,0 +1,211 @@
+import { projectTrashDirectoryKey } from './storage.js'
+import { CoreError } from '@gugu/core'
+import type { Pool, PoolClient } from 'pg'
+import { randomUUID } from 'node:crypto'
+import { createLocalFileTree, localEntryKind, moveLocalEntry, removeLocalTree } from '@gugu/fs/node'
+import { projectFilePath } from '../../files/paths.js'
+import { enqueueScheduledTaskRagRebuild } from '../../scheduled-tasks/store.js'
+
+type ProjectDirectoryRow = { id: number; user_id: string; name: string; start_date: unknown; created_at: unknown }
+
+function directoryKey(project: ProjectDirectoryRow) {
+  return projectFilePath(project.user_id, project.id, project.name, project.start_date, project.created_at)
+}
+
+function stagingKey(owner: string, journalId: string) {
+  if (![owner, journalId].every(value => /^[a-f0-9-]{36}$/u.test(value)))
+    throw new Error('项目清理日志标识无效')
+  return `${owner}/.gugu-project-purge/${journalId}`
+}
+
+export async function hasProjectExpiryJournalSchema(db: Pick<Pool, 'query'>): Promise<boolean> {
+  const result = await db.query<{ ready: boolean }>(
+    "SELECT to_regclass('project_expiry_journals') IS NOT NULL AS ready",
+  )
+  return result.rows[0]?.ready === true
+}
+
+/** 清理一个过期项目；行锁使恢复和多个清理者不会同时处理同一项目。 */
+export async function purgeExpiredProject(pool: Pool, storageRoot: string, cutoff: Date): Promise<boolean> {
+  return purgeDeletedProject(pool, storageRoot, { cutoff })
+}
+
+export async function purgeDeletedProject(pool: Pool, storageRoot: string,
+  target: { cutoff: Date } | { ownerId: string; projectId: number }): Promise<boolean> {
+  const manual = 'ownerId' in target
+  const client = await pool.connect()
+  let staged: { source: string; target: string } | undefined
+  let committed = false
+  let commitAttempted = false
+  let locked = false
+  let journalClient: PoolClient | undefined
+  try {
+    const lock = await client.query<{ acquired: boolean }>("SELECT pg_try_advisory_lock(hashtext('gugu-project-expiry:' || current_schema())) AS acquired")
+    if (!lock.rows[0]?.acquired) {
+      if (manual) throw new CoreError('conflict', '项目清理正在进行，请稍后重试')
+      return false
+    }
+    locked = true
+    // 先预留日志连接，再持有项目行锁；其他请求等待项目时不会耗尽所需连接。
+    journalClient = await pool.connect()
+    await client.query('BEGIN')
+    const result = await client.query<ProjectDirectoryRow>(
+      manual
+        ? `SELECT id,user_id::text,name,start_date,created_at FROM projects WHERE user_id=$1 AND id=$2 AND deleted_at IS NOT NULL FOR UPDATE`
+        : `SELECT id,user_id::text,name,start_date,created_at FROM projects WHERE deleted_at IS NOT NULL AND deleted_at <= $1
+           ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1`,
+      manual ? [target.ownerId, target.projectId] : [target.cutoff],
+    )
+    const project = result.rows[0]
+    if (!project) {
+      await client.query('COMMIT')
+      return false
+    }
+    const { id, user_id: owner } = project
+    const journalId = randomUUID()
+    const active = directoryKey(project)
+    const parked = projectTrashDirectoryKey(owner, id)
+    const hasParked = await localEntryKind(storageRoot, parked)
+    if (hasParked && await localEntryKind(storageRoot, active))
+      throw new CoreError('conflict', '发现两份项目目录，无法安全清理')
+    const source = hasParked ? parked : active
+    const targetPath = stagingKey(owner, journalId)
+    // 独立连接先提交日志；项目行锁持续持有到清理事务结束。
+    await journalClient.query(
+      `INSERT INTO project_expiry_journals(id,user_id,project_id,entries,created_at)
+       VALUES($1,$2,$3,$4::json,CURRENT_TIMESTAMP)`,
+      [journalId, owner, id, JSON.stringify({ source })],
+    )
+    if (await localEntryKind(storageRoot, source)) {
+      if (!await createLocalFileTree(storageRoot, `${owner}/.gugu-project-purge`).ensureRoot()
+        || !await moveLocalEntry(storageRoot, source, targetPath))
+        throw new CoreError('conflict', '项目目录已变化')
+      staged = { source, target: targetPath }
+    }
+    const removedTasks = await client.query<{ id: number }>(
+      `DELETE FROM scheduled_tasks WHERE user_id=$1 AND event_id IN
+       (SELECT id FROM calendar_events WHERE user_id=$1 AND project_id=$2) RETURNING id`, [owner, id],
+    )
+    for (const task of removedTasks.rows) await enqueueScheduledTaskRagRebuild(client, owner, Number(task.id))
+    await client.query('DELETE FROM calendar_events WHERE user_id=$1 AND project_id=$2', [owner, id])
+    await client.query('DELETE FROM projects WHERE user_id=$1 AND id=$2', [owner, id])
+    commitAttempted = true
+    await client.query('COMMIT')
+    committed = true
+    if (staged) await removeLocalTree(storageRoot, staged.target)
+    await journalClient.query('DELETE FROM project_expiry_journals WHERE id=$1', [journalId])
+    return true
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    // 提交连接中断时结果未知，保留暂存文件供后续核对，不能假定回滚成功。
+    if (!committed && !commitAttempted) {
+      if (staged && !await moveLocalEntry(storageRoot, staged.target, staged.source))
+        throw new Error('项目目录恢复失败', { cause: error })
+    }
+    throw error
+  } finally {
+    journalClient?.release()
+    let discard = false
+    if (locked) {
+      try { await client.query("SELECT pg_advisory_unlock(hashtext('gugu-project-expiry:' || current_schema()))") }
+      catch { discard = true }
+    }
+    client.release(discard)
+  }
+}
+
+/** 重启后按数据库中项目和文件的状态恢复；任何路径冲突均保留日志供重试。 */
+export async function recoverProjectExpiryJournal(pool: Pool, storageRoot: string): Promise<boolean | 'busy'> {
+  const client = await pool.connect()
+  let locked = false
+  try {
+    const lock = await client.query<{ acquired: boolean }>("SELECT pg_try_advisory_lock(hashtext('gugu-project-expiry:' || current_schema())) AS acquired")
+    if (!lock.rows[0]?.acquired) return 'busy'
+    locked = true
+    await client.query('BEGIN')
+    const journals = await client.query<{ id: string; user_id: string; project_id: number; entries: { source?: string } }>(
+      `SELECT id,user_id::text,project_id,entries FROM project_expiry_journals
+       ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`,
+    )
+    const journal = journals.rows[0]
+    if (!journal) { await client.query('COMMIT'); return false }
+    const source = journal.entries.source
+    const parked = projectTrashDirectoryKey(journal.user_id, journal.project_id)
+    if (typeof source !== 'string' || (source !== parked && (!source.startsWith(`${journal.user_id}/项目文件/`)
+      || !source.endsWith(` #${journal.project_id}`)))) throw new Error('项目清理日志路径无效')
+    const target = stagingKey(journal.user_id, journal.id)
+    const project = await client.query<ProjectDirectoryRow>(
+      'SELECT id,user_id::text,name,start_date,created_at FROM projects WHERE id=$1 AND user_id=$2 FOR UPDATE',
+      [journal.project_id, journal.user_id],
+    )
+    if (await localEntryKind(storageRoot, target)) {
+      if (project.rows[0]) {
+        if ((source !== parked && directoryKey(project.rows[0]) !== source) || !await moveLocalEntry(storageRoot, target, source))
+          throw new Error('项目目录恢复失败')
+      } else await removeLocalTree(storageRoot, target)
+    }
+    await client.query('DELETE FROM project_expiry_journals WHERE id=$1', [journal.id])
+    await client.query('COMMIT')
+    return true
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    throw error
+  } finally {
+    let discard = false
+    if (locked) {
+      try { await client.query("SELECT pg_advisory_unlock(hashtext('gugu-project-expiry:' || current_schema()))") }
+      catch { discard = true }
+    }
+    client.release(discard)
+  }
+}
+
+export interface ProjectExpiryWorkerOptions {
+  enabled: boolean
+  expire?: boolean
+  pool: Pool
+  storageRoot: string
+  intervalMs?: number
+  retentionMs?: number
+  recoveryRetryMs?: number
+  onError(error: unknown): void
+}
+
+/** 显式启用；停止时等待当前批次完成。部署时确保 Python 清理循环已停用。 */
+export function startProjectExpiryWorker(options: ProjectExpiryWorkerOptions): { stop(): Promise<void> } {
+  if (!options.enabled) return { async stop() {} }
+  const interval = options.intervalMs ?? 3_600_000
+  const retention = options.retentionMs ?? 30 * 86_400_000
+  const recoveryRetry = options.recoveryRetryMs ?? 1000
+  if (!Number.isSafeInteger(interval) || interval < 1 || !Number.isSafeInteger(retention) || retention < 1 || !Number.isSafeInteger(recoveryRetry) || recoveryRetry < 1)
+    throw new RangeError('清理间隔和保留时间必须是正整数毫秒')
+  let stopping = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let resolveWait: (() => void) | undefined
+  const wait = (delay: number) => new Promise<void>(resolve => {
+    resolveWait = resolve
+    timer = setTimeout(resolve, delay)
+    timer.unref()
+  })
+  const recover = async () => {
+    while (!stopping) {
+      const result = await recoverProjectExpiryJournal(options.pool, options.storageRoot)
+      if (result === false) return
+      if (result === 'busy') await wait(recoveryRetry)
+    }
+  }
+  const task = (async () => {
+    try { await recover() } catch (error) { options.onError(error) }
+    while (!stopping) {
+      await wait(interval)
+      if (stopping) break
+      try {
+        await recover()
+        if (options.expire === false) continue
+        const cutoff = new Date(Date.now() - retention)
+        while (!stopping && await purgeExpiredProject(options.pool, options.storageRoot, cutoff)) { /* 逐项清理 */ }
+      } catch (error) { options.onError(error) }
+    }
+  })()
+  return { async stop() { stopping = true; if (timer) clearTimeout(timer); resolveWait?.(); await task } }
+}

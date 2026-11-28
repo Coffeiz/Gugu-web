@@ -43,20 +43,26 @@ async def forget(user_id, arg: str, locale: str | None = None) -> str:
         return command_help("forget", locale)
     if not arg or len(store._pattern_norm(arg)) < 2:
         return "想忘掉哪条呀？比如「/forget 我喜欢猫」。发「/memory」可以先看看我都记得啥。"
-    profile = await store.read_profile_list(user_id)
-    keep_profile = [item for item in profile if not _forget_match(item.get("text", ""), arg)]
-    patterns = await store.read_pattern_list(user_id)
-    keep_patterns = [item for item in patterns if not _forget_match(item.get("text", ""), arg)]
-    removed = (len(profile) - len(keep_profile)) + (len(patterns) - len(keep_patterns))
+    def keep_unmatched(current):
+        return [item for item in current if not _forget_match(item.get("text", ""), arg)]
+
+    removed = 0
+    conflict = False
+    try:
+        profile, keep_profile = await store.mutate_owner_memory_list(user_id, "profile", keep_unmatched)
+        removed += len(profile) - len(keep_profile)
+        patterns, keep_patterns = await store.mutate_owner_memory_list(user_id, "pattern", keep_unmatched)
+        removed += len(patterns) - len(keep_patterns)
+        if len(keep_patterns) != len(patterns):
+            await store.sync_pattern_vecs(user_id, keep_patterns, require_current=True)
+    except store.MemoryListConflict:
+        conflict = True
     if removed == 0:
+        if conflict:
+            return "记忆档案正在更新，请稍后再试。"
         return f"我记忆里没找到和「{arg}」对得上的事，没动哦。发「/memory」看看现有的。"
-    if len(keep_profile) != len(profile):
-        await store.write_profile_list(user_id, keep_profile)
-    if len(keep_patterns) != len(patterns):
-        await store.write_pattern_list(user_id, keep_patterns)
-        # 已删 pattern 的向量缓存靠 sync 的存活集 GC 回收；不主动同步会把
-        # 删除动作拖到下一次新增 pattern 才生效，期间检索仍可能命中幽灵向量。
-        await store.sync_pattern_vecs(user_id, keep_patterns)
     from agent import events
     events.publish(events.types.MemoryUpdated(user_id=user_id, added=0, removed=removed, source="forget"))
+    if conflict:
+        return f"已忘掉和「{arg}」相关的 {removed} 条记忆，另一份档案正在更新，请稍后重试。"
     return f"好，我把和「{arg}」相关的 {removed} 条记忆忘掉了。"

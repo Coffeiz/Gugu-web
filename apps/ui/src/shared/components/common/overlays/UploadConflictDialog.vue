@@ -1,0 +1,196 @@
+<template>
+  <BaseModal :show="open" teleport-to="body" width="480px" background="var(--panel-bg)" @close="cancel">
+    <div class="ucd">
+      <div class="ucd-header">
+        <h2>{{ t('viewerUi.conflictTitle', { count: conflicts.length }) }}</h2>
+        <CloseButton @click="cancel" />
+      </div>
+
+      <div class="ucd-bulk">
+        <span class="ucd-bulk-label">{{ t('viewerUi.all') }}：</span>
+        <button class="ucd-bulk-btn" @click="applyAll('overwrite')">{{ t('viewerUi.overwrite') }}</button>
+        <button class="ucd-bulk-btn" @click="applyAll('keep_both')">{{ t('viewerUi.keepBoth') }}</button>
+        <button class="ucd-bulk-btn" @click="applyAll('skip')">{{ t('viewerUi.skip') }}</button>
+      </div>
+
+      <div class="ucd-list">
+        <div v-for="c in conflicts" :key="c.filename" class="ucd-item">
+          <span class="ucd-name" :title="c.filename">{{ c.filename }}</span>
+          <div class="ucd-choices">
+            <label v-if="c.canOverwrite !== false" class="ucd-radio" :class="{ active: choices[c.filename] === 'overwrite' }">
+              <input type="radio" :name="c.filename" value="overwrite" v-model="choices[c.filename]" />{{ t('viewerUi.overwrite') }}
+            </label>
+            <label class="ucd-radio" :class="{ active: choices[c.filename] === 'keep_both' }">
+              <input type="radio" :name="c.filename" value="keep_both" v-model="choices[c.filename]" />{{ t('viewerUi.keepBoth') }}
+            </label>
+            <label class="ucd-radio" :class="{ active: choices[c.filename] === 'skip' }">
+              <input type="radio" :name="c.filename" value="skip" v-model="choices[c.filename]" />{{ t('viewerUi.skip') }}
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="ucd-footer app-card-actions">
+        <button class="btn-cancel" @click="cancel">{{ t('viewerUi.cancelUpload') }}</button>
+        <button class="btn-confirm" @click="confirm">{{ t('common.actions.confirm') }}</button>
+      </div>
+    </div>
+  </BaseModal>
+</template>
+
+<script setup lang="ts">
+import { ref, onBeforeUnmount } from 'vue'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
+export interface ConflictItem {
+  filename: string
+  canOverwrite?: boolean
+}
+export interface ConflictDecision {
+  action: 'overwrite' | 'keep_both' | 'skip'
+}
+
+const open = ref(false)
+const conflicts = ref<ConflictItem[]>([])
+const choices = ref<Record<string, ConflictDecision['action']>>(Object.create(null))
+let _resolve: ((m: Map<string, ConflictDecision>) => void) | null = null
+
+// 有冲突时弹出列表式确认，返回一个 Promise：resolve 出每个文件名 -> 决定（覆盖/保留两者/跳过）。
+// 没有冲突的文件不会经过这个弹窗，宿主直接按 keep_both 处理即可。
+function show(list: ConflictItem[]): Promise<Map<string, ConflictDecision>> {
+  if (_resolve) cancel()
+  conflicts.value = list
+  choices.value = Object.create(null)
+  for (const c of list) choices.value[c.filename] = 'keep_both'
+  open.value = true
+  return new Promise(resolve => { _resolve = resolve })
+}
+
+function applyAll(action: ConflictDecision['action']) {
+  for (const c of conflicts.value) {
+    if (action !== 'overwrite' || c.canOverwrite !== false) choices.value[c.filename] = action
+  }
+}
+
+function _buildMap(): Map<string, ConflictDecision> {
+  return new Map(conflicts.value.map(c => [
+    c.filename,
+    { action: choices.value[c.filename] },
+  ]))
+}
+
+async function confirm() {
+  const resolve = _resolve
+  if (!resolve) return
+  const decisions = _buildMap()
+  const overwrites = conflicts.value.filter(item =>
+    item.canOverwrite === true && decisions.get(item.filename)?.action === 'overwrite')
+  open.value = false
+  _resolve = null
+  if (overwrites.length && !await confirmDialog({
+    title: t('filesUi.overwriteTitle'),
+    message: t('filesUi.overwriteMessage', { count: overwrites.length }),
+    tone: 'danger',
+    confirmText: t('viewerUi.overwrite'),
+  })) {
+    for (const item of overwrites) decisions.set(item.filename, { action: 'skip' })
+  }
+  resolve(decisions)
+}
+
+function cancel() {
+  open.value = false
+  // 取消 = 这批冲突文件全部跳过，不上传（不影响本来就没冲突的其它文件）
+  _resolve?.(new Map(conflicts.value.map(c => [c.filename, { action: 'skip' as const }])))
+  _resolve = null
+}
+
+onBeforeUnmount(cancel)
+defineExpose({ show })
+</script>
+
+<style scoped>
+.ucd { display: flex; flex-direction: column; max-height: 70vh; }
+
+.ucd-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 24px 14px;
+  border-bottom: 1px solid var(--panel-divider);
+  flex-shrink: 0;
+}
+.ucd-header h2 { font-size: 15px; font-weight: 700; }
+
+
+.ucd-bulk {
+  display: flex; align-items: center; gap: 6px;
+  padding: 12px 24px; flex-shrink: 0;
+  border-bottom: 1px solid var(--panel-divider);
+}
+.ucd-bulk-label { font-size: 11px; color: var(--text-secondary); margin-right: 2px; }
+.ucd-bulk-btn {
+  padding: 4px 10px; border-radius: 20px;
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
+  font-size: 11px; color: var(--text-secondary);
+  cursor: pointer; font-family: var(--font-sans);
+  transition: all 0.15s;
+}
+.ucd-bulk-btn:hover { background: var(--action-soft-hover); color: var(--action-primary); border-color: var(--action-outline); }
+
+.ucd-list {
+  flex: 1; overflow-y: auto;
+  padding: 10px 24px; display: flex; flex-direction: column; gap: 6px;
+}
+.ucd-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 10px; border-radius: 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+}
+.ucd-name {
+  flex: 1; min-width: 0; font-size: 12px; font-weight: 500; color: var(--text-primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ucd-choices { display: flex; gap: 4px; flex-shrink: 0; }
+.ucd-radio {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 8px;
+  font-size: 11px; color: var(--text-secondary);
+  cursor: pointer; user-select: none;
+  border: 1px solid transparent;
+  transition: all 0.12s;
+}
+.ucd-radio input { width: 11px; height: 11px; accent-color: var(--action-primary); }
+.ucd-radio.active { background: var(--action-soft); color: var(--action-primary); border-color: var(--action-outline); }
+
+.ucd-footer {
+  display: flex; justify-content: flex-end; gap: 10px;
+
+
+
+}
+.btn-cancel {
+  padding: 8px 18px; border-radius: var(--radius-xs);
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
+  font-size: 13px; color: var(--text-secondary);
+  cursor: pointer; font-family: var(--font-sans);
+  transition: all 0.15s;
+}
+.btn-cancel:hover { background: var(--control-bg-hover); color: var(--content-primary); }
+.btn-confirm {
+  padding: 8px 22px; border-radius: var(--radius-xs);
+  background: var(--action-primary-bg);
+  border: none; color: var(--content-on-accent);
+  font-size: 13px; font-weight: 600;
+  cursor: pointer; font-family: var(--font-sans);
+  box-shadow: none;
+  transition: background-color 0.15s;
+}
+.btn-confirm:hover { background: var(--action-primary-bg-hover); opacity: 1; }
+</style>

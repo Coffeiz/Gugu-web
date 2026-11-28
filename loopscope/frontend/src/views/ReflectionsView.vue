@@ -107,7 +107,18 @@ let stopEvents: (() => void) | null = null
 
 function probe(run: TraceRun): Probe {
   const value = run.attributes?.reflection_cache_probe
-  return value && typeof value === 'object' ? value as Probe : {}
+  if (value && typeof value === 'object') return value as Probe
+  const attrs = run.attributes
+  const usage = run.usage
+  const input = number(usage?.input)
+  const cached = number(usage?.cache_read)
+  return {
+    reflection_scope: attrs?.reflection_scope, trigger_source: attrs?.trigger_source,
+    origin_run_id: attrs?.origin_run_id, input_tokens: input, cache_read_tokens: cached,
+    cache_write_tokens: number(usage?.cache_write), cache_hit_ratio: input ? cached / input : 0,
+    request_duration_ms: run.duration_ms,
+    request_outcome: run.status === 'success' ? 'success' : run.status,
+  }
 }
 function wire(run: TraceRun): Probe {
   const value = probe(run).wire_prefix

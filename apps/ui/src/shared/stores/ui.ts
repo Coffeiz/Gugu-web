@@ -1,0 +1,208 @@
+import { defineStore } from 'pinia'
+import type { FileLibraryNavigationTarget } from '@/utils/filesNav'
+import type { PathFileRef } from '@/services/api'
+import { ref, computed } from 'vue'
+import { playGuguSfx } from '@/services/sfx'
+
+// 导航栏通知中心的持久条目（time 在前端归一成 Date）
+interface NotifItem {
+  id: number | null
+  title?: string
+  content?: string
+  meta?: string
+  color?: string
+  unread: boolean
+  time: Date
+}
+// SSE / 后端下发的原始通知载荷（字段多为可选，前端按需取用）
+interface NotifInput {
+  id?: number | null
+  title?: string
+  content?: string
+  color?: string
+  persist?: boolean
+  bubble?: boolean
+  time?: string | number | Date
+  [k: string]: unknown
+}
+// 气泡（toast）信号
+interface LiveNotif {
+  seq: number
+  id?: number | null
+  title?: string
+  content?: string
+}
+
+export const useUiStore = defineStore('ui', () => {
+  const openNewProject = ref(false)
+  const newProjectInitStatus = ref(null)
+  const sidebarCollapsed = ref(false)
+  const newProjectRange = ref<{ start: string; end: string } | null>(null)
+  const calendarActiveRange = ref<{ start: string; end: string } | null>(null)
+  const openProfile = ref(false)
+  const profileInitialNav = ref<string | null>(null)
+  const pendingChatNavigation = ref<{ requestId: number; sessionId: number; messageId: number | null } | null>(null)
+  let chatNavigationSequence = 0
+  const pendingChatPrefill   = ref<string | null>(null)
+  const pendingFileTarget    = ref<FileLibraryNavigationTarget | null>(null)
+  const workspaceUploadTarget = ref<PathFileRef | null>(null)
+  const pendingCalendarEvent = ref<{ id: number; date?: string } | null>(null)   // { id, date } 日程搜索跳转
+  const pendingNoteId = ref<number | null>(null)   // 思维笔记搜索跳转后打开对应便签的编辑态
+  const pendingCanvasTarget = ref<{ canvasId: number; nodeId: number } | null>(null)
+  const pendingCalendarDate  = ref<string | null>(null)   // 仪表盘小日历点某天 → 跳日历定位到该日（不高亮具体活动）
+  const pendingProjectHighlight = ref<number | null>(null)   // 项目搜索跳转后高亮项目卡（不打开编辑弹窗）
+  const pendingProjectHighlightMs = ref<number | null>(null) // 高亮时长(ms)：缺省 1800；新手引导用 5000（设 id 前先设它）
+
+  function beginChatNavigation() {
+    const requestId = ++chatNavigationSequence
+    pendingChatNavigation.value = null
+    return requestId
+  }
+
+  function publishChatNavigation(requestId: number, sessionId: number, messageId: number | null) {
+    if (requestId !== chatNavigationSequence) return false
+    pendingChatNavigation.value = { requestId, sessionId, messageId }
+    return true
+  }
+
+  function requestChatNavigation(sessionId: number, messageId: number | null) {
+    const requestId = beginChatNavigation()
+    publishChatNavigation(requestId, sessionId, messageId)
+    return requestId
+  }
+
+  function isCurrentChatNavigation(requestId: number) {
+    return requestId === chatNavigationSequence
+  }
+
+  function clearChatNavigation(requestId: number) {
+    if (!isCurrentChatNavigation(requestId) || pendingChatNavigation.value?.requestId !== requestId) return false
+    pendingChatNavigation.value = null
+    return true
+  }
+
+  function cancelChatNavigation() {
+    chatNavigationSequence += 1
+    pendingChatNavigation.value = null
+  }
+
+  // 通知气泡锚点：距视口底部的 px。GuguChat 按小窗/播放器是否展开实时更新，
+  // 让通知气泡始终浮在「聊天窗/音乐播放器」上方而不重叠。
+  const chatNotifyAnchor = ref(90)
+  // 通知气泡开合的缩放原点：直接浮在球上方时以咕咕球圆心缩放；被小窗/播放器顶高时从自身中心缩放
+  // （与音乐播放器一致）。由 GuguChat 实时计算写入。
+  const chatNotifyOrigin = ref('calc(100% - 25px) calc(100% + 37px)')
+
+  // ── 通知 ────────────────────────────────────────────────
+  // 导航栏通知中心：持久态（后端拉 + 实时追加），未读/已读落库，关浏览器重开还在。
+  const notifications = ref<NotifItem[]>([])
+  const notifCount = computed(() => notifications.value.filter(n => n.unread).length)
+  // 气泡（toast）专用信号：置位即弹。实时到达 + 上线补弹最近一条都走它。
+  const liveNotification = ref<LiveNotif | null>(null)
+  let _liveSeq = 0
+  const _BUBBLE_SEEN_KEY = 'gugu_last_bubble_id'   // 本设备已弹过的最大气泡 id（"只弹一次"）
+  function _markBubbleSeen(id: number | null | undefined) {
+    if (id != null) { try { localStorage.setItem(_BUBBLE_SEEN_KEY, String(id)) } catch {} }
+  }
+
+  // 登录后拉一次（含离线漏掉的）；DefaultLayout onMounted 调
+  async function fetchNotifications() {
+    try {
+      const { notificationsApi } = await import('@/services/api')
+      const list = await notificationsApi.list() as NotifInput[]
+      notifications.value = list.map((n): NotifItem => ({
+        id: n.id ?? null, title: n.title, content: n.content, color: n.color,
+        unread: n.unread !== false, time: n.time ? new Date(n.time) : new Date(),
+      }))
+    } catch { /* 后端未就绪等：静默 */ }
+  }
+
+  // 实时 SSE 到达：按发布方选择的渠道分流——
+  // persist=true 进持久列表（导航栏，落库可追踪）；bubble=true 弹气泡（toast，转瞬）。两者独立。
+  // 缺省都为 true（兼容旧 payload）。
+  function pushNotification(n: NotifInput) {
+    const persist = n.persist !== false
+    const bubble  = n.bubble  !== false
+    if (persist) {
+      const item: NotifItem = {
+        id: n.id ?? null, title: n.title, content: n.content,
+        color: n.color || '#7b7fb2', unread: true, time: new Date(),
+      }
+      if (item.id == null || !notifications.value.some(x => x.id === item.id)) {
+        notifications.value.unshift(item)
+      }
+    }
+    if (bubble) {
+      liveNotification.value = { seq: ++_liveSeq, id: n.id ?? null, title: n.title, content: n.content }
+      playGuguSfx('notification')
+      _markBubbleSeen(n.id)   // 实时弹过的，下次上线别再补弹
+    }
+  }
+
+  // 上线补弹：拉最近一条有效气泡，比本设备记录新才弹一次（过期的后端已过滤）
+  async function checkLoginBubble() {
+    try {
+      const { notificationsApi } = await import('@/services/api')
+      const { bubble } = await notificationsApi.latestBubble()
+      if (!bubble || bubble.id == null) return
+      const last = Number(localStorage.getItem(_BUBBLE_SEEN_KEY) || 0)
+      if (bubble.id > last) {
+        liveNotification.value = { seq: ++_liveSeq, id: bubble.id, title: bubble.title, content: bubble.content }
+        playGuguSfx('notification')
+        _markBubbleSeen(bubble.id)
+      }
+    } catch { /* 静默 */ }
+  }
+
+  function resetAccountState() {
+    notifications.value = []
+    liveNotification.value = null
+    _liveSeq = 0
+    // pending 导航信号属于当前账号；登录/登出边界必须一起失效，避免旧页面的
+    // 延迟监听在新账号页面挂载后误消费，或覆盖新账号自己的高光请求。
+    cancelChatNavigation()
+    pendingChatPrefill.value = null
+    pendingFileTarget.value = null
+    workspaceUploadTarget.value = null
+    pendingCalendarEvent.value = null
+    pendingNoteId.value = null
+    pendingCanvasTarget.value = null
+    pendingCalendarDate.value = null
+    pendingProjectHighlight.value = null
+    pendingProjectHighlightMs.value = null
+    profileInitialNav.value = null
+  }
+
+  async function _persistRead(ids: number[] | null) {
+    try {
+      const { notificationsApi } = await import('@/services/api')
+      await notificationsApi.markRead(ids)
+    } catch { /* 落库失败不影响本地态 */ }
+  }
+  function markAllRead() {
+    notifications.value.forEach(n => { n.unread = false })
+    _persistRead(null)   // 全部已读
+  }
+  function markRead(id: number) {
+    const n = notifications.value.find(x => x.id === id)
+    if (n) n.unread = false
+    if (id != null) _persistRead([id])
+  }
+  async function clearNotifications() {
+    const { notificationsApi } = await import('@/services/api')
+    await notificationsApi.clear()
+    notifications.value = []
+  }
+
+  return {
+    notifCount, notifications, liveNotification, fetchNotifications, checkLoginBubble,
+    pushNotification, markAllRead, markRead, clearNotifications, resetAccountState,
+    openNewProject, newProjectInitStatus, openProfile, profileInitialNav, sidebarCollapsed, newProjectRange,
+    calendarActiveRange, pendingChatNavigation, beginChatNavigation, publishChatNavigation,
+    requestChatNavigation, isCurrentChatNavigation, clearChatNavigation, cancelChatNavigation,
+    pendingChatPrefill, pendingFileTarget, workspaceUploadTarget, chatNotifyAnchor, chatNotifyOrigin,
+    pendingCalendarEvent, pendingCalendarDate, pendingProjectHighlight, pendingProjectHighlightMs,
+    pendingNoteId,
+    pendingCanvasTarget,
+  }
+})

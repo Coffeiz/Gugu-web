@@ -1,0 +1,300 @@
+<template>
+  <BaseModal :show="show" width="480px" background="var(--panel-bg)" @close="$emit('close')">
+    <div class="ap-modal">
+      <div class="ap-header">
+        <div class="ap-heading">
+          <span class="ap-title">{{ title }}</span>
+          <span v-if="isDeleted" class="ap-retention">{{ t('projectsDeleted.deletedRetention') }}</span>
+        </div>
+        <CloseButton @click="$emit('close')" />
+      </div>
+
+      <div ref="layoutRoot" class="ap-body">
+        <!-- 只有真·首次（还没任何缓存数据）才显示加载态；已有数据后台静默刷新不再闪这个 -->
+        <div v-if="loading && !loaded" class="ap-empty">{{ t('common.status.loading') }}</div>
+        <div v-else-if="!collection.length" class="ap-empty">{{ emptyText }}</div>
+
+        <template v-else>
+          <!-- 年目录（同「已完成」列的年/月折叠约定）-->
+          <div v-for="yg in groupedByYear" :key="yg.year" class="year-group">
+            <button class="year-row" @click="toggleYear(yg.year)">
+              <FlipChevron :open="openYears.has(yg.year)" />
+              <span class="year-label">{{ yg.year }}</span>
+              <span class="year-cnt">{{ yg.total }}</span>
+            </button>
+
+            <div class="year-body" data-layout-guide data-layout-content :data-layout-key="`year-${yg.year}`" :data-layout-open="openYears.has(yg.year) ? 'true' : 'false'">
+              <div v-for="mg in yg.months" :key="mg.month" class="month-group">
+                <button class="month-row" @click="toggleMonth(yg.year + mg.month)">
+                  <Icon name="file.folder-open" v-if="openMonths.has(yg.year + mg.month)" :size="13" style="color:var(--color-primary); opacity:0.85; flex-shrink:0" />
+                  <Icon name="file.folder" v-else :size="13" style="flex-shrink:0; opacity:0.6" />
+                  <span class="month-name">{{ mg.month }}</span>
+                  <span class="month-cnt">{{ mg.items.length }}</span>
+                  <FlipChevron :open="openMonths.has(yg.year + mg.month)" :size="8" />
+                </button>
+
+                <div class="ap-list" data-layout-content :data-layout-key="yg.year + mg.month" :data-layout-open="openMonths.has(yg.year + mg.month) ? 'true' : 'false'">
+                  <div v-for="p in mg.items" :key="p.id" class="ap-row">
+                    <span class="ap-dot" :style="{ backgroundColor: extractProjectAccent(p.color) }"></span>
+                    <div class="ap-info">
+                      <div class="ap-name">{{ p.name }}</div>
+                      <div class="ap-sub">
+                        <template v-if="isDeleted">{{ t('projectsDeleted.deletedAt', { date: formatDate(p.deletedAt) }) }}</template>
+                        <template v-else>{{ p.client || t('projects.noClient') }} · {{ statusLabel(p.status) }}</template>
+                      </div>
+                    </div>
+                    <div class="ap-actions">
+                      <ActionButton class="ap-action" variant="secondary" fit :disabled="restoringId !== null || purgingId !== null" @click="restore(p.id)">
+                        {{ restoringId === p.id ? t('projects.restoring') : restoreLabel }}
+                      </ActionButton>
+                      <ActionButton v-if="isDeleted && projectStore.canPurgeDeletedProject" class="ap-action" variant="danger" fit
+                        :disabled="restoringId !== null || purgingId !== null" @click="purge(p)">
+                        {{ t('projectsDeleted.purge') }}
+                      </ActionButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </BaseModal>
+</template>
+
+<script setup lang="ts">
+import { computed, nextTick, ref, watch } from 'vue'
+import { extractProjectAccent } from '@/utils/projectColors'
+import CloseButton from '@/components/common/overlays/CloseButton.vue'
+import Icon from '@/components/common/icons/Icon.vue'
+import ActionButton from '@/components/common/controls/ActionButton.vue'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import { getAccountBoundaryEpoch } from '@/utils/accountBoundary'
+import FlipChevron from '@/components/common/controls/FlipChevron.vue'
+import BaseModal from '@/components/common/overlays/BaseModal.vue'
+import { runtime } from '@/interaction/runtime'
+import { useProjectStore } from '@/stores/projects'
+import { showAppError } from '@/composables/core/useAppToast'
+import type { Project } from '@/types/project'
+import { naturalCompare } from '@/utils/textSort'
+import { useI18n } from 'vue-i18n'
+
+const props = defineProps({
+  show: { type: Boolean, default: false },
+  mode: { type: String, default: 'archived' },
+})
+const emit = defineEmits(['close'])
+
+const projectStore = useProjectStore()
+const { t } = useI18n()
+const restoringId = ref<number | null>(null)
+const purgingId = ref<number | null>(null)
+const layoutRoot = ref<HTMLElement | null>(null)
+const isDeleted = computed(() => props.mode === 'deleted')
+const title = computed(() => t(isDeleted.value ? 'projectsDeleted.deleted' : 'projects.archived'))
+const emptyText = computed(() => t(isDeleted.value ? 'projectsDeleted.noDeleted' : 'projects.noArchived'))
+const restoreLabel = computed(() => t(isDeleted.value ? 'projectsDeleted.restoreDeleted' : 'projects.cancelArchive'))
+const collection = computed(() => isDeleted.value ? projectStore.deletedProjects : projectStore.archivedProjects)
+const loading = computed(() => isDeleted.value ? projectStore.deletedLoading : projectStore.archivedLoading)
+const loaded = computed(() => isDeleted.value ? projectStore.deletedLoaded : projectStore.archivedLoaded)
+
+const STATUS_KEYS: Record<string, string> = { pending: 'projects.notStarted', active: 'projects.inProgress', done: 'projects.done' }
+function statusLabel(status: string) { return t(STATUS_KEYS[status] ?? status) }
+
+// 没有专门的「归档时间」字段，用 updatedAt（归档这个 PATCH 本身会刷新它）当分组依据
+const openYears  = ref(new Set<string>())
+const openMonths = ref(new Set<string>())
+const defaultsInitialized = ref(false)
+
+// BaseModal 的 slot 会在关闭过渡期间卸载；先由 Runtime 取消该根节点下的
+// RAF/FLIP/height 动画，避免关闭归档弹窗后旧回调在下一次拖拽时补写样式。
+watch(() => props.show, show => {
+  if (!show && layoutRoot.value) runtime.cancelLayoutAnimations(layoutRoot.value)
+})
+
+const groupedByYear = computed(() => {
+  const yearMap = new Map<string, Map<string, Project[]>>()
+  for (const p of collection.value) {
+    const src = isDeleted.value ? (p.deletedAt || p.updatedAt || p.createdAt) : (p.updatedAt || p.createdAt)
+    const d = src ? new Date(src) : new Date()
+    const y = String(d.getFullYear())
+    const m = String(d.getMonth() + 1).padStart(2, '0') + '月'
+    if (!yearMap.has(y)) yearMap.set(y, new Map())
+    const mMap = yearMap.get(y)!
+    if (!mMap.has(m)) mMap.set(m, [])
+    mMap.get(m)!.push(p)
+  }
+  const years = [...yearMap.entries()]
+    .sort(([a], [b]) => naturalCompare(b, a))
+    .map(([year, mMap]) => ({
+      year,
+      total: [...mMap.values()].reduce((s, arr) => s + arr.length, 0),
+      months: [...mMap.entries()]
+        .sort(([a], [b]) => naturalCompare(b, a))
+        .map(([month, items]) => ({ month, items })),
+    }))
+  return years
+})
+
+// 默认状态只能初始化一次，不能放在 groupedByYear computed 内；否则用户把
+// 最后一个年组收起后，computed 再求值会把它自动设回展开，表现为“只能收起、不能展开”。
+watch(groupedByYear, years => {
+  if (defaultsInitialized.value || years.length === 0) return
+  defaultsInitialized.value = true
+  openYears.value = new Set([years[0].year])
+  if (years[0].months.length) {
+    openMonths.value = new Set([years[0].year + years[0].months[0].month])
+  }
+}, { immediate: true })
+
+function toggleYearState(y: string) {
+  const next = new Set(openYears.value)
+  next.has(y) ? next.delete(y) : next.add(y)
+  openYears.value = next
+}
+function toggleMonthState(key: string) {
+  const next = new Set(openMonths.value)
+  next.has(key) ? next.delete(key) : next.add(key)
+  openMonths.value = next
+}
+
+async function runGroupToggle(key: string, opening: boolean, mutate: () => void) {
+  const root = layoutRoot.value
+  const content = root?.querySelector<HTMLElement>(`[data-layout-key="${CSS.escape(key)}"]`)
+  if (!root || !content) {
+    mutate()
+    return
+  }
+  await runtime.runGroupToggle({
+    root,
+    content,
+    opening,
+    mutate,
+    waitForLayout: nextTick,
+    duration: 250,
+    easing: 'cubic-bezier(.22,1,.36,1)',
+  })
+}
+
+function toggleYear(y: string) {
+  void runGroupToggle(`year-${y}`, !openYears.value.has(y), () => toggleYearState(y))
+}
+function toggleMonth(key: string) {
+  void runGroupToggle(key, !openMonths.value.has(key), () => toggleMonthState(key))
+}
+
+async function restore(id: number) {
+  restoringId.value = id
+  try {
+    if (isDeleted.value) await projectStore.restoreDeletedProject(id)
+    else await projectStore.unarchiveProject(id)
+  } catch (error) {
+    showAppError(error instanceof Error ? error.message : String(error))
+  } finally {
+    restoringId.value = null
+  }
+}
+
+async function purge(project: Project) {
+  if (purgingId.value !== null || restoringId.value !== null) return
+  const epoch = getAccountBoundaryEpoch()
+  purgingId.value = project.id
+  try {
+    const confirmed = await confirmDialog({
+      title: t('projectsDeleted.purge'),
+      message: t(projectStore.storesProjectsLocally ? 'projectsDeleted.purgeLocalMessage' : 'projectsDeleted.purgeMessage', { name: project.name }),
+      tone: 'danger',
+      confirmText: t('projectsDeleted.purge'),
+    })
+    if (confirmed && epoch === getAccountBoundaryEpoch()) await projectStore.purgeDeletedProject(project.id)
+  } catch (error) {
+    if (epoch === getAccountBoundaryEpoch()) showAppError(error instanceof Error ? error.message : String(error))
+  } finally {
+    purgingId.value = null
+  }
+}
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return t('projectsDeleted.unknownDate')
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? t('projectsDeleted.unknownDate') : date.toLocaleDateString()
+}
+</script>
+
+<style scoped>
+.ap-actions { display: flex; gap: var(--space-xs); align-items: center; flex: none; }
+.ap-modal { display: flex; flex-direction: column; max-height: 70vh; }
+.ap-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-lg); border-bottom: 1px solid var(--content-divider); flex-shrink: 0;
+}
+.ap-heading { display:flex; align-items:baseline; gap:8px; min-width:0; }
+.ap-title { font-size: 15px; font-weight: 700; color: var(--content-primary); }
+.ap-retention { font-size:11px; color:var(--content-tertiary); }
+
+.ap-body {
+  --ap-year-chevron-center: 10px;
+  --ap-year-content-indent: 20px;
+  flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 16px;
+}
+.ap-empty { padding: 32px 0; text-align: center; color: var(--content-secondary); font-size: 13px; }
+
+/* ── 年目录（同「已完成」列约定）── */
+.year-group { margin-bottom: 4px; }
+.year-row {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 4px 6px;
+  border: none; background: none;
+  border-radius: 6px; cursor: pointer;
+  font-family: var(--font-sans); text-align: left;
+  transition: background 0.12s;
+}
+.year-row:hover { background: var(--surface-soft-hover); }
+.year-label { font-size: 12px; font-weight: 700; color: var(--content-primary); flex: 1; letter-spacing: 0.03em; }
+.year-cnt { font-size: 10px; color: var(--content-tertiary); }
+.year-body {
+  --tree-guide-anchor: var(--ap-year-chevron-center);
+  position: relative;
+  padding: 0 0 0 var(--ap-year-content-indent);
+  margin-top: 1px;
+  min-height: 0; overflow: hidden;
+}
+/* ── 月目录 ── */
+.month-group { margin-bottom: 0; }
+.month-row {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 4px 8px; border-radius: 7px;
+  border: none; background: none; cursor: pointer;
+  font-family: var(--font-sans); text-align: left;
+  transition: background 0.12s;
+}
+.month-row:hover { background: var(--surface-soft-hover); }
+.month-name { font-size: 11px; font-weight: 500; color: var(--content-secondary); flex: 1; }
+.month-cnt { font-size: 10px; color: var(--content-tertiary); }
+/* ── 项目行 ── */
+.ap-list { display: flex; flex-direction: column; gap: 4px; padding: 0 0 0 4px; box-sizing: border-box; min-height: 0; overflow: hidden; }
+.year-body[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height: 0; overflow: hidden; }
+.ap-list[data-layout-open="false"]:not([data-runtime-group-animating="true"]) {
+  height: 0;
+  overflow: hidden;
+}
+.ap-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 10px; transition: background 0.12s;
+}
+.ap-row:hover { background: var(--surface-soft-hover); }
+.ap-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.ap-info { flex: 1; min-width: 0; }
+.ap-name {
+  font-size: 13px; font-weight: 600; color: var(--content-primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ap-sub { font-size: 11px; color: var(--content-secondary); margin-top: 1px; }
+.ap-actions .ap-action {
+  min-height: 26px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+</style>

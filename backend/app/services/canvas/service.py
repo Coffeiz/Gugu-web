@@ -30,33 +30,38 @@ def relation_anchor_from_canvas(canvas, relation_id):
     return {"source_side": src_side, "target_side": dst_side}
 
 
-def _detached_relation_ids(canvas) -> set[int]:
+def _canvas_data(raw: str) -> dict:
     try:
-        data = json.loads(canvas.data_json or "{}")
+        data = json.loads(raw or "{}")
     except (TypeError, json.JSONDecodeError):
-        return set()
-    raw_ids = data.get("detachedRelationIds") if isinstance(data, dict) else None
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _detached_relation_ids(canvas) -> set[int]:
+    raw_ids = _canvas_data(canvas.data_json).get("detachedRelationIds")
     if not isinstance(raw_ids, list):
         return set()
     return {value for value in raw_ids if isinstance(value, int) and not isinstance(value, bool)}
 
 
 def _set_detached_relation_ids(canvas, relation_ids: set[int]) -> None:
-    try:
-        data = json.loads(canvas.data_json or "{}")
-    except (TypeError, json.JSONDecodeError):
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
+    data = _canvas_data(canvas.data_json)
     data["detachedRelationIds"] = sorted(relation_ids)
     canvas.data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
+def _reattach_canvas_relation(canvas, relation_id: int) -> None:
+    detached = _detached_relation_ids(canvas)
+    if relation_id in detached:
+        _set_detached_relation_ids(canvas, detached - {relation_id})
 
 
 async def update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side, *, commit=False):
     """更新指定画布上的关系端点，保留画布 data_json 的其它视图状态。"""
     if source_side not in _RELATION_SIDES or target_side not in _RELATION_SIDES:
         raise ValueError("连接点只能是 left 或 right")
-    canvas = await get_owned_canvas(db, user_id, canvas_id)
+    canvas = await get_owned_canvas(db, user_id, canvas_id, for_update=True)
     if canvas is None:
         return None
     node_ids = (await db.execute(select(MindCanvasItem.node_id).where(
@@ -101,13 +106,16 @@ async def create_canvas(db, user_id, title, project_id=None, *, commit=False):
 
 async def update_canvas(db, user_id, canvas_id, fields, *, commit=False):
     """更新画布自身的标题/视图数据，默认只 flush。"""
-    canvas = await get_owned_canvas(db, user_id, canvas_id)
+    canvas = await get_owned_canvas(db, user_id, canvas_id, for_update=True)
     if canvas is None:
         return None
     if "title" in fields:
         canvas.title = fields["title"]
     if "data_json" in fields:
+        detached = _detached_relation_ids(canvas)
         canvas.data_json = fields["data_json"]
+        if detached or "detachedRelationIds" in _canvas_data(canvas.data_json):
+            _set_detached_relation_ids(canvas, detached)
     if commit:
         await db.commit()
     else:
@@ -274,8 +282,9 @@ async def update_canvas_item(db, user_id, canvas_id, item_id, fields, *, commit=
 
 
 async def remove_canvas_item(db, user_id, canvas_id, item_id, *, commit=False):
+    canvas = await get_owned_canvas(db, user_id, canvas_id, for_update=True)
     item = await get_canvas_item(db, user_id, canvas_id, item_id)
-    if item is None:
+    if canvas is None or item is None:
         return None
     node_id = item.node_id
     relation_ids = (await db.execute(select(MindRelation.id).where(
@@ -283,8 +292,7 @@ async def remove_canvas_item(db, user_id, canvas_id, item_id, *, commit=False):
         MindRelation.canvas_id == canvas_id,
         or_(MindRelation.src_node_id == node_id, MindRelation.dst_node_id == node_id),
     ))).scalars().all()
-    canvas = await get_owned_canvas(db, user_id, canvas_id)
-    if canvas is not None and relation_ids:
+    if relation_ids:
         _set_detached_relation_ids(canvas, _detached_relation_ids(canvas) | set(relation_ids))
     item.deleted_at = now_utc()
     item.updated_at = now_utc()
@@ -316,6 +324,9 @@ async def delete_canvas_note(db, user_id, node_id, version, *, commit=False):
 
 
 async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="related", *, commit=False):
+    canvas = await get_owned_canvas(db, user_id, canvas_id, for_update=True)
+    if canvas is None:
+        return None, "画布不存在"
     items = (await db.execute(select(MindCanvasItem).where(
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.user_id == user_id,
@@ -336,6 +347,7 @@ async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="
         relation = await upsert_relation(db, user_id, source_id, target_id, rel_type=rel_type, canvas_id=canvas_id)
     except ValueError as exc:
         return None, str(exc)
+    _reattach_canvas_relation(canvas, relation.id)
     if commit:
         await db.commit()
     else:
@@ -352,7 +364,8 @@ async def create_relation(
         return None, "需要提供画布"
     if source_id == target_id:
         return None, "节点不能连向自己"
-    if await get_owned_canvas(db, user_id, canvas_id) is None:
+    canvas = await get_owned_canvas(db, user_id, canvas_id, for_update=True)
+    if canvas is None:
         return None, "画布不存在"
     canvas_node_ids = set((await db.execute(select(MindCanvasItem.node_id).where(
         MindCanvasItem.canvas_id == canvas_id,
@@ -376,6 +389,7 @@ async def create_relation(
         )
     except ValueError as exc:
         return None, str(exc)
+    _reattach_canvas_relation(canvas, relation.id)
     if commit:
         await db.commit()
     else:
@@ -422,10 +436,13 @@ async def get_or_create_reference(db, user_id, ref_type, ref_id):
     return await get_or_create_reference_node(db, user_id, ref_type, ref_id)
 
 
-async def get_owned_canvas(db, user_id, canvas_id):
-    return await db.scalar(select(MindMap).where(
+async def get_owned_canvas(db, user_id, canvas_id, *, for_update=False):
+    query = select(MindMap).where(
         MindMap.id == canvas_id, MindMap.user_id == user_id, MindMap.deleted_at.is_(None),
-    ))
+    )
+    if for_update:
+        query = query.with_for_update().execution_options(populate_existing=True)
+    return await db.scalar(query)
 
 
 async def get_canvas_near_item(db, user_id, canvas_id, node_id):

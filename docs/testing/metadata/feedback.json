@@ -1,0 +1,34 @@
+{
+  "apps/web-host/tests/feedback/feedback-notification-config.test.ts": {
+    "domain": "feedback",
+    "layer": "L1",
+    "owner": "apps/web-host/src/config.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "系统反馈邮件收件人及开关的默认值和配置优先级",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/feedback/feedback-notification.test.ts": {
+    "domain": "feedback",
+    "layer": "L2",
+    "owner": "packages/core/src/feedback/notification.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "提交后偏好读取、正文归一、邮件转义及失败边界",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/feedback/feedback-smtp.integration.test.ts": {
+    "domain": "feedback",
+    "layer": "L2",
+    "owner": "packages/core/src/feedback/notification.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "隔离本地 SMTP 收件器的 TLS 认证和反馈投递；缺少临时证书时跳过",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/feedback/feedback.test.ts": {
+    "domain": "feedback",
+    "layer": "L2",
+    "owner": "packages/core/src/feedback/feedback.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "反馈校验、双库持久化、分类分页及桌面 owner 隔离和升级",
+    "ci": "core-node"
+  }
+}

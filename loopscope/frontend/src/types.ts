@@ -5,6 +5,18 @@ export interface GuguSession {
   updatedAt?: string
 }
 
+export interface TraceSession {
+  session_key: string
+  external_session_id: string
+  source: string
+  title: string
+  im_platform?: 'feishu' | 'qq' | 'wechat' | 'telegram'
+  parent_session_id?: string
+  parent_run_id?: string
+  child_id?: string
+  agent_id?: string
+}
+
 export interface ChatDebugEvent {
   kind: 'status' | 'tool' | 'round'
   label: string
@@ -46,6 +58,7 @@ export interface TokenUsage {
   cache_read?: number
   cache_write?: number
   fresh_input?: number
+  context_input?: number
   total?: number
   cache_ratio?: number
 }

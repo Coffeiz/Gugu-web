@@ -1,0 +1,297 @@
+import { errorFrames } from '@gugu/log/runtime'
+import { Worker } from 'node:worker_threads'
+import { resolve } from 'node:path'
+import { CoreError } from '../contracts/index.js'
+import type { ErrorCode, Fields } from '../contracts/index.js'
+
+const retryableCommands = new Set(['agent.sessions.events', 'agent.sessions.history', 'agent.sessions.messages', 'im.inbox.prepare'])
+
+type WorkerExitReason = 'out_of_memory' | 'uncaught_exception' | 'unexpected_exit' | 'watchdog_timeout'
+
+interface Pending {
+  resolve(value: unknown): void
+  reject(reason: unknown): void
+  flag: Int32Array
+  dispose(): void
+}
+interface CallOptions {
+  operationId?: string
+  signal?: AbortSignal
+  timeoutMs?: number
+}
+interface Startup {
+  event: string
+  ownerId: string
+  schemaVersion: string
+  error?: { code: ErrorCode; message: string }
+}
+export interface LocalRuntimeOptions {
+  exclusive?: boolean
+  workerEntry?: URL | string
+  agentRuntimeModule?: string
+  onWorkerExit?: (exitCode: number, reason: WorkerExitReason, frames: readonly string[]) => void
+}
+export interface LocalHostRequest {
+  readonly signal: AbortSignal
+  readonly requestId: number
+  readonly method: string
+  readonly params: Fields
+}
+type LocalHostRequestHandler = (request: LocalHostRequest) => Promise<unknown>
+export class LocalRuntime {
+  private agentRunListeners = new Set<(sessionId: number, runId: string | undefined, interactionChanged?: true) => void>()
+  private hostControllers = new Map<number, AbortController>()
+  private hostRequestListeners = new Set<LocalHostRequestHandler>()
+  private pending = new Map<number, Pending>()
+  private sequence = 0
+  private closed = false
+  private healthy = true
+  private workerExitReason: WorkerExitReason = 'unexpected_exit'
+  private closing?: Promise<void>
+  readonly ownerId: string
+  readonly schemaVersion: string
+  private constructor(
+    private worker: Worker,
+    info: { ownerId: string; schemaVersion: string },
+    onWorkerExit?: LocalRuntimeOptions['onWorkerExit'],
+  ) {
+    this.ownerId = info.ownerId
+    this.schemaVersion = info.schemaVersion
+    worker.on(
+      'message',
+      (frame: {
+        id: number
+        event?: string
+        sessionId?: number
+        runId?: string
+        interactionChanged?: boolean
+        requestId?: number
+        method?: string
+        params?: Fields
+        result?: unknown
+        error?: { code: ErrorCode; message: string }
+      }) => {
+        if (frame.event === 'agent_run_changed' && typeof frame.sessionId === 'number' && (frame.runId === undefined || typeof frame.runId === 'string')) {
+          for (const listener of this.agentRunListeners) listener(frame.sessionId, frame.runId, frame.interactionChanged === true ? true : undefined)
+          return
+        }
+        if (frame.event === 'host_cancel' && frame.requestId !== undefined) {
+          this.hostControllers.get(frame.requestId)?.abort()
+          return
+        }
+        if (frame.event === 'host_request' && Number.isSafeInteger(frame.requestId) && frame.requestId! > 0
+          && typeof frame.method === 'string' && frame.params && typeof frame.params === 'object' && !Array.isArray(frame.params)) {
+          const requestId = frame.requestId!
+          const handler = [...this.hostRequestListeners].at(-1)
+          if (!handler) {
+            this.worker.postMessage({ event: 'host_response', requestId,
+              error: { code: 'unsupported', message: '桌面 Agent 宿主能力未连接' } })
+            return
+          }
+          const controller = new AbortController()
+          this.hostControllers.set(requestId, controller)
+          const { method, params } = frame
+          void Promise.resolve().then(() => handler({ requestId, method, params, signal: controller.signal }))
+            .then(result => {
+              if (!controller.signal.aborted) this.worker.postMessage({ event: 'host_response', requestId, result })
+            })
+            .catch(() => {
+              if (!controller.signal.aborted) this.worker.postMessage({ event: 'host_response', requestId,
+                error: { code: 'storage_error', message: '桌面 Agent 宿主能力执行失败' } })
+            }).finally(() => { this.hostControllers.delete(requestId) })
+          return
+        }
+        const pending = this.pending.get(frame.id)
+        if (!pending) return
+        this.pending.delete(frame.id)
+        pending.dispose()
+        if (frame.error)
+          pending.reject(new CoreError(frame.error.code, frame.error.message))
+        else pending.resolve(frame.result)
+      },
+    )
+    const failed = (): void => {
+      this.healthy = false
+      for (const controller of this.hostControllers.values()) controller.abort()
+      this.hostControllers.clear()
+      for (const pending of this.pending.values()) {
+        pending.dispose()
+        pending.reject(
+          new CoreError('closed', '数据进程已停止，请重读已保存数据确认操作状态'),
+        )
+      }
+      this.pending.clear()
+    }
+    let frames: string[] = []
+    worker.on('error', (error: Error & { code?: string }) => {
+      this.workerExitReason = error.code === 'ERR_WORKER_OUT_OF_MEMORY' ? 'out_of_memory' : 'uncaught_exception'
+      frames = errorFrames(error).slice(0, 8)
+      failed()
+    })
+    worker.on('exit', exitCode => {
+      if (!this.closed) onWorkerExit?.(exitCode, this.workerExitReason, frames)
+      failed()
+    })
+  }
+  private static async start(
+    database: string,
+    initialize: boolean,
+    options: LocalRuntimeOptions = {},
+  ): Promise<LocalRuntime> {
+    const worker = new Worker(options.workerEntry ?? new URL('./worker.js', import.meta.url), {
+      workerData: {
+        database: resolve(database),
+        initialize,
+        exclusive: options.exclusive ?? false,
+        ...(options.agentRuntimeModule ? { agentRuntimeModule: resolve(options.agentRuntimeModule) } : {}),
+      },
+    })
+    return new Promise((resolve, reject) => {
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        worker.off('error', fail)
+        worker.off('exit', fail)
+        worker.off('message', ready)
+      }
+      const fail = (): void => {
+        cleanup()
+        void worker.terminate()
+        reject(new CoreError('storage_error', 'Core 数据进程无法启动'))
+      }
+      const ready = (info: Startup): void => {
+        cleanup()
+        if (info.event !== 'ready') {
+          void worker.terminate()
+          reject(
+            new CoreError(
+              info.error?.code ?? 'storage_error',
+              info.error?.message ?? 'Core 数据进程无法启动',
+            ),
+          )
+          return
+        }
+        resolve(new LocalRuntime(worker, info, options.onWorkerExit))
+      }
+      const timer = setTimeout(() => {
+        cleanup()
+        void worker.terminate()
+        reject(new CoreError('storage_error', 'Core 启动超时'))
+      }, 15_000)
+      worker.once('error', fail)
+      worker.once('exit', fail)
+      worker.once('message', ready)
+    })
+  }
+  static initialize(
+    database: string,
+    options: LocalRuntimeOptions = {},
+  ): Promise<LocalRuntime> {
+    return this.start(database, true, options)
+  }
+  static open(
+    database: string,
+    options: LocalRuntimeOptions = {},
+  ): Promise<LocalRuntime> {
+    return this.start(database, false, options)
+  }
+  onAgentRunChanged(listener: (sessionId: number, runId: string | undefined, interactionChanged?: true) => void): () => void {
+    this.agentRunListeners.add(listener)
+    return () => { this.agentRunListeners.delete(listener) }
+  }
+  onHostRequest(listener: LocalHostRequestHandler): () => void {
+    this.hostRequestListeners.add(listener)
+    return () => { this.hostRequestListeners.delete(listener) }
+  }
+  call<T = unknown>(
+    method: string,
+    params: Fields = {},
+    options: CallOptions = {},
+  ): Promise<T> {
+    if (this.closed || !this.healthy)
+      return Promise.reject(new CoreError('closed', '数据运行时已关闭'))
+    if (method === 'runtime.close')
+      return Promise.reject(new CoreError('invalid_request', '请通过 close 关闭运行时'))
+    if (this.pending.size >= 128)
+      return Promise.reject(new CoreError('busy', '本地数据队列已满'))
+    return this.enqueue<T>(method, params, options)
+  }
+  private enqueue<T>(
+    method: string,
+    params: Fields,
+    options: CallOptions = {},
+  ): Promise<T> {
+    if (options.signal?.aborted)
+      return Promise.reject(new CoreError('cancelled', '操作已取消'))
+    const id = ++this.sequence,
+      flag = new Int32Array(new SharedArrayBuffer(8)),
+      timeoutMs = options.timeoutMs ?? 12_000
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000)
+      return Promise.reject(new CoreError('invalid_request', '请求时限无效'))
+    return new Promise<T>((resolve, reject) => {
+      const cancel = (): void => {
+        Atomics.store(flag, 0, 1)
+      }
+      const timer = setTimeout(() => {
+        cancel()
+        // 尚未开始的请求可原子地从队列撤销，不应终止正在执行其他请求的 Worker。
+        if (Atomics.compareExchange(flag, 1, 0, 2) === 0) {
+          const request = this.pending.get(id)
+          this.pending.delete(id)
+          request?.dispose()
+          reject(new CoreError('busy', '本地数据队列等待超时，请重试'))
+          return
+        }
+        if (retryableCommands.has(method)) {
+          const request = this.pending.get(id)
+          this.pending.delete(id)
+          request?.dispose()
+          reject(new CoreError('busy', '本地请求暂时超时，请重试'))
+          return
+        }
+        this.healthy = false
+        this.workerExitReason = 'watchdog_timeout'
+        // 不把未知提交状态报告为已回滚；终止后可凭持久操作 ID 查询。
+        void this.worker.terminate()
+      }, timeoutMs + 1000)
+      options.signal?.addEventListener('abort', cancel, { once: true })
+      this.pending.set(id, {
+        resolve: (value) => resolve(value as T),
+        reject,
+        flag,
+        dispose: () => {
+          clearTimeout(timer)
+          options.signal?.removeEventListener('abort', cancel)
+        },
+      })
+      try {
+        this.worker.postMessage({
+          id,
+          method,
+          params,
+          operationId: options.operationId,
+          cancel: flag.buffer,
+          deadline: Date.now() + timeoutMs,
+        })
+      } catch {
+        const pending = this.pending.get(id)
+        pending?.dispose()
+        this.pending.delete(id)
+        reject(new CoreError('invalid_request', '请求包含不可传输的值'))
+      }
+    })
+  }
+  close(): Promise<void> {
+    if (this.closing) return this.closing
+    // 先停止业务入队，关闭控制帧保留独立容量；并发 close 等待同一轮释放。
+    this.closed = true
+    for (const pending of this.pending.values()) Atomics.store(pending.flag, 0, 1)
+    this.closing = (async () => {
+      try {
+        if (this.healthy) await this.enqueue('runtime.close', {})
+      } finally {
+        await this.worker.terminate()
+      }
+    })()
+    return this.closing
+  }
+}

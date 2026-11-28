@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 168">
+  <defs>
+    <linearGradient id="background" x2=".75" y2="1"><stop stop-color="#261f21"/><stop offset="1" stop-color="#9a6554"/></linearGradient>
+    <linearGradient id="ink" x2=".7" y2="1"><stop stop-color="#5b4e4f"/><stop offset="1" stop-color="#292325"/></linearGradient>
+    <clipPath id="tile"><rect x="11" y="11" width="146" height="146" rx="36"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <path fill="#261f21" d="M0 0H168V168H0Z"/>
+    <path fill="url(#background)" d="M0 159C69 164 105 128 168 111V168H0Z"/>
+    <path fill="#bf806b" d="M115 30Q117 30 118 35Q121 42 127 44Q131 46 127 48Q120 50 118 57Q116 62 114 57Q111 50 104 48Q100 46 104 44Q112 42 114 34Q115 30 115 30Z"/>
+    <path fill="url(#ink)" d="M36 131L66 97L83 92C85 70 97 61 110 61C121 60 131 64 136 71C127 72 123 78 122 87L121 101C120 119 106 131 87 131Z"/>
+    <path fill="#f0e4da" d="M58 131L95 91L90 83C98 69 106 63 116 63C125 63 131 66 136 71C125 72 119 72 116 86L116 96C115 115 100 126 65 131Z"/>
+    <circle cx="115" cy="71" r="3.3" fill="#362b2d"/>
+    <path fill="url(#ink)" d="M32 63H66C80 63 88 74 99 90L75 111C60 112 49 106 44 93Z"/>
+    <path fill="#bf806b" d="M43 90H99L76 110C63 112 50 105 43 90Z"/>
+  </g>
+</svg>

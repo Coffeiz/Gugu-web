@@ -267,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 mutants = []
         else:
-            frontend = ROOT / "frontend"
+            frontend = ROOT / "apps" / "web"
             run = _run(["corepack", "pnpm", "exec", "stryker", "run", "stryker.config.mjs"], cwd=frontend)
             command_result = {key: value for key, value in run.items() if key != "_output"}
             result_path = frontend / ".stryker-report/mutation.json"

@@ -1,0 +1,434 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createApp, defineComponent, h, nextTick, reactive } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import GuguChatInteraction from '@/components/common/gugu-chat/GuguChatInteraction.vue'
+import type { ChatMessage } from '@/components/common/gugu-chat/chatTypes'
+
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
+})
+
+vi.mock('@/views/Mail/MailMessageEditor.vue', () => ({
+  default: defineComponent({
+    props: { modelValue: String },
+    emits: ['update:modelValue'],
+    setup: (props, { emit }) => () => h('textarea', {
+      'aria-label': '正文', value: props.modelValue,
+      onInput: (event: Event) => emit('update:modelValue', (event.target as HTMLTextAreaElement).value),
+    }),
+  }),
+}))
+
+function interactionMessage(options: NonNullable<ChatMessage['interaction']>['options'] = []): ChatMessage {
+  return {
+    id: 17,
+    role: 'interaction',
+    text: '',
+    time: '09:30',
+    interaction: {
+      promptId: 42,
+      kind: 'confirm',
+      title: '确认操作',
+      body: '请确认是否继续',
+      options,
+    },
+  }
+}
+
+function mountInteraction(
+  msg: ChatMessage,
+  onSelect = vi.fn(),
+  answerMode: 'inline' | 'composer' = 'composer',
+  onTextSubmit = vi.fn(),
+) {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const app = createApp(defineComponent({
+    setup: () => () => h(GuguChatInteraction, { msg, onSelect, answerMode, onTextSubmit }),
+  }))
+  app.mount(host)
+  return { app, host, onSelect, onTextSubmit }
+}
+
+let mounted: ReturnType<typeof mountInteraction> | undefined
+
+afterEach(() => {
+  mounted?.app.unmount()
+  mounted?.host.remove()
+  mounted = undefined
+  vi.useRealTimers()
+})
+
+describe('GuguChatInteraction', () => {
+  it('已提交的问答按题目顺序展示所选标签及自定义回答', () => {
+    const msg = interactionMessage()
+    Object.assign(msg.interaction!, {
+      kind: 'question', resolved: true, responseText: '已提交全部答案',
+      questions: [
+        { id: 'scope', title: '处理范围', options: [{ id: 'a', label: '范围甲' }, { id: 'b', label: '范围乙' }] },
+        { id: 'note', title: '补充要求' },
+      ],
+      questionAnswers: [
+        { question_id: 'note', text: '保留原记录' },
+        { question_id: 'scope', option_ids: ['a', 'b'] },
+      ],
+    })
+    mounted = mountInteraction(msg)
+    expect([...mounted.host.querySelectorAll('.interaction-question-summary > li')].map(row =>
+      [row.querySelector('div')?.textContent, ...[...row.querySelectorAll('li')].map(answer => answer.textContent)],
+    )).toEqual([['处理范围', '范围甲', '范围乙'], ['补充要求', '保留原记录']])
+    expect(mounted.host.textContent).not.toContain('已提交全部答案')
+  })
+
+  it('待发送邮件的发送按钮展示图标并保留文字', () => {
+    const msg = interactionMessage()
+    msg.interaction!.emailCompose = {
+      enabled: true, canDraft: false, sender: 'sender@example.test', senderName: '小北',
+      recipient: 'recipient@example.test', subject: '合成邮件', text: '原正文', accounts: [], attachments: [],
+    }
+    mounted = mountInteraction(msg)
+    const button = [...mounted.host.querySelectorAll('button')].find(item => item.textContent?.trim() === '发送')!
+    expect(button).toBeTruthy()
+    expect(button.querySelector('svg')).not.toBeNull()
+  })
+
+  it.each(['html', 'template'] as const)('%s 邮件直接展示只读预览，提交前后均保留原正文', async format => {
+    const msg = interactionMessage()
+    msg.interaction = reactive(msg.interaction!)
+    msg.interaction!.emailCompose = {
+      enabled: true, canDraft: false, sender: 'sender@example.test', senderName: '小北',
+      recipient: 'recipient@example.test', subject: '合成邮件', text: '原正文', accounts: [], attachments: [],
+      format, templateHtml: '<p>合成模板</p>',
+    }
+    mounted = mountInteraction(msg)
+    const preview = mounted.host.querySelector<HTMLIFrameElement>('[title="邮件正文预览"]')
+    expect(preview?.getAttribute('sandbox')).toBe('allow-same-origin')
+    expect(preview?.srcdoc).toContain('合成模板')
+    expect(preview?.closest('details')).toBeNull()
+    expect(mounted.host.querySelector('input, textarea, .email-text')).toBeNull()
+    expect(mounted.host.textContent).toContain('发送')
+    msg.interaction!.resolved = true
+    await nextTick()
+    expect(mounted.host.querySelector<HTMLIFrameElement>('iframe')?.srcdoc).toContain('合成模板')
+  })
+
+  it('邮件确认卡提交编辑后的字段，并使用现有确认令牌', async () => {
+    const msg = interactionMessage([
+      { id: 'confirm', label: '确认', token: 'mail-approval' },
+      { id: 'cancel', label: '取消', token: 'mail-cancel' },
+    ])
+    msg.interaction!.emailCompose = {
+      enabled: true, canDraft: false, sender: 'sender@example.test', senderName: '小北',
+      recipient: 'original@example.test', subject: '合成邮件', text: '原正文', accounts: [], attachments: [],
+    }
+    mounted = mountInteraction(msg)
+    expect(mounted.host.textContent).not.toContain('抄送与密送')
+    const input = mounted.host.querySelector<HTMLInputElement>('[aria-label="收件邮箱"]')!
+    input.value = 'recipient@example.test'
+    input.dispatchEvent(new Event('input'))
+    const body = mounted.host.querySelector<HTMLTextAreaElement>('[aria-label="正文"]')!
+    body.value = '**更新正文**'
+    body.dispatchEvent(new Event('input'))
+    await nextTick()
+    const send = [...mounted.host.querySelectorAll('button')].find(button => button.textContent?.trim() === '发送')!
+    send.click()
+    const option = mounted.onSelect.mock.calls[0]?.[1]
+    expect(option).toMatchObject({ id: 'confirm', token: 'mail-approval' })
+    const submitted = JSON.parse(option.customAnswer)
+    expect(submitted).not.toHaveProperty('cc')
+    expect(submitted).not.toHaveProperty('bcc')
+    expect(submitted).toMatchObject({
+      action: 'send', recipient: 'recipient@example.test', text: '**更新正文**', html: expect.stringContaining('<strong>更新正文</strong>'),
+    })
+  })
+
+  it('旧提问没有选项时不渲染空操作区或悬空分隔线', () => {
+    mounted = mountInteraction(interactionMessage())
+
+    expect(mounted.host.querySelector('.interaction-actions')).toBeNull()
+    expect(mounted.host.querySelector('.interaction-title')?.textContent).toBe('确认操作')
+  })
+
+  it('选择确认项会发出消息和选项，并立即禁用重复提交', async () => {
+    const msg = interactionMessage([{ id: 'confirm', label: '确认', token: 'yes' }])
+    mounted = mountInteraction(msg)
+    const button = mounted.host.querySelector('.interaction-option') as HTMLButtonElement
+
+    expect(button.textContent?.trim()).toBe('确认')
+    button.click()
+    await nextTick()
+
+    expect(mounted.onSelect).toHaveBeenCalledWith(msg, { id: 'confirm', label: '确认', token: 'yes' })
+    expect(button.disabled).toBe(true)
+    expect(mounted.host.querySelector('.interaction-resolved')?.textContent).toContain('chatUi.confirmationSubmitting')
+  })
+
+  it('开放问题仅有自定义回复入口时直接激活输入，不再发起按钮提交', async () => {
+    const msg = reactive(interactionMessage([
+      { id: '__custom_reply__', label: '自定义回复', token: 'fresh-token' },
+    ]))
+    msg.interaction!.kind = 'question'
+    msg.interaction!.allowTextInput = true
+    mounted = mountInteraction(msg)
+    await nextTick()
+
+    expect(msg.interaction!.customInputActive).toBe(true)
+    expect(mounted.onSelect).not.toHaveBeenCalled()
+    expect(mounted.host.querySelector('.interaction-option')).toBeNull()
+    expect(mounted.host.querySelector('.interaction-custom-hint')?.textContent).toBe('chatUi.customReplyHint')
+  })
+
+  it('Web 开放问题在卡片内显示输入框，按 Enter 直接提交答案', async () => {
+    const msg = reactive(interactionMessage())
+    msg.interaction!.kind = 'question'
+    msg.interaction!.allowTextInput = true
+    mounted = mountInteraction(msg, vi.fn(), 'inline')
+    await nextTick()
+
+    const input = mounted.host.querySelector('textarea.interaction-answer-input') as HTMLTextAreaElement
+    expect(input).not.toBeNull()
+    expect(mounted.host.querySelector('.interaction-custom-hint')).toBeNull()
+    input.value = '周六延期'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+
+    expect(mounted.onTextSubmit).toHaveBeenCalledWith(msg, '周六延期')
+    expect(msg.interaction!.submitting).toBe(true)
+  })
+
+  it('无选项问题回复完成后隐藏自定义回复入口和输入提示', async () => {
+    const msg = reactive(interactionMessage([
+      { id: '__custom_reply__', label: '自定义回复', token: 'fresh-token' },
+    ]))
+    msg.interaction!.kind = 'question'
+    msg.interaction!.allowTextInput = true
+    msg.interaction!.customInputActive = true
+    msg.interaction!.resolved = true
+    msg.interaction!.responseText = '测试'
+    mounted = mountInteraction(msg)
+    await nextTick()
+
+    expect(mounted.host.querySelector('.interaction-option')).toBeNull()
+    expect(mounted.host.querySelector('.interaction-custom-hint')).toBeNull()
+    expect(mounted.host.querySelector('.interaction-response')?.textContent).toBe('测试')
+    expect(mounted.host.querySelector('.interaction-resolved')?.textContent).toContain('chatUi.submitted')
+  })
+
+  it('MCP 密码表单不展示通用交互 token，并提供专用取消事件', async () => {
+    const msg = interactionMessage([
+      { id: 'input_credentials', label: '输入凭据', token: 'input-token' },
+      { id: 'cancel', label: '取消', token: 'cancel-token' },
+    ])
+    msg.interaction!.secretFields = [{ name: 'key', label: '服务 Key', type: 'secret' }]
+    const onSecretCancel = vi.fn()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(defineComponent({
+      setup: () => () => h(GuguChatInteraction, { msg, onSecretCancel }),
+    }))
+    app.mount(host)
+    mounted = { app, host, onSelect: vi.fn(), onTextSubmit: vi.fn() }
+
+    expect(host.querySelector('.interaction-actions')).toBeNull()
+    expect(host.querySelector('input[type="password"]')).not.toBeNull()
+    const cancel = host.querySelector('.interaction-secret-cancel') as HTMLButtonElement
+    cancel.click()
+    await Promise.resolve()
+
+    expect(onSecretCancel).toHaveBeenCalledWith(msg)
+    expect(cancel.disabled).toBe(true)
+  })
+
+  it('secret 提交失败后解除提交态会清空密码输入框', async () => {
+    const msg = reactive(interactionMessage())
+    msg.interaction!.secretFields = [{ name: 'key', label: '服务 Key', type: 'secret' }]
+    mounted = mountInteraction(msg)
+    const input = mounted.host.querySelector('input[type="password"]') as HTMLInputElement
+    input.value = 'temporary-secret'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await Promise.resolve()
+    expect(input.value).toBe('temporary-secret')
+
+    msg.interaction!.submitting = true
+    await nextTick()
+    msg.interaction!.submitting = false
+    await nextTick()
+
+    expect(input.value).toBe('')
+  })
+
+  it('不会在自定义回答请求进行中把交互卡自动标记为过期', async () => {
+    vi.useFakeTimers()
+    const expiresAt = new Date(Date.now() + 1000).toISOString()
+    const msg = reactive(interactionMessage())
+    msg.interaction!.kind = 'question'
+    msg.interaction!.allowTextInput = true
+    msg.interaction!.customInputActive = true
+    msg.interaction!.submitting = true
+    msg.interaction!.expiresAt = expiresAt
+    mounted = mountInteraction(msg)
+
+    await vi.advanceTimersByTimeAsync(1500)
+    await nextTick()
+    expect(msg.interaction!.expired).toBeUndefined()
+    expect(mounted.host.querySelector('.interaction-resolved')?.textContent)
+      .toContain('chatUi.confirmationSubmitting')
+
+    msg.interaction!.submitting = false
+    await nextTick()
+    expect(msg.interaction!.expired).toBe(true)
+    expect(mounted.host.querySelector('.interaction-resolved')?.textContent)
+      .toContain('chatUi.expired')
+  })
+
+  it('已回答的无选项问题在期限过后仍显示已提交', () => {
+    const msg = interactionMessage()
+    Object.assign(msg.interaction!, {
+      kind: 'question', allowTextInput: true, resolved: true, responseText: '测试回答',
+      selectedOptionId: null, expiresAt: new Date(Date.now() - 1000).toISOString(),
+    })
+    mounted = mountInteraction(msg, vi.fn(), 'inline')
+    expect(mounted.host.querySelector('.interaction-response')?.textContent).toBe('测试回答')
+    expect(mounted.host.querySelector('.interaction-resolved')?.textContent).toBe('chatUi.submitted')
+  })
+
+  it('长选项的静态布局契约允许收缩、换行并限制在气泡宽度内', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/shared/components/common/gugu-chat/GuguChatInteraction.vue'), 'utf8')
+    const style = source.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] ?? ''
+    const selector = /\.interaction-actions\s+:deep\(\.interaction-option\)\s*\{([^}]+)\}/
+    const declarations = style.match(selector)?.[1]
+      .split(';')
+      .map(declaration => declaration.trim().split(/:\s*/, 2))
+      .filter(([property, value]) => Boolean(property && value))
+    const rules = new Map(declarations?.map(([property, value]) => [property, value]))
+
+    expect(Object.fromEntries(rules)).toMatchObject({
+      'min-width': '0',
+      'max-width': '100%',
+      'white-space': 'normal',
+      'word-break': 'normal',
+      'overflow-wrap': 'anywhere',
+    })
+  })
+})
+
+it('多选先勾选再提交，提交失败时保留草稿，成功后锁定选项', async () => {
+  const msg = reactive(interactionMessage([
+    { id: 'a', label: '保留', token: 'token-a' },
+    { id: 'b', label: '审阅', token: 'token-b' },
+  ]))
+  Object.assign(msg.interaction!, { kind: 'choice', selectionMode: 'multiple' })
+  mounted = mountInteraction(msg)
+  const [first, second] = [...mounted.host.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')]
+  const [all, submit] = [...mounted.host.querySelectorAll<HTMLButtonElement>('.interaction-choice-footer button')]
+  expect(submit!.disabled).toBe(true)
+  all!.click()
+  await nextTick()
+  expect(first!.getAttribute('aria-checked')).toBe('true')
+  expect(second!.getAttribute('aria-checked')).toBe('true')
+  expect(mounted.onSelect).not.toHaveBeenCalled()
+  submit!.click()
+  await nextTick()
+  expect(mounted.onSelect).toHaveBeenCalledWith(msg, {
+    id: 'a', token: 'token-a', label: '保留、审阅', selectedOptionIds: ['a', 'b'],
+  })
+  msg.interaction!.submitting = false
+  await nextTick()
+  expect(submit!.disabled).toBe(false)
+  expect(second!.getAttribute('aria-checked')).toBe('true')
+  Object.assign(msg.interaction!, { resolved: true, selectedOptionIds: ['a', 'b'] })
+  await nextTick()
+  expect(second!.disabled).toBe(true)
+  expect(second!.getAttribute('aria-checked')).toBe('true')
+  expect(mounted.host.querySelector('.interaction-choice-footer')).toBeNull()
+})
+
+it('多选的自定义回复可以收起，并保留选项和文字草稿', async () => {
+  const msg = reactive(interactionMessage([
+    { id: 'a', label: '保留', token: 'token-a' },
+    { id: 'b', label: '审阅', token: 'token-b' },
+    { id: '__custom_reply__', label: '自定义回复', token: 'token-custom' },
+  ]))
+  Object.assign(msg.interaction!, { kind: 'choice', selectionMode: 'multiple', allowTextInput: true })
+  mounted = mountInteraction(msg)
+  const [first, second] = [...mounted.host.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')]
+  const custom = mounted.host.querySelector<HTMLButtonElement>('.is-custom-choice')!
+  first!.click()
+  custom.click()
+  await nextTick()
+  const input = mounted.host.querySelector('textarea')!
+  input.value = '补充说明'
+  input.dispatchEvent(new Event('input'))
+  expect(first!.getAttribute('aria-checked')).toBe('true')
+  expect(first!.disabled).toBe(false)
+  custom.click()
+  await nextTick()
+  expect(mounted.host.querySelector('textarea')).toBeNull()
+  expect(first!.getAttribute('aria-checked')).toBe('true')
+  second!.click()
+  custom.click()
+  await nextTick()
+  expect(mounted.host.querySelector('textarea')?.value).toBe('补充说明')
+  expect(mounted.onSelect).not.toHaveBeenCalled()
+  mounted.host.querySelectorAll<HTMLButtonElement>('.interaction-choice-footer button')[1]!.click()
+  expect(mounted.onSelect).toHaveBeenCalledExactlyOnceWith(msg, {
+    id: 'a', token: 'token-a', label: '保留、审阅', selectedOptionIds: ['a', 'b'], customAnswer: '补充说明',
+  })
+})
+
+it('已提交的单选卡保留所有选项，只标记选中项且不重复显示答案', () => {
+  const msg = interactionMessage([
+    { id: 'a', label: '选项 A', token: '' },
+    { id: 'b', label: '选项 B', token: '' },
+  ])
+  Object.assign(msg.interaction!, { kind: 'choice', resolved: true, selectedOptionId: 'a', responseText: '选项 A' })
+  mounted = mountInteraction(msg)
+  const options = [...mounted.host.querySelectorAll<HTMLButtonElement>('.interaction-option')]
+  expect(options.map(option => [option.textContent?.trim(), option.getAttribute('aria-pressed'), option.disabled]))
+    .toEqual([['选项 A', 'true', true], ['选项 B', 'false', true]])
+  expect(mounted.host.querySelector('.interaction-response')).toBeNull()
+})
+
+it('问答卡返回修改上一题并保留下一题草稿，最后只提交一次', async () => {
+  const msg = interactionMessage([
+    { id: '__submit_questions__', label: '提交答案', token: 'batch-submit' },
+    { id: '__cancel_questions__', label: '取消问答', token: 'batch-cancel' },
+  ])
+  msg.interaction!.kind = 'question'
+  msg.interaction!.questions = [
+    { id: 'format', title: '格式', options: [{ id: 'a', label: '甲' }, { id: 'b', label: '乙' }] },
+    { id: 'length', title: '篇幅' },
+  ]
+  mounted = mountInteraction(msg)
+  const { host, onSelect } = mounted
+  const click = async (label: string) => {
+    const button = [...host.querySelectorAll('button')].find(item => item.textContent?.trim() === label)
+    expect(button).toBeDefined()
+    button!.click()
+    await nextTick()
+  }
+
+  await click('甲')
+  await click('下一题')
+  const input = host.querySelector('textarea')!
+  input.value = '简短'
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  await nextTick()
+  await click('上一题')
+  expect(host.querySelector('[aria-pressed="true"]')?.textContent?.trim()).toBe('甲')
+  await click('乙')
+  await click('下一题')
+  expect(host.querySelector('textarea')?.value).toBe('简短')
+  expect(onSelect).not.toHaveBeenCalled()
+  await click('提交全部答案')
+  expect(onSelect).toHaveBeenCalledOnce()
+  const [, action] = onSelect.mock.calls[0]!
+  expect(action.token).toBe('batch-submit')
+  expect(JSON.parse(action.customAnswer)).toEqual([
+    { question_id: 'format', option_ids: ['b'] }, { question_id: 'length', text: '简短' },
+  ])
+})

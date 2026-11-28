@@ -1,0 +1,116 @@
+<template>
+  <component
+    :is="href ? 'a' : 'button'"
+    class="app-action-button"
+    :class="[`is-${variant}`, { 'is-fit': fit }]"
+    :disabled="href ? undefined : disabled"
+    :type="href ? undefined : type"
+    :href="href"
+    :target="href ? target : undefined"
+    :rel="href ? rel : undefined"
+  >
+    <span class="app-action-button-content"><slot /></span>
+  </component>
+</template>
+
+<script setup lang="ts">
+withDefaults(defineProps<{
+  variant?: 'primary' | 'secondary' | 'danger'
+  disabled?: boolean
+  fit?: boolean
+  type?: 'button' | 'submit' | 'reset'
+  href?: string
+  target?: string
+  rel?: string
+}>(), {
+  variant: 'primary',
+  disabled: false,
+  fit: false,
+  type: 'button',
+})
+</script>
+
+<style scoped>
+.app-action-button {
+  box-sizing: border-box;
+  width: 64px;
+  min-width: 64px;
+  height: 34px;
+  min-height: 34px;
+  flex: 0 0 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  font: 500 13px/var(--line-height-ui) var(--font-sans);
+  white-space: nowrap;
+  word-break: keep-all;
+  writing-mode: horizontal-tb;
+  cursor: pointer;
+  filter: none;
+  position: relative;
+  overflow: hidden;
+  transition: border-color var(--motion-hover-control) var(--motion-ease-standard),
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+    transform var(--motion-hover-control) var(--motion-ease-standard),
+    filter var(--motion-hover-control) var(--motion-ease-standard),
+    opacity var(--motion-hover-control) ease;
+}
+.app-action-button[href] { text-decoration: none; }
+.app-action-button.is-fit { width: auto; min-width: 0; flex-basis: auto; }
+.app-action-button.is-primary {
+  border: 0;
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+  /* 玻璃系表面的顶部 1px 内高光（--highlight-soft 随主题给值），与卡片同一条线；
+     渐变顶部混白只有 ~6%，肉眼上比玻璃卡片薄，单靠它顶不住。 */
+  box-shadow: inset 0 1px 0 var(--highlight-soft);
+}
+.app-action-button.is-primary::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  content: '';
+  background: var(--action-primary-bg-hover);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+/* hover 不能加 opacity：透明度把页面底色掺进填充，恰好抵消 hover 渐变的明暗变化
+   （实测亮暗主题下净变化都≈0，肉眼不可见）。按压反馈由 :active 负责。 */
+.app-action-button.is-primary:hover:not(:disabled) { box-shadow: inset 0 1px 0 var(--highlight-soft); }
+.app-action-button-content { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: inherit; }
+.app-action-button.is-primary:hover:not(:disabled)::before { opacity: 1; }
+.app-action-button.is-secondary {
+  border: 1px solid var(--action-secondary-border);
+  color: var(--action-secondary-fg);
+  background: var(--action-secondary-bg);
+  box-shadow: none;
+}
+.app-action-button.is-secondary:hover:not(:disabled) {
+  border-color: var(--action-secondary-border-hover);
+  color: var(--action-secondary-fg-hover);
+  background: var(--action-secondary-bg);
+  filter: brightness(1.04);
+  box-shadow: none;
+}
+/* 危险操作变体（删除/停用一类）：语义色走 --status-danger，随主题明暗自动取值 */
+.app-action-button.is-danger {
+  border: 1px solid color-mix(in srgb, var(--status-danger) 35%, transparent);
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+  box-shadow: none;
+}
+.app-action-button.is-danger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--status-danger) 55%, transparent);
+  color: var(--status-danger);
+  background: color-mix(in srgb, var(--status-danger) 20%, transparent);
+  box-shadow: none;
+}
+.app-action-button:active:not(:disabled) { transform: translateY(1px); opacity: .93; }
+.app-action-button:disabled { opacity: .5; cursor: default; }
+.app-action-button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+</style>

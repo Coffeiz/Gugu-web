@@ -1,0 +1,77 @@
+/* Aero 玻璃材质统一使用中性色，调色板继续提供文字与交互色。 */
+:root[data-family='glass'][data-theme='light'] {
+  --theme-page: #e9e9e9;
+  --theme-sidebar: var(--theme-glass);
+  --theme-base: rgba(245,245,245,.90);
+  --theme-chat-main-bg: #f5f5f5;
+  --theme-glass: rgba(255,255,255,.65);
+  --theme-glass-hover: rgba(255,255,255,.75);
+  --theme-card-solid: rgba(255,255,255,.82);
+  --theme-soft: color-mix(in srgb,var(--theme-action-primary) 6%,transparent);
+  --theme-soft-hover: color-mix(in srgb,var(--theme-action-primary) 10%,transparent);
+  --theme-raised: rgba(255,255,255,.88);
+  --theme-floating: rgba(255,255,255,.92);
+  --theme-scrim: var(--palette-scrim);
+  --theme-content-primary: var(--palette-text-primary);
+  --theme-content-secondary: var(--palette-text-secondary);
+  --theme-content-tertiary: var(--palette-text-tertiary);
+  --theme-content-disabled: var(--palette-text-disabled);
+  --theme-border-hairline: rgba(255,255,255,.30);
+  --theme-border-subtle: rgba(255,255,255,.42);
+  --theme-border-default: rgba(255,255,255,.62);
+  --theme-border-strong: rgba(255,255,255,.76);
+  --theme-border-hover: rgba(255,255,255,.92);
+  --theme-highlight-rest: rgba(255,255,255,.95);
+}
+:root[data-family='glass'][data-theme='dark'] {
+  --theme-page: #191919;
+  --theme-auth-page: var(--theme-page);
+  --theme-sidebar: var(--theme-glass);
+  --theme-base: rgba(31,31,31,.86);
+  --theme-chat-main-bg: #242424;
+  --theme-glass: rgba(42,42,42,.75);
+  --theme-glass-hover: rgba(49,49,49,.86);
+  --theme-card-solid: #292929;
+  --theme-soft: color-mix(in srgb,var(--theme-action-primary) 5%,transparent);
+  --theme-soft-hover: color-mix(in srgb,var(--theme-action-primary) 8%,transparent);
+  --theme-raised: rgba(56,56,56,.92);
+  --theme-floating: rgba(48,48,48,.92);
+  --theme-scrim: var(--palette-scrim);
+  --theme-content-primary: var(--palette-text-primary);
+  --theme-content-secondary: var(--palette-text-secondary);
+  --theme-content-tertiary: var(--palette-text-tertiary);
+  --theme-content-disabled: var(--palette-text-disabled);
+  --theme-border-hairline: rgba(255,255,255,.045);
+  --theme-border-subtle: rgba(255,255,255,.07);
+  --theme-border-default: rgba(255,255,255,.10);
+  --theme-border-strong: rgba(255,255,255,.16);
+  --theme-border-hover: rgba(255,255,255,.20);
+  --theme-highlight-rest: rgba(255,255,255,.08);
+}
+
+/* Mono 亮色的中性底色由主题提供，配色用于交互反馈。 */
+:root[data-family='mono'][data-theme='light'] {
+  --theme-soft: color-mix(in srgb,var(--theme-action-primary) 7%,transparent);
+  --theme-soft-hover: color-mix(in srgb,var(--theme-action-primary) 11%,transparent);
+}
+:root[data-family='mono'][data-theme='dark'] {
+  --theme-page: var(--palette-page-mid);
+  --theme-auth-page: var(--palette-page-mid);
+  --theme-sidebar: var(--palette-page-mid);
+  --theme-base: var(--palette-surface);
+  --theme-glass: var(--palette-surface);
+  --theme-glass-hover: var(--palette-surface-raised);
+  --theme-card-solid: var(--palette-surface-strong);
+  --theme-soft: color-mix(in srgb,var(--theme-action-primary) 6%,transparent);
+  --theme-soft-hover: color-mix(in srgb,var(--theme-action-primary) 10%,transparent);
+  --theme-raised: var(--palette-surface-raised);
+  --theme-floating: var(--palette-surface-strong);
+  --theme-content-primary: var(--palette-text-primary);
+  --theme-content-secondary: var(--palette-text-secondary);
+  --theme-content-tertiary: var(--palette-text-tertiary);
+}
+
+:root[data-theme='dark'][data-family] {
+  --theme-project-overlay-start: rgb(from var(--palette-surface-raised) r g b / .92);
+  --theme-project-overlay-end: rgb(from color-mix(in srgb, var(--palette-surface-strong) 55%, var(--palette-page-end)) r g b / .98);
+}

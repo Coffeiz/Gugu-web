@@ -84,7 +84,7 @@ def apply_line_edits(text: str, edits: list[dict[str, Any]]) -> tuple[str, int]:
             actual = _normalise_expected("".join(old_segment))
             if actual != _normalise_expected(expected):
                 raise ValueError(
-                    f"target_lines {start}-{end} 的原文校验失败；正文可能已变化，请重新读取后再编辑"
+                    f"target_lines {start}-{end} 的原文校验失败：该范围与 expected 不一致。请重新读取，按物理行号定位（空行也计入），并复制对应原文，不含行号前缀。"
                 )
         replacement = content
         if replacement and old_segment and old_segment[-1].endswith(("\n", "\r")) and not replacement.endswith(("\n", "\r")):

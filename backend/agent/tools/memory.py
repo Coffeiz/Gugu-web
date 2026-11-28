@@ -42,19 +42,14 @@ async def _remember(db, user_id, args: dict):
         return {"error": "target 只能是 profile 或 pattern"}
 
     if target == "profile":
-        profile = await store.read_profile_list(user_id)
-        before_items = list(profile)
         ops_add = []
         if text:
             item_type = str(args.get("type") or "note").strip().lower()
             if item_type not in store.PROFILE_TYPES:
                 return {"error": "profile type 不合法"}
             ops_add = [{"type": item_type, "text": text}]
-        profile = store.apply_profile_ops(profile, ops_add, remove_items)
-        await store.write_profile_list(user_id, profile)
+        apply = store.apply_profile_ops
     else:
-        patterns = await store.read_pattern_list(user_id)
-        before_items = list(patterns)
         ops_add = []
         if text:
             try:
@@ -64,11 +59,16 @@ async def _remember(db, user_id, args: dict):
             if not 1 <= importance <= 5:
                 return {"error": "pattern importance 必须是 1 到 5 的整数"}
             ops_add = [{"text": text, "kind": "observed", "importance": importance}]
-        patterns = store.apply_pattern_ops(patterns, ops_add, remove_items)
-        await store.write_pattern_list(user_id, patterns)
-        await store.sync_pattern_vecs(user_id, patterns)
+        apply = store.apply_pattern_ops
 
-    after_items = profile if target == "profile" else patterns
+    try:
+        before_items, after_items = await store.mutate_owner_memory_list(
+            user_id, target, lambda current: apply(current, ops_add, remove_items), write_unchanged=True,
+        )
+    except store.MemoryListConflict as exc:
+        return {"error": str(exc)}
+    if target == "pattern":
+        await store.sync_pattern_vecs(user_id, after_items, require_current=True)
     added, removed = _diff_added_removed(before_items, after_items)
     from agent import events
     events.publish(events.types.MemoryUpdated(

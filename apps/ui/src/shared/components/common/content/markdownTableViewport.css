@@ -1,0 +1,25 @@
+.md-floating-table-head,
+.md-floating-table-scroll {
+  position: absolute;
+  background: var(--surface-card-solid);
+}
+.md-floating-table-head {
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  box-shadow: 0 1px 0 var(--border-document-table);
+}
+.md-floating-table-head > table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin: 0;
+}
+.md-floating-table-scroll {
+  z-index: 3;
+  height: calc(var(--scrollbar-size-default, 8px) + 2px);
+  overflow-x: scroll;
+  overflow-y: hidden;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--content-primary) 18%, transparent);
+}
+.md-floating-table-scroll > div { height: 1px; }

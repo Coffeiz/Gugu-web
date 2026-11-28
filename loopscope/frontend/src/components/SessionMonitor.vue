@@ -52,6 +52,16 @@
           </div>
         </header>
 
+        <div v-if="traceCaptureTruncated" class="trace-capture-warning">
+          {{ t('monitor.traceTruncated') }}
+        </div>
+        <div v-else-if="traceCaptureUnavailable" class="trace-capture-warning">
+          {{ t('monitor.traceUnavailable') }}
+        </div>
+        <div v-if="runRootMissing" class="trace-capture-warning">
+          {{ t('monitor.runRootMissing') }}
+        </div>
+
         <section class="usage-grid">
           <div class="usage-card"><span>Input</span><b>{{ fmtTokens(usage.input) }}</b><small>{{ usageSourceLabel }}</small></div>
           <div class="usage-card"><span>Output</span><b>{{ fmtTokens(usage.output) }}</b><small>generated</small></div>
@@ -116,7 +126,12 @@
             <template v-for="span in rootSpans" :key="span.id">
               <TraceSpanCard :span="span" :previous-span="previousRoundSpan(span)" />
               <div v-if="childrenOf(span.id).length" class="child-spans">
-                <TraceSpanCard v-for="child in childrenOf(span.id)" :key="child.id" :span="child" :depth="1" />
+                <template v-for="child in childrenOf(span.id)" :key="child.id">
+                  <TraceSpanCard :span="child" :previous-span="previousRoundSpan(child)" :depth="1" />
+                  <div v-if="childrenOf(child.id).length" class="child-spans grandchild-spans">
+                    <TraceSpanCard v-for="grandchild in childrenOf(child.id)" :key="grandchild.id" :span="grandchild" :previous-span="previousRoundSpan(grandchild)" :depth="2" />
+                  </div>
+                </template>
               </div>
             </template>
           </div>
@@ -132,6 +147,7 @@ import type { AdapterCallStats, CanonicalEventStats, TraceRun, TraceRunSummary, 
 import TraceSpanCard from './TraceSpanCard.vue'
 import { formatCompactNumber } from '../utils/formatNumber'
 import { resolveMonitorSelection } from '../utils/monitorSelection'
+import { isModelSpan } from '../utils/spanKinds'
 import { useLoopScopeI18n } from '../i18n/index'
 
 const { t } = useLoopScopeI18n()
@@ -170,6 +186,8 @@ watch(
 
 const selected = computed(() => props.details?.[selectedId.value] ?? props.runs.find(r => r.id === selectedId.value) ?? null)
 const selectedLoaded = computed(() => Boolean(props.details?.[selectedId.value]?.spans))
+const runRootMissing = computed(() => selectedLoaded.value
+  && !(selected.value?.spans ?? []).some(span => span.id === selected.value?.id))
 const usage = computed<TokenUsage>(() => resolveUsage(selected.value))
 const usageSourceLabel = computed(() => {
   if (hasProviderUsage(selected.value)) return 'provider reported prompt tokens'
@@ -178,6 +196,11 @@ const usageSourceLabel = computed(() => {
 const cacheRatio = computed(() => usage.value.input ? Math.min((usage.value.cache_read ?? 0) / usage.value.input, 1) : 0)
 const cachePercent = computed(() => usage.value.input ? `${(cacheRatio.value * 100).toFixed(1)}%` : '—')
 const cacheMode = computed(() => (selected.value?.attributes?.cache_mode ?? 'active') as string)
+const traceCaptureTruncated = computed(() => {
+  const value = selected.value?.attributes?.trace_capture_truncated
+  return !!value && typeof value === 'object'
+})
+const traceCaptureUnavailable = computed(() => selected.value?.attributes?.trace_capture_unavailable === 'trace_size_limit')
 const canonicalStats = computed<CanonicalEventStats>(() => {
   const value = selected.value?.attributes?.canonical_events
   return value && typeof value === 'object' ? value as CanonicalEventStats : {}
@@ -200,10 +223,10 @@ const adapterCallSummary = computed(() => {
 })
 const modelLabel = computed(() => {
   const a = selected.value?.attributes ?? {}
-  const labels = [[a.provider, a.model]]
+  const labels = [[a.provider, safeModelLabel(a.model)]]
   for (const span of selected.value?.spans ?? []) {
-    if (span.kind !== 'llm') continue
-    labels.push([span.attributes?.provider, span.attributes?.model])
+    if (!isModelSpan(span)) continue
+    labels.push([span.attributes?.provider, safeModelLabel(span.attributes?.model)])
     const input = span.input && typeof span.input === 'object'
       ? span.input as Record<string, any>
       : {}
@@ -214,23 +237,46 @@ const modelLabel = computed(() => {
   }
   const label = labels.map(parts => parts.filter(Boolean).join(' / ')).find(Boolean)
   if (label) return label
-  if (selected.value?.ended_at && !(selected.value.spans ?? []).some(span => span.kind === 'llm')) {
-    return t('monitor.noModelCall')
+  if (selected.value?.ended_at && !(selected.value.spans ?? []).some(isModelSpan)) {
+    return hasProviderUsage(selected.value) ? t('monitor.modelUnknown') : t('monitor.noModelCall')
   }
   return t('monitor.modelUnknown')
 })
-const rootSpans = computed(() => (selected.value?.spans ?? []).filter(s => !s.parent_span_id))
+const displaySpans = computed(() => {
+  const spans = selected.value?.spans ?? []
+  const ids = new Set(spans.map(span => span.id))
+  const root = spans.find(span => span.kind === 'run' && !span.parent_span_id)
+  if (!root) return spans
+  return spans.map(span => span.parent_span_id && !ids.has(span.parent_span_id)
+    ? { ...span, parent_span_id: root.id } : span)
+    .sort((a, b) => a.started_at - b.started_at)
+})
+const rootSpans = computed(() => {
+  const ids = new Set(displaySpans.value.map(span => span.id))
+  return displaySpans.value.filter(span => !span.parent_span_id || !ids.has(span.parent_span_id))
+})
 const injectionSpans = computed(() => (selected.value?.spans ?? []).filter((span) => {
   const source = span.attributes?.context_source
-  return source === 'tool_schema' || source === 'tool_schema_error' || source === 'capability_catalog' || source === 'skill_index' || source === 'skill_body' || source === 'shell_policy'
+  return source === 'tool_schema' || source === 'tool_schema_error' || source === 'capability_catalog' || source === 'skill_index' || source === 'skill_body' || source === 'shell_policy' || source === 'rag_retrieval'
 }))
 function injectionLabel(span: any) {
-  const labels: Record<string, string> = { tool_schema: 'trace.contextSchema', tool_schema_error: 'trace.schemaError', capability_catalog: 'trace.capabilityCatalog', skill_index: 'trace.skillIndex', skill_body: 'trace.skillBody', shell_policy: 'trace.shellPolicy' }
+  const labels: Record<string, string> = { tool_schema: 'trace.contextSchema', tool_schema_error: 'trace.schemaError', capability_catalog: 'trace.capabilityCatalog', skill_index: 'trace.skillIndex', skill_body: 'trace.skillBody', shell_policy: 'trace.shellPolicy', rag_retrieval: 'trace.ragRetrieval' }
   const key = labels[String(span.attributes?.context_source)]
   return key ? t(key) : span.name
 }
 function injectionSummary(span: any) {
   const input = (span.input && typeof span.input === 'object' ? span.input : {}) as Record<string, any>
+  if (span.attributes?.context_source === 'rag_retrieval') {
+    const output = (span.output && typeof span.output === 'object' ? span.output : {}) as Record<string, any>
+    const diagnostics = (output.diagnostics && typeof output.diagnostics === 'object' ? output.diagnostics : {}) as Record<string, any>
+    const hits = Array.isArray(output.scope_hits) ? output.scope_hits.reduce((sum: number, row: any) => sum + Number(row?.hit_count || 0), 0) : 0
+    const duration = Number(span.duration_ms)
+    const parts = [t('monitor.ragMessages', { count: Number(output.message_count || 0) }), t('monitor.ragHits', { count: hits })]
+    if (Number.isFinite(duration)) parts.push(t('monitor.ragDuration', { duration: duration >= 1000 ? `${(duration / 1000).toFixed(2)}s` : `${Math.round(duration)}ms` }))
+    if (output.reason) parts.push(String(output.reason))
+    if (diagnostics.engine) parts.push(String(diagnostics.engine))
+    return parts.join(' · ')
+  }
   if (span.attributes?.context_source === 'shell_policy') {
     return span.attributes?.role === 'stable_protocol' ? t('monitor.stableProtocol') : t('monitor.dynamicPermissions')
   }
@@ -244,27 +290,28 @@ function injectionSummary(span: any) {
   if (span.attributes?.context_source === 'skill_index') return `${t('monitor.skillsCount', { count: span.attributes?.skill_count ?? 0 })} index`
   return `${input.skill ?? span.attributes?.skill ?? 'Skill'} · ${span.attributes?.action === 'reused' ? t('monitor.skillActionReused') : t('monitor.skillActionFirst')}`
 }
-function childrenOf(id: string) { return (selected.value?.spans ?? []).filter(s => s.parent_span_id === id) }
+function childrenOf(id: string) { return displaySpans.value.filter(s => s.parent_span_id === id) }
+function spanRound(span: any) {
+  const fromId = String(span.id ?? '').match(/:round:(\d+)(?::provider)?$/)?.[1]
+  return Number(span.attributes?.round ?? fromId ?? 0)
+}
 function previousRoundSpan(span: any) {
-  if (span.kind !== 'llm') return undefined
-  const rounds = rootSpans.value
-    .filter(item => item.kind === 'llm' && item.id !== span.id)
-    .sort((a, b) => (Number(a.attributes?.round ?? 0) - Number(b.attributes?.round ?? 0)) || a.ordinal - b.ordinal)
-  const currentRound = Number(span.attributes?.round ?? 0)
-  const previousInRun = rounds.reverse().find(item => Number(item.attributes?.round ?? 0) < currentRound)
+  if (!isModelSpan(span) || span.attributes?.purpose === 'branch') return undefined
+  const rounds = (selected.value?.spans ?? [])
+    .filter(item => isModelSpan(item) && item.attributes?.purpose !== 'branch' && item.id !== span.id)
+    .sort((a, b) => (spanRound(a) - spanRound(b)) || a.ordinal - b.ordinal)
+  const currentRound = spanRound(span)
+  const previousInRun = rounds.reverse().find(item => spanRound(item) < currentRound)
   if (previousInRun) return previousInRun
-  if (currentRound > 1) return undefined
-
-  const currentRun = selected.value
-  if (!currentRun) return undefined
-  const previousRun = props.runs
-    .filter(run => run.id !== currentRun.id && run.started_at < currentRun.started_at)
-    .sort((a, b) => b.started_at - a.started_at)[0]
-  const previousSpans = previousRun ? props.details?.[previousRun.id]?.spans ?? [] : []
-  return previousSpans
-    .filter(item => !item.parent_span_id && item.kind === 'llm')
-    .sort((a, b) => (Number(a.attributes?.round ?? 0) - Number(b.attributes?.round ?? 0)) || a.ordinal - b.ordinal)
-    .at(-1)
+  const current = selected.value
+  if (currentRound !== 1 || !current) return undefined
+  const previous = props.runs.filter(run => run.session_key === current.session_key && !run.id.startsWith('run-reflection-') && run.started_at < current.started_at && run.ended_at != null
+    && run.ended_at <= current.started_at).sort((a, b) => b.started_at - a.started_at)[0]
+  const last = (previous && props.details?.[previous.id]?.spans)?.filter(item =>
+    isModelSpan(item) && item.attributes?.purpose !== 'branch')
+    .sort((a, b) => spanRound(b) - spanRound(a) || b.ordinal - a.ordinal)[0]
+  return last && ['provider', 'model', 'protocol'].every(key => last.attributes?.[key] === span.attributes?.[key])
+    ? last : undefined
 }
 function selectRun(runId: string) {
   if (selectedId.value !== runId) selectedId.value = runId
@@ -295,7 +342,6 @@ function onRunListScroll(event: Event) {
 function resolveUsage(run: TraceRun | TraceRunSummary | null): TokenUsage {
   if (!run) return {}
   const spans = run.spans ?? []
-  if (!spans.some(span => span.kind === 'llm')) return {}
   const candidates = [run.usage, run.attributes?.tokens]
   for (const candidate of candidates) {
     const normalized = normalizeUsage(candidate)
@@ -336,23 +382,39 @@ function hasProviderUsage(run: TraceRun | TraceRunSummary | null): boolean {
   if (runInput !== undefined && runInput > 0) return true
   return Boolean((run?.spans ?? []).some(span => {
     const input = number(span.usage?.input)
-    return span.kind === 'llm' && input !== undefined && input > 0
+    return isModelSpan(span) && input !== undefined && input > 0
   }))
+}
+
+function safeModelLabel(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const model = value.trim()
+  if (!model || model.startsWith('gugu-model-v1.') || model.length > 120) return undefined
+  return model
 }
 
 function normalizeUsage(value: Record<string, any> | undefined): TokenUsage {
   if (!value || typeof value !== 'object') return {}
-  const input = number(value.input ?? value.input_tokens ?? value.prompt_tokens)
+  const rawInput = number(value.input ?? value.input_tokens ?? value.prompt_tokens)
   const output = number(value.output ?? value.output_tokens ?? value.completion_tokens)
   const cacheRead = number(value.cache_read ?? value.cache_read_input_tokens ?? value.prompt_cache_hit_tokens)
   const cacheWrite = number(value.cache_write ?? value.cache_write_input_tokens)
   const fresh = number(value.fresh_input)
   const total = number(value.total)
+  // 旧 Node Collector 的 input 是 fresh token；context_input 标记了该口径。
+  // 当前 Collector 的 input 是总输入，fresh_input 单独展示。
+  const cacheTokens = (cacheRead ?? 0) + (cacheWrite ?? 0)
+  const legacyNodeUsage = value.context_input !== undefined || rawInput !== undefined && rawInput < cacheTokens
+  const input = legacyNodeUsage && rawInput !== undefined
+    ? (fresh ?? rawInput) + cacheTokens
+    : rawInput
   if (![input, output, cacheRead, cacheWrite, fresh, total].some(v => v !== undefined)) return {}
   return {
     input, output, cache_read: cacheRead, cache_write: cacheWrite,
-    fresh_input: fresh ?? (input !== undefined ? Math.max(input - (cacheRead ?? 0), 0) : undefined),
-    total: total ?? (input !== undefined || output !== undefined ? (input ?? 0) + (output ?? 0) : undefined),
+    fresh_input: fresh ?? (legacyNodeUsage ? rawInput : input !== undefined ? Math.max(input - (cacheRead ?? 0) - (cacheWrite ?? 0), 0) : undefined),
+    total: legacyNodeUsage && input !== undefined
+      ? input + (output ?? 0)
+      : total ?? (input !== undefined || output !== undefined ? (input ?? 0) + (output ?? 0) : undefined),
     cache_ratio: input ? (cacheRead ?? 0) / input : 0,
   }
 }
@@ -408,6 +470,7 @@ function fmtTokens(v: number | null | undefined) {
 .run-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
 .run-header h2 { margin:3px 0 5px; font:600 14px var(--font-mono); }
 .run-sub { display:flex; align-items:baseline; gap:7px; color:var(--content-tertiary); font-size:9px; line-height:1.4; }
+.trace-capture-warning { margin-top:10px; padding:8px 11px; border:1px solid color-mix(in srgb,var(--status-warning) 30%,var(--border-subtle)); border-radius:var(--radius-md); background:color-mix(in srgb,var(--status-warning) 9%,var(--surface-panel)); color:var(--content-secondary); font-size:10px; line-height:1.5; }
 .duration { text-align:right; }
 .run-header-actions { display:flex; align-items:flex-start; gap:14px; }
 .duration small { display:block; color:var(--content-tertiary); font-size:8px; text-transform:uppercase; letter-spacing:.08em; }

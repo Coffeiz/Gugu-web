@@ -2,10 +2,10 @@
   <div class="workspace">
     <section class="sessions">
       <header>
-        <div><span class="eyebrow">SESSIONS</span><h2>Conversation</h2></div>
-        <button class="new" :title="t('playground.newSession')" @click="newSession">＋</button>
+        <div><span class="eyebrow">SESSIONS</span><h2>{{ subagents ? t('playground.subagents') : 'Conversation' }}</h2></div>
+        <button v-if="!subagents && !localDesktopMode" class="new" :title="t('playground.newSession')" @click="newSession">＋</button>
       </header>
-      <div v-if="!connected" class="empty small">{{ t('playground.openDev') }}</div>
+      <div v-if="!connected && !localDesktopMode" class="empty small">{{ t('playground.openDev') }}</div>
       <button
         v-for="s in sessions" :key="s.id"
         class="session-row" :class="{ active: s.id === activeId }"
@@ -15,16 +15,36 @@
         <span class="session-title">{{ s.title }}</span>
         <span class="sid">#{{ s.id }}</span>
       </button>
+      <section v-for="[agentId, children] in subagentGroups" :key="agentId" class="subagent-group">
+        <h3 :title="agentId || undefined">{{ subagentName(agentId) }}</h3>
+        <button
+          v-for="session in children" :key="session.session_key"
+          class="session-row subagent-row" :class="{ active: session.session_key === desktopSession?.session_key }"
+          :disabled="sending" @click="selectDesktopSession(session)"
+        >
+          <span class="session-title">{{ childIdentifier(session) }}</span>
+          <span v-if="hasChildIdentifier(session)" class="sid">#{{ session.external_session_id }}</span>
+        </button>
+      </section>
+      <button
+        v-for="session in topLevelTraceSessions" :key="session.session_key"
+        class="session-row" :class="{ active: session.session_key === desktopSession?.session_key }"
+        :disabled="sending" @click="selectDesktopSession(session)"
+      >
+        <span class="source">{{ t(session.im_platform ? `playground.imSource.${session.im_platform}` : 'playground.desktopSource') }}</span>
+        <span class="session-title">{{ session.title }}</span>
+        <span class="sid">#{{ session.external_session_id }}</span>
+      </button>
     </section>
 
     <section class="session-stage">
       <header class="session-head">
         <div>
-          <span class="eyebrow">{{ activeId ? `SESSION #${activeId}` : 'NEW SESSION' }}</span>
-          <h1>{{ activeSession?.title || 'New conversation' }}</h1>
+          <span class="eyebrow">{{ activeSessionId ? `SESSION #${activeSessionId}` : subagents ? '' : 'NEW SESSION' }}</span>
+          <h1>{{ (subagents && desktopSession ? `${subagentName(subagentId(desktopSession))} · ${childIdentifier(desktopSession)}` : desktopSession?.title) || activeSession?.title || (subagents ? t('playground.subagents') : 'New conversation') }}</h1>
         </div>
         <div class="head-actions">
-          <button v-if="activeId" class="refresh" :title="t('playground.refreshSession')" :aria-label="t('playground.refreshSession')" @click="refreshAll">↻</button>
+          <button v-if="activeSessionId || subagents" class="refresh" :title="refreshLabel" :aria-label="refreshLabel" @click="refreshAll">↻</button>
           <div v-if="activeId" class="view-switch">
             <button :class="{ active: sessionView === 'conversation' }" @click="showConversation">{{ t('playground.conversation') }}</button>
             <button :class="{ active: sessionView === 'monitor' }" @click="openMonitor">Monitor</button>
@@ -41,8 +61,8 @@
           <div v-if="loadingOlder" class="older-loading">{{ t('playground.loadingOlder') }}</div>
           <div v-if="!messages.length" class="empty">
             <div class="empty-orb">◎</div>
-            <strong>{{ t('playground.startMessage') }}</strong>
-            <span>{{ t('playground.agentLoopHint') }}</span>
+            <strong>{{ t(localDesktopMode ? 'playground.desktopEmpty' : 'playground.startMessage') }}</strong>
+            <span v-if="!localDesktopMode">{{ t('playground.agentLoopHint') }}</span>
           </div>
 
           <article v-for="(m, idx) in messages" :key="m.id" class="message" :class="m.role">
@@ -79,7 +99,7 @@
           </article>
         </div>
 
-        <form class="composer ls-card" @submit.prevent="send">
+        <form v-if="!localDesktopMode" class="composer ls-card" @submit.prevent="send">
           <textarea v-model="draft" :disabled="sending || !connected" rows="1" :placeholder="t('playground.composer')" @keydown="handleComposerKeydown" />
           <div class="composer-foot">
             <span>{{ mode === 'detail' ? t('playground.detailedSummary') : t('playground.normalConversation') }}</span>
@@ -89,8 +109,12 @@
         <p v-if="error" class="error">{{ error }}</p>
       </template>
 
+      <div v-else-if="subagents && !activeSessionKey" class="empty">
+        <strong>{{ t('playground.noSubagentSessions') }}</strong>
+      </div>
       <SessionMonitor
         v-else
+        :key="activeSessionKey ?? undefined"
         ref="monitorRef"
         :runs="runs"
         :details="runDetails"
@@ -109,10 +133,11 @@
 </template>
 
 <script setup lang="ts">
+import { localDesktopMode } from '../services/api'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import type { ChatMessage, GuguSession, TraceRun, TraceRunSummary } from '../types'
+import type { ChatMessage, GuguSession, TraceRun, TraceRunSummary, TraceSession } from '../types'
 import { listGuguSessions, loadBootstrap, loadMessagePage, sendMessage } from '../services/gugu'
-import { getRun, getRunSpans, listRuns, subscribeTraceEvents } from '../services/api'
+import { getRun, getRunSpans, listRuns, listTraceSessions, subscribeTraceEvents } from '../services/api'
 import { useLoopScopeI18n } from '../i18n/index'
 const { t } = useLoopScopeI18n()
 import SessionMonitor from '../components/SessionMonitor.vue'
@@ -120,8 +145,49 @@ import { buildTraceRounds } from '../utils/runExport'
 import { prettyJson } from '../utils/prettyJson'
 import { formatCompactNumber } from '../utils/formatNumber'
 
+const props = defineProps({ subagents: Boolean })
+
 const sessions = ref<GuguSession[]>([])
 const activeId = ref<number | null>(null)
+const desktopSessions = ref<TraceSession[]>([])
+const allTraceSessions = ref<TraceSession[]>([])
+const desktopSession = ref<TraceSession | null>(null)
+const topLevelTraceSessions = computed(() => props.subagents ? [] : desktopSessions.value.filter(session => !session.parent_session_id))
+const childTraceSessions = computed(() => allTraceSessions.value.filter(session => session.parent_session_id))
+const subagentGroups = computed(() => {
+  const groups = new Map<string, TraceSession[]>()
+  if (!props.subagents) return groups
+  for (const session of childTraceSessions.value) {
+    const id = subagentId(session)
+    const children = groups.get(id)
+    if (children) children.push(session)
+    else groups.set(id, [session])
+  }
+  return groups
+})
+
+function subagentId(session: TraceSession) {
+  // 旧版只有 Searcher，且将内部会话号写入 child_id。
+  return session.agent_id || (session.child_id && session.child_id === session.external_session_id ? 'builtin:searcher' : '')
+}
+
+function subagentName(id: string) {
+  if (id === 'builtin:searcher') return 'Searcher'
+  return id || t('playground.unknownAgent')
+}
+
+function hasChildIdentifier(session: TraceSession) {
+  return Boolean(session.child_id && (session.agent_id || session.child_id !== session.external_session_id))
+}
+
+function childIdentifier(session: TraceSession) {
+  return hasChildIdentifier(session)
+    ? session.child_id
+    : t('playground.sessionIdentifier', { id: session.external_session_id })
+}
+const activeSessionId = computed(() => desktopSession.value?.external_session_id ?? activeId.value)
+const activeSessionKey = computed(() => desktopSession.value?.session_key ?? (activeId.value == null ? null : `web:${activeId.value}`))
+const refreshLabel = computed(() => t(props.subagents || desktopSession.value ? 'playground.refreshRuns' : 'playground.refreshSession'))
 const messages = ref<ChatMessage[]>([])
 const activeChatType = ref<string | null>(null)
 const ownerPlatformUserId = ref<string | null>(null)
@@ -140,7 +206,7 @@ const oldestMessageId = ref<number | null>(null)
 const hasOlderRuns = ref(false)
 const loadingOlderRuns = ref(false)
 const mode = ref<'normal'|'detail'>('normal')
-const sessionView = ref<'conversation'|'monitor'>('conversation')
+const sessionView = ref<'conversation'|'monitor'>(props.subagents ? 'monitor' : 'conversation')
 const monitorFocusRunId = ref('')
 const draft = ref('')
 const sending = ref(false)
@@ -149,60 +215,77 @@ const scrollEl = ref<HTMLElement | null>(null)
 const monitorRef = ref<{ getScrollTop: () => number; setScrollTop: (value: number) => void } | null>(null)
 const conversationScrollTop = ref(0)
 const monitorScrollTop = ref(0)
+
 const connected = ref(!!loadBootstrap())
 const activeSession = computed(() => sessions.value.find(s => s.id === activeId.value))
 let stopTraceEvents: (() => void) | null = null
 let traceRefreshTimer: number | undefined
 let pendingTraceEvent: { run_id: string; session_key: string; status: string } | undefined
-const runRefreshes = new Map<number, Promise<TraceRunSummary[]>>()
+const runRefreshes = new Map<string, Promise<TraceRunSummary[]>>()
+let desktopSessionRefresh: Promise<void> | undefined
 
 async function refreshSessions() {
-  if (!connected.value) return
+  if (props.subagents || !connected.value) return
   sessions.value = await listGuguSessions()
 }
-function runSources() {
+function refreshDesktopSessions() {
+  if (!connected.value && !localDesktopMode) return Promise.resolve()
+  desktopSessionRefresh ??= listTraceSessions()
+    .then(entries => {
+      allTraceSessions.value = entries
+      desktopSessions.value = entries.filter(session => session.source === 'desktop')
+    })
+    .catch(() => { /* Collector 暂不可用时保留已有会话。 */ })
+    .finally(() => { desktopSessionRefresh = undefined })
+  return desktopSessionRefresh
+}
+function traceSessionKeys() {
+  if (desktopSession.value) return [desktopSession.value.session_key]
+  if (activeId.value == null) return []
   const source = activeSession.value?.source || 'web'
-  return [...new Set([source, 'web'])]
+  const collectorSource = ['im', 'feishu', 'qq', 'wechat', 'telegram'].includes(source) ? 'im' : source
+  // IM 可以绑定 Web 会话，因此也保留同一会话的 Web Run。
+  return [...new Set([collectorSource, 'web'])].map(origin => `gugu:${origin}:${activeId.value}`)
 }
 async function loadSessionRuns(options: { limit?: number; before?: number } = {}) {
-  const sessionId = activeId.value
-  if (sessionId == null) return []
+  const sessionKey = activeSessionKey.value
+  if (!sessionKey) return []
   const results = await Promise.allSettled(
-    runSources().map(source => listRuns(sessionId, source, options)),
+    traceSessionKeys().map(key => listRuns(key, options)),
   )
   const batches = results.map(result => result.status === 'fulfilled' ? result.value : [])
   if (results.every(result => result.status === 'rejected')) {
     throw results.find(result => result.status === 'rejected')?.reason ?? new Error('Runs 请求失败')
   }
-  if (activeId.value === sessionId && results.some(result => result.status === 'rejected')) {
+  if (activeSessionKey.value === sessionKey && results.some(result => result.status === 'rejected')) {
     runsError.value = t('playground.runLoadFailed', { message: '部分会话来源暂不可用' })
   }
   const unique = new Map(batches.flat().map(run => [run.id, run]))
   return [...unique.values()].sort((a, b) => (b.started_at - a.started_at) || b.id.localeCompare(a.id))
 }
 async function refreshRuns() {
-  const sessionId = activeId.value
-  if (!sessionId) { runs.value = []; runsError.value = ''; return }
-  let request = runRefreshes.get(sessionId)
+  const sessionKey = activeSessionKey.value
+  if (!sessionKey) { runs.value = []; runsError.value = ''; return }
+  let request = runRefreshes.get(sessionKey)
   runsLoading.value = Boolean(request)
   if (!request) {
     runsLoading.value = true
     runsError.value = ''
     request = loadSessionRuns({ limit: 20 }).then(result => result.slice(0, 20))
-    runRefreshes.set(sessionId, request)
+    runRefreshes.set(sessionKey, request)
     void request.finally(() => {
-      if (runRefreshes.get(sessionId) === request) runRefreshes.delete(sessionId)
-      if (activeId.value === sessionId) runsLoading.value = false
+      if (runRefreshes.get(sessionKey) === request) runRefreshes.delete(sessionKey)
+      if (activeSessionKey.value === sessionKey) runsLoading.value = false
     }).catch(() => {})
   }
   try {
     const nextRuns = await request
     // 切换会话后，迟到的旧结果不能覆盖当前 Monitor。
-    if (activeId.value !== sessionId) return
+    if (activeSessionKey.value !== sessionKey) return
     runs.value = nextRuns
     hasOlderRuns.value = runs.value.length >= 20
   } catch (cause) {
-    if (activeId.value === sessionId) {
+    if (activeSessionKey.value === sessionKey) {
       runs.value = []
       runsError.value = t('playground.runLoadFailed', { message: errorMessage(cause) })
     }
@@ -218,7 +301,11 @@ async function refreshLiveRun(runId: string) {
   spanHasMore.value = { ...spanHasMore.value, [runId]: Boolean(page.hasMore) }
 }
 function onTraceEvent(event: { run_id: string; session_key: string; status: string }) {
-  if (!activeId.value || !runSources().some(source => event.session_key === `gugu:${source}:${activeId.value}`)) return
+  if (props.subagents && !allTraceSessions.value.some(session => session.session_key === event.session_key)) {
+    void refreshSubagentSessions()
+  } else if (event.session_key.startsWith('gugu:desktop:')
+    && !desktopSessions.value.some(session => session.session_key === event.session_key)) void refreshDesktopSessions()
+  if (!traceSessionKeys().includes(event.session_key)) return
   if (sessionView.value !== 'monitor' && mode.value !== 'detail') return
   pendingTraceEvent = event
   if (traceRefreshTimer !== undefined) return
@@ -229,18 +316,20 @@ function onTraceEvent(event: { run_id: string; session_key: string; status: stri
     if (!latestEvent) return
     void (async () => {
       await refreshRuns()
-      if (sessionView.value !== 'monitor') return
+      if (sessionView.value !== 'monitor' || !traceSessionKeys().includes(latestEvent.session_key)) return
       if (!monitorFocusRunId.value) monitorFocusRunId.value = latestEvent.run_id
       if (monitorFocusRunId.value === latestEvent.run_id) await refreshLiveRun(latestEvent.run_id)
     })().catch(() => {})
   }, 120)
 }
 async function loadOlderRuns() {
-  if (!activeId.value || !hasOlderRuns.value || loadingOlderRuns.value || !runs.value.length) return
+  const sessionKey = activeSessionKey.value
+  if (!sessionKey || !hasOlderRuns.value || loadingOlderRuns.value || !runs.value.length) return
   const oldest = runs.value[runs.value.length - 1]
   loadingOlderRuns.value = true
   try {
     const older = await loadSessionRuns({ limit: 20, before: oldest.started_at })
+    if (activeSessionKey.value !== sessionKey) return
     const existing = new Set(runs.value.map(run => run.id))
     const unique = older.filter(run => !existing.has(run.id))
     runs.value = [...runs.value, ...unique]
@@ -253,7 +342,7 @@ function previousRunFor(runId: string) {
   const current = runs.value.find(run => run.id === runId)
   if (!current) return undefined
   return runs.value
-    .filter(run => run.id !== runId && run.started_at < current.started_at)
+    .filter(run => run.id !== runId && run.session_key === current.session_key && !run.id.startsWith('run-reflection-') && run.started_at < current.started_at && run.ended_at != null && run.ended_at <= current.started_at)
     .sort((a, b) => b.started_at - a.started_at)[0]
 }
 async function loadRunDetail(runId: string, loadPrevious = true) {
@@ -262,6 +351,7 @@ async function loadRunDetail(runId: string, loadPrevious = true) {
   const existing = runDetails.value[runId]
   if (existing) {
     if (!existing.spans) await loadSpans(runId, 0)
+    if (loadPrevious) await loadPreviousRun(runId)
     return
   }
   loadingRunId.value = runId
@@ -269,14 +359,19 @@ async function loadRunDetail(runId: string, loadPrevious = true) {
     const detail = await getRun(runId, { includeSpans: false })
     runDetails.value = { ...runDetails.value, [runId]: detail }
     if (!await loadSpans(runId, 0)) return
-    if (loadPrevious) {
-      const previous = previousRunFor(runId)
-      if (previous && !runDetails.value[previous.id]) await loadRunDetail(previous.id, false)
-    }
+    if (loadPrevious) await loadPreviousRun(runId)
   } catch (cause) {
     error.value = t('playground.runLoadFailed', { message: errorMessage(cause) })
   } finally {
     loadingRunId.value = ''
+  }
+}
+async function loadPreviousRun(runId: string) {
+  const previous = previousRunFor(runId)
+  if (!previous) return
+  await loadRunDetail(previous.id, false)
+  while (spanHasMore.value[previous.id]) {
+    if (!await loadSpans(previous.id, spanOffsets.value[previous.id] ?? 0)) break
   }
 }
 function selectMonitorRun(runId: string) {
@@ -372,7 +467,29 @@ function messageRoleLabel(message: ChatMessage): string {
       ? t('playground.groupMemberWithId', { id: message.platformUserId })
       : t('playground.groupMember'))
 }
+async function refreshSubagentSessions() {
+  await refreshDesktopSessions()
+  const first = childTraceSessions.value[0]
+  if (!activeSessionKey.value && first) await selectDesktopSession(first)
+}
 async function refreshAll() {
+  if (props.subagents && !desktopSession.value) {
+    await refreshSubagentSessions()
+    return
+  }
+  const desktop = desktopSession.value
+  if (desktop) {
+    error.value = ''
+    await Promise.all([refreshDesktopSessions(), refreshRuns()])
+    if (desktopSession.value?.session_key === desktop.session_key && monitorFocusRunId.value) {
+      try { await refreshLiveRun(monitorFocusRunId.value) }
+      catch (cause) {
+        if (desktopSession.value?.session_key === desktop.session_key)
+          error.value = t('playground.runLoadFailed', { message: errorMessage(cause) })
+      }
+    }
+    return
+  }
   if (!activeId.value) return
   const newestCanonicalId = messages.value.reduce((max, message) => Math.max(max, message.canonicalId ?? 0), 0)
   if (messages.value.length && newestCanonicalId) {
@@ -388,6 +505,7 @@ async function refreshAll() {
   scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight })
 }
 async function selectSession(id: number) {
+  desktopSession.value = null
   activeId.value = id
   runs.value = []
   runsError.value = ''
@@ -407,7 +525,13 @@ async function selectSession(id: number) {
     scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight })
   }
 }
+async function selectDesktopSession(session: TraceSession) {
+  newSession()
+  desktopSession.value = session
+  await openMonitor()
+}
 function newSession() {
+  desktopSession.value = null
   activeId.value = null
   activeChatType.value = null
   ownerPlatformUserId.value = null
@@ -430,7 +554,8 @@ async function showConversation() {
   if (scrollEl.value) scrollEl.value.scrollTop = conversationScrollTop.value
 }
 async function openMonitor() {
-  if (!activeId.value) return
+  const sessionKey = activeSessionKey.value
+  if (!sessionKey) return
   conversationScrollTop.value = scrollEl.value?.scrollTop ?? conversationScrollTop.value
   sessionView.value = 'monitor'
   if (!runs.value.some(run => run.id === monitorFocusRunId.value)) {
@@ -439,6 +564,7 @@ async function openMonitor() {
   await nextTick()
   monitorRef.value?.setScrollTop(monitorScrollTop.value)
   void refreshRuns().then(() => {
+    if (activeSessionKey.value !== sessionKey) return
     if (!runs.value.some(run => run.id === monitorFocusRunId.value)) {
       monitorFocusRunId.value = runs.value[0]?.id ?? ''
     }
@@ -492,8 +618,15 @@ async function send() {
   scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight, behavior:'smooth' })
   try {
     let lastTool: ChatMessage | null = null
+    let runId: string | undefined
     const sid = await sendMessage(text, activeId.value, evt => {
-      if (evt.type === 'session_id') activeId.value = Number(evt.session_id)
+      if (evt.type === 'session_id') {
+        activeId.value = Number(evt.session_id)
+        if (typeof evt.run_id === 'string' && evt.run_id) {
+          runId = evt.run_id
+          ai.runId = runId
+        }
+      }
       else if (evt.type === 'token') {
         ai.content += evt.content ?? ''
         if (!ai.debugEvents?.some(x => x.label === 'Final response streaming')) {
@@ -515,6 +648,7 @@ async function send() {
         if (ai.content.trim()) {
           ai.pending = false
           ai = { id: `a-${Date.now()}-${Math.random()}`, role:'assistant', content:'', pending:true, debugEvents: [{ kind:'status', label:'Agent loop continues' }] }
+          ai.runId = runId
           messages.value.push(ai)
         }
       } else if (evt.type === 'error') {
@@ -525,14 +659,14 @@ async function send() {
     if (sid) activeId.value = sid
     ai.pending = false
     await refreshSessions()
-    const before = runs.value.length
-    for (let i = 0; i < 6; i += 1) {
-      await new Promise(r => setTimeout(r, 160))
-      await refreshRuns()
-      if (runs.value.length > before) break
+    if (runId) {
+      for (let i = 0; i < 6; i += 1) {
+        await new Promise(r => setTimeout(r, 160))
+        await refreshRuns()
+        if (runs.value.some(run => run.id === runId)) break
+      }
+      if (runs.value.some(run => run.id === runId)) void loadRunDetail(runId)
     }
-    ai.runId = runs.value[0]?.id
-    if (ai.runId) void loadRunDetail(ai.runId)
   } catch (e: any) {
     ai.pending = false
     error.value = e?.message ?? String(e)
@@ -540,16 +674,9 @@ async function send() {
     sending.value = false
   }
 }
-function assistantOrdinal(messageIndex: number) {
-  return messages.value.slice(0, messageIndex + 1).filter(m => m.role === 'assistant').length - 1
-}
 function runForAssistant(messageIndex: number) {
   const message = messages.value[messageIndex]
   if (message?.runId) return runDetails.value[message.runId] ?? runs.value.find(r => r.id === message.runId)
-  const assistantCount = messages.value.filter(m => m.role === 'assistant').length
-  const offset = Math.max(0, assistantCount - runs.value.length)
-  const ordinal = assistantOrdinal(messageIndex) - offset
-  return ordinal >= 0 ? runs.value[ordinal] : undefined
 }
 function spanCount(run: TraceRun | TraceRunSummary | undefined, kind: string) { return run?.spans?.filter(s => s.kind === kind).length ?? 0 }
 function fmtMs(v: number | null | undefined) { return v == null ? '—' : v >= 1000 ? `${(v/1000).toFixed(2)}s` : `${Math.round(v)}ms` }
@@ -559,9 +686,14 @@ function preview(v: unknown) {
   return (s || '').slice(0, 700)
 }
 async function onBootstrap() {
-  connected.value = !!loadBootstrap()
-  await refreshSessions()
-  if (!activeId.value && sessions.value[0]) await selectSession(sessions.value[0].id)
+  connected.value = !localDesktopMode && !!loadBootstrap()
+  if (props.subagents) {
+    await refreshSubagentSessions()
+    return
+  }
+  await Promise.all([refreshSessions(), refreshDesktopSessions()])
+  if (!activeSessionKey.value && topLevelTraceSessions.value[0] && localDesktopMode) await selectDesktopSession(topLevelTraceSessions.value[0])
+  else if (!activeSessionKey.value && sessions.value[0]) await selectSession(sessions.value[0].id)
 }
 onMounted(async () => {
   window.addEventListener('loopscope:bootstrap', onBootstrap)
@@ -583,6 +715,9 @@ h1,h2 { margin:3px 0 0; font-size:18px; }
 .eyebrow { font-size:10px; letter-spacing:.11em; color:var(--content-tertiary); font-weight:600; }
 .new { border:0; background:var(--action-soft); color:var(--action-primary); border-radius:10px; width:32px; height:32px; }
 .session-row { width:100%; margin-top:8px; display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; text-align:left; border:1px solid transparent; background:transparent; border-radius:12px; padding:10px; color:var(--content-secondary); }
+.subagent-group { margin-top:16px; }
+.subagent-group h3 { margin:0 0 0 10px; color:var(--content-secondary); font-size:12px; overflow-wrap:anywhere; }
+.subagent-row { grid-template-columns:minmax(0,1fr) auto; font-family:var(--font-mono); }
 .session-row:hover { background:var(--surface-card); }
 .session-row.active { background:var(--surface-raised); border-color:var(--border-subtle); box-shadow:var(--elevation-card); color:var(--content-primary); }
 .source,.sid { font-size:10px; color:var(--content-tertiary); font-family:var(--font-mono); }

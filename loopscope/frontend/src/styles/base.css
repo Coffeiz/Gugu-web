@@ -27,5 +27,3 @@ code, pre { font-family: var(--font-mono); }
   background: var(--surface-card); border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md); box-shadow: var(--elevation-card); backdrop-filter: blur(18px);
 }
-.muted { color: var(--content-secondary); }
-.mono { font-family: var(--font-mono); }

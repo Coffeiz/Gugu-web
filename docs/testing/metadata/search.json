@@ -1,0 +1,10 @@
+{
+  "apps/web-host/tests/search/search-shared-postgres.test.ts": {
+    "domain": "search",
+    "layer": "L2",
+    "owner": "packages/core/src/search/global-search.ts",
+    "productionEntry": "packages/core/src/search/postgres.ts",
+    "keyBehavior": "真实Fastify与隔离PG检索11来源，保护owner会话窗口导航脱敏及Unicode去重后原词查询和公开query",
+    "ci": "node-webui"
+  }
+}

@@ -1,0 +1,30 @@
+// @vitest-environment node
+import { describe, expect, it } from 'vitest'
+import { isLiveEventPayload } from '@/types/live-events'
+
+describe('live-event-v1', () => {
+  it('接受待发队列变更事件供聊天窗口即时同步', () => {
+    expect(isLiveEventPayload({
+      protocol_version: 'live-event-v1',
+      event_id: 'evt-pending-queue',
+      type: 'resource.changed',
+      resource: 'pending_queues',
+      operation: 'update',
+      entity_id: 388,
+      revision: 1,
+      created_at: '2026-09-12T00:00:00Z',
+    })).toBe(true)
+  })
+
+  it('接受 Skill 目录变更事件，使跨端创建能触发页面刷新', () => {
+    expect(isLiveEventPayload({
+      protocol_version: 'live-event-v1',
+      event_id: 'evt-skill-created',
+      type: 'resource.changed',
+      resource: 'skills',
+      operation: 'refresh',
+      revision: 1,
+      created_at: '2026-10-13T00:00:00Z',
+    })).toBe(true)
+  })
+})

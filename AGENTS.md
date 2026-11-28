@@ -5,7 +5,8 @@
 | Skill | 路径 | 适用场景 |
 |-------|------|---------|
 | frontend | `agentskills/frontend/SKILL.md` | Vue/TS 前端开发 |
-| backend | `agentskills/backend/SKILL.md` | Python/FastAPI 后端 |
+| backend | `agentskills/backend/SKILL.md` | Node.js 后端开发入口（转到 node-webui） |
+| node-webui | `agentskills/node-webui/SKILL.md` | Node.js/Fastify Web Host、Core、Gateway 与 Desktop 后端 |
 | canvas-mind | `agentskills/canvas-mind/SKILL.md` | 画布/便签/Mind |
 | design | `agentskills/design/SKILL.md` | UI 视觉与交互规范 |
 | testing | `agentskills/testing/SKILL.md` | 写/改测试 |
@@ -14,6 +15,11 @@
 | loopscope | `agentskills/loopscope/SKILL.md` | LoopScope trace、Collector、上下文观测与脱敏边界 |
 
 完整设计文档见 `agentskills/design/references/`。历史开发文档见 `docs/development/`。
+
+## 共享层优先
+
+- 所有功能和修复先检查共享实现及受影响入口。跨端通用的业务规则、数据契约和校验在共享包中维护，通用组件和交互在共享 UI 层维护。
+- Web、桌面和其他宿主复用同一份共享实现。只有平台专属能力放在宿主适配层。修改共享能力后，核对各端及 Agent 等实际调用入口。
 
 ## 本地开发机信息
 
@@ -26,6 +32,12 @@
 - 修改 `frontend/src/views/Admin/**/index.vue` 时，不得只继续堆叠模板、样式或业务逻辑；如果触及已有大入口文件，应顺手把可独立的模块、弹窗、表单区块拆到 `components/`，把状态与异步流程拆到 `composables/`，把请求和纯逻辑拆到对应 service/utils。
 - 新增 Admin 功能优先创建独立组件或 composable；`index.vue` 只保留页面布局、模块组合和流程调度。
 - 拆分时保持现有 design token、权限边界、数据流和测试覆盖，不为了拆分引入无必要的全局状态或重复 API。
+
+## Node 开发监听约定
+
+- 日常开发优先使用 `corepack pnpm --filter @gugu/webui dev` 监听源码和共享包，不要因每次编辑而手动运行全量 build。仅首次缺少共享包制品、资源生成、发布或需要验证生产构建时执行对应构建。
+- 监听会重启 Web Host；运行中的 Agent 任务和请求可能中断。修改共享包后应确认监听编译成功，不能用旧制品掩盖编译错误。
+- 新后端功能、缺陷修复、测试和架构演进均以 `apps/web-host/`、`apps/desktop/` 与 `packages/` 中的 Node.js 实现为目标。Python 后端只可作为历史行为和数据迁移的只读参考，不是新增实现、验收或运行目标。
 
 ## 调试原则
 
@@ -44,9 +56,9 @@
 
 ## 安全规范
 
-- 聊天正文、附件名和用户输入不得写入可见日志；使用 `agent/logsafe.py` 的 `fingerprint()`。
-- 可见错误必须经过 `app.core.redaction.redact()`；原始异常只能写入 `diag_log()`/`diag_log_raw()`。
-- 跨用户数据查询使用 `app/core/ownership.py` 的 `get_owned()`。
+- 聊天正文、附件名和用户输入不得写入可见日志；使用 `@gugu/log` 的指纹、字段白名单和诊断日志接口，遵循 `agentskills/node-webui/SKILL.md`。
+- 可见错误必须走 Node Host/Core 的统一错误映射和脱敏；原始异常只允许进入受限诊断日志，不得写入常规日志或用户响应。
+- 跨用户读写由可信 owner 上下文和 Core/Host 的 owner 限定端口执行；不得仅凭请求参数中的 owner/id 查询其他用户数据。
 - destructive 工具必须声明 `destructive=True` 并接入 `confirm` 确认门。
 - 外部请求复用 URL 安全校验，禁止自动跟随未经校验的重定向。
 - 不得把 token、密钥或凭据写入 URL、日志或 Git。
@@ -54,10 +66,14 @@
 
 ## 用户运行配置保护
 
-- `backend/config.override.json`、`backend/.env` 及 devserver 上的同名运行配置属于用户数据，默认只读。
+- `apps/web-host/config.override.json`、`apps/web-host/.env`、Desktop 的运行配置及 devserver 上对应配置属于用户数据，默认只读。旧 `backend/` 目录中的配置也按用户数据保护，但不作为新后端运行或开发目标。
 - Agent、测试脚本、诊断脚本、Mutagen 同步和部署流程不得擅自创建、清空、重写或用本地副本覆盖这些文件；测试必须使用临时目录或显式 mock 配置路径。
 - 用户明确要求修改运行配置时，只修改指定字段，保留其他字段；写入必须使用原子替换并先校验 JSON，禁止把解析失败当成空对象继续写回。
 - 任何配置迁移、恢复或重建操作都必须先生成带时间戳的备份，并在完成后校验数据库、LLM 预设和其他配置段仍然存在；不得在日志中输出密码、Token 或 API Key。
+
+## 文件修改说明
+
+- 每次新增、修改、移动或删除文件后，在该轮最终回复中列出本轮变更的文件，并用相对于仓库根目录的目录树展示其位置。目录树只包含本轮变更的文件及其父目录，并简要标注各文件的改动或操作类型。
 
 ## 语言与提交
 
@@ -84,3 +100,9 @@
 - 本地与远端分叉时，获得确认后再 `git fetch` + `git rev-list --left-right --count` 分析差异。
 - 若本地内容是最新的但历史不同步：优先把本地新增改动 **cherry-pick / 重新应用** 到远端分支上，保留远端既有提交历史，而不是重置 + 强制推送。
 - 任何历史重写操作前，先创建备份分支（`git branch backup-<desc> <commit>`）。
+
+## 统一页面加载样式
+
+- 页面首次加载和路由等待统一复用 `PageLoadingState`，使用居中图标、加载文字及轻微呼吸动效；遵循减少动态效果偏好。
+- `SkeletonGate` 保留 150ms 延迟。L2 外壳先呈现，后台刷新保留已有内容，不显示整页加载状态。
+- 不再新增左上角单行加载提示或各页面独立的加载动画。局部操作保留按钮忙碌态，分页加载不替换整页内容。

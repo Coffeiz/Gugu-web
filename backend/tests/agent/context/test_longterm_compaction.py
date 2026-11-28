@@ -30,10 +30,9 @@ def test_pattern_compaction_rejects_unknown_or_duplicate_ids():
 
 
 def test_compaction_rejects_an_empty_result_for_a_large_snapshot():
-    source_profile = [{"type": "note", "text": f"画像 {index}"} for index in range(100)]
     source_pattern = [{"id": str(index), "text": f"模式 {index}"} for index in range(100)]
 
-    assert _valid_profile([], source_profile) is None
+    assert _valid_profile([]) is None
     assert _valid_pattern([], source_pattern) is None
 
 
@@ -83,3 +82,21 @@ async def _read(value):
 
 async def _json(value):
     return value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["profile", "pattern"])
+async def test_large_snapshot_can_compact_to_one_valid_item(kind, tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "get_storage", lambda: LocalStorageBackend(tmp_path))
+    user_id = "u1"
+    item = {"type": "preference", "text": "偏好简洁回复"}
+    if kind == "pattern":
+        item = {"id": "p0", "kind": "observed", "text": "习惯先做小范围验证"}
+    # 超过 350 条时，旧的 20% 下限与最多 70 条互斥。
+    original = [{**item, "id": f"p{i}", "text": f"原条目 {i}"} for i in range(400)]
+    await getattr(store, f"write_{kind}_list")(user_id, original)
+    monkeypatch.setattr(longterm_compaction, "complete_json", lambda *_a, **_kw: _json({kind: [item]}))
+    monkeypatch.setattr(store, "sync_pattern_vecs", lambda *_args, **_kwargs: _read(None))
+    assert await getattr(longterm_compaction, f"compact_{kind}")(user_id, None)
+    saved = await getattr(store, f"read_{kind}_list")(user_id)
+    assert [entry["text"] for entry in saved] == [item["text"]]

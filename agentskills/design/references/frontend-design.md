@@ -4,7 +4,7 @@
 
 ## 概述
 
-这是咕咕前台（用户侧 Web 应用）的设计规范手册，给写代码的人（含未来改代码的 AI）对照用——不是产品介绍。设计语言是**冷淡紫灰色调的轻玻璃视觉**：浅灰到冷灰蓝的渐变背景上叠加半透明表面、细边框和阴影；常驻内容面板默认不模糊背景，导航侧栏和 Mind 笔记 glass 保留 blur，弹窗/菜单等临时浮层也可按需使用真实 `backdrop-filter`。全文按「产品定位 → 技术选型 → 文件架构 → UI 设计规范（色彩/字重/交互等具体规则）→ 核心页面与组件 → 功能清单 → 文案规范 → 设计文件」组织，越往后越具体到像素值和 CSS 属性，改代码时直接定位对应章节查数值即可。
+这是咕咕前台（用户侧 Web 应用）的设计规范手册，给写代码的人（含未来改代码的 AI）对照用——不是产品介绍。设计语言是**冷淡紫灰色调的轻玻璃视觉**：浅灰到冷灰蓝的渐变背景上叠加半透明表面、细边框和阴影；常驻内容面板默认不模糊背景，导航侧栏保留 blur，弹窗/菜单等临时浮层也可按需使用真实 `backdrop-filter`。全文按「产品定位 → 技术选型 → 文件架构 → UI 设计规范（色彩/字重/交互等具体规则）→ 核心页面与组件 → 功能清单 → 文案规范 → 设计文件」组织，越往后越具体到像素值和 CSS 属性，改代码时直接定位对应章节查数值即可。
 
 ---
 
@@ -22,7 +22,7 @@
 |------|------|------|
 | 前端 | Vue 3 + Vite | `<script setup>` + Pinia |
 | 图标库 | Phosphor Icons（`@phosphor-icons/vue`） | MIT，UI 操作图标统一 `weight="bold"` |
-| 后端 | FastAPI (Python) | 异步，SQLAlchemy 2.0 async |
+| 后端 | Node.js + TypeScript | Web Host 使用 Fastify；Core、Database、Gateway 在 Desktop/Web Host 间按契约复用 |
 | 数据库 | PostgreSQL + Redis | 结构化数据 + 缓存/实时 |
 | 文件存储 | 阿里云 OSS / 本地 | 可切换，Admin 配置 |
 | 模型 | 可配置（Qwen / Anthropic / OpenAI 兼容） | Admin 后台热更新 |
@@ -37,7 +37,7 @@
 ### 前端（Vue 3）
 
 ```
-frontend/
+apps/ui/
 ├── src/
 │   ├── assets/          # 字体、图片、全局 CSS
 │   ├── components/
@@ -56,25 +56,20 @@ frontend/
 │   └── utils/
 ```
 
-### 后端（FastAPI）
+### 后端（Node.js）
 
 ```
-backend/
-├── app/
-│   ├── api/v1/
-│   │   ├── projects.py
-│   │   ├── tasks.py
-│   │   ├── files.py
-│   │   └── agent.py     # 自然语言对话/指令入口
-│   ├── services/
-│   │   ├── agent/       # 自然语言对话逻辑、记忆管理（Markdown 文件作为记忆）
-│   │   └── storage/     # OSS 文件操作
-│   ├── models/          # SQLAlchemy 数据库模型
-│   ├── schemas/         # Pydantic 请求/响应校验
-│   ├── core/            # 配置、JWT、中间件
-│   ├── db/              # 连接池、Alembic 迁移
-│   └── main.py
+apps/
+├── web-host/            # Fastify API、Web 运行时、后台任务与服务端适配
+└── desktop/             # Desktop Host 与本地运行时适配
+packages/
+├── core/                # 跨宿主业务规则、Agent Loop 与应用契约
+├── database/            # 共享数据库 schema、迁移和数据库基础设施
+├── gateway/             # IM 网关协议与运行时
+└── log/                 # 共用结构化日志和诊断契约
 ```
+
+后端新增功能以 Node.js 实现为准；历史 Python 代码仅可用于确认既有业务行为，不是开发、测试或运行目标。具体模块边界和命令见 `agentskills/node-webui/SKILL.md`。
 
 ---
 
@@ -88,22 +83,29 @@ backend/
 - **卡片**：半透明 tint、边框高光 + 轻阴影构成层次感；常驻卡片不使用 `backdrop-filter`，hover 时背景/阴影以 `0.25s ease` 淡入淡出，不立即亮起
 - **边缘高光**：`inset 0 1px 0 rgba(255,255,255,0.95)` 顶边亮线模拟玻璃切割倒角
 - **阴影**：轻阴影 `0 4px 16px rgba(80,90,110,0.08)`，扁平化，不堆叠
-- **圆角**：面板 `18px`，小元素 `10–12px`
+- **圆角**：玻璃表面（含桌面 L3）和内容卡片使用 `sm`（14px），常规控件使用 `xs`（10px），紧凑控件使用 `compact`（6px），桌面 L2 使用 `md`（20px）。
 
-**圆角形状分层约定**：
-- `.glass-card` 面板统一 `border-radius: var(--radius-lg)` + `corner-shape: squircle`
+**圆角形状约定**
+- 面板和控件统一使用普通圆角（`corner-shape: round`），按组件规格设置半径。`.glass-card` 面板使用 `border-radius: var(--radius-md)`。
 - 顶栏直接用 `.glass-card` 的静态 tint，不挂载独立 `GlassBg`；宿主保持 `overflow: visible`，避免顶栏按钮的外发阴影被裁掉
 - 其他明确采用 `GlassBg` 的工具栏，仍由 `GlassBg` 自己负责圆角裁切（`overflow: hidden` 放在背景层，不放在宿主）
-- 小按钮、输入框、chip、页内工具条按钮一律用普通圆角，不跟 squircle 混用
 
 **Surface blur 约定（全走 CSS 变量，明确哪些 surface 需要背景采样）：**
 
 | 档 | 变量/落点 | 值 | 用途 |
 |---|---|---|---|
 | 常驻面板 | `--glass-card-blur` | `none` | 页面内容卡、顶栏和 Admin 内容卡；用 tint、边框和阴影建立层次 |
-| 导航与笔记 glass | `--popup-blur` / `--glass-blur` | 主题 token | 应用/Admin 侧边导航；Mind 模式标签、画布工具 chrome、每日笔记玻璃底板及实体贴纸 |
+| 导航与画布控件 | `--popup-blur` / `--glass-blur` | 主题 token | 应用/Admin 侧边导航；画布工具栏、抽屉及实体贴纸 |
 | 临时浮层 | `--popup-surface-blur` / `--glass-blur` | 主题 token | `.popup-menu`、日期选择器、搜索下拉、弹窗卡片、聊天/媒体预览等浮在页面内容上的 surface |
 | 拖拽代理 | Interaction Runtime 代理视觉 | 由 runtime 与卡片组件共同管理 | 独立的短暂交互材质，不改变常驻面板默认无 blur 的契约 |
+
+### 页面骨架与加载态
+
+- **统一等待 150 ms**。Web 和桌面页面使用共享的 `SkeletonGate`，路由占位复用同一个延迟常量。加载立即开始，短于门槛时直接显示结果。路由交接沿用本次导航的剩余时间，不另起一段延迟。页面复用已有 L2 外壳，快速切页取消旧占位。
+
+- **玻璃面板优先**。切页或首载时先显示目标页的 L2 玻璃区域，包括正式页面的面板边界、底色、圆角和栏间距。面板内部再显示卡片、表格或工具栏占位。材质沿用该端的正式页面，保持主题和层级一致。
+- **占位与正式内容对齐**。按目标页保留工具栏、主栏和侧栏的相对位置。项目使用看板列，日历使用日期工具栏、日历网格和详情栏，终端使用会话列表和输出区，画布使用底部工具栏和右侧抽屉。定时任务、技能、MCP 与文件库的卡片占位按正式卡片的列数、列宽、间距和响应式断点排布，文件列表视图使用行占位。
+- **加载完成时原位替换**。玻璃面板、主要分栏和控件外壳在骨架与正式内容之间保持稳定。Web 和桌面端复用相同的布局契约，并沿用各自的工作区尺寸与定位。
 
 ### 两种静态玻璃表面：标准 glass-card vs GlassBg 仿玻璃
 
@@ -116,7 +118,13 @@ backend/
 | 现例 | 技能页、终端页、文件库主面板和顶栏 | 日历工具栏、文件工具栏；顶栏不使用 GlassBg |
 | hover | global.css `.glass-card:hover`，token `--glass-card-background-hover` | component-theme-refinements.css 契约规则 `.glass-card:hover .gb-tint` 切 `--surface-glass-hover`（带 0.25s 过渡） |
 
-除导航与笔记 glass 的明确例外外，常驻面板即使叠在可滚动/可交互内容上，也通过 tint、边框和阴影区分，不按内容是否可编辑来决定 blur。
+笔记列表和阅读面板沿用常驻 Glass，通过底色、边框和阴影建立层次。
+
+页面工具栏的上下、左右内边距统一用 `--toolbar-inset`（当前取 `--space-md`），高度随控件和内边距计算。紧凑的浮动工具栏可以用 `--space-sm`，四边同值。加载占位应和正式工具栏对齐。
+
+工作区页面内容面板四边使用 `--page-content-inset`（取 `--space-md`），与工具栏内的控件对齐。多栏页面的各个面板沿用同一内边距，全宽分割线和粘性表头可以跨越内边距。卡片、列表项、分组和加载占位的内外间距使用现有 `--space-*` 令牌。 小卡片和小弹层的内容内边距统一使用 `--space-sm`（8px）。 中型卡片（项目、笔记、文件、文件夹、定时任务、技能和连接器）使用 `--space-md`（12px）。同组卡片之间使用 `--space-xs`（4px）。 同组选项之间统一使用 `--option-gap`（1px），适用于菜单项、分段切换和表单选项。常规卡片间距与选项内容内边距沿用各自的空间令牌。带全宽操作区时，正文与操作区的横向内边距对齐。
+
+**内容间距统一使用 Space 令牌**：分区、卡片、表单字段、列表、提示文字和分隔线周围的 `margin`、`padding`、`gap`、`row-gap`、`column-gap` 使用 `--space-xs`（4px）、`--space-sm`（8px）、`--space-md`（12px）、`--space-lg`（16px）、`--space-xl`（24px）五档。已有语义令牌（如 `--page-content-inset`、`--toolbar-inset`）优先保留。不要在内容布局中新增任意像素间距；固定控件尺寸、边框宽度以及为图标/文字基线做的 1px 光学校正不属于内容间距，可以保留像素值。调整页面时检查该页面所有内容区域，避免只修被选中的单个字段后留下不一致的间距。
 
 实现红线（多次踩坑）：
 - 仿玻璃的 hover tint 规则**必须放全局样式表**（component-theme-refinements.css 的 `.glass-card:hover .gb-tint`）；写在 GlassBg.vue 或宿主的 scoped style 里（含 `:global` 写法）会被编译器丢弃 `.gb-tint` 后代部分而静默失效。
@@ -200,7 +208,7 @@ function darkenHex(hex, amount = 0.60) {
 
 **重命名按钮交互**：进入重命名状态后，铅笔图标（`PhPencilSimple`）切换为勾图标（`PhCheck`），再次点击执行确认提交，`title` 同步变为"确认"。按钮加 `@mousedown.prevent` 阻止 input blur 先于 click 触发导致状态重置。点击后自动全选文件名（`startRename` 内 `el.focus(); el.select()`，以及 input 上 `@focus="$event.target.select()"`）。
 
-**卡片重命名输入框**：使用共享 ghost sizer（隐藏的 `rename-ghost` 撑开名称行，输入框覆盖其上），确保进入编辑时卡片高度不变。单输入模式沿用自然行盒尺寸：ghost 决定 sizer 高度，input 绝对定位覆盖其上；不要给共享单输入 sizer 强制 `1lh` 高度或 `appearance: none`。文件夹、文件名与后缀输入继承名称行行高；若输入内容盒不足，只扩展绝对定位 input 到名称行预留留白（当前上下各 1px），不得压低 `line-height`，也不得改变 ghost/sizer 的流式高度。分段布局只增加容器规则，禁止只给文件输入另设输入外观。文件与文件夹必须复用同一输入框基础 class、外观规则与 `--rename-input-*` / `--input-*` token；文件名分段只负责名称/后缀布局，不得叠画第二层焦点光晕。输入框不得覆盖元信息或撑高卡片；焦点态只使用标准描边与光晕。验收时用含下伸字母的值（如 `gg`）检查文件与文件夹的字形、文字基线、输入框高度和相邻元信息间距。
+**卡片重命名输入框**：使用共享 ghost sizer（隐藏的 `rename-ghost` 撑开名称行，输入框覆盖其上），确保进入编辑时卡片高度不变。单输入模式沿用自然行盒尺寸：ghost 决定 sizer 高度，input 绝对定位覆盖其上；不要给共享单输入 sizer 强制 `1lh` 高度或 `appearance: none`。文件夹、文件名与后缀输入继承名称行行高；若输入内容盒不足，只扩展绝对定位 input 到名称行预留留白（当前上下各 1px），不得压低 `line-height`，也不得改变 ghost/sizer 的流式高度。分段布局只增加容器规则，禁止只给文件输入另设输入外观。文件与文件夹必须复用同一输入框基础 class、外观规则与 `--rename-input-*` / `--input-*` token；文件名分段只负责名称/后缀布局，不得重复绘制焦点描边。输入框不得覆盖元信息或撑高卡片；焦点态只使用标准高亮描边。验收时用含下伸字母的值（如 `gg`）检查文件与文件夹的字形、文字基线、输入框高度和相邻元信息间距。
 
 ### 图标
 
@@ -334,8 +342,8 @@ function darkenHex(hex, amount = 0.60) {
 
 **表单控件**：
 
-- **字段标题交互（全站规范）**：文本、数字、日期、邮箱、URL、密码等输入框的标题与控件分开布局；点击标题不应触发控件聚焦。不要用包裹输入框的 `<label>` 或指向输入框的 `<label for>` 实现布局，改用 `aria-label` / `aria-labelledby` 提供可访问名称。复选框和单选框保留 label 可点击语义。全局回归由 `frontend/tests/forms/field-label-focus.test.ts` 扫描所有 Vue 页面。
-- `field-input`：`padding: 9px 12px; border-radius: 8px; background: rgba(255,255,255,0.6); border: 1px solid rgba(0,0,0,0.1)`，focus 时蓝紫色光晕
+- **字段标题交互（全站规范）**：文本、数字、日期、邮箱、URL、密码等输入框的标题与控件分开布局；点击标题不应触发控件聚焦。不要用包裹输入框的 `<label>` 或指向输入框的 `<label for>` 实现布局，改用 `aria-label` / `aria-labelledby` 提供可访问名称。复选框和单选框保留 label 可点击语义。全局回归由 `apps/ui/tests/forms/field-label-focus.test.ts` 扫描所有 Vue 页面。
+- `field-input`：`padding: 9px 12px; border-radius: 8px; background: rgba(255,255,255,0.6); border: 1px solid rgba(0,0,0,0.1)`，focus 时使用 `--input-border-focus` 高亮描边
 - `section-label`：`10px / 600 / uppercase / letter-spacing: 0.07em`，小型大写标题
 - `col-divider`：`border-top: 1px solid rgba(0,0,0,0.07)`，区块间水平线
 - `color-chip`：`22px` 圆，渐变背景，选中 `border: 2px solid #fff + box-shadow: 0 0 0 2px rgba(0,0,0,0.18)`
@@ -506,3 +514,18 @@ function darkenHex(hex, amount = 0.60) {
 |------|------|
 | `design/prototype.html` | 可交互 HTML 原型稿（Dashboard 总览） |
 | `design.md` | 本文档 |
+
+### 卡片与弹窗的独立底部操作区
+
+- 提交表单、确认操作，以及卡片底部固定展示的详情、安装、编辑等操作，统一使用 `assets/styles/components/card-actions.css` 中的 `.app-card-actions`。
+- 顶部分割线为 **1 px**，从卡片内边缘延伸至另一侧内边缘。按钮的左右、上下留白统一使用关闭按钮的 `--card-close-inset`，正文保留独立内边距。如果底栏在带水平内边距的容器里，在直接外层设置 `--card-actions-inset`，其值与该容器的水平内边距一致。
+- 表单和标准按钮的单行底栏为 **59 px**，包含 34 px 控件高度、上下各 12 px 留白和 1 px 分割线。连接器、技能和定时任务等卡片的小型文字操作加用 `.app-card-actions--compact`，单行高 **37 px**，包含 24 px 控件、上下各 6 px 留白和 1 px 分割线，水平内边距沿用共享规则。底栏与卡片下沿之间不再叠加容器底部内边距。窄窗口、多语言长文案允许换行，底栏随内容增高，按钮保持同一高度。
+- 列表行尾、悬浮按钮、信息卡的纯信息页脚和正文中的内联操作沿用各自的布局。
+
+笔记、日历等卡片的悬浮删除按钮统一在悬停或键盘焦点进入时淡入，离开时淡出。按钮浮在卡片右侧，正文使用完整宽度，显隐时保持原有换行。无悬停能力的设备直接显示操作。
+
+### 弹层关闭按钮与间距
+
+- 居中模态框、大型预览和展开窗口使用共享 `CloseButton` 的默认样式，复用控件高度、圆角、描边和背景令牌。贴在卡片右上角时使用 `card-corner`，沿用统一的关闭按钮内边距。
+- 锚定小弹层、紧凑工具窗使用 `CloseButton compact`。静止时无边框、透明底，悬停时平滑显示浅底，键盘焦点保留可见描边。
+- 能用现有 `--space-*` 令牌表达的边距、内边距和间隙统一用令牌。描边、图标和控件尺寸沿用对应组件令牌。

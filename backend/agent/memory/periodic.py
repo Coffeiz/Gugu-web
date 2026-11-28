@@ -14,6 +14,7 @@ PATTERN_AUTO_INCREMENT = 30
 PROFILE_AUTO_THRESHOLD = 100
 PROFILE_AUTO_INCREMENT = 30
 PATTERN_AUTO_COOLDOWN = 7 * 24 * 60 * 60
+MAINTENANCE_RETRY_INTERVAL = 60 * 60
 
 _locks: dict[str, asyncio.Lock] = {}
 _pending_users: set[str] = set()
@@ -31,13 +32,17 @@ def _lock_for(user_id) -> asyncio.Lock:
 async def _run_pattern_compact(user_id, settings, count: int) -> bool:
     """执行一次 pattern 整理并记录水位；失败不影响当前对话。"""
     try:
+        state = await store.read_pattern_maintenance(user_id)
+        state["pattern_last_attempt_at"] = time.time()
+        await store.write_pattern_maintenance(user_id, state)
         if not await longterm_compaction.compact_pattern(user_id, settings):
             return False
         compacted_count = len(await store.read_pattern_list(user_id))
-        await store.write_pattern_maintenance(user_id, {
+        state.update({
             "last_review_at": time.time(),
             "reviewed_count": compacted_count,
         })
+        await store.write_pattern_maintenance(user_id, state)
         return True
     except Exception:
         # 维护是后台锦上添花功能，模型或存储失败不能影响回复。
@@ -47,10 +52,12 @@ async def _run_pattern_compact(user_id, settings, count: int) -> bool:
 async def _run_profile_compact(user_id, settings, count: int) -> bool:
     """整理 profile 并记录独立水位；失败时保留原档案。"""
     try:
+        state = await store.read_pattern_maintenance(user_id)
+        state["profile_last_attempt_at"] = time.time()
+        await store.write_pattern_maintenance(user_id, state)
         if not await longterm_compaction.compact_profile(user_id, settings):
             return False
         compacted_count = len(await store.read_profile_list(user_id))
-        state = await store.read_pattern_maintenance(user_id)
         state.update({"profile_last_compact_at": time.time(), "profile_compacted_count": compacted_count})
         await store.write_pattern_maintenance(user_id, state)
         return True
@@ -76,14 +83,20 @@ async def maybe_schedule(user_id, settings) -> bool:
     reviewed_count = int(state.get("reviewed_count", 0) or 0)
     pattern_due = (
         pattern_count >= PATTERN_AUTO_THRESHOLD
-        and now - last_review >= PATTERN_AUTO_COOLDOWN
+        and now >= max(
+            last_review + PATTERN_AUTO_COOLDOWN,
+            float(state.get("pattern_last_attempt_at", 0)) + MAINTENANCE_RETRY_INTERVAL,
+        )
         and (not reviewed_count or pattern_count >= reviewed_count + PATTERN_AUTO_INCREMENT)
     )
     profile_last = float(state.get("profile_last_compact_at", 0) or 0)
     profile_reviewed_count = int(state.get("profile_compacted_count", 0) or 0)
     profile_due = (
         profile_count >= PROFILE_AUTO_THRESHOLD
-        and now - profile_last >= PATTERN_AUTO_COOLDOWN
+        and now >= max(
+            profile_last + PATTERN_AUTO_COOLDOWN,
+            float(state.get("profile_last_attempt_at", 0)) + MAINTENANCE_RETRY_INTERVAL,
+        )
         and (
             not profile_reviewed_count
             or profile_count >= profile_reviewed_count + PROFILE_AUTO_INCREMENT

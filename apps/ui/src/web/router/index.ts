@@ -1,0 +1,238 @@
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import DefaultLayout from '@web/layouts/DefaultLayout.vue'
+import { mcpApi } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
+
+const routes: RouteRecordRaw[] = [
+  // ── 用户认证页（无 layout）──
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('@web/views/Login.vue'),
+    meta: { authPublic: true },
+  },
+  {
+    path: '/verify-email-change',
+    name: 'VerifyEmailChange',
+    component: () => import('@web/views/VerifyEmailChange.vue'),
+    meta: { authPublic: true },
+  },
+  {
+    path: '/register',
+    name: 'Register',
+    component: () => import('@web/views/Register.vue'),
+    meta: { authPublic: true },
+  },
+  {
+    path: '/forgot-password',
+    name: 'ForgotPassword',
+    component: () => import('@web/views/ForgotPassword.vue'),
+    meta: { authPublic: true },
+  },
+  {
+    // 重置链接从邮件点进来，登录与否都要可用 → 不加 authPublic（避免已登录被重定向走）
+    path: '/reset-password',
+    name: 'ResetPassword',
+    component: () => import('@web/views/ResetPassword.vue'),
+  },
+  {
+    path: '/privacy',
+    name: 'Privacy',
+    component: () => import('@web/views/Privacy.vue'),
+  },
+  {
+    path: '/design',
+    name: 'DesignTokens',
+    component: () => import('@/views/Design/index.vue'),
+    meta: { requiresAuth: true, title: 'Design Tokens' },
+  },
+
+  // ── 主 App（需要用户登录）──
+  {
+    path: '/',
+    component: DefaultLayout,
+    meta: { requiresAuth: true },
+    children: [
+      { path: '', redirect: () => {
+        const view = localStorage.getItem('gugu-default-view')
+        return view === 'calendar' ? '/calendar'
+          : view === 'files' ? '/files'
+          : view === 'mind' ? (localStorage.getItem('mind-last-mode') === 'canvas' ? '/canvases' : '/notes')
+          : '/projects'
+      } },
+      // 总览面板暂时隐藏（个人用户用处不大，默认进项目）；代码保留，未来作团队功能再开启。
+      // 取消注释即可恢复（同时恢复 AppSidebar 的「总览」导航项、Login/Register 的跳转目标）。
+      // {
+      //   path: 'dashboard',
+      //   name: 'Dashboard',
+      //   component: () => import('@/views/Dashboard/index.vue'),
+      //   meta: { title: '总览' },
+      // },
+      {
+        path: 'projects',
+        name: 'Projects',
+        component: () => import('@/views/Projects/index.vue'),
+        meta: { title: 'navigation.projects' },
+      },
+      {
+        path: 'calendar',
+        name: 'Calendar',
+        component: () => import('@/views/Calendar/index.vue'),
+        meta: { title: 'navigation.calendar' },
+      },
+      {
+        path: 'files',
+        name: 'Files',
+        component: () => import('@/views/Files/index.vue'),
+        meta: { title: 'navigation.files' },
+      },
+      {
+        path: 'mail',
+        name: 'mail',
+        component: () => import('@/views/Mail/index.vue'),
+        meta: { title: 'navigation.mail' },
+      },
+      {
+        path: 'mcp',
+        name: 'SkillsMcp',
+        component: () => import('@/views/Mcp/index.vue'),
+        meta: { title: 'navigation.mcp' },
+      },
+      {
+        path: 'skills',
+        name: 'Skills',
+        component: () => import('@/views/Skills/index.vue'),
+        meta: { title: 'navigation.skills' },
+        children: [
+          {
+            path: '',
+            name: 'SkillsHome',
+            component: () => import('@/views/Skills/SkillsHome.vue'),
+            meta: { title: 'navigation.skills' },
+          },
+          {
+            // MCP 已抽成独立页面 /mcp；旧路径保留重定向兼容收藏与已分发的链接。
+            path: 'mcp',
+            redirect: { name: 'SkillsMcp' },
+          },
+        ],
+      },
+      {
+        path: 'terminals',
+        name: 'Terminals',
+        component: () => import('@/views/Terminals/index.vue'),
+        meta: { title: 'navigation.terminals' },
+      },
+      {
+        // 笔记与画布是独立路由，共用 mind 数据与组件模块。
+        path: 'notes',
+        component: () => import('@/views/Mind/index.vue'),
+        meta: { title: 'mind.notes' },
+        children: [{ path: '', name: 'MindNotes', component: () => import('@/views/Mind/NotesThreePaneView.vue') }],
+      },
+      {
+        path: 'canvases',
+        name: 'MindCanvas',
+        component: () => import('@/views/Mind/CanvasView.vue'),
+        meta: { title: 'mind.canvases', fullBleed: true },
+        beforeEnter: () => { localStorage.setItem('mind-last-mode', 'canvas') },
+      },
+      {
+        // 旧链接兼容；新导航与生成的链接使用 /notes 和 /canvases。
+        path: 'mind',
+        redirect: () => localStorage.getItem('mind-last-mode') === 'canvas' ? '/canvases' : '/notes',
+      },
+      { path: 'mind/notes', redirect: to => ({ path: '/notes', query: to.query, hash: to.hash }) },
+      { path: 'mind/canvases', redirect: to => ({ path: '/canvases', query: to.query, hash: to.hash }) },
+      {
+        path: 'schedules',
+        name: 'Schedules',
+        component: () => import('@/views/Schedules/index.vue'),
+        meta: { title: 'navigation.schedules' },
+      },
+      // /dev 索引页：列出下面所有 dev 工具的入口，新加工具只需要在 devRegistry.ts
+      // 里加一条，不需要再想"入口放哪"。同样仅 dev 注册。
+      ...(import.meta.env.DEV ? [{
+        path: 'dev',
+        name: 'DevHome',
+        component: () => import('@/views/DevHome.vue'),
+        meta: { title: 'navigation.devTools' },
+      }] : []),
+      // 新手引导 demo 面板：仅 dev 注册；prod build 时 import.meta.env.DEV=false，
+      // 整个三元分支（含 import() 动态导入）被 tree-shake 掉，DevOnboarding.vue 不进生产包。
+      ...(import.meta.env.DEV ? [{
+        path: 'dev/onboarding',
+        name: 'DevOnboarding',
+        component: () => import('@/views/DevOnboarding.vue'),
+        meta: { title: 'devOnboarding.title' },
+      }] : []),
+      ...(import.meta.env.DEV ? [{
+        path: 'dev/email',
+        name: 'DevEmail',
+        component: () => import('@/views/DevEmail.vue'),
+        meta: { title: 'devEmail.title' },
+      }] : []),
+      // 注意力评分沙盒仅在 Vite 开发环境注册，生产路由和 bundle 不包含该页面。
+      ...(import.meta.env.DEV ? [{
+        path: 'dev/attention',
+        name: 'DevAttention',
+        component: () => import('@/views/DevAttention.vue'),
+        meta: { title: 'devHome.tools.attention.label' },
+      }] : []),
+      // 原时间轴保留为临时 DEV 预览；UI9 响应式实现完成后移除该入口。
+      ...(import.meta.env.DEV ? [{
+        path: 'dev/notes-timeline',
+        name: 'DevNotesTimeline',
+        component: () => import('@/views/DevNotesTimeline.vue'),
+        meta: { title: 'devHome.tools.notesTimeline.label', fullBleed: true },
+      }] : []),
+      // 旧预览地址仅为 DEV 书签兼容；生产构建不暴露该临时入口。
+      ...(import.meta.env.DEV ? [{
+        path: 'dev/notes-three-pane',
+        name: 'DevNotesThreePaneLegacy',
+        redirect: '/dev/notes-timeline',
+      }] : []),
+    ],
+  },
+
+  // 404（登录与否都直接展示，不跳登录）
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'NotFound',
+    component: () => import('@web/views/NotFound.vue'),
+  },
+]
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
+})
+
+router.beforeEach(async (to) => {
+  if (to.meta.requiresAuth || to.meta.authPublic) {
+    const authStore = useAuthStore()
+    const valid = authStore.user ? true : await authStore.fetchMe()
+    if (to.meta.authPublic && valid === true) return { path: '/projects' }
+    if (to.meta.requiresAuth && valid === false) {
+      return { path: '/login', query: { redirect: to.fullPath } }
+    }
+    if (to.meta.requiresAuth && valid === null) return false
+  }
+})
+
+router.beforeEach(async (to) => {
+  // 终端页通过列表接口实时校验权限，避免先串行加载整个工作区。
+  if (to.name !== 'SkillsMcp') return
+  try {
+    if (to.name === 'SkillsMcp') {
+      const status = await mcpApi.status()
+      if (!status.enabled) return { path: '/skills' }
+      return
+    }
+  } catch (cause) {
+    const status = (cause as { status?: number }).status
+    if (status === 401 || status === 403) return { path: '/projects' }
+  }
+})
+
+export default router

@@ -4,7 +4,7 @@
 > 创建：2026-09-06
 > 最近更新：2026-09-06
 > 关联模块：`backend/app/services/storage/`、`backend/app/services/files/`、`backend/app/services/workspaces.py`、`backend/app/services/filesystem_authorization.py`、`backend/agent/sandbox/`、`backend/agent/tools/shell.py`、`backend/app/api/v1/config.py`、`frontend/src/stores/filesCache.ts`、`frontend/src/stores/live.ts`
-> 背景参考：[`docs/backend/storage.md`](../backend/storage.md)、[`PRD-SHELL-1-工作区Shell沙盒`](./【已完成】PRD-SHELL-1-工作区Shell沙盒.md)、[`桌面应用迁移方案`](../product/_archibe/桌面应用迁移方案.md)
+> 背景参考：[`docs/backend/storage.md`](../backend/storage.md)、[`PRD-SHELL-1-工作区Shell沙盒`](./【已完成】PRD-SHELL-1-工作区Shell沙盒.md)、[`桌面应用迁移方案`](../architecture/desktop/archive/桌面应用迁移方案.md)
 
 ## 0. 实际状态
 

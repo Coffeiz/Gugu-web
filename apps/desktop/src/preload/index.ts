@@ -1,0 +1,324 @@
+import { desktopUpdateChannels, type DesktopUpdateBridge, type DesktopUpdateStatus } from '@gugu/desktop-contracts'
+import { chatFabChannels } from '../chat-fab-channels.js'
+import {
+  applicationEditKeys, applicationMenuChannels,
+  type ApplicationEditAction, type ApplicationMenuBridge, type ApplicationMenuCommand,
+} from '@gugu/desktop-contracts'
+import { nativeEditingChannel, type EditingFocus } from '../keyboard-editing.js'
+import { createNativeFileDragGuard } from './native-file-drag.js'
+import { previewWindowChannels, projectWindowChannels, type PreviewWindowBridge, type ProjectWindowBridge } from '@gugu/desktop-contracts'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
+import type { DesktopProjectCollection } from '@gugu/core/desktop'
+import type { DesktopBridge } from '@gugu/desktop-contracts'
+import type { DesktopAppearancePreferences } from '@gugu/core/desktop'
+
+let droppedPaths: string[] = []
+
+if (typeof window !== 'undefined') {
+  let lastFocus: EditingFocus | undefined
+  function syncNativeEditing() {
+    const focused = document.activeElement
+    const selection = window.getSelection()
+    const editable = focused instanceof HTMLElement && focused.isContentEditable
+    const needsEditorHistory = editable && !!focused.closest('.ProseMirror, .cm-content')
+    const native = editable || !!focused?.closest('input, textarea, select') || (!!selection && !selection.isCollapsed)
+    const focus = needsEditorHistory ? 'editor' : native ? 'native' : 'page'
+    if (focus === lastFocus) return
+    lastFocus = focus
+    ipcRenderer.send(nativeEditingChannel, focus)
+  }
+  document.addEventListener('focusin', syncNativeEditing, true)
+  document.addEventListener('focusout', () => queueMicrotask(syncNativeEditing), true)
+  document.addEventListener('selectionchange', syncNativeEditing)
+  syncNativeEditing()
+
+  const setNativeDragSource = createNativeFileDragGuard(window, file => webUtils.getPathForFile(file))
+  window.addEventListener('drop', event => {
+    if (!event.isTrusted || !event.dataTransfer) return
+    const paths = Array.from(event.dataTransfer.files, file => webUtils.getPathForFile(file))
+    droppedPaths = paths
+    setTimeout(() => { if (droppedPaths === paths) droppedPaths = [] }, 0)
+  }, true)
+  ipcRenderer.on(DESKTOP_CHANNELS.nativeFileDragSource, (_event, path: unknown) => {
+    setNativeDragSource(typeof path === 'string' ? path : null)
+  })
+}
+
+// 菜单可能在主窗口刚加载、Vue 壳层尚未订阅时触发。
+const pendingMenuCommands: ApplicationMenuCommand[] = []
+let menuListener: ((command: ApplicationMenuCommand) => void) | undefined
+ipcRenderer.on(applicationMenuChannels.command, (_event, command: ApplicationMenuCommand) => {
+  if (menuListener) menuListener(command)
+  else pendingMenuCommands.push(command)
+})
+ipcRenderer.on(applicationMenuChannels.edit, (_event, action: ApplicationEditAction) => {
+  if (!Object.hasOwn(applicationEditKeys, action)) return
+  const target = document.activeElement ?? document.body
+  target?.dispatchEvent(new KeyboardEvent('keydown', {
+    key: applicationEditKeys[action], metaKey: true, shiftKey: action === 'redo',
+    bubbles: true, cancelable: true, composed: true,
+  }))
+})
+const applicationMenu: ApplicationMenuBridge = {
+  onCommand(listener) {
+    menuListener = listener
+    for (const command of pendingMenuCommands.splice(0)) listener(command)
+    return () => { if (menuListener === listener) menuListener = undefined }
+  },
+}
+contextBridge.exposeInMainWorld('guguApplicationMenu', applicationMenu)
+
+type CanvasItemAddBody = Parameters<DesktopBridge['addCanvasItem']>[1]
+type CanvasItemFrontBody = Parameters<DesktopBridge['bringCanvasItemToFront']>[2]
+type CanvasRelationBody = Parameters<DesktopBridge['createCanvasRelation']>[0]
+type CanvasNoteBody = Parameters<DesktopBridge['createCanvasNote']>[1]
+
+const bridge: DesktopBridge = Object.freeze({
+  onTelegramConnectionChanged: (callback: () => void) => {
+    const listener = () => callback()
+    ipcRenderer.on(DESKTOP_CHANNELS.telegramConnectionChanged, listener)
+    return () => ipcRenderer.removeListener(DESKTOP_CHANNELS.telegramConnectionChanged, listener)
+  },
+  remoteByok: (...args: Parameters<DesktopBridge['remoteByok']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteByok, ...args),
+  deviceInfo: () => ipcRenderer.invoke(DESKTOP_CHANNELS.deviceInfo),
+  remoteAccount: () => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteAccount),
+  remoteLogin: (input: Parameters<DesktopBridge['remoteLogin']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteLogin, input),
+  remoteLogout: () => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteLogout),
+  qqPairing: (command: Parameters<DesktopBridge['qqPairing']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.qqPairing, command),
+  feishuPairing: (command: Parameters<DesktopBridge['feishuPairing']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.feishuPairing, command),
+  wechatPairing: (command: Parameters<DesktopBridge['wechatPairing']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.wechatPairing, command),
+  telegramGateway: (command: Parameters<DesktopBridge['telegramGateway']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.telegramGateway, command),
+  terminal: (command: Parameters<DesktopBridge['terminal']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.terminal, command),
+  mail: (command: Parameters<DesktopBridge['mail']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.mail, command),
+  createDroppedFileReference: (file: File, allowFolder?: boolean) => ipcRenderer.invoke(DESKTOP_CHANNELS.createDroppedFileReference, webUtils.getPathForFile(file), allowFolder),
+  openDroppedFileReference: (id: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.openDroppedFileReference, id),
+  startFileDrag: (directoryId: Parameters<NonNullable<DesktopBridge['startFileDrag']>>[0], path: string, preview?: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.startFileDrag, directoryId, path, preview),
+  moveDroppedFiles: async (...[directoryId, path, decide, progress]: Parameters<NonNullable<DesktopBridge['moveDroppedFiles']>>) => {
+    const sources = droppedPaths
+    droppedPaths = []
+    if (!sources.length) return { ok: false, error: { code: 'invalid_request', message: '请直接拖入本机文件或文件夹' } }
+    let retained = 0
+    for (const [index, source] of sources.entries()) {
+      const progressId = crypto.randomUUID()
+      const listener = (_event: Electron.IpcRendererEvent, id: string, percent: number) => {
+        if (id === progressId) progress(Math.floor((index + percent / 100) * 100 / sources.length))
+      }
+      ipcRenderer.on(DESKTOP_CHANNELS.droppedFileProgress, listener)
+      const command = { action: 'move-dropped', directoryId, path, sources: [source], progressId, negotiate: true }
+      try {
+        let reply = await ipcRenderer.invoke(DESKTOP_CHANNELS.files, command)
+        if (!reply.ok) return reply
+        if (reply.result.conflict) {
+          const { filename, canOverwrite, identity } = reply.result.conflict
+          const choice = await decide(filename, canOverwrite)
+          if (choice === 'skip') continue
+          reply = await ipcRenderer.invoke(DESKTOP_CHANNELS.files, { ...command, negotiate: false, choice, identity })
+          if (!reply.ok) return reply
+        }
+        retained += reply.result.retained ?? 0
+      } finally {
+        ipcRenderer.removeListener(DESKTOP_CHANNELS.droppedFileProgress, listener)
+        progress(Math.floor((index + 1) * 100 / sources.length))
+      }
+    }
+    return { ok: true, result: { retained } }
+  },
+  files: (command: Parameters<DesktopBridge['files']>[0]) => {
+    if (String(command.action) === 'move-dropped') throw new Error('请直接拖入本机文件')
+    return ipcRenderer.invoke(DESKTOP_CHANNELS.files, command)
+  },
+  auxiliaryModel: (command: Parameters<DesktopBridge['auxiliaryModel']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.auxiliaryModel, command),
+  agentModel: (command: Parameters<DesktopBridge['agentModel']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentModel, command),
+  onAgentRunChanged: (callback: Parameters<NonNullable<DesktopBridge['onAgentRunChanged']>>[0]) => {
+    const listener = (_event: Electron.IpcRendererEvent, sessionId: number, interactionChanged?: true) => callback(sessionId, interactionChanged)
+    ipcRenderer.on(DESKTOP_CHANNELS.agentRunChanged, listener)
+    return () => ipcRenderer.removeListener(DESKTOP_CHANNELS.agentRunChanged, listener)
+  },
+  onAgentChatEvent: (callback: Parameters<NonNullable<DesktopBridge['onAgentChatEvent']>>[0]) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof callback>[0]) => callback(payload)
+    ipcRenderer.on(DESKTOP_CHANNELS.agentChatEvent, listener)
+    return () => ipcRenderer.removeListener(DESKTOP_CHANNELS.agentChatEvent, listener)
+  },
+  agentSessions: (command: Parameters<DesktopBridge['agentSessions']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentSessions, command),
+  agentAttachment: (command: Parameters<NonNullable<DesktopBridge['agentAttachment']>>[0]) => {
+    if (Object.hasOwn(command, 'sourcePath')) throw new Error('请通过文件选择器上传本机附件')
+    return ipcRenderer.invoke(DESKTOP_CHANNELS.agentAttachment, command)
+  },
+  // 大附件不走整块 IPC：在这里把用户挑定的 File 解析成本机路径，主进程流式落盘。
+  uploadAgentAttachment: (file: File, options: { name: string; mime: string | null; voice: boolean }) =>
+    ipcRenderer.invoke(DESKTOP_CHANNELS.agentAttachment, {
+      action: 'upload', name: options.name, mime: options.mime, voice: options.voice,
+      sourcePath: webUtils.getPathForFile(file),
+    }),
+  resources: (command: Parameters<DesktopBridge['resources']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.resources, command),
+  scheduleTask: (command: Parameters<DesktopBridge['scheduleTask']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.scheduleTask, command),
+  onScheduleChanged: (callback: () => void) => subscribeDesktopEvent(DESKTOP_CHANNELS.scheduleChanged, callback),
+  readLogs: (kind: Parameters<DesktopBridge['readLogs']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.readLogs, kind),
+  applyBusinessArchive: (id: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.applyBusinessArchive, id),
+  preflightBusinessArchive: () => ipcRenderer.invoke(DESKTOP_CHANNELS.preflightBusinessArchive),
+  exportBusinessArchive: () => ipcRenderer.invoke(DESKTOP_CHANNELS.exportBusinessArchive),
+  dataInventory: () => ipcRenderer.invoke(DESKTOP_CHANNELS.dataInventory),
+  agentUsage: () => ipcRenderer.invoke(DESKTOP_CHANNELS.agentUsage),
+  agentPreference: (...args: Parameters<DesktopBridge['agentPreference']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentPreference, ...args),
+  clearAgentMemory: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clearAgentMemory),
+  clearAgentAttachments: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clearAgentAttachments),
+  appearance: () => ipcRenderer.invoke(DESKTOP_CHANNELS.appearance),
+  updateAppearance: (patch: Partial<DesktopAppearancePreferences>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateAppearance, patch),
+  onboarding: (patch?: Record<string, unknown>, reopen?: true) => patch === undefined && reopen === undefined
+    ? ipcRenderer.invoke(DESKTOP_CHANNELS.onboarding)
+    : ipcRenderer.invoke(DESKTOP_CHANNELS.onboarding, patch, reopen),
+  projects: () => ipcRenderer.invoke(DESKTOP_CHANNELS.projects),
+  createProject: (name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createProject, name),
+  renameProject: (id: number, version: number, name: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.renameProject, id, version, name),
+  projectBoard: (collection: DesktopProjectCollection, offset: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.projectBoard, collection, offset),
+  projectDetails: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.projectDetails, id),
+  createBoardProject: (fields: Record<string, unknown>, operationId?: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createBoardProject, fields, operationId),
+  updateBoardProject: (id: number, version: number, fields: Record<string, unknown>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateBoardProject, id, version, fields),
+  deleteBoardProject: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteBoardProject, id),
+  purgeBoardProject: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.purgeBoardProject, id),
+  restoreBoardProject: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.restoreBoardProject, id),
+  clients: () => ipcRenderer.invoke(DESKTOP_CHANNELS.clients),
+  clientRelated: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.clientRelated, id),
+  createClient: (fields: Parameters<DesktopBridge['createClient']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.createClient, fields),
+  renameClient: (id: number, fields: Parameters<DesktopBridge['renameClient']>[1]) => ipcRenderer.invoke(DESKTOP_CHANNELS.renameClient, id, fields),
+  deleteClient: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteClient, id),
+  search: (queries: Parameters<DesktopBridge['search']>[0], expansion?: number) => expansion === undefined
+    ? ipcRenderer.invoke(DESKTOP_CHANNELS.search, queries)
+    : ipcRenderer.invoke(DESKTOP_CHANNELS.search, queries, expansion),
+  calendar: () => ipcRenderer.invoke(DESKTOP_CHANNELS.calendar),
+  createCalendarEvent: (...args: Parameters<DesktopBridge['createCalendarEvent']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCalendarEvent, ...args),
+  updateCalendarEvent: (...args: Parameters<DesktopBridge['updateCalendarEvent']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCalendarEvent, ...args),
+  deleteCalendarEvent: (id: number, version: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteCalendarEvent, id, version),
+  canvases: () => ipcRenderer.invoke(DESKTOP_CHANNELS.canvases),
+  createCanvas: (title: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCanvas, title),
+  updateCanvas: (id: number, body: { title?: string; data?: Record<string, unknown> }) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCanvas, id, body),
+  deleteCanvas: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteCanvas, id),
+  canvasItems: (canvasId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.canvasItems, canvasId),
+  canvasRelations: (canvasId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.canvasRelations, canvasId),
+  addCanvasItem: (canvasId: number, body: CanvasItemAddBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.addCanvasItem, canvasId, body),
+  bringCanvasItemToFront: (canvasId: number, id: number, body: CanvasItemFrontBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.bringCanvasItemToFront, canvasId, id, body),
+  createCanvasRelation: (body: CanvasRelationBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCanvasRelation, body),
+  deleteCanvasRelation: (canvasId: number, id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteCanvasRelation, canvasId, id),
+  createRefNode: (refType: 'project' | 'file' | 'event' | 'client', refId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.createRefNode, refType, refId),
+  canvasNoteLocation: (nodeId: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.canvasNoteLocation, nodeId),
+  createCanvasNote: (canvasId: number, body: CanvasNoteBody) => ipcRenderer.invoke(DESKTOP_CHANNELS.createCanvasNote, canvasId, body),
+  updateCanvasNote: (id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCanvasNote, id, fields),
+  updateCanvasItem: (canvasId: number, id: number, body: Parameters<DesktopBridge['updateCanvasItem']>[2]) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateCanvasItem, canvasId, id, body),
+  deleteCanvasItem: (canvasId: number, id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteCanvasItem, canvasId, id),
+  notes: () => ipcRenderer.invoke(DESKTOP_CHANNELS.notes),
+  createNote: (contentMd: string, color?: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.createNote, contentMd, color),
+  updateNote: (id: number, fields: { version: number; contentMd?: string; title?: string | null; color?: string | null }) => ipcRenderer.invoke(DESKTOP_CHANNELS.updateNote, id, fields),
+  deleteNote: (id: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.deleteNote, id),
+  receipt: (operationId: string) =>
+    ipcRenderer.invoke(DESKTOP_CHANNELS.receipt, operationId),
+  sandboxStatus: () => ipcRenderer.invoke(DESKTOP_CHANNELS.sandboxStatus),
+  undoPreview: (contextId: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.undoPreview, contextId),
+  undoApply: (contextId: string, undoId: string, operationId: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.undoApply, contextId, undoId, operationId),
+  undoRedo: (contextId: string, undoId: string, operationId: string) => ipcRenderer.invoke(DESKTOP_CHANNELS.undoRedo, contextId, undoId, operationId),
+})
+contextBridge.exposeInMainWorld('guguDesktop', bridge)
+
+function subscribeDesktopEvent(channel: string, callback: () => void) {
+  const listener = () => callback()
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
+}
+
+const projectWindow: ProjectWindowBridge = {
+  open: id => ipcRenderer.invoke(projectWindowChannels.open, id),
+  close: () => ipcRenderer.invoke(projectWindowChannels.close),
+  onPrepareClose: callback => subscribeDesktopEvent(projectWindowChannels.prepareClose, callback),
+  onUpdated: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, project: Parameters<typeof callback>[0]) => callback(project)
+    ipcRenderer.on(projectWindowChannels.updated, listener)
+    return () => ipcRenderer.removeListener(projectWindowChannels.updated, listener)
+  },
+  onClosed: callback => subscribeDesktopEvent(projectWindowChannels.closed, callback),
+}
+contextBridge.exposeInMainWorld('guguProjectWindow', projectWindow)
+
+const previewWindow: PreviewWindowBridge = {
+  open: file => ipcRenderer.invoke(previewWindowChannels.open, file),
+  read: () => ipcRenderer.invoke(previewWindowChannels.read),
+  close: () => ipcRenderer.invoke(previewWindowChannels.close),
+  reveal: () => ipcRenderer.invoke(previewWindowChannels.reveal),
+  state: (action, enabled) => ipcRenderer.invoke(previewWindowChannels.state, action, enabled),
+  onStateChanged: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof callback>[0]) => callback(state)
+    ipcRenderer.on(previewWindowChannels.stateChanged, listener)
+    return () => ipcRenderer.removeListener(previewWindowChannels.stateChanged, listener)
+  },
+}
+contextBridge.exposeInMainWorld('guguPreviewWindow', previewWindow)
+
+contextBridge.exposeInMainWorld('guguChatFabHost', {
+  attach: () => ipcRenderer.invoke(chatFabChannels.attach),
+  onPanelDetached(listener: (detached: boolean) => void) {
+    const receive = (_event: unknown, detached: boolean) => listener(detached)
+    ipcRenderer.on(chatFabChannels.panelDetached, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.panelDetached, receive)
+  },
+  panelGeometryDone: (id: number) => ipcRenderer.send(chatFabChannels.panelGeometryDone, id),
+  onPanelGeometry(listener: (geometry: unknown) => void) {
+    const receive = (_event: unknown, geometry: unknown) => listener(geometry)
+    ipcRenderer.on(chatFabChannels.panelGeometry, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.panelGeometry, receive)
+  },
+  setExpanded: (expanded: boolean) => ipcRenderer.send(chatFabChannels.panelExpanded, expanded),
+  panelReady: () => ipcRenderer.send(chatFabChannels.panelReady),
+  panelEntered: () => ipcRenderer.send(chatFabChannels.panelEntered),
+  panelClosing: () => ipcRenderer.send(chatFabChannels.panelClosing),
+  panelClose: () => ipcRenderer.send(chatFabChannels.panelClose),
+  dragDockedBall: (action: string, x: number, y: number) => ipcRenderer.send(chatFabChannels.gesture, action, x, y),
+  onBallDetached(listener: (detached: boolean) => void) {
+    const receive = (_event: unknown, detached: unknown) => listener(detached === true)
+    ipcRenderer.on(chatFabChannels.ballDetached, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.ballDetached, receive)
+  },
+  setChatVisible: (visible: boolean) => ipcRenderer.send(chatFabChannels.chatVisible, visible),
+  dropReferences: (references: unknown, selection?: unknown) => ipcRenderer.send(chatFabChannels.dropReferences, references, selection),
+  onDroppedReferences(listener: (references: unknown, selection?: unknown) => void) {
+    const receive = (_event: unknown, references: unknown, selection?: unknown) => listener(references, selection)
+    ipcRenderer.on(chatFabChannels.droppedReferences, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.droppedReferences, receive)
+  },
+  onDroppedReference(listener: (reply: unknown) => void) {
+    const receive = (_event: unknown, reply: unknown) => listener(reply)
+    ipcRenderer.on(chatFabChannels.droppedReference, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.droppedReference, receive)
+  },
+  onCloseChat(listener: (animated: boolean) => void) {
+    const receive = (_event: Electron.IpcRendererEvent, animated?: boolean) => listener(animated === true)
+    ipcRenderer.on(chatFabChannels.closeChat, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.closeChat, receive)
+  },
+  openMainReference: (type: unknown, id: unknown) => ipcRenderer.invoke(chatFabChannels.openMainReference, type, id),
+  onOpenMainReference(listener: (type: unknown, id: unknown) => void) {
+    const receive = (_event: unknown, type: unknown, id: unknown) => listener(type, id)
+    ipcRenderer.on(chatFabChannels.openMainReference, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.openMainReference, receive)
+  },
+  onOpenChat(listener: () => void) {
+    const receive = () => listener()
+    ipcRenderer.on(chatFabChannels.openChat, receive)
+    return () => ipcRenderer.removeListener(chatFabChannels.openChat, receive)
+  },
+})
+
+const desktopUpdate: DesktopUpdateBridge = {
+  command: command => ipcRenderer.invoke(desktopUpdateChannels.command, command),
+  onStatusChanged(listener) {
+    const receive = (_event: Electron.IpcRendererEvent, status: DesktopUpdateStatus) => listener(status)
+    ipcRenderer.on(desktopUpdateChannels.changed, receive)
+    return () => ipcRenderer.removeListener(desktopUpdateChannels.changed, receive)
+  },
+}
+contextBridge.exposeInMainWorld('guguDesktopUpdate', desktopUpdate)
+
+if (process.platform === 'win32') {
+  contextBridge.exposeInMainWorld('guguWindowChrome', {
+    platform: process.platform,
+    command: (action: string) => ipcRenderer.send('gugu:window-chrome', action),
+  })
+}

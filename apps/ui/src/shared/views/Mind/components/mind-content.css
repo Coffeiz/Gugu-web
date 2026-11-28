@@ -1,0 +1,268 @@
+/* 便签正文渲染的共享排版规则：编辑态（NoteEditor.vue 的 .ne-body .ProseMirror）跟
+   只读态（NoteCard.vue 的 .md-preview）分别是 TipTap 富文本 / mdToPreviewHtml 生成的
+   纯 HTML 两套独立实现（只读态特意不用 TipTap——一天一列摆几十张卡，每张卡都起一个
+   编辑器实例太重，这条权衡是故意的，见 useMindEditor.ts 里 mdToPreviewHtml 的注释）。
+   两套实现的选择器不同，但排版数值必须一致，所以统一放这一份文件里、用组合选择器
+   写在一起——改一处两边同时生效，不会再出现"改了编辑器忘了改预览"这种间距对不齐。
+
+   顶层块间距不用「每种块各自 margin、指望相邻两块 margin 塌陷成同一个值」这套——
+   margin 塌陷规则本来就细（跟是否有 border/padding、跟具体元素类型都有关系），两套
+   独立实现的 DOM 结构又不完全一样，塌陷结果很容易对不上，就是之前"改了半天间距还是
+   不一样"的根源。改用「owl selector」：顶层块自己 margin:0，只由后一个块的
+   margin-top 撑开间距——不管前后是 p/ul[任何类型]，撑开的量永远是同一个值，没有
+   "两个 margin 碰在一起选谁"这种歧义。 */
+
+.md-preview,
+.ne-body .ProseMirror {
+  font-size: 13px; line-height: 1.6; color: var(--text-primary);
+}
+
+.md-preview > *,
+.ne-body .ProseMirror > * {
+  margin: 0;
+}
+.md-preview > * + *,
+.ne-body .ProseMirror > * + * {
+  margin-top: 0.2em;
+}
+
+.md-preview h1,
+.ne-body .ProseMirror h1 {
+  font-size: 15px; font-weight: 700;
+}
+
+
+/* 待办列表：TipTap 用 [data-type="taskList"]，只读预览用 .np-tasks class，选择器不同
+   但数值要一致。TipTap 的 TaskItem 内容会多包一层 <p>，要清零，不然行距比预览宽
+   （这层嵌套在 <li> 里面，不是顶层块，owl selector 管不到，还是要单独清零）。 */
+.md-preview .np-tasks,
+.ne-body .ProseMirror ul[data-type="taskList"] {
+  list-style: none; padding: 0;
+}
+.md-preview .np-tasks li,
+.ne-body .ProseMirror ul[data-type="taskList"] li {
+  display: flex; align-items: flex-start; gap: var(--space-sm);
+}
+.md-preview .np-tasks li.done > span,
+.ne-body .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+  opacity: 0.45; text-decoration: line-through;
+}
+/* 预览和编辑使用不同 DOM 结构，但尺寸统一跟随全局控件令牌，避免局部规则覆盖全局尺寸。 */
+.md-preview .np-tasks input,
+.ne-body .ProseMirror ul[data-type="taskList"] input[type="checkbox"] {
+  width: var(--control-checkbox-size); height: var(--control-checkbox-size);
+  margin-top: var(--space-xs); flex-shrink: 0; cursor: pointer;
+}
+.ne-body .ProseMirror ul[data-type="taskList"] li > label { display: flex; }
+.ne-body .ProseMirror ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+.ne-body .ProseMirror ul[data-type="taskList"] li > div p { margin: 0; }
+
+/* 无序列表（平铺不嵌套）：不用原生 list-style（圆点宽度不可控），改成跟待办同一套
+   flex + 固定宽度标记（.mind-dot），文字起点才能跟待办项精确对齐，不再各走各的缩进。 */
+.md-preview .np-list,
+.ne-body .ProseMirror ul:not([data-type="taskList"]) {
+  list-style: none; padding: 0;
+}
+.md-preview .np-list li,
+.ne-body .ProseMirror ul:not([data-type="taskList"]) li {
+  display: flex; align-items: flex-start; gap: var(--space-sm); margin: 0.1em 0;
+}
+.ne-body .ProseMirror ul:not([data-type="taskList"]) li > div { flex: 1; min-width: 0; }
+.ne-body .ProseMirror ul:not([data-type="taskList"]) li > div p { margin: 0; }
+
+/* 圆点标记：跟 checkbox 共用宽度令牌，预览/编辑态用同一个类名，一条规则两边都生效 */
+.mind-dot {
+  flex-shrink: 0; width: 14px; margin-top: var(--space-xs);
+  text-align: center; line-height: 1; color: var(--text-secondary);
+}
+
+/* 加粗/斜体/删除线/行内代码/链接：2026-07-11 起支持。两套渲染出的都是标准 HTML 标签
+   （TipTap marks 默认渲染 strong/em/s/code/a，mdToPreviewHtml 手写的标签名跟它一致），
+   一份选择器两边都生效，不用再分开写 .md-preview/.ne-body 两套。
+   行内 code 排除 pre 里的那个——代码块自己有单独一套样式（不要行内代码的"小药丸"底色）。 */
+.md-preview strong, .ne-body .ProseMirror strong { font-weight: 700; }
+.md-preview em, .ne-body .ProseMirror em { font-style: italic; }
+.md-preview s, .ne-body .ProseMirror s { text-decoration: line-through; opacity: 0.75; }
+.md-preview a, .ne-body .ProseMirror a {
+  color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* 有序列表：2026-07-11 起支持。数字不锁死宽度（两位数会变宽），右对齐贴着文字，
+   跟圆点/checkbox 同一套 flex 结构对齐；序号靠 CSS counter 算，JS/HTML 侧都不用关心
+   "这是第几项"（跟 TipTap 的 start 属性没挂钩，用不到自定义起始序号）。 */
+.md-preview .np-ordered,
+.ne-body .ProseMirror ol {
+  list-style: none; padding: 0; counter-reset: mind-ol;
+}
+.md-preview .np-ordered li,
+.ne-body .ProseMirror ol li {
+  display: flex; align-items: flex-start; gap: var(--space-sm); margin: 0.1em 0;
+  counter-increment: mind-ol;
+}
+.md-preview .np-ordered li::before,
+.ne-body .ProseMirror ol li::before {
+  content: counter(mind-ol) '.'; flex-shrink: 0; min-width: 14px; margin-top: var(--space-xs);
+  text-align: right; line-height: 1; color: var(--text-secondary); font-variant-numeric: tabular-nums;
+}
+.ne-body .ProseMirror ol li > div { flex: 1; min-width: 0; }
+.ne-body .ProseMirror ol li > div p { margin: 0; }
+
+/* 引用块：2026-07-11 起支持。左侧一条竖线 + 缩进 + 弱化文字色，标准的"引用"视觉语言；
+   允许多段（每段一行，中间不留空行——跟待办/列表"一项一行"是同一个模型）。 */
+.md-preview .np-quote,
+.ne-body .ProseMirror blockquote {
+  padding: var(--space-xs) 0 var(--space-xs) var(--space-md);
+  border-left: 3px solid color-mix(in srgb, var(--action-primary) 35%, transparent);
+  color: var(--text-secondary);
+}
+.md-preview .np-quote p,
+.ne-body .ProseMirror blockquote p { margin: 0; }
+.md-preview .np-quote p + p,
+.ne-body .ProseMirror blockquote p + p { margin-top: 0.2em; }
+
+/* 代码块：2026-07-11 起支持，等宽字体 + 浅底色块，跟行内代码的"小药丸"样式区分开。
+   语法高亮 2026-07-11 补上（原来判断"窄口径不引额外的高亮库"，但 highlight.js 其实
+   已经是项目依赖——GuguChat 聊天代码块就在用）。只读预览走 hljs.highlightAuto()（「插入」
+   菜单没有语言选择器，代码块基本都没写语言，所以两边都是"没语言就自动猜"）；编辑态走
+   @tiptap/extension-code-block-lowlight（同一个 highlight.js 内核，包成 ProseMirror
+   装饰），两边 class 命名一致，这份配色两边通用。
+   语言名标签行：光靠颜色猜不出自动识别到底生没生效，加一行文字。预览是
+   mdToPreviewHtml 自己拼的 <div class="np-code-block">，编辑态是 CodeBlockView.vue 的
+   Vue NodeView（NodeViewWrapper 默认渲染成 <div class="ne-codeblock">），结构不完全一样
+   但两边的外层容器/标签行/代码区三段职责对应，选择器分开写、数值保持一致。 */
+.md-preview .np-code-block,
+.ne-body .ProseMirror .ne-codeblock {
+  border-radius: 8px; overflow: hidden;
+  background: rgba(60,70,100,0.06);
+}
+.md-preview .np-code-lang,
+.ne-body .ProseMirror .ne-codeblock-lang {
+  padding: var(--space-xs) var(--space-md); font-size: 10px; font-weight: 600;
+  color: var(--text-secondary); opacity: 0.8; text-transform: lowercase; letter-spacing: 0.03em;
+  border-bottom: 1px solid color-mix(in srgb, var(--action-primary) 14%, transparent);
+  user-select: none;
+}
+.md-preview .np-code,
+.ne-body .ProseMirror .ne-codeblock pre {
+  padding: var(--space-sm) var(--space-md); margin: 0;
+  font-family: var(--font-family-mono);
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+.md-preview .np-code code,
+.ne-body .ProseMirror .ne-codeblock pre code {
+  padding: 0; background: none; font-size: inherit;
+}
+/* token 配色按「谁更该赢」分了两级优先级，不只是随便列——editor 端 @tiptap/extension-
+   code-block-lowlight 是拿 ProseMirror decoration 画高亮的，decoration 画不出真实嵌套
+   的 <span>，遇到「string 嵌在 params 里、params 嵌在 function 里」这种情况，会把三层
+   class 拍扁成一个 "hljs-function hljs-params hljs-string" 全挂在同一段文字上（源码见
+   parseNodes()）。这套 CSS 已经按"内容类 token 在前、wrapper 类在后"排序——同一文件
+   里规则按位置「后来居上」决定优先级，顺序本身就是优先级机制，不需要再用 .X.X 双 class
+   写法（那只会把选择器从「匹配单 class」变成「要求 class 字符串里出现两次同一个名」，
+   实际 DOM 里没人这样写，等于零匹配）。结构性 wrapper 类（function/name/type/params/
+   title/section/selector-id/selector-class）留单层、写在内容类之后、自然垫底。
+   注意：之前 (2026-07-11) 注释里说"重复 class 提高优先级"是 CSS 误解，specificity 0,2,0
+   是高没错但匹配条件是「元素 class 字符串里同时含两次这个名」——prose decoration 输出
+   是单 class <span class="hljs-keyword">，全都不匹配，等于整个编辑态语法高亮是死的。
+   2026-07-15 修：把所有 .hljs-X.hljs-X 改回 .hljs-X。 */
+.md-preview .np-code .hljs-keyword, .ne-body .ProseMirror pre .hljs-keyword,
+.md-preview .np-code .hljs-literal, .ne-body .ProseMirror pre .hljs-literal,
+.md-preview .np-code .hljs-selector-tag, .ne-body .ProseMirror pre .hljs-selector-tag,
+.md-preview .np-code .hljs-tag, .ne-body .ProseMirror pre .hljs-tag { color: #7b5cf0; }
+.md-preview .np-code .hljs-string, .ne-body .ProseMirror pre .hljs-string,
+.md-preview .np-code .hljs-regexp, .ne-body .ProseMirror pre .hljs-regexp,
+.md-preview .np-code .hljs-symbol, .ne-body .ProseMirror pre .hljs-symbol,
+.md-preview .np-code .hljs-bullet, .ne-body .ProseMirror pre .hljs-bullet,
+.md-preview .np-code .hljs-addition, .ne-body .ProseMirror pre .hljs-addition { color: #2d7a4f; }
+.md-preview .np-code .hljs-comment, .ne-body .ProseMirror pre .hljs-comment,
+.md-preview .np-code .hljs-quote, .ne-body .ProseMirror pre .hljs-quote,
+.md-preview .np-code .hljs-meta, .ne-body .ProseMirror pre .hljs-meta { color: #9a9a9a; font-style: italic; }
+.md-preview .np-code .hljs-number, .ne-body .ProseMirror pre .hljs-number,
+.md-preview .np-code .hljs-attr, .ne-body .ProseMirror pre .hljs-attr,
+.md-preview .np-code .hljs-attribute, .ne-body .ProseMirror pre .hljs-attribute,
+.md-preview .np-code .hljs-deletion, .ne-body .ProseMirror pre .hljs-deletion { color: #b07858; }
+.md-preview .np-code .hljs-built_in, .ne-body .ProseMirror pre .hljs-built_in,
+.md-preview .np-code .hljs-builtin-name, .ne-body .ProseMirror pre .hljs-builtin-name,
+.md-preview .np-code .hljs-link, .ne-body .ProseMirror pre .hljs-link { color: #5a9e88; }
+.md-preview .np-code .hljs-variable, .ne-body .ProseMirror pre .hljs-variable,
+.md-preview .np-code .hljs-template-variable, .ne-body .ProseMirror pre .hljs-template-variable { color: #1e2028; }
+/* 下面这两组是结构性 wrapper（外层容器），优先级故意留低——单层 class 选择器，
+   不跟上面几组的"重复 class 提权"手法比 */
+.md-preview .np-code .hljs-function, .ne-body .ProseMirror pre .hljs-function,
+.md-preview .np-code .hljs-name, .ne-body .ProseMirror pre .hljs-name,
+.md-preview .np-code .hljs-type, .ne-body .ProseMirror pre .hljs-type,
+.md-preview .np-code .hljs-params, .ne-body .ProseMirror pre .hljs-params { color: #4a7fb5; }
+.md-preview .np-code .hljs-title, .ne-body .ProseMirror pre .hljs-title,
+.md-preview .np-code .hljs-section, .ne-body .ProseMirror pre .hljs-section,
+.md-preview .np-code .hljs-selector-id, .ne-body .ProseMirror pre .hljs-selector-id,
+.md-preview .np-code .hljs-selector-class, .ne-body .ProseMirror pre .hljs-selector-class { color: #4a7fb5; font-weight: 600; }
+.md-preview .np-code .hljs-emphasis, .ne-body .ProseMirror pre .hljs-emphasis { font-style: italic; }
+.md-preview .np-code .hljs-strong, .ne-body .ProseMirror pre .hljs-strong { font-weight: 700; }
+
+/* 分割线：2026-07-11 起支持。轻玻璃语言下的柔和分隔，不用默认的一条硬灰线 */
+.md-preview .np-hr,
+.ne-body .ProseMirror hr {
+  border: none; height: 1px;
+  background: color-mix(in srgb, var(--action-primary) 20%, transparent);
+}
+
+/* 对象引用 chip：整体选中/删除的原子节点，编辑态/只读态外观必须一致。
+   点击可交互（项目跳详情/文件预览下载/活动编辑，见 NoteCard.vue、NoteEditor.vue 的
+   useMindRefActions 调用）——cursor:pointer + hover 加深，跟按钮同一套反馈语言。 */
+.mind-ref {
+  display: inline-flex; align-items: center; gap: var(--space-xs);
+  padding: 0 var(--space-xs); margin: 0 var(--space-xs); border-radius: 5px;
+  background: color-mix(in srgb, var(--action-primary) 14%, transparent);
+  color: #5b5f8c; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; max-width: 100%; box-sizing: border-box;
+  transition: background 0.12s;
+}
+.mind-ref:hover { background: color-mix(in srgb, var(--action-primary) 26%, transparent); }
+.mind-ref.mind-ref-missing {
+  background: rgba(120,124,142,0.1); color: var(--text-secondary);
+  cursor: pointer; text-decoration: line-through; opacity: 0.72;
+}
+.mind-ref.mind-ref-missing:hover { background: rgba(120,124,142,0.1); }
+.mind-ref.mind-ref-missing::after {
+  content: '已删除'; font-size: 10px; text-decoration: none; opacity: 0.8;
+}
+/* 类型图标：不用文字徽标了，跟 GlobalSearch.vue/NoteEditor.vue 下拉的图标同一套颜色语言 */
+.mind-ref-icon { flex-shrink: 0; color: var(--color-primary); }
+/* label 单独包一层：对话引用的 label 是消息片段，可能很长又没有空格（中文/连续字符）可断——
+   .mind-ref 本来是 white-space:nowrap 整体不可断，短的项目名/文件名没问题，但长片段会把
+   chip 撑得比卡片还宽、右边直接溢出。只读预览容器本身有 overflow-wrap:anywhere（治连续
+   长串），但那条规则救不到这里——nowrap 的优先级比 overflow-wrap 高，继承下来也没用，
+   得在 label 自己身上显式允许换行。 */
+.mind-ref-label { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+
+
+/* 笔记和便签的表格在正文内横向滚动，保持阅读与编辑的单元格样式一致。 */
+:is(.md-preview .mind-table-scroll, .ne-body .tableWrapper) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+:is(.md-preview, .ne-body .ProseMirror) table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: .9em;
+}
+:is(.md-preview, .ne-body .ProseMirror) :is(th, td) {
+  min-width: 4em;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border-document-table);
+  vertical-align: top;
+}
+:is(.md-preview, .ne-body .ProseMirror) th {
+  background: var(--surface-soft);
+  font-weight: 600;
+  text-align: start;
+}
+.md-preview th[align='center'] { text-align: center; }
+.md-preview th[align='right'] { text-align: right; }
+:is(.md-preview, .ne-body .ProseMirror) tr:nth-child(even) td {
+  background: var(--surface-soft-hover);
+}
+.ne-body .ProseMirror .selectedCell {
+  background: var(--selection-bg);
+}

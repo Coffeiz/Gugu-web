@@ -1,0 +1,28 @@
+import { ref, shallowRef } from 'vue'
+import type { FileMeta } from '@/stores/filesCache'
+
+/** 文件名与后缀分段编辑的共享状态；保存逻辑由具体文件区负责。 */
+export function useInlineFileRenameState() {
+  const renamingFileId = ref<string | number | null>(null)
+  const renameText = ref('')
+  const renameExtension = ref('')
+  const editingFile = shallowRef<FileMeta | null>(null)
+
+  function start(file: FileMeta) {
+    editingFile.value = file
+    renamingFileId.value = file.filePath ?? null
+    const isLegacyDotfile = !file.displayName && file.ext.toUpperCase() !== 'FILE'
+    const extensionlessName = isLegacyDotfile || file.ext.toUpperCase() === 'FILE'
+    renameText.value = isLegacyDotfile ? `.${file.ext.toLowerCase()}` : file.displayName
+    renameExtension.value = extensionlessName ? '' : file.ext.toLowerCase()
+  }
+
+  function cancel() {
+    editingFile.value = null
+    renamingFileId.value = null
+    renameText.value = ''
+    renameExtension.value = ''
+  }
+
+  return { renamingFileId, renameText, renameExtension, editingFile, start, cancel }
+}

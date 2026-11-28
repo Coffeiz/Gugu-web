@@ -1,7 +1,7 @@
 # Gugu 2.0 — Python → Node.js / TypeScript 全量依赖迁移矩阵
 
 > **专题参考**：目标架构与目录职责见[架构说明](Gugu-2.0-架构说明.md)；实施顺序、完成状态与当前任务见[迁移任务清单](Gugu-2.0-迁移任务清单.md)。本表不作为另一份实施路线或完成率清单。
-> **2026-11-12 对齐**：首批 Core 已采用 Kysely、Zod、better-sqlite3、pg 与 Node 26；Drizzle 等并列项保留为原始候选，不代表同时采用。其他依赖只有存在真实迁移调用链及验收结果时才能标为已替换。
+> **依赖对齐**：Core 与 LoopScope 的 `better-sqlite3` 固定为 13.2.0，类型包固定为 9.6.0；驱动上游使用 SQLite 3.54.1。各目标平台原生制品仍须分别验证，Python 参考后端保持独立依赖。首批 Core 已采用 Kysely、Zod、better-sqlite3、pg 与 Node 26；Drizzle 等并列项保留为原始候选，不代表同时采用。其他依赖只有存在真实迁移调用链及验收结果时才能标为已替换。
 > **桌面路线更新**：目标为 Electron + TS Main/Preload + 独立 Node Core，使用 `electron-builder.yml` 打包；执行契约/策略/平台适配归入 Core `agent/executor/`，桌面 `sandbox/` 只做诊断。旧 Rust Host、依赖与构建配置已清除；Electron 验证切片已实现。目录与剩余验收见[架构说明](Gugu-2.0-架构说明.md)和[迁移任务清单](Gugu-2.0-迁移任务清单.md)。
 > 下文的 PR #116 和 Python 包位置是盘点基线；原 Python Core/Desktop 包当前分别位于 `compat/core-python/`、`compat/desktop-python/`。仍有调用方的 Python 依赖不能直接删除。
 
@@ -17,8 +17,8 @@
 
 - `backend/requirements.txt`：全部生产直接声明及安全约束依赖。
 - `backend/requirements-dev.txt`：全部开发与测试依赖。
-- `gugu-core/pyproject.toml`：`sqlalchemy[asyncio]`、`aiosqlite`、可选 `asyncpg`、构建系统。
-- `gugu-desktop/pyproject.toml`：Python Desktop Host 及其 `gugu-core` 依赖。
+- `packages/core/pyproject.toml`：`sqlalchemy[asyncio]`、`aiosqlite`、可选 `asyncpg`、构建系统。
+- `apps/desktop/pyproject.toml`：Python Desktop Host 及其 `gugu-core` 依赖。
 - 系统级/运行时：FFmpeg、Poppler、Cython 原生内核、数据库、Redis、MXC、文件监听、Electron Host、随包 Node 与原生进程管理。
 - 依据现有代码路径标注行为兼容要点。**没有完成全仓动态 import 与 transitive dependency 穷举**；应在实施时自动化扫描并锁定最终 npm 依赖树。
 
@@ -67,13 +67,31 @@
 
 | Python 依赖（原约束） | 用途 | Node/TS 目标候选 | 难度 | 必须验收 |
 |---|---|---|---|---|
-| `openai>=3.31.0,<4.0.0` | OpenAI-compatible provider | 官方 `openai` Node SDK | M | 兼容厂商、tool_calls、usage、错误/stream chunk |
-| `anthropic>=1.14.0,<2.0.0` | Anthropic 协议 | `@anthropic-ai/sdk` | M | 异常事件顺序、缺块停止、参数截断恢复 |
+| `openai>=3.31.0,<4.0.0` | OpenAI-compatible provider | 本轮采用可移植协议实现 + 显式 Node HTTP transport | M | 兼容厂商、tool_calls、usage、错误/stream chunk |
+| `anthropic>=1.14.0,<2.0.0` | Anthropic 协议 | 本轮采用可移植协议状态机 + 显式 Node HTTP transport | M | 异常事件顺序、缺块停止、参数截断恢复 |
 | `mcp==2.3.0` | MCP 会话/Client/Server | `@modelcontextprotocol/client` + `@modelcontextprotocol/server` v2 | H | stdio/HTTP、鉴权、工具发现、取消与断线恢复 |
 | `lark-oapi>=1.7.4,<2.0.0` | 飞书 WS 长连/API | `@larksuiteoapi/node-sdk` | M | 消息事件顺序、卡片交互、重连、媒体上传/下载 |
 | `oss2>=2.18.0` | 阿里云 OSS | `ali-oss`（候选） | M | 分片上传、签名 URL、分页、权限、迁移回滚 |
 
+2026-11-13 Provider 切片未新增 Node Provider SDK 依赖：Chat/Responses/Anthropic/Ollama 的 wire、usage、原生续接和错误映射由 `packages/core/src/agent/providers/` 实际实现，Node 专属 HTTP/DNS/TLS/代理仅从独立入口装配。旧 SDK 内部累加器异常白名单、httpx/httpx2 对象桥接退役，不机械复制语言内部异常类；已收到正文/工具参数/私有推理后的请求禁止重放。URL/DNS 固定、重定向拒绝、分阶段超时、真实合成 TLS/代理和流取消有运行回归，默认环境代理、CA 文件/目录读取及实际网络快照池键也已有生产实现和真实回归；搜索可显式关闭环境继承，SOCKS 明确不支持，真实 Host 网络配置热更新装配仍待验收。具体差异及未完成项见 [Provider 映射](../testing/node-agent-provider-parity.md)，不能据此宣称 M6 或生产入口已整体迁移。
+
 > QQ 目前为 raw WebSocket + HTTP；微信 iLink 有独立适配代码，它们**虽不是上述 pip 包**，仍须迁移消息、媒体、幂等、Gateway、trace_id 与重试逻辑。
+
+2026-11-18 实现进展：Web Host 固定使用 `@larksuiteoapi/node-sdk@1.76.0` 与 `ws@8.22.0`；微信 AES 使用 `node:crypto`，四平台 HTTP 复用受控传输。`main.ts` 已接真实生产资源与 Node IM bootstrap，包括永久准入、持久批次、媒体 claim/恢复、IM-only 调度、原平台回复、交互与出站恢复扫描。默认 Python 归属下不启动 Node 消费者；真实平台、全媒体转码及部署切换仍按 [IM Gateway 迁移清单](Gugu-2.0-IM-Gateway迁移清单.md) 分别验收，不能据依赖安装或隔离网络替身判定平台验收通过。
+
+群注意力接入生产 Ingress、当前策略复核与既有 Harness 回复门；延迟 ASK 走内部持久 resume 收据和正式 v3 Run 入队，成功平台回执与加密事实同事务保存。Node 独立 Redis issued/取消证明丢失时取消旧唤醒。生产 `resources()` 读取真实 PG/本地 FS/配置，不依赖 Python 消费者双写补齐。
+
+共享链路复用真实控制事务、冻结 Run 取消、授权上下文/引用恢复、IM memory 与当前群工具。异步工厂使用同一 ProviderRuntime 装配压缩/finalizer；成功历史同事务登记反思 Job，独立消费者承担租约、journal/CAS、cursor/RAG 与清除围栏；最小 read_file/send_file 已注册实际授权能力。飞书图表实际 PNG、隔离 PG/Redis/Linux FS 行为均独立记录，平台/Provider HTTP 为替身。“组件实现、生产接线、Python 回归、真实平台”继续分别验收。
+
+被动群与 idle 反思增量已接正式消息收据和成功 Run：`reflection-triggers.ts` 持久计数、独立窗口与 scope 冻结，`reflection-tail.ts` 校验有界序号尾部，`reflection-postgres.ts` 使用真实 Run 前缀发起 Core 反思分支。每50条被动消息生成窗口，只有成功主动 Run 设置180秒 idle，被动不重置；无合格快照不调用 Provider。原始成员身份与混合批次最低权限分开处理，owner 不落成员记忆。旧 schema 显式升级使用 `reflection-trigger-upgrade.sql`，缺原始冻结的旧 Run 不反填当前版本。群daily 100条自动沉淀已复用既有Core规则、正式提示词和真实Provider独立分支，逐批加密文件计划与后继Job支持跨进程恢复，不推进消息水位。owner daily 50条已接本人BM25参考、追加主档、逐响应用量和持久恢复，profile/pattern低频维护已接Core门限、独立Provider、加密计划与失败冷却，QQ可选私聊流与Telegram私聊draft/保活/图文已进共享持久投递，独立平台密钥/显式约束升级及退出排空，不走旁路observer；platform-user成员可从真实checkpoint恢复，公开group仍等原快照。真实平台和部署切换另验。
+
+语音 Run 已补实际活动语音预设/`speech_to_text` BYOK 与三种 Core ASR 协议接线，Host 负责有界 ffprobe/ffmpeg、当前版本/权限和字幕卡片事务。主模型原生音频直接使用授权稳定引用，未配置独立 ASR 走既有 early exit；隔离 PG/Redis 与实际 OGG 转码整链路已通过，平台/Provider 网络为替身。群注意力非 autonomous 模式已接独立 ASR-only 工厂与加密持久收据，原消息证明及派发事务绑定后由真实 Run 复用，未知请求不重发；不把字幕写回密封入站材料。引用语音已补完整来源与历史证明，SILK 已通过受限 Rust WASM worker 接入。视频已补 Core 规则、真实 ffprobe/ffmpeg、MiniMax 上传及加密缓存；OpenAI/M3/不支持视频三种生产链路通过隔离存储验收。原生音频附加字幕与 sessions 卡片精细更新已通过生产隔离回归11/11，MiMo Chat保留原音频格式；HEIC与旧默认Python相同明确拒绝，不能把仅声明的依赖误记为已存在解码能力；真实平台另验。
+
+Responses/Anthropic私有推理已补活动checkpoint同事务加密、原ref恢复及成功历史事务发布跨Run状态；关闭模式、工具Schema变化与当前权限均复核。OpenAI Chat/Ollama只保存当前Run私有工具续接，按Python基线不发布跨Run成功状态。`resources()`调用同一真实服务，活动表沿既有显式迁移；三协议工具轮、Anthropic重启跨Run/off及Responses拒绝均经隔离PG/Redis/Harness验收，网络为替身。Anthropic跨Run只保存Python同形thinking映射和tail，不宣称恢复Node额外原始响应块；真实Provider、OS强杀及部署另行验收。
+
+Responses 上游协议拒绝已从 Core 通知 Host，按本次加载时冻结的版本 CAS 失效数据库成功状态，不能让旧 Run 清除较新状态。正式三 Run 回归验证两次成功续接后第三次真实 400 拒绝、密文清空及失败终态完成；平台/Provider 网络仍为替身，PG/Redis/Harness 真实。
+
+Node IM 自动保留复用现有 Core PG session 删除与 Host 本地文件引用计数：真实事务中的50会话替换、按摘要水位2000条/每批500的历史保留、无消息外键的永久消费标记及持久FS回收均已由正式 Gateway/Worker/Agent Run 链验证。后台仅处理Node登记目标，保护引用证明、运行/投递/交互/反思及 pending ASK，FS失败保留重试。Python消费者及配置不变；显式删除已接Node同事务永久墓碑/持久GC与真实取消，认证HTTP整链路5/5；Web owner取消不再依赖已撤销的Bot/群/平台绑定，出站仍严格复核；未知投递仍409。Node Web实际创建已加入同一owner行锁，真实PG双向竞争/回滚/跨owner验证通过；Python创建者仍须部署上保持同写域单写者，不能据Node锁推断Python并行写入已协调。
 
 ### 1.4 搜索、多语言、日期和通用工具
 
@@ -95,16 +113,27 @@
 
 | Python 依赖（原约束） | 用途 | Node/TS 目标候选 | 难度 | 必须验收 |
 |---|---|---|---|---|
-| `Pillow>=13.0.0` | 图片读取、缩略图 | `sharp` | M | EXIF、方向、透明图、多帧、大图安全限制 |
-| `pillow-heif>=0.16.0` | iPhone HEIC/HEIF | `sharp`（经验证的 HEIF/libheif build）/ 独立 `libheif` | H | 实机 HEIC/HEIF、授权/编解码器、跨平台包 |
-| `pilk>=0.2.4` | QQ/微信 SILK → PCM | SILK 原生解码器或 WASM 包；FFmpeg 后处理 | H | 腾讯头、24k/单声道、错误音频、Windows/macOS；许可证审查 |
+| `Pillow>=13.0.0` | 图片读取、缩略图 | IM 副本复用已有 `@napi-rs/canvas` + TIFF 的受限 FFmpeg；其他调用方另核对 | M | IM PNG/JPEG/GIF/WebP/BMP/TIFF 完整解码、降采样/透明铺白/原样策略已实现；HEIC 未支持，EXIF、多帧及其他领域不以此代验收 |
+| `pillow-heif>=0.16.0` | 仅依赖声明，旧生产未注册HEIF opener | 默认拒绝与旧实际行为一致；真实解码作为后续能力补齐 | — | 内存真实HEIC可直接codec解码，但正式Python fit_image注册前None、进程内显式注册后JPEG；不得把后者计作旧入口验收 |
+| `pilk>=0.2.4` | QQ/微信 SILK → PCM | Host 锁定 `@zpowertech/audio-player@0.1.1`，受限独立 Node/WASM → 24k 单声道 PCM → FFmpeg WAV | H | Linux 32 组采样率/信号/标准腾讯头与 pilk 逐字节差分、畸形帧/超时/取消及构建 JS worker已验证；Windows/macOS 单独记录，第三方声明随 Host 保留 |
 | `trafilatura>=2.0.0` | 网页正文抽取 → Markdown | `@mozilla/readability` + `jsdom`，必要时 `cheerio` | H | 中文页面、动态站点、链接、表格与正文质量 |
-| `python-docx==1.1.2` | DOCX 文本 | `mammoth` 或 OOXML 解析 | M | 段落顺序、表格、页眉脚、批注 |
-| `openpyxl==3.1.5` | XLSX 文本 | `exceljs` / `xlsx`（许可证确认） | M | 公式缓存、合并单元格、多个 sheet |
-| `xlrd==2.0.1` | 旧 XLS | 支持 BIFF8 的 XLS 解析器（PoC 选型） | H | .xls 兼容性、日期序列、编码 |
-| `python-pptx==1.0.2` | PPTX 文本 | OOXML 专用抽取适配器 | H | 文字框、组合形状、表格、备注、排序 |
-| `striprtf==0.0.28` | RTF 文本 | RTF parser / 转换工具（PoC） | H | Unicode 转义、嵌套样式、容错 |
-| `odfpy==1.4.1` | ODF 文本 | ODF ZIP/XML 自定义抽取 / 适配库 | H | ODT/ODS/ODP 格式、命名空间、表格 |
+| `python-docx==1.1.2` | DOCX 文本 | `mammoth`（DOCX→HTML/文本抽取） | M | 段落顺序、表格、页眉脚等；Mammoth 不负责 HTML 净化，不视为结构编辑能力 |
+| `openpyxl==3.1.5` | XLSX 文本 | `xlsx`（SheetJS CE，读取） | M | 公式缓存、合并单元格、多个 sheet；先验证 Gugu 所需字段与工作簿特性 |
+| `xlrd==2.0.1` | 旧 XLS | `xlsx`（SheetJS CE，BIFF/XLS 读取） | H | BIFF8、日期序列、编码与真实样本兼容性 |
+| `python-pptx==1.0.2` | PPTX 文本 | `fflate` + `fast-xml-parser` + OOXML 专用抽取适配器 | H | 关系与部件顺序、文字框、组合形状、表格、备注；限制 ZIP/XML 资源并拒绝 DTD/实体 |
+| `striprtf==0.0.28` | RTF 文本 | 独立 RTF parser；仅在明确需要高保真转换时评估受限转换服务 | H | Unicode 转义、嵌套样式、容错与资源上限 |
+| `odfpy==1.4.1` | ODF 文本 | `xlsx`（SheetJS CE，仅 ODS 读取）；ODT/ODP 使用专用 ZIP/XML 适配器 | H | ODS 表格兼容性、ODT/ODP 命名空间和内容顺序；不引入 `officeparser` 兜底 |
+
+**Office 依赖决策（2026-11-16）**：
+
+| 格式 | 首选方案 | 选择理由与边界 |
+|---|---|---|
+| DOCX | Mammoth | 专注 Word 文档，维护历史较长；用于文本/HTML 抽取，不承担 HTML 净化或结构编辑。 |
+| XLSX、XLS、ODS | SheetJS CE（npm 包 `xlsx`） | 成熟表格解析；分别验证工作表、BIFF8、日期序列、ODS 和公式缓存等 Gugu 所需行为。读取能力不代表无损写入。 |
+| PPTX、ODT、ODP | `fflate` + `fast-xml-parser` + 格式专用适配器 | 由适配器处理 OOXML/ODF ZIP 结构和 Gugu 所需投影；PPTX ZIP 层使用 `fflate`。 |
+| RTF | 独立 RTF parser；必要时另评估受限转换服务 | 暂不绑定低活跃度综合解析库；先覆盖 Unicode 转义、嵌套样式、容错和资源限制。 |
+
+不引入 `officeparser`。当前 Core 的 XLSX 预览消费者已声明并锁定 SheetJS CE 0.20.3 与 `fast-xml-parser` 5.11.2：SheetJS 读取单元格、合并区域和行列尺寸，XML parser 校验并投影工作簿、关系及绘图 XML；ZIP 资源校验和图片定位由 XLSX 适配代码负责。XML 路径拒绝 DTD/ENTITY、未知实体、非法 XML 字符及不合法文档结构。DOCX 使用 Mammoth；PPTX 的 ZIP 与 OOXML 投影使用 `fflate` 和 `fast-xml-parser`。DOCX/PPTX/ODF API 仍须依据实际调用方补充合成与兼容性样本、owner/资源限制及安全回归；未知 OOXML/ODF 部件保留和创建/结构编辑能力需单独评估，不从读取能力推断。
 
 ### 1.6 Python 传递依赖与安全约束（同样逐项记录）
 
@@ -127,7 +156,7 @@
 |---|---|---|---|
 | `pytest>=8.0` | `vitest` | M | 将行为契约转换为 TS 测试 |
 | `pytest-asyncio>=0.23` | Vitest async/Promise | E | 异步取消、竞态与失败注入 |
-| `Cython>=3.1` | 优先复用 TS/Rust RAG；必要时 N-API/WASM | H | `cython_native` 算法与排序行为等价 |
+| `Cython>=3.1` | 复用 Gugu 1.7.7 TypeScript RAG；Node 生产路径不引入 Cython/N-API/WASM RAG 内核 | M | 对照当前 Python/Cython 回归与质量语料，验证分词、BM25/混合排序、confidence、ACL、索引重建 |
 | `setuptools>=68` | TS 构建链；删除 `pyximport` | N/A | 无剩余构建时 Python import |
 | `aiosqlite>=0.20` | 本地 SQLite 测试与测试数据库 | M | 事务、WAL、并发一致性 |
 | `fakeredis[lua]>=2.30` | 真实隔离 Redis 优先；`ioredis-mock` 仅做单元 mock | M | Lua 锁、Streams 不可仅靠 mock 证明 |
@@ -137,7 +166,7 @@
 | `mutmut==3.8.0` | `@stryker-mutator/core` + Vitest runner | M | 先迁移人工运行规范、变异目标与阈值 |
 | `pytest-xdist>=3.5` | Vitest pool/sharding | M | 测试隔离、每 worker 独立 DB/Redis |
 
-> **不要**因 TS 迁移而简单删除现有 5,000+ Python 测试；保留 Python Golden Runner，直至对应功能的 TS 差分测试及生产回归达标。
+> Python pytest 仅作为旧行为基准，不构成 Node 构建、运行或生产调用依赖。按领域补齐 TypeScript 行为回归后，2.0 最终删除 Python 后端；不保留 Python Golden Runner、桥接或双运行时。
 
 ## 3. 原 Python 包与桌面 Host 的迁移表
 
@@ -145,15 +174,15 @@
 
 | 盘点部分 | 目标 | 处理方式 | 风险 |
 |---|---|---|---|
-| `gugu-core` Python wheel | 顶层 `gugu-core/` TypeScript | 项目/联系人首批已迁；其余 Domain/Application 逐域迁移 | 中 |
-| `gugu_core/data` SQLAlchemy | `gugu-core/src/data/` + Kysely | 首批已落地；后续仍须**跨域事务整体迁移**，不得 Python/Node 双写 | 高 |
+| `gugu-core` Python wheel | 顶层 `packages/core/` TypeScript | 项目/联系人首批已迁；其余 Domain/Application 逐域迁移 | 中 |
+| `gugu_core/data` SQLAlchemy | `packages/core/src/data/` + Kysely | 首批已落地；后续仍须**跨域事务整体迁移**，不得 Python/Node 双写 | 高 |
 | `gugu_core.data.runtime.LocalRuntime` | Node SQLite Host | 显式 initialize/open/migrate/close | 高 |
-| `gugu_core.data.migrations` | SQLite 增量迁移器 | 当前本地 schema 3；v1/v2 显式备份升级及回滚验收，不因换壳升级 schema | 高 |
+| `gugu_core.data.migrations` | Node SQLite 与 Host PostgreSQL migrations | Core schema 18 包含可重建 RAG 索引表及显式 SQLite 升级；Web Host 提供正式 PostgreSQL 索引迁移校验/应用命令，Node Worker、八类来源、写入队列与 Web Agent RAG Run 已接线。隔离 PostgreSQL/Redis 调用链已验证；目标部署上的正式迁移仍是切换步骤，不由工具运行时回退 Python | 高 |
 | `gugu-desktop-host` Python 管道进程 | 独立 Node 26 Core 进程 | Node 已替换 Python；Electron Main 继续使用 NDJSON v2、Worker 与收据契约 | 中 |
 | 旧 Rust 桌面 Host | Electron + TS Main/Preload | 已迁入窗口/生命周期与 IPC 的安全、恢复契约；Core 不依赖 Electron | 高 |
-| `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 Core `agent/executor/mxc.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |
-| 旧 Rust 桌面构建 CLI | `electron` + `electron-builder` | 已从活动依赖、源码和构建链移除；用 `electron-builder.yml` 及 `scripts/package.ts` / `smoke.ts` 验证依赖与资源 | 中～高 |
-| Vue `frontend/` 独立 desktop 入口 | **复用** | 将旧桌面 bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
+| `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 `packages/sandbox/src/mxc/executor.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |
+| 旧 Rust 桌面构建 CLI | `electron` + `electron-builder` | 已从活动依赖、源码和构建链移除；用 `electron-builder.yml` 及 `apps/desktop/scripts/package/package.ts` / `apps/desktop/scripts/verify/smoke.ts` 验证依赖与资源 | 中～高 |
+| Vue `apps/web/` 独立 desktop 入口 | **复用** | 将旧桌面 bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
 | `gugu-desktop` Node engines 约束 | 构建 Node、Electron 内嵌 Node、Core Node 分别声明 | Core 保持已声明的 Node 26；不假设 Electron 内嵌版本相同 | 中 |
 | 现有 Node sidecar 制品 | Electron 真实资源目录中的独立 Node/Core 制品 | 重用装配/完整性契约；原生依赖按独立 Node ABI 构建，安装后脱离开发目录验证 | 高 |
 
@@ -173,12 +202,12 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 | PostgreSQL | SaaS 多用户事实库 | **保留** | 兼容历史数据/Alembic、零重建 |
 | Redis | SaaS IM/协调/通知 | **保留** | Streams 重试、锁、通知 |
 | SQLite | Desktop 数据库 | **保留** | WAL/备份/恢复/迁移 |
-| Cython 原生 RAG 内核 | 现有 Python/Cython 算法 | TS / `@node-rs/jieba` / Rust N-API | BM25、分词/投影、索引版本 |
-| Python RAG/记忆对象文件 | 非全部存在 DB | 统一 Node 内容 Store | 数据迁移完整性、删除屏障 |
+| Cython 原生 RAG 内核 | 当前 Python 参考实现 | 复用 1.7.7 TypeScript RAG；迁移后 Node 只运行 TS 检索路径 | Python/Cython 差分回归、分词/排序/权限过滤、性能与索引重建 |
+| RAG 来源正文与文件/记忆内容 | 本地文件或既有 Canonical 来源 | 通过授权 FS / Core 来源 Adapter 按需读取；DB 只存可重建的派生索引/缓存，不复制文件正文或创建独立本地文件对象 ID | 路径授权、来源变更后的失效/重建、删除屏障、ACL 过滤 |
 | Linux sandboxd/容器 | Web/NAS 执行隔离 | 保留或实现同协议 Adapter | 防止 Host fallback |
-| Windows MXC | PR #116 有受限验证 | 从旧桌面 Host 绑定抽离后端，经 Core `executor/mxc.ts` 适配；桌面仅装配/诊断 | Node/MCP/PTY 严格隔离尚未证明；Electron Renderer sandbox 不替代它 |
+| Windows MXC | PR #116 有受限验证 | 从旧桌面 Host 绑定抽离后端，经 `packages/sandbox/src/mxc/executor.ts` 适配；桌面仅装配/诊断 | Node/MCP/PTY 严格隔离尚未证明；Electron Renderer sandbox 不替代它 |
 | macOS sandbox | 尚未验收 | 原生 Adapter（待选型） | 签名、公证、文件授权、进程树 |
-| 文件监听 | Python watcher / TS Sidecar | `chokidar` 或 OS watcher Adapter | rename、丢事件、恢复对账 |
+| 文件监听 | Python watcher / TS Sidecar | 文件读写以本地 FS 为准，不迁移 DB↔FS watcher 或对账 | UI 刷新如需监听，另行设计为可丢弃的通知，不作为同步与持久化依据 |
 | CLI、Shell、PTY、MCP stdio | sandboxd/Unix socket 与 Python 桥 | Node `spawn` + OS Sandbox Broker | 取消、stdio、终止信号、权限 |
 | SSE / Redis 事件总线 | 浏览器跨页状态通知 | Fastify SSE + Redis | event ID、重连、顺序 |
 | Docker/Compose | 当前 Python 构建镜像 | Node 多阶段构建 | 非 root、健康检查、版本回滚 |
@@ -204,7 +233,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 
 ## 6. 推荐目标栈（候选，并非锁定清单）
 
-目录统一采用主清单的 `gugu-core/`、`gugu-desktop/`、未来 `gugu-saas/` 与 `gugu-mobile/`，保留 `frontend/`；不再维护另一套 `apps/` / `packages/` 搬迁布局。领域、数据、Runtime 和平台契约的具体文件职责见主清单 §2。
+目录统一采用主清单的 `packages/core/`、`apps/desktop/`、未来 `gugu-saas/` 与 `gugu-mobile/`，保留 `apps/web/`；不再维护另一套 `apps/` / `packages/` 搬迁布局。领域、数据、Runtime 和平台契约的具体文件职责见主清单 §2。
 
 - Web：优先 **Vue 3 + Vite**；不为“全 TS”而强制换 Nuxt 或 Next.js。
 - API：`fastify` 优先，原因是独立 Node 服务更贴近现有 FastAPI/Worker 边界；可另做 Hono PoC。
@@ -222,7 +251,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 | M2 | Electron Host + 随包 Node Core | Main/Preload 权限、旧数据连续性、未知结果恢复及 Windows/macOS 安装/签名/更新/重启；无 Python 安装 |
 | M3 | Web 项目/联系人事务切换 | 由 Node 唯一写入，PG 历史数据不变，事件/权限/撤销一致 |
 | M4 | 会话、Job、调度、事件总线 | Canonical History、Redis Stream、幂等、恢复一致 |
-| M5 | RAG、记忆、媒体、Office | 质量基准通过，旧索引有明确重建路径 |
+| M5 | 复用 1.7.7 TypeScript RAG，迁移记忆、媒体、Office 来源适配 | Python/Cython 回归与质量集对照通过；Node 单一生产检索路径；授权 FS 直读、派生索引可重建；旧索引有明确重建路径 |
 | M6 | Agent Loop、Provider、工具、IM | 跨 provider 流式 Golden Tests、IM 接入与安全门通过 |
 | M7 | 全量切换与撤除 Python | 无 Python 生产入口、可回滚制品、安全/许可证复核通过 |
 
@@ -231,7 +260,7 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 ## 8. 建议建立的验证数据集
 
 - **数据库**：同一套项目、联系人、归档、回收站、乐观锁、批量跨域提交；SQLite/PG 各运行一遍。
-- **RAG**：中文日期/月份、英语实体、拼音、日语专有名词、未登录词；记录 Token 列表、候选、排序和 ACL。
+- **RAG**：以 1.7.7 TypeScript RAG 为目标实现，使用当前 Python/Cython 作为迁移期回归基准；覆盖中文日期/月份、英语实体、拼音、日语专有名词、未登录词；记录 Token 列表、候选、排序、confidence 和 ACL，并验证 FS 来源变化后的索引失效与重建。
 - **HTTP/LLM**：重定向 SSRF、DNS rebinding、代理、超时；部分 SSE chunk、tool_calls 截断、事件乱序。
 - **媒体**：QQ/微信 SILK、Feishu Opus、损坏文件、iPhone HEIC、超大 PNG、视频取帧。
 - **Office**：DOCX、XLS/XLSX、PPTX、ODT/ODS/ODP、RTF，中文/日文、表格、公式、备注。
@@ -258,13 +287,13 @@ Core 的 `runtime/transport/stdio.ts` / `ipc.ts` 仅适配传输，复用 `runti
 - [PR #116](https://github.com/Coffeiz/Gugu-web/pull/116)
 - [生产 requirements](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/requirements.txt)
 - [开发 requirements](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/requirements-dev.txt)
-- [Core package](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-core/pyproject.toml)
-- [Desktop host package](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-desktop/pyproject.toml)
+- [Core package](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/packages/core/pyproject.toml)
+- [Desktop host package](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/apps/desktop/pyproject.toml)
 - [RAG Jieba 适配](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/agent/rag/cython_tokenizer.py)
 - [中日文读音](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/app/utils/romaji.py)
 - [音频转码](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/backend/app/core/media_transcode.py)
-- [Core 数据装配](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-core/src/gugu_core/data/unit_of_work.py)
-- [桌面 IPC](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/gugu-desktop/native-host/src/core_host.rs)
+- [Core 数据装配](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/packages/core/src/gugu_core/data/unit_of_work.py)
+- [桌面 IPC](https://github.com/Coffeiz/Gugu-web/blob/020ed06100bbd1f946ee2f277afa2b537fd64677/apps/desktop/native-host/src/core_host.rs)
 
 **官方文档/代码参考**
 

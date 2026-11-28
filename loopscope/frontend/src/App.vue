@@ -7,17 +7,18 @@
       </div>
       <nav class="nav">
         <RouterLink to="/">{{ t('nav.conversation') }}</RouterLink>
+        <RouterLink to="/subagents">{{ t('playground.subagents') }}</RouterLink>
         <RouterLink to="/reflections">{{ t('nav.reflections') }}</RouterLink>
         <RouterLink to="/tokens">{{ t('nav.tokens') }}</RouterLink>
         <RouterLink to="/changelog">{{ t('nav.changelog') }}</RouterLink>
         <RouterLink to="/settings">{{ t('nav.settings') }}</RouterLink>
       </nav>
       <div class="rail-footer">
-        <div class="account-card" :title="connected ? t('nav.accountHint') : t('nav.accountDisconnected')">
+        <div class="account-card" :title="localDesktopMode ? connectionLabel : connected ? t('nav.accountHint') : t('nav.accountDisconnected')">
           <span class="account-avatar">{{ accountInitial }}</span>
           <span class="account-info">
-            <strong>{{ accountName || t('nav.guguAccount') }}</strong>
-            <small><i class="dot" :class="{ on: connected }"></i>{{ connected ? t('nav.connected') : t('nav.disconnected') }}</small>
+            <strong>{{ localDesktopMode ? t('nav.localDesktop') : accountName || t('nav.guguAccount') }}</strong>
+            <small><i class="dot" :class="{ on: localDesktopMode ? localReady : connected }"></i>{{ connectionLabel }}</small>
           </span>
           <button
             class="locale-btn"
@@ -33,13 +34,16 @@
         <strong>{{ t('nav.authRequired') }}</strong>
         <span>{{ t('nav.accountDisconnected') }}</span>
       </section>
-      <RouterView v-else />
+      <RouterView v-else v-slot="{ Component, route }">
+        <component :is="Component" :key="route.path" />
+      </RouterView>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { health, localDesktopMode } from './services/api'
 import { loadBootstrap } from './services/gugu'
 import { setLocale, useLoopScopeI18n } from './i18n/index'
 const connected = ref(!!loadBootstrap())
@@ -52,16 +56,28 @@ const accountName = computed(() => bootstrap.value?.accountName ?? '')
 const accountInitial = computed(() => accountName.value.trim().slice(0, 1).toLocaleUpperCase() || 'G')
 const { locale, t } = useLoopScopeI18n()
 const authRequired = ref(false)
+const localReady = ref(false)
+const connectionLabel = computed(() => localDesktopMode
+  ? t(localReady.value ? 'nav.localReady' : 'nav.localUnavailable')
+  : t(connected.value ? 'nav.connected' : 'nav.disconnected'))
+async function checkLocalCollector() {
+  if (!localDesktopMode) return
+  try { localReady.value = (await health()).ok === true }
+  catch { localReady.value = false }
+}
 const localeButtonTitle = computed(() => `${t('nav.language')}: ${t(locale.value === 'zh-CN' ? 'locale.chinese' : 'locale.english')}`)
 function cycleLocale() {
   setLocale(locale.value === 'zh-CN' ? 'en-US' : 'zh-CN')
 }
-function onAuthRequired() { authRequired.value = true }
+function onAuthRequired() { if (!localDesktopMode) authRequired.value = true }
 onMounted(() => {
+  void checkLocalCollector()
+  window.addEventListener('focus', checkLocalCollector)
   window.addEventListener('loopscope:bootstrap', update)
   window.addEventListener('loopscope:auth-required', onAuthRequired)
 })
 onUnmounted(() => {
+  window.removeEventListener('focus', checkLocalCollector)
   window.removeEventListener('loopscope:bootstrap', update)
   window.removeEventListener('loopscope:auth-required', onAuthRequired)
 })

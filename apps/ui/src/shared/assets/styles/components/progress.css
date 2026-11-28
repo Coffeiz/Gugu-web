@@ -1,0 +1,78 @@
+progress {
+  display: block;
+  block-size: var(--progress-track-height);
+  appearance: none;
+  border: 0;
+  border-radius: var(--progress-track-radius);
+  background: var(--progress-track-bg);
+  color: var(--progress-fill-bg);
+}
+
+progress::-webkit-progress-bar {
+  border: 0;
+  border-radius: var(--progress-track-radius);
+  background: var(--progress-track-bg);
+}
+
+progress::-webkit-progress-value {
+  border-radius: var(--progress-track-radius);
+  background: var(--progress-fill-bg);
+}
+
+progress::-moz-progress-bar {
+  border-radius: var(--progress-track-radius);
+  background: var(--progress-fill-bg);
+}
+
+.progress-range[type='range'] {
+  appearance: none;
+  block-size: var(--progress-thumb-size);
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.progress-range:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.progress-range::-webkit-slider-runnable-track {
+  block-size: var(--progress-track-height);
+  border: 0;
+  border-radius: var(--progress-track-radius);
+  background: linear-gradient(to right, var(--progress-fill-bg) var(--progress-position, 0%), var(--progress-track-bg) var(--progress-position, 0%));
+}
+
+.progress-range::-webkit-slider-thumb {
+  appearance: none;
+  inline-size: var(--progress-thumb-size);
+  block-size: var(--progress-thumb-size);
+  margin-block-start: calc((var(--progress-track-height) - var(--progress-thumb-size)) / 2);
+  border: 0;
+  border-radius: 50%;
+  background: var(--progress-fill-bg);
+}
+
+.progress-range::-moz-range-track {
+  block-size: var(--progress-track-height);
+  border: 0;
+  border-radius: var(--progress-track-radius);
+  background: var(--progress-track-bg);
+}
+
+.progress-range::-moz-range-progress {
+  block-size: var(--progress-track-height);
+  border-radius: var(--progress-track-radius);
+  background: var(--progress-fill-bg);
+}
+
+.progress-range::-moz-range-thumb {
+  inline-size: var(--progress-thumb-size);
+  block-size: var(--progress-thumb-size);
+  border: 0;
+  border-radius: 50%;
+  background: var(--progress-fill-bg);
+}

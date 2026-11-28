@@ -321,3 +321,29 @@ def test_card_size_fields_rules():
     sized = _card_size_fields({"width": 220, "height": 160}, allow=True)
     assert sized == {"w": 220, "h": 160}
     assert set(_card_size_fields({"width": 99999, "height": 1}, allow=True)) == {"w", "h"}
+
+
+async def test_agent_layout_and_remove_preserve_deleted_node_body(db, user_a):
+    """画布项仍存活时，旧工具可编辑/移除视图，不复活或覆盖节点墓碑。"""
+    from app.core.tz import now_utc
+
+    canvas = await _canvas(db, user_a)
+    node, item = await _note_and_item(db, user_a, canvas)
+    owner_id, canvas_id, node_id, item_id = user_a.id, canvas.id, node.id, item.id
+    node.deleted_at = now_utc()
+    await db.commit()
+    updated = await _canvas_update_node(db, owner_id, {
+        "canvas_id": canvas_id, "item_id": item_id, "x": 33,
+    })
+    assert updated["updated"] is True
+    assert updated["node"]["position"]["x"] == 33
+    removed = await _canvas_remove_node(db, owner_id, {
+        "canvas_id": canvas_id, "item_id": item_id,
+    })
+    assert removed == {
+        "canvas_id": canvas_id, "removed_item_id": item_id,
+        "node_id": node_id, "node_preserved": True,
+    }
+    await db.refresh(node)
+    assert node.deleted_at is not None
+    assert node.content_md == "内容"

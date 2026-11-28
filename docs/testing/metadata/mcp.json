@@ -1,0 +1,106 @@
+{
+  "apps/web-host/tests/mcp/runtime.test.ts": {
+    "domain": "mcp",
+    "layer": "L2",
+    "owner": "apps/web-host/src/modules/mcp/runtime.ts",
+    "productionEntry": "Web Host MCP 连接运行时及 Agent 连接检测",
+    "keyBehavior": "按 owner 和当前启用配置重新发现工具，保护凭据与错误投影，停用及取消时不启动连接，探测不执行远端工具；reconnect 成功/失败均返回 Python 兼容的 total_loaded",
+    "ci": "web-host-node"
+  },
+  "apps/web-host/tests/mcp/runtime-routes.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/runtime-routes.ts",
+    "productionEntry": "apps/web-host/src/app.ts MCP 认证运行时路由",
+    "keyBehavior": "认证 owner 传递及 reconnect 完整响应结构透传",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/status.test.ts": {
+    "domain": "api",
+    "layer": "L2",
+    "owner": "packages/core/src/mcp/status.ts",
+    "productionEntry": "apps/web-host/src/main.ts",
+    "keyBehavior": "MCP 认证与状态接口，开关、限额和默认超时遵守 Python 环境变量及 override 优先级",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/safe-fetch.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "packages/core/src/mcp/safe-fetch.ts",
+    "productionEntry": "MCP 连接测试 startServer 固定 DNS 出站适配",
+    "keyBehavior": "拒绝跳转、传播 SSE 取消、限制响应体大小",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/server-routes.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/servers.ts",
+    "productionEntry": "MCP 配置 CRUD 路由原型及创建路由",
+    "keyBehavior": "认证、owner 参数、Python 创建 DTO 与 201 响应",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/server-create-postgres.test.ts": {
+    "domain": "mcp",
+    "layer": "L2",
+    "owner": "packages/core/src/agent/tools/mcp-management.ts + packages/core/src/mcp/server-create.ts",
+    "productionEntry": "apps/web-host/src/main.ts MCP 添加、更新与私密交互接线",
+    "keyBehavior": "确认认领与新增、更换或清空凭据槽位、加密意图及收据原子提交。失败保留旧凭据，重放复用表单，配置变化拒绝私密提交，恢复不携带凭据值",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/test-connection-route.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/test-connection.ts",
+    "productionEntry": "apps/web-host/src/app.ts MCP 连接测试认证路由",
+    "keyBehavior": "认证、owner 传递、成功/失败 Python DTO",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/server-list-route.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/server-list.ts",
+    "productionEntry": "apps/web-host/src/main.ts owner-scoped PG 配置列表与 owner-only 编辑视图",
+    "keyBehavior": "认证/owner 传递、envelope 解密、未加载状态不触发外网",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/test-connection.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp/test-connection.ts",
+    "productionEntry": "apps/web-host/src/main.ts PG MCP 探测组合",
+    "keyBehavior": "owner 限定读取、信封解密、仅 Header 凭据、schema/白名单/热读工具上限过滤、资源关闭和错误脱敏",
+    "ci": "node-webui"
+  },
+  "packages/core/tests/mcp/test-connection.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "packages/core/src/mcp/test-connection.ts",
+    "productionEntry": "MCP tools/list 业务筛选",
+    "keyBehavior": "无效声明/白名单过滤、重复名去重及超过单 server 限额时整体拒绝",
+    "ci": "core-node"
+  },
+  "packages/core/tests/mcp/schema-adapter.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "packages/core/src/mcp/schema-adapter.ts",
+    "productionEntry": "MCP tools/call 参数预检",
+    "keyBehavior": "沿用 Python 兼容归一化与结构化错误；必填、类型/范围错误和额外字段均在出站调用前拒绝且不回显输入",
+    "ci": "core-node"
+  },
+  "apps/web-host/tests/mcp/sdk-client.test.ts": {
+    "domain": "mcp",
+    "layer": "L1",
+    "owner": "apps/web-host/src/modules/mcp",
+    "productionEntry": "MCP SDK HTTP client over pinned transport",
+    "keyBehavior": "官方 SDK 握手、发现及调用经受控传输",
+    "ci": "node-webui"
+  },
+  "apps/web-host/tests/mcp/server-mutations-postgres.test.ts": {
+    "domain": "mcp",
+    "layer": "L2",
+    "owner": "packages/core/src/mcp/server-mutations.ts",
+    "productionEntry": "apps/web-host/src/main.ts MCP 配置生产事务",
+    "keyBehavior": "隔离 PostgreSQL 更新密文、owner 隔离和配置快照原子失效。Agent 启停和非凭据更新复核租约及访问版本，重放只返回持久收据",
+    "ci": "node-webui"
+  }
+}

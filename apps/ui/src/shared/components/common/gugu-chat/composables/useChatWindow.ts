@@ -1,0 +1,297 @@
+/**
+ * 窗口状态、样式与小窗高度跟随的唯一所有权：open / expanded / resizing、窗口坐标、
+ * z-index、通知锚点、播放器样式和内容自适应高度。
+ *
+ * 不拥有：消息/会话/流式（useChatConversation）、附件/录音（useChatAttachments）、
+ * 音频播放（useChatAudio）、IM 连接（useChatImConnect）、FAB 行为。
+ *
+ * 依赖：useChatWindow 需要 windowRef（chat-window DOM 引用，由 GuguChatWindow.vue
+ * 通过 defineExpose 暴露）、composerRef（调 fitTextarea 做过渡结束后的最终校准）、
+ * messagesEl（消息容器 ref，由 useChatConversation 通过 messageListRef.el 提供）。
+ */
+import { ref, computed, watch, onMounted, onUnmounted, type ComputedRef, type Ref } from 'vue'
+import { audioTrackKey, useAudioStore } from '@/stores/audio'
+import { useUiStore } from '@/stores/ui'
+import { nextZ, raisePopoversAbove } from '@/composables/core/windowz'
+import { playGuguSfx } from '@/services/sfx'
+import { SMALL_W, SMALL_H, SIDEBAR_W, SESSION_KEY, LAST_SESSION_KEY, MINI_PINNED_KEY, REOPEN_RESUME_KEY, LAST_WINDOW_MODE_KEY } from '../chatConstants'
+
+const MP_EST_H = 112   // 播放器外高估值（含 padding，用于通知锚点堆叠避让）
+
+export interface UseChatWindowOptions {
+  windowRef: Ref<HTMLElement | null>
+  composerRef: Ref<{ fitTextarea?: (isExpanded?: boolean) => void } | null>
+  messagesEl: ComputedRef<HTMLElement | null>
+}
+
+export function useChatWindow(options: UseChatWindowOptions) {
+  const audioStore = useAudioStore()
+  const uiStore = useUiStore()
+
+  // ── 状态 ────────────────────────────────────────────
+  const open       = ref(false)
+  const expanded   = ref(false)
+  let lastExpanded = localStorage.getItem(LAST_WINDOW_MODE_KEY) === 'expanded'
+  const resizing   = ref(false)   // 只表示用户主动的大/小窗位形过渡，不代表浏览器 viewport resize
+  const chatClosing = ref(false)
+  const chatZ      = ref(nextZ())
+  const miniPinned = ref(localStorage.getItem(MINI_PINNED_KEY) !== 'false')
+  const reopenResume = ref(localStorage.getItem(REOPEN_RESUME_KEY) !== '0')
+
+  // 每首新打开或刷新后恢复的音频都默认固定播放器，避免播放器被悬浮球遮住。
+  // 用户手动取消固定后，在同一首音频生命周期内仍保持取消状态。
+  watch(() => audioTrackKey(audioStore.file), (key, previousKey) => {
+    if (key != null && key !== previousKey) miniPinned.value = true
+  })
+
+  // ── 大/小窗位形过渡生命周期 ────────────────────────────
+  // viewport resize 与模式切换是两种不同事务：前者必须当帧跟随窗口，后者才允许 0.42s 缓动。
+  // 如果用户恰好在模式动画期间拖浏览器边缘，真实 window.resize 会直接结束模式动画，
+  // 让 is-layout-resizing class 在同一 Vue patch 中撤掉，避免新的 viewport 几何继续吃旧 transition。
+  let _resizeTimer: ReturnType<typeof setTimeout> | null = null
+  let _resizeScrollFrame: number | null = null
+  let _resizeObserver: ResizeObserver | null = null
+  let _resizeAnchor: { index: string; fraction: number } | null = null
+  let _resizeAtBottom = false
+  let _onResizeTransitionEnd: ((e: TransitionEvent) => void) | null = null
+  function restoreResizeAnchor() {
+    const el = options.messagesEl.value
+    if (!el) return
+    if (_resizeAtBottom) {
+      el.scrollTop = el.scrollHeight - el.clientHeight
+      return
+    }
+    if (!_resizeAnchor) return
+    const row = el.querySelector<HTMLElement>(`.msg-virtual-row[data-index="${_resizeAnchor.index}"]`)
+    if (!row) return
+    const rect = row.getBoundingClientRect()
+    el.scrollTop += rect.top + rect.height * _resizeAnchor.fraction - el.getBoundingClientRect().bottom
+  }
+  function observeResizeAnchor() {
+    _resizeScrollFrame = null
+    const el = options.messagesEl.value
+    if (!resizing.value || !el) return
+    _resizeObserver = new ResizeObserver(restoreResizeAnchor)
+    _resizeObserver.observe(el)
+    const spacer = el.querySelector('.msg-virtual-spacer')
+    if (spacer) _resizeObserver.observe(spacer)
+    restoreResizeAnchor()
+  }
+  function finishResizing(fitTextarea = true) {
+    _resizeObserver?.disconnect()
+    _resizeObserver = null
+    if (_resizeScrollFrame !== null) cancelAnimationFrame(_resizeScrollFrame)
+    _resizeScrollFrame = null
+    if (resizing.value && fitTextarea) restoreResizeAnchor()
+    _resizeAnchor = null
+    _resizeAtBottom = false
+    resizing.value = false
+    if (_resizeTimer) { clearTimeout(_resizeTimer); _resizeTimer = null }
+    const w = options.windowRef.value
+    if (w && _onResizeTransitionEnd) w.removeEventListener('transitionend', _onResizeTransitionEnd)
+    _onResizeTransitionEnd = null
+    if (fitTextarea) options.composerRef.value?.fitTextarea?.()
+  }
+
+  // 视口尺寸
+  const vw = ref(window.innerWidth)
+  const vh = ref(window.innerHeight)
+  function onResize() {
+    vw.value = window.innerWidth
+    vh.value = window.innerHeight
+    if (resizing.value) finishResizing()
+  }
+
+  const contentH = ref(SMALL_H)
+  const compactGrowth = ref(false)
+  const smallH = computed(() => {
+    const maxH = Math.max(0, Math.min(vh.value * 0.85, vh.value - 88 - 16))
+    const limit = compactGrowth.value ? maxH : Math.min(maxH, vh.value / 2)
+    return Math.min(limit, Math.max(SMALL_H, contentH.value))
+  })
+
+  function syncSmallH() {
+    const el = options.messagesEl.value
+    const shell = options.windowRef.value
+    if (!open.value || !el || !shell || resizing.value) return
+    const spacer = el.querySelector<HTMLElement>('.msg-virtual-spacer')
+    if (!spacer) return
+    // scrollHeight 至少等于视口高度，不能用来判断内容变短后的自然高度。
+    const status = el.querySelector<HTMLElement>('.chat-generation-status')
+    const chromeH = shell.offsetHeight - el.clientHeight
+    contentH.value = chromeH + spacer.offsetHeight + (status?.offsetHeight ?? 0)
+  }
+
+  watch([open, options.messagesEl, options.windowRef, resizing], ([visible, el, shell, inTransition], _previous, onCleanup) => {
+    if (!visible || !el || !shell || inTransition) return
+    syncSmallH()
+    const observer = new ResizeObserver(syncSmallH)
+    const spacer = el.querySelector('.msg-virtual-spacer')
+    if (spacer) observer.observe(spacer)
+    observer.observe(el)
+    observer.observe(shell)
+    const statusObserver = new MutationObserver(syncSmallH)
+    statusObserver.observe(el, { childList: true })
+    onCleanup(() => {
+      observer.disconnect()
+      statusObserver.disconnect()
+    })
+  }, { flush: 'post' })
+
+  // ── 标记 resizing：监听 chat-window 自己的 transitionend，结束后清掉。
+  // 用真实 transitionend 结束 resizing，而不是硬编码 420ms——CSS 过渡在性能不足时
+  // 会被拖慢，定时器却按固定墙钟时间准点触发，导致 backdrop-filter/跟随在过渡还没
+  // 走完时就被重新打开，看起来「闪一下」。定时器保留作兜底（万一属性没变、不会触发
+  // transitionend），加了缓冲、不再和过渡时长完全对齐。
+  function markResizing() {
+    _resizeObserver?.disconnect()
+    _resizeObserver = null
+    if (_resizeTimer) clearTimeout(_resizeTimer)
+    const w = options.windowRef.value
+    if (w && _onResizeTransitionEnd) w.removeEventListener('transitionend', _onResizeTransitionEnd)
+    const el = options.messagesEl.value
+    _resizeAtBottom = !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 2
+    _resizeAnchor = null
+    if (el && !_resizeAtBottom) {
+      const bottom = el.getBoundingClientRect().bottom
+      const rows = Array.from(el.querySelectorAll<HTMLElement>('.msg-virtual-row[data-index]'))
+      const row = rows.find(row => row.getBoundingClientRect().bottom >= bottom)
+      if (row) {
+        const rect = row.getBoundingClientRect()
+        _resizeAnchor = { index: row.dataset.index!, fraction: Math.max(0, Math.min(1, (bottom - rect.top) / rect.height)) }
+      }
+    }
+    resizing.value = true
+    // 同时监听视口与虚拟内容高度，在布局完成后、绘制前校准锚点。
+    // 不能逐帧轮询：rAF 可能先于虚拟行测量，导致上一帧的高度被拿来滚动。
+    if (_resizeScrollFrame !== null) cancelAnimationFrame(_resizeScrollFrame)
+    _resizeScrollFrame = requestAnimationFrame(observeResizeAnchor)
+    _onResizeTransitionEnd = (e: TransitionEvent) => {
+      if (e.target !== w) return
+      if (!['top', 'left', 'right', 'bottom'].includes(e.propertyName)) return
+      finishResizing()
+    }
+    w?.addEventListener('transitionend', _onResizeTransitionEnd)
+    _resizeTimer = setTimeout(() => finishResizing(), 600)
+  }
+
+  // ── 窗口层级 ────────────────────────────────────────────
+  function raiseChat() {
+    chatZ.value = nextZ()
+    raisePopoversAbove(chatZ.value)
+  }
+  watch(open, v => { if (v) raiseChat() })
+
+  // FAB 层级：离场动画尚未结束时窗口仍缩回悬浮球，不能提前把球提到窗口前面。
+  // after-leave 后才恢复常驻最高层，避免关闭瞬间球盖住窗口。
+  const fabZ = computed(() => (open.value || chatClosing.value) ? chatZ.value - 1 : 99999)
+
+  // ── 位置样式 ────────────────────────────────────────────
+  // 几何值只负责给出当前真实位置；是否做 0.42s 缓动由 GuguChatWindow 的
+  // is-layout-resizing class 单独决定。这样 viewport resize 永远直接跟随，而动画参数
+  // 仍只有组件 CSS 一个 owner，不在 JS 再复制 transition。
+  const windowStyle = computed(() => {
+    if (expanded.value) {
+      const left = Math.max(SIDEBAR_W + 12, vw.value * 0.4 - 12)
+      return { top: '12px', right: '12px', bottom: '12px', left: `${left}px`, zIndex: chatZ.value }
+    }
+    return {
+      top:    `${vh.value - 88 - smallH.value}px`,
+      left:   `${vw.value - parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--floating-edge')) - SMALL_W}px`,
+      right:  'var(--floating-edge)',
+      bottom: '88px',
+      zIndex: chatZ.value,
+    }
+  })
+
+  // 播放器联动：小窗展开时放到窗口后面；紧凑聊天窗与播放器同层，利用 DOM 顺序
+  // 让聊天窗背景覆盖播放器投到聊天区域内的阴影，同时保留播放器本体的独立空隙和点击区。
+  // 聊天窗关闭时播放器仍悬在 fab 上方。
+  const miniPlayerStyle = computed(() => {
+    const bottom = (open.value && !expanded.value) ? 88 + smallH.value + 8 : 88
+    const origin = (open.value && !expanded.value)
+      ? '50% 50%'
+      : `calc(100% - 25px) calc(100% + ${bottom - 53}px)`
+    const zIndex = expanded.value ? chatZ.value - 1 : open.value ? chatZ.value : chatZ.value + 1
+    return { bottom: `${bottom}px`, transformOrigin: origin, zIndex }
+  })
+
+  // 通知锚点：始终浮在「小窗 / 音乐播放器」上方，不与之重叠。
+  const notifyAnchor = computed(() => {
+    const hasPlayer = !!audioStore.file && (miniPinned.value || open.value)
+    if (open.value && !expanded.value) {
+      const winTop = 88 + smallH.value
+      return (hasPlayer ? winTop + 8 + MP_EST_H : winTop) + 12
+    }
+    return hasPlayer ? 88 + MP_EST_H + 12 : 90
+  })
+  watch(notifyAnchor, v => { uiStore.chatNotifyAnchor = v }, { immediate: true })
+
+  // 通知开合的缩放原点（与音乐播放器同逻辑）
+  const notifyOrigin = computed(() => {
+    const hasPlayer = !!audioStore.file && (miniPinned.value || open.value)
+    if (!open.value && !hasPlayer) {
+      return `calc(100% - 25px) calc(100% + ${notifyAnchor.value - 53}px)`
+    }
+    return '50% 50%'
+  })
+  watch(notifyOrigin, v => { uiStore.chatNotifyOrigin = v }, { immediate: true })
+
+  // 退出动画结束后再重置布局，输入编辑器随窗口一同卸载。
+  function closeChat() {
+    lastExpanded = expanded.value
+    localStorage.setItem(LAST_WINDOW_MODE_KEY, lastExpanded ? 'expanded' : 'compact')
+    finishResizing(false)
+    chatClosing.value = true
+    open.value = false
+  }
+
+  function finishChatClose() {
+    chatClosing.value = false
+    if (!open.value) {
+      expanded.value = false
+      compactGrowth.value = false
+    }
+  }
+
+  function openInLastMode() {
+    expanded.value = lastExpanded
+    open.value = true
+  }
+
+  // ── 声音提示：聊天窗被用户看着时不打断；切到别的标签页或收起才提示 ──────
+  function playIncomingMessageSfx() {
+    if (!open.value || document.hidden) playGuguSfx('message')
+  }
+
+  // ── 持久化 ────────────────────────────────────────────
+  watch(miniPinned, v => localStorage.setItem(MINI_PINNED_KEY, String(v)))
+
+  // ── 视口监听 ────────────────────────────────────────────
+  onMounted(() => {
+    window.addEventListener('resize', onResize)
+  })
+  onUnmounted(() => {
+    window.removeEventListener('resize', onResize)
+    finishResizing(false)
+  })
+
+  return {
+    // 状态
+    open, expanded, resizing, chatClosing, chatZ, fabZ,
+    vw, vh, contentH, smallH,
+    miniPinned, reopenResume,
+    // 样式
+    windowStyle, miniPlayerStyle, notifyAnchor, notifyOrigin,
+    // 方法
+    setOpen: (v: boolean) => { open.value = v },
+    setExpanded: (v: boolean) => { expanded.value = v },
+    markResizing, raiseChat, closeChat, finishChatClose, openInLastMode,
+    playIncomingMessageSfx,
+    enableCompactGrowth: () => { compactGrowth.value = true },
+    // 滚动定位前先同步尺寸。
+    onSyncSmallH: syncSmallH,
+    // 常量
+    SESSION_KEY, LAST_SESSION_KEY,
+  }
+}

@@ -1,4 +1,7 @@
 export const en = {
+  'nav.localDesktop': 'Local desktop',
+  'nav.localReady': 'Local Collector connected',
+  'nav.localUnavailable': 'Local Collector unavailable',
   'nav.conversation': 'Conversation',
   'nav.reflections': 'Reflections',
   'nav.tokens': 'Design Tokens',
@@ -14,6 +17,9 @@ export const en = {
   'nav.authRequired': 'Log in to Gugu to view LoopScope data',
 }
 export const zh = {
+  'nav.localDesktop': '本机桌面',
+  'nav.localReady': '已连接本机采集器',
+  'nav.localUnavailable': '本机采集器未连接',
   'nav.conversation': '对话',
   'nav.reflections': '反思',
   'nav.tokens': '设计令牌',

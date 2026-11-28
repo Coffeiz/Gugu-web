@@ -1,0 +1,129 @@
+/* Cross-family public color roles and adaptive highlight refinement.
+ * Theme-family files provide raw values; long-lived product components consume only these stable
+ * roles so dark mode never needs a literal white highlight patched into individual pages.
+ */
+:root {
+  --color-accent: var(--action-primary);
+  --color-accent-hover: var(--action-primary-hover);
+  --color-accent-muted: color-mix(in srgb, var(--action-primary) 16%, var(--surface-soft));
+  --color-accent-faint: color-mix(in srgb, var(--action-primary) 8%, transparent);
+
+  --highlight-strong: var(--theme-highlight-rest);
+  --highlight-side: var(--theme-highlight-side);
+  --highlight-soft: color-mix(in srgb, var(--theme-highlight-rest) 72%, transparent);
+  --highlight-muted: color-mix(in srgb, var(--theme-highlight-side) 64%, transparent);
+
+  /* Floating app chrome is distinct from content cards. Aero resolves to its normal glass surface;
+     Mono remaps only this role below so cards keep their quieter solid language while
+     navigation/drawers/toolbars retain backdrop glass. */
+  --chrome-glass-bg: var(--surface-glass);
+  --chrome-glass-border: var(--border-strong);
+  --chrome-glass-shadow: var(--elevation-card);
+  --chrome-glass-blur: var(--glass-blur);
+}
+
+/* Mono uses quieter card separation than Aero, so key content cards should not rely on elevation
+   alone. Floating chrome remains translucent rather than reusing the more solid content surface. */
+html[data-family='mono'] {
+  --project-card-border: var(--border-strong);
+  --project-card-hover-border: var(--border-hover);
+  --chrome-glass-bg: color-mix(in srgb,var(--surface-floating) 76%,transparent);
+  --chrome-glass-border: var(--border-strong);
+  --chrome-glass-shadow: var(--elevation-card);
+  --chrome-glass-blur: var(--glass-blur);
+}
+
+html[data-theme='dark'][data-family] {
+  /* 暗色 glass hover 高亮按暗色标定：theme-glass-hover（玻璃族 9% 白）用户实测偏亮，
+     统一压到 7% 白；亮色不受影响。 */
+  --surface-glass-hover: color-mix(in srgb, white 7%, transparent);
+  /* 日历 chip/capsule 的 hover 高光按暗色标定（5% 白，与项目卡 sheen 同惯例）。
+     其余 surface/card/glass 的 hover 中性化覆盖（transparent/同值自映射）已清理：
+     暗色与亮色共用 :root 语义 hover token，普通 glass 卡片恢复标准 hover。 */
+  --calendar-chip-hover-overlay: color-mix(in srgb, white 5%, transparent);
+  --calendar-capsule-hover-overlay: color-mix(in srgb, white 5%, transparent);
+
+  /* Dark primary fills remain quieter than the foreground accent while retaining the shared gradient. */
+  --action-primary-fill: color-mix(in srgb,var(--action-primary) 46%,var(--surface-base));
+  --action-primary-fill-hover: color-mix(in srgb,var(--action-primary) 54%,var(--surface-base));
+
+  /* Dark secondary actions use surface-based fills instead of the light glass literals. */
+  --action-secondary-fill: var(--surface-soft);
+  --action-secondary-fill-hover: var(--surface-soft-hover);
+  --action-secondary-border: var(--border-default);
+  --action-secondary-border-hover: var(--border-hover);
+  --action-secondary-fg: var(--content-secondary);
+  --action-secondary-fg-hover: var(--content-primary);
+
+  /* 项目卡 sheen 跟随各主题自身取值：暗色主题定义的是 7.5~8% 白的克制微光
+     （与日历 chip 的 5% 白同惯例），不再整体置 transparent——用户确认暗色
+     也要有 hover 高光，全灭会让明暗两版手感不一致。 */
+
+  /* Keep the previous dark calendar grid treatment while light mode restores the original
+     purple-grey main-branch lines. Capsule/chip/cell hover brightening is disabled with surfaces. */
+  --calendar-grid-line: var(--border-subtle);
+  --calendar-grid-line-strong: var(--border-subtle);
+  --calendar-cell-bg: transparent;
+  --calendar-cell-hover-bg: color-mix(in srgb,var(--action-primary) 10%,transparent);
+  --calendar-today-cell-bg: var(--calendar-cell-bg);
+  --calendar-range-cell-bg: var(--calendar-selected-cell-bg);
+  --calendar-selected-cell-bg: color-mix(in srgb,var(--action-primary) 10%,transparent);
+  --calendar-range-edge-bg: color-mix(in srgb,var(--action-primary) 15%,transparent);
+  --calendar-weekend-range-edge-bg: color-mix(in srgb,var(--status-danger) 15%,transparent);
+  --calendar-weekend-hover-bg: color-mix(in srgb,var(--status-danger) 10%,transparent);
+  --calendar-weekend-bg: color-mix(in srgb,var(--status-danger) 3%,transparent);
+  --calendar-capsule-surface-overlay: color-mix(in srgb,var(--surface-base) 22%,transparent);
+
+  /* settings-popup retains its historical component paint; dark mode only remaps its values. */
+  --settings-popup-bg: color-mix(in srgb,var(--surface-floating) 90%,transparent);
+  --settings-popup-border: var(--border-default);
+  --settings-popup-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-popup);
+  --settings-popup-item-fg: var(--content-primary);
+  --settings-popup-hover-bg: var(--surface-soft-hover);
+  --settings-popup-danger: var(--status-danger);
+  --settings-popup-danger-hover-bg: var(--status-danger-bg);
+  --settings-popup-divider: var(--popup-divider);
+}
+
+/* Mono settings uses the same geometry as Aero but switches only its surface vocabulary: a solid
+   neutral card plus the family border. No final paint property lives here, so there is no CSS race. */
+html[data-theme='light'][data-family='mono'] {
+  --settings-popup-bg: var(--surface-card-solid);
+  --settings-popup-border: var(--border-strong);
+  --settings-popup-shadow: var(--elevation-popup);
+  --settings-popup-item-fg: var(--content-primary);
+  --settings-popup-hover-bg: var(--surface-soft-hover);
+  --settings-popup-danger: var(--status-danger);
+  --settings-popup-danger-hover-bg: var(--status-danger-bg);
+  --settings-popup-divider: var(--popup-divider);
+}
+html[data-theme='dark'][data-family='mono'] {
+  --settings-popup-bg: var(--surface-card-solid);
+  --settings-popup-border: var(--border-strong);
+  --settings-popup-shadow: var(--elevation-popup);
+  --settings-popup-hover-bg: var(--surface-soft-hover);
+}
+
+html[data-theme='dark'][data-family] .pm-nav-item.active {
+  color: var(--sidebar-item-active-fg);
+  background: var(--sidebar-item-active);
+  border-color: var(--sidebar-item-active-border);
+  box-shadow: inset 0 1px 0 var(--highlight-soft);
+}
+html[data-theme='dark'][data-family] .pm-nav-item:hover:not(.active) {
+  color: var(--content-primary);
+  background: var(--color-accent-faint);
+}
+html[data-theme='dark'][data-family] .pm-nav-divider {
+  background: var(--divider-line);
+}
+
+html[data-theme][data-family] .topbar .btn-ghost-custom,
+html[data-theme][data-family] .sample-topbar .sample-ghost {
+  --topbar-btn-shadow: none;
+  box-shadow: none !important;
+}
+html[data-theme][data-family] .topbar .btn-ghost-custom:hover,
+html[data-theme][data-family] .sample-topbar .sample-ghost:hover {
+  box-shadow: none !important;
+}

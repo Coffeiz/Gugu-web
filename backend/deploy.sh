@@ -21,7 +21,7 @@ set -euo pipefail
 # ── 配置 ─────────────────────────────────────────────────
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$APP_DIR/.." && pwd)"
-FRONTEND_DIR="${PROJECT_ROOT}/frontend"
+FRONTEND_DIR="${PROJECT_ROOT}/apps/web"
 BACKUP_DIR="${APP_DIR}/.deploy-backups"
 TS="$(date +%Y%m%d-%H%M%S)"
 

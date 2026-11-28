@@ -1,0 +1,167 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import {
+  createMindCanvasCreation,
+  createMindCanvasUpdate,
+  createMindCanvasDelete,
+  MindCanvasMutationError,
+  type MindCanvasCreateRuntime,
+  type MindCanvasCreateRecord,
+} from '@gugu/core/mind'
+
+const ownerId = 'synthetic-owner'
+const metadata = { undoContextId: 'undo-context', clientId: 'mind-client' }
+const timestamp = new Date('2026-11-14T01:02:03.000Z')
+
+function canvas(overrides: Partial<MindCanvasCreateRecord> = {}): MindCanvasCreateRecord {
+  return {
+    id: 7,
+    title: '画布',
+    project_id: 3,
+    data_json: '{"zoom":1}',
+    created_at: timestamp,
+    updated_at: timestamp,
+    ...overrides,
+  }
+}
+
+test('canvas creation keeps Python defaults, owner-scoped project validation, atomic undo, then publishes', async () => {
+  const order: string[] = []
+  let recordedOwner = ''
+  let undoRecord: unknown
+  const runtime: MindCanvasCreateRuntime = {
+    async transaction(requestOwnerId, work) {
+      recordedOwner = requestOwnerId
+      return work({
+        async projectExistsForOwner(owner, projectId) { order.push(`project:${owner}:${projectId}`); return owner === ownerId },
+        async insert(owner, title, projectId) {
+          order.push(`insert:${owner}:${title}:${projectId}`)
+          return canvas({ title, project_id: projectId, data_json: '{}' })
+        },
+        async recordUndo(record) { undoRecord = record; order.push('undo') },
+      })
+    },
+    async publishChanged(event) { order.push(`publish:${event.origin}:${event.entityId}`) },
+  }
+  const create = createMindCanvasCreation(runtime)
+
+  const result = await create(ownerId, { project_id: '3', title: '  ' }, metadata)
+
+  assert.equal(recordedOwner, ownerId)
+  assert.equal(result.title, '未命名画布')
+  assert.equal(result.projectId, 3)
+  assert.deepEqual(order, [`project:${ownerId}:3`, `insert:${ownerId}:未命名画布:3`, 'undo', 'publish:mind-client:7'])
+  assert.deepEqual(undoRecord, {
+    userId: ownerId,
+    contextId: 'undo-context',
+    resource: 'mind',
+    action: 'create',
+    targetRefs: [{ kind: 'canvas', id: 7 }],
+    beforeState: { items: {} },
+    afterState: { items: { 'canvas:7': { id: 7, title: '未命名画布', project_id: 3, data_json: '{}', deleted_at: null } } },
+    baseVersions: { 'canvas:7': {} },
+  })
+})
+
+test('canvas creation rejects a project owned by somebody else before inserting', async () => {
+  let inserted = false
+  const create = createMindCanvasCreation({
+    async transaction(_ownerId, work) {
+      return work({
+        async projectExistsForOwner() { return false },
+        async insert() { inserted = true; return canvas() },
+        async recordUndo() {},
+      })
+    },
+    async publishChanged() {},
+  })
+
+  await assert.rejects(create(ownerId, { projectId: 9 }, metadata), (error: unknown) =>
+    error instanceof MindCanvasMutationError && error.statusCode === 404,
+  )
+  assert.equal(inserted, false)
+})
+
+test('canvas update keeps omitted fields, stores explicit null data, records before and after, then publishes', async () => {
+  const order: string[] = []
+  let updateFields: { title?: string; dataJson?: string } | undefined
+  let undoRecord: { action: string; beforeState: unknown; afterState: unknown } | undefined
+  const update = createMindCanvasUpdate({
+    async transaction(_ownerId, work) {
+      return work({
+        async getOwned(owner, id) { order.push(`lock:${owner}:${id}`); return canvas() },
+        async update(owner, id, fields) {
+          order.push(`update:${owner}:${id}`)
+          updateFields = fields
+          return canvas({ data_json: fields.dataJson ?? '{"zoom":1}', updated_at: new Date('2026-11-14T02:00:00.000Z') })
+        },
+        async recordUndo(record) { undoRecord = record; order.push('undo') },
+      })
+    },
+    async publishChanged() { order.push('publish') },
+  })
+
+  const result = await update(ownerId, 7, { data: null }, metadata)
+
+  assert.deepEqual(updateFields, { dataJson: 'null' })
+  assert.deepEqual(result.data, {})
+  assert.equal(undoRecord?.action, 'update')
+  assert.deepEqual(undoRecord?.beforeState, { items: { 'canvas:7': { id: 7, title: '画布', project_id: 3, data_json: '{"zoom":1}', deleted_at: null } } })
+  assert.deepEqual(undoRecord?.afterState, { items: { 'canvas:7': { id: 7, title: '画布', project_id: 3, data_json: 'null', deleted_at: null } } })
+  assert.deepEqual(order, [`lock:${ownerId}:7`, `update:${ownerId}:7`, 'undo', 'publish'])
+})
+
+test('canvas update hides another owner and rejects non-object view data', async () => {
+  let updated = false
+  const update = createMindCanvasUpdate({
+    async transaction(_ownerId, work) {
+      return work({
+        async getOwned() { return null },
+        async update() { updated = true; return canvas() },
+        async recordUndo() {},
+      })
+    },
+    async publishChanged() {},
+  })
+
+  await assert.rejects(update(ownerId, 7, { title: '新标题' }, metadata), (error: unknown) =>
+    error instanceof MindCanvasMutationError && error.statusCode === 404,
+  )
+  await assert.rejects(update(ownerId, 7, { data: [] }, metadata), MindCanvasMutationError)
+  assert.equal(updated, false)
+})
+
+test('canvas deletion records every scoped resource atomically and publishes after the commit', async () => {
+  const order: string[] = []
+  let undo: unknown
+  const remove = createMindCanvasDelete({
+    async transaction(_ownerId, work) {
+      return work({
+        async delete(owner, id) {
+          order.push(`delete:${owner}:${id}`)
+          return {
+            targetRefs: [{ kind: 'canvas', id }, { kind: 'canvas_item', id: 8 }, { kind: 'relation', id: 9 }, { kind: 'canvas_note', id: 10 }],
+            before: { 'canvas:7': { deleted_at: null }, 'canvas_item:8': { deleted_at: null }, 'relation:9': { deleted_at: null }, 'canvas_note:10': { content_md: '保留' } },
+            after: { 'canvas:7': { deleted_at: 'deleted' }, 'canvas_item:8': { deleted_at: 'deleted' }, 'relation:9': { deleted_at: 'deleted' }, 'canvas_note:10': { content_md: '保留' } },
+          }
+        },
+        async recordUndo(record) { undo = record; order.push('undo') },
+      })
+    },
+    async publishChanged(event) { order.push(`publish:${event.operation}:${event.entityId}`) },
+  })
+
+  await remove(ownerId, 7, metadata)
+
+  assert.deepEqual(order, [`delete:${ownerId}:7`, 'undo', 'publish:delete:7'])
+  assert.deepEqual(undo, {
+    userId: ownerId,
+    contextId: 'undo-context',
+    resource: 'mind',
+    action: 'delete',
+    targetRefs: [{ kind: 'canvas', id: 7 }, { kind: 'canvas_item', id: 8 }, { kind: 'relation', id: 9 }, { kind: 'canvas_note', id: 10 }],
+    beforeState: { items: { 'canvas:7': { deleted_at: null }, 'canvas_item:8': { deleted_at: null }, 'relation:9': { deleted_at: null }, 'canvas_note:10': { content_md: '保留' } } },
+    afterState: { items: { 'canvas:7': { deleted_at: 'deleted' }, 'canvas_item:8': { deleted_at: 'deleted' }, 'relation:9': { deleted_at: 'deleted' }, 'canvas_note:10': { content_md: '保留' } } },
+    baseVersions: {},
+  })
+})

@@ -1,0 +1,152 @@
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { Pool } from 'pg'
+import test from 'node:test'
+import { createPostgresWorkspaceLister } from '../../src/modules/workspaces/store.js'
+import { createWorkspaceLister } from '@gugu/core'
+import { createKyselyWorkspaceListReader } from '@gugu/core/workspaces'
+import { createPostgresRuntime } from '@gugu/core/data'
+
+const databaseUrl = process.env.GUGU_WEBUI_TEST_DATABASE_URL
+const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
+const otherOwnerId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'
+
+test('PostgreSQL workspace list returns owner rows, disabled items, per-owner session counts and runtime flags', {
+  skip: !databaseUrl && 'set GUGU_WEBUI_TEST_DATABASE_URL to run isolated PostgreSQL integration',
+  timeout: 10_000,
+}, async () => {
+  const schema = `gugu_workspace_list_${randomUUID().replaceAll('-', '')}`
+  const admin = new Pool({ connectionString: databaseUrl, max: 1 })
+  await admin.query(`CREATE SCHEMA "${schema}"`)
+  const pool = new Pool({ connectionString: databaseUrl, options: `-c search_path=${schema}`, max: 3 })
+  try {
+    await pool.query(`
+      CREATE TABLE workspaces (
+        id integer PRIMARY KEY,
+        user_id uuid NOT NULL,
+        name varchar(200) NOT NULL,
+        kind varchar(20) NOT NULL,
+        project_id integer,
+        directory_id integer,
+        enabled boolean NOT NULL,
+        is_default boolean NOT NULL,
+        created_at timestamptz NOT NULL,
+        updated_at timestamptz NOT NULL
+      )
+    `)
+    await pool.query(`
+      CREATE TABLE conversation_sessions (
+        id integer PRIMARY KEY,
+        user_id uuid NOT NULL,
+        workspace_id integer
+      )
+    `)
+    await pool.query('CREATE TABLE user_preferences (user_id uuid PRIMARY KEY, data_json text NOT NULL)')
+    await pool.query(
+      `INSERT INTO workspaces
+         (id, user_id, name, kind, project_id, directory_id, enabled, is_default, created_at, updated_at)
+       VALUES (1, $1, '停用项目', 'project', 11, NULL, false, false, $3, $3),
+              (2, $1, '默认目录', 'directory', NULL, 31, true, true, $3, $4),
+              (3, $2, '他人项目', 'project', 55, NULL, true, false, $3, $4)`,
+      [ownerId, otherOwnerId, '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z'],
+    )
+    await pool.query(
+      `INSERT INTO conversation_sessions (id, user_id, workspace_id)
+       VALUES (101, $1, 1), (102, $1, 2), (103, $1, 2), (104, $2, 2)`,
+      [ownerId, otherOwnerId],
+    )
+    await pool.query(
+      `INSERT INTO user_preferences (user_id, data_json)
+       VALUES ($1, $3), ($2, $4)`,
+      [ownerId, otherOwnerId, JSON.stringify({
+        shell_enabled: true,
+        shell_system_enabled: false,
+        shell_dangerous_enabled: false,
+        automatic_mode_enabled: true,
+      }), JSON.stringify({ shell_enabled: false, shell_system_enabled: true })],
+    )
+
+    const settings = {
+      shellEnabled: true,
+      shellSystemEnabled: false,
+      shellDangerousEnabled: true,
+      automaticModeEnabled: true,
+      sandboxReady: true,
+      fullUserSandboxAuthorizationEnabled: true,
+      terminalMode: 'pty_disabled',
+    }
+    const listLocal = createPostgresWorkspaceLister(pool, { readRuntimeSettings: () => settings })
+    assert.deepEqual(await listLocal(ownerId), {
+      globalEnabled: true,
+      sandboxEnabled: true,
+      systemGlobalEnabled: false,
+      dangerousGlobalEnabled: true,
+      automaticModeGlobalEnabled: true,
+      userEnabled: true,
+      userSystemEnabled: false,
+      userDangerousEnabled: false,
+      userAutomaticModeEnabled: true,
+      filesystemAuthorizationEnabled: true,
+      workspaceSupported: true,
+      storageBackend: 'local',
+      terminalMode: 'pty_disabled',
+      terminalEntryEnabled: true,
+      ptyEnabled: false,
+      items: [
+        {
+          id: 2, name: '默认目录', kind: 'directory', projectId: null,
+          directoryId: 31, enabled: true, isDefault: true, boundSessionCount: 2,
+        },
+        {
+          id: 1, name: '停用项目', kind: 'project', projectId: 11,
+          directoryId: null, enabled: false, isDefault: false, boundSessionCount: 1,
+        },
+      ],
+    })
+    // 两个实际PG读适配器读取同一隔离schema；业务投影必须一致。
+    const core = await createPostgresRuntime({ url: databaseUrl!, schema, maxConnections: 1 })
+    try {
+      const read = createKyselyWorkspaceListReader(core.db as unknown as Parameters<typeof createKyselyWorkspaceListReader>[0], 'postgres')
+      const listShared = createWorkspaceLister(read, { readRuntimeSettings: () => settings })
+      assert.deepEqual(await listShared(ownerId), await listLocal(ownerId))
+      assert.deepEqual(await listShared(otherOwnerId), await listLocal(otherOwnerId))
+      // 实际表锁控制查询等待；取消不能提前报告连接已清理。
+      const blocker = await pool.connect()
+      let locked = false
+      try {
+        await blocker.query('BEGIN'); locked = true
+        await blocker.query('LOCK TABLE user_preferences IN ACCESS EXCLUSIVE MODE')
+        let entered!: () => void
+        const waiting = new Promise<void>(resolve => { entered = resolve })
+        const blockedDb = core.db.withPlugin({
+          transformQuery(args) { entered(); return args.node },
+          async transformResult(args) { return args.result },
+        })
+        const blockedRead = createKyselyWorkspaceListReader(blockedDb as unknown as Parameters<typeof createKyselyWorkspaceListReader>[0], 'postgres')
+        const controller = new AbortController(), reason = new Error('合成工作区查询取消')
+        let settled = false
+        const pending = blockedRead.preferences(ownerId, controller.signal).finally(() => { settled = true })
+        const rejected = assert.rejects(pending, error => error === reason)
+        try {
+          await waiting
+          controller.abort(reason)
+          await new Promise<void>(resolve => setImmediate(resolve))
+          assert.equal(settled, false)
+        } finally {
+          await blocker.query('ROLLBACK'); locked = false
+        }
+        await rejected
+        assert.equal(settled, true)
+        // Core池只有一个连接；后续查询成功证明没有遗留占用或污染。
+        assert.equal(await read.preferences(ownerId), await pool.query('SELECT data_json FROM user_preferences WHERE user_id=$1', [ownerId]).then(result => result.rows[0].data_json))
+      } finally {
+        try { if (locked) await blocker.query('ROLLBACK') }
+        finally { blocker.release() }
+      }
+    } finally { await core.close() }
+  } finally {
+    await pool.end()
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`).catch(() => undefined)
+    await admin.end()
+  }
+})

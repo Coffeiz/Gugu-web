@@ -1,0 +1,237 @@
+import { strip } from '../../shared/values.js'
+import { projectColorKey } from '../../projects/colors.js'
+import { dateInputNeedsYear, normalizeDateInput } from './date-input.js'
+import { asciiDecimalDigits, decimalDigitPattern } from '../../shared/unicode-decimal.js'
+import type { PreparedToolDefinition } from '../models.js'
+
+type Schema = Readonly<Record<string, unknown>>
+interface NormalizationState { strict: readonly string[]; adaptations?: string[] }
+function adapted(state: NormalizationState, path: string, label: string): void {
+  state.adaptations?.push(`${path || 'args'}:${label}`)
+}
+const decimalInteger = new RegExp(`^[+-]?${decimalDigitPattern}+$`, 'u')
+function object(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+}
+function schemaTypes(schema: Schema): Set<string> {
+  return new Set(typeof schema.type === 'string' ? [schema.type]
+    : Array.isArray(schema.type) ? schema.type.filter((value): value is string => typeof value === 'string') : [])
+}
+
+function actualType(value: unknown): string {
+  return value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
+}
+function unionBranch(schema: Schema, input: unknown, field: string): unknown {
+  if (!Array.isArray(schema.anyOf)) return null
+  const branches = schema.anyOf.filter(object)
+  const type = actualType(input)
+  const matches = branches.filter(branch => {
+    const types = schemaTypes(branch)
+    return types.has(type) || type === 'number' && typeof input === 'number' && Number.isInteger(input) && types.has('integer')
+  })
+  if (typeof input === 'string' && field === 'ref_id' && schema['x-coerce-ref-id'] === true && /^#?[+-]?\d+$/u.test(input.trim())
+    && matches.length === 1 && typeof matches[0]!.pattern === 'string') {
+    const integers = branches.filter(branch => schemaTypes(branch).has('integer'))
+    if (integers.length === 1) return integers[0]
+  }
+  if (matches.length === 1) return matches[0]
+  // 与 Python string|object 联合类型一致：数值可转string，boolean不可转。
+  if (!matches.length && type === 'number') {
+    const strings = branches.filter(branch => schemaTypes(branch).has('string'))
+    if (strings.length === 1) return strings[0]
+  }
+  return null
+}
+function itemPropertyNames(schema: unknown): Set<string> {
+  if (!object(schema)) return new Set()
+  const own = object(schema.properties) ? Object.keys(schema.properties) : []
+  const branches = Array.isArray(schema.anyOf) ? schema.anyOf : []
+  return new Set([...own, ...branches.flatMap(branch => [...itemPropertyNames(branch)])])
+}
+function unwrapArray(schema: Schema, input: Record<string, unknown>, state: NormalizationState, field: string, path: string): unknown {
+  const fields = itemPropertyNames(schema.items)
+  let current: unknown = input
+  let changed = false
+  for (let depth = 0; depth < 4; depth++) {
+    if (!object(current) || Object.keys(current).length !== 1) break
+    const key = Object.keys(current)[0]!
+    if (!['item', 'block'].includes(key) || fields.has(key)) break
+    current = current[key]
+    changed = true
+  }
+  if (!changed) return input
+  if (object(current) && Object.keys(current).length === 1) {
+    const key = Object.keys(current)[0]!
+    if (['item', 'block'].includes(key) && !fields.has(key)) return input
+  }
+  if (Array.isArray(current)) {
+    adapted(state, path, 'item_wrapper_unwrapped')
+    return current.map((value, index) => normalizeValue(schema.items, value, field, state, `${path}[${index}]`))
+  }
+  if (object(current) || ['string', 'number', 'boolean'].includes(typeof current)) {
+    adapted(state, path, 'item_wrapper_unwrapped')
+    return [normalizeValue(schema.items, current, field, state, `${path}[0]`)]
+  }
+  return input
+}
+
+function normalizeValue(schema: unknown, input: unknown, field: string, state: NormalizationState, path: string): unknown {
+  if (!object(schema)) return input
+  const branch = unionBranch(schema, input, field)
+  if (branch) return normalizeValue(branch, input, field, state, path)
+  const types = schemaTypes(schema)
+  if (object(input) && types.has('object') && object(schema.properties)) {
+    const result = { ...input }
+    for (const [key, child] of Object.entries(schema.properties)) {
+      if (!Object.hasOwn(input, key)) continue
+      const location = path ? `${path}.${key}` : key
+      const required = Array.isArray(schema.required) && schema.required.includes(key)
+      if (!required && object(child) && typeof input[key] === 'string' && !strip(input[key] as string)) {
+        const childTypes = schemaTypes(child)
+        if (child['x-empty-string'] === 'omit' && childTypes.size === 1 && childTypes.has('string')) {
+          delete result[key]; adapted(state, location, 'empty_omitted'); continue
+        }
+        if (child['x-empty-string'] === 'empty-array' && childTypes.size === 1 && childTypes.has('array')) {
+          result[key] = []; adapted(state, location, 'empty_string_to_array'); continue
+        }
+      }
+      result[key] = normalizeValue(child, input[key], key, state, location)
+    }
+    return result
+  }
+  if (Array.isArray(input) && types.has('array'))
+    return input.map((value, index) => normalizeValue(schema.items, value, field, state, `${path}[${index}]`))
+  if (object(input) && types.size === 1 && types.has('array') && !state.strict.includes(field)) return unwrapArray(schema, input, state, field, path)
+  if (typeof input === 'number' && Number.isFinite(input) && types.has('string')
+    && !['integer', 'number', 'boolean'].some(type => types.has(type))) {
+    adapted(state, path, 'number_to_string')
+    return String(input)
+  }
+  if (typeof input !== 'string') return input
+  const text = strip(input)
+  if (!text) return input
+  if (!types.has('string') && !['boolean', 'integer', 'number'].some(type => types.has(type))
+    && (types.has('array') || types.has('object'))) {
+    try {
+      const parsed: unknown = JSON.parse(text)
+      if (types.has(actualType(parsed)) && (Array.isArray(parsed) || object(parsed))) {
+        adapted(state, path, `json_string_to_${actualType(parsed)}`)
+        return normalizeValue(schema, parsed, field, state, path)
+      }
+    } catch { /* 无法解析的输入保留，交由原validator拒绝。 */ }
+  }
+  if (types.has('boolean') && /^(true|false)$/i.test(text)) {
+    adapted(state, path, 'string_to_boolean')
+    return text.toLowerCase() === 'true'
+  }
+  if (types.size === 1 && types.has('number') && schema['x-coerce-number'] === true && /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/u.test(text)) {
+    const number = Number(text)
+    if (Number.isFinite(number)) {
+      adapted(state, path, 'string_to_number')
+      return number
+    }
+  }
+  if (types.has('integer')) {
+    const numeric = field.endsWith('_id') && text.startsWith('#') ? text.slice(1) : text
+    if (decimalInteger.test(numeric)) {
+      const integer = Number(asciiDecimalDigits(numeric))
+      if (Number.isSafeInteger(integer)) {
+        adapted(state, path, 'string_to_integer')
+        return integer
+      }
+    }
+  }
+  return input
+}
+
+/** 仅搬回顶层无处安放的元素字段；原对象是调用方副本。 */
+function hoistArrayItems(schema: Schema, input: Record<string, unknown>, state: NormalizationState): void {
+  if (!object(schema.properties)) return
+  const properties = schema.properties
+  for (const [field, child] of Object.entries(properties)) {
+    if (!object(child) || !schemaTypes(child).has('array') || state.strict.includes(field)) continue
+    const current = input[field]
+    if (current !== undefined && current !== null && !(typeof current === 'string' && !strip(current))) continue
+    if (!object(child.items) || !object(child.items.properties) || !Object.keys(child.items.properties).length) continue
+    const itemProperties = child.items.properties
+    const extras = Object.keys(input).filter(key => !Object.hasOwn(properties, key))
+    if (!extras.length || extras.some(key => !Object.hasOwn(itemProperties, key))) continue
+    const item: Record<string, unknown> = {}
+    for (const key of extras) { item[key] = input[key]; delete input[key] }
+    input[field] = [item]
+    adapted(state, field, 'flattened_items_hoisted')
+  }
+}
+
+export function normalizeContactToolFields(input: unknown): unknown {
+  if (!object(input)) return input
+  const source = { ...input }
+  for (const [legacy, current] of Object.entries({
+    client_id: 'contact_id', client_ids: 'contact_ids', client: 'contact_query', client_name: 'name',
+  })) {
+    if (Object.hasOwn(source, legacy)) {
+      if (!Object.hasOwn(source, current)) source[current] = source[legacy]
+      delete source[legacy]
+    }
+  }
+  return source
+}
+
+/** 只解除精确匹配的协议包装，调用方仍需验证实际参数。 */
+export function unwrapToolInputEnvelope(input: Record<string, unknown>, matchesArguments: (args: Record<string, unknown>) => boolean,
+  options: { toolName?: string; acceptsArguments?: boolean; adaptations?: string[] } = {}): Record<string, unknown> {
+  if (options.acceptsArguments || !object(input.arguments)) return input
+  const keys = Object.keys(input)
+  if (keys.length === 2 && options.toolName && typeof input.tool_name === 'string' && strip(input.tool_name) === options.toolName) {
+    options.adaptations?.push('call_tool_envelope:unwrapped')
+    return input.arguments
+  }
+  if (keys.length === 1 && matchesArguments(input.arguments)) return input.arguments
+  return input
+}
+
+/** 仅做已迁移的无歧义标量与容器兼容；随后仍必须经过工具 validator，不授予任何能力。 */
+export function normalizeToolInput(definition: PreparedToolDefinition, input: unknown, context: { defaultYear?: number; strictArrayFields?: readonly string[]; adaptations?: string[] } = {}): unknown {
+  if (!object(input)) return input
+  const wire = definition.schema
+  const functionSchema = object(wire.function) ? wire.function.parameters : wire.input_schema
+  if (!object(functionSchema)) return input
+  const alias: Record<string, string> = {
+    create_project: 'project_name', update_project: 'project_name',
+  }
+  const state: NormalizationState = { strict: context.strictArrayFields ?? [], adaptations: context.adaptations }
+  const properties = object(functionSchema.properties) ? functionSchema.properties : {}
+  const contactTool = ['create_contact', 'update_contact', 'delete_contact'].includes(definition.name)
+  const unwrapped = unwrapToolInputEnvelope(input, args =>
+    Object.keys(contactTool ? normalizeContactToolFields(args) as Record<string, unknown> : args)
+      .some(key => Object.hasOwn(properties, key)), {
+    toolName: functionSchema.additionalProperties === false && !Object.hasOwn(properties, 'tool_name') ? definition.name : undefined,
+    acceptsArguments: Object.hasOwn(properties, 'arguments'),
+    adaptations: state.adaptations,
+  })
+  const field = alias[definition.name]
+  const source = contactTool ? normalizeContactToolFields(unwrapped) as Record<string, unknown> : { ...unwrapped }
+  // 专属名称字段即使显式为null/空串，也不能被历史name覆盖。
+  if (field && object(functionSchema.properties) && Object.hasOwn(functionSchema.properties, field)
+    && Object.hasOwn(source, 'name') && !Object.hasOwn(source, field)) {
+    source[field] = source.name
+    delete source.name
+    state.adaptations?.push(`${definition.name}.name:renamed_to_${field}`)
+  }
+  if ((definition.name === 'create_project' || definition.name === 'set_color') && typeof source.color === 'string') {
+    const color = projectColorKey(source.color) ?? source.color
+    if (color !== source.color) state.adaptations?.push(`${definition.name}.color:normalized_token`)
+    source.color = color
+  }
+  if (definition.name === 'create_project' || definition.name === 'update_project') {
+    for (const field of ['start_date', 'deadline']) if (typeof source[field] === 'string') {
+      const explicit = normalizeDateInput(source[field])
+      const canonical = explicit ?? (dateInputNeedsYear(source[field]) ? normalizeDateInput(source[field], context.defaultYear) : null) ?? source[field]
+      if (canonical !== source[field]) state.adaptations?.push(`${definition.name}.${field}:normalized_date`)
+      source[field] = canonical
+    }
+  }
+  hoistArrayItems(functionSchema, source, state)
+  return normalizeValue(functionSchema, source, '', state, '')
+}

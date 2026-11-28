@@ -1,0 +1,10 @@
+{
+  "apps/web-host/tests/data-portability/delete-export.test.ts": {
+    "domain": "data-portability",
+    "layer": "L1",
+    "owner": "packages/core/src/data-portability/delete-export.ts",
+    "productionEntry": "Host认证路由 → Core owner事务 → Local归档清理",
+    "keyBehavior": "认证及UUID解析、只删所属结束任务、活动与跨owner拒绝、归档清理失败保留任务",
+    "ci": "node-webui"
+  }
+}

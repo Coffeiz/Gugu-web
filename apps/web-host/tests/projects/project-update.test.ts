@@ -1,0 +1,310 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { CoreError, type ProjectRecord } from '@gugu/core'
+import { createAgentProjectUpdater, createProjectUpdater } from '@gugu/core/project-update'
+import type {
+  ProjectUpdateRuntime,
+  ProjectUpdateTransaction,
+} from '@gugu/core/project-update'
+import { createLocalProjectDirectoryRenamer } from '../../src/modules/projects/update.js'
+
+const ownerId = '9e51a4bf-07e1-4db8-9050-54a8c7356e8d'
+const stages = [
+  { key: 's0', label: '准备', todos: [] },
+  { key: 's1', label: '交付', todos: [] },
+]
+
+function project(overrides: Partial<ProjectRecord> = {}): ProjectRecord {
+  return {
+    id: 17,
+    user_id: ownerId,
+    name: '原项目',
+    summary: null,
+    client: null,
+    status: 'pending',
+    start_date: '2026-11-01',
+    deadline: '2026-12-01',
+    color: 'linear-gradient(135deg,#7b7fb2,#c4afc8)',
+    progress: 0,
+    stages_json: JSON.stringify(stages),
+    current_stage: 's0',
+    priority: null,
+    version: 4,
+    archived: false,
+    done_at: null,
+    created_at: '2026-11-01T00:00:00.000Z',
+    updated_at: '2026-11-01T00:00:00.000Z',
+    deleted_at: null,
+    ...overrides,
+  }
+}
+
+function fakeRuntime(initial = project()) {
+  let row = initial
+  let committed = false
+  const undo: unknown[] = []
+  const events: unknown[] = []
+  const runtime: ProjectUpdateRuntime = {
+    async transaction<T>(work: (tx: ProjectUpdateTransaction) => Promise<T>) {
+      committed = false
+      let working = row
+      const result = await work({
+        async getOwned(owner, id) {
+          return owner === working.user_id && id === working.id && working.deleted_at === null ? working : null
+        },
+        async updateIfVersion(owner, id, version, fields) {
+          if (owner !== working.user_id || id !== working.id || working.deleted_at !== null || working.version !== version)
+            return null
+          const updated = { ...working, ...fields, version: working.version + 1, updated_at: '2026-11-13T00:00:00.000Z' }
+          if ('status' in fields) {
+            updated.done_at = fields.status === 'done' ? working.done_at ?? '2026-11-13T00:00:00.000Z' : null
+          }
+          working = updated
+          return working
+        },
+        async recordUndo(record) { undo.push(record) },
+      })
+      row = working
+      committed = true
+      return result
+    },
+    async publishProjectUpdated(event) {
+      assert.equal(committed, true, '项目事件必须在提交后发布')
+      events.push(event)
+    },
+    async renameProjectDirectory() {},
+    async getFileCount() { return 3 },
+  }
+  return { runtime, get row() { return row }, undo, events }
+}
+
+test('Agent 项目更新可清空摘要和优先级并写入阶段，Web 摘要字段仍不生效', async () => {
+  const fake = fakeRuntime(project({ summary: '旧摘要', priority: 'high' }))
+  const update = createAgentProjectUpdater(fake.runtime)
+  await update(ownerId, 17, { summary: null, priority: null, stages, current_stage: 's1' }, { undoContextId: 'agent-1' })
+  assert.equal(fake.row.summary, null)
+  assert.equal(fake.row.priority, null)
+  assert.equal(fake.row.current_stage, 's1')
+  assert.equal(fake.undo.length, 1)
+  const recorded = fake.undo[0] as { beforeState: { items: Record<string, { summary: string | null }> }, afterState: { items: Record<string, { summary: string | null }> } }
+  assert.equal(recorded.beforeState.items['project:17']?.summary, '旧摘要')
+  assert.equal(recorded.afterState.items['project:17']?.summary, null)
+  await createProjectUpdater(fake.runtime)(ownerId, 17, { version: 5, summary: '不应写入' })
+  assert.equal(fake.row.summary, null)
+})
+
+test('Agent 首次完成项目补全未完成待办，空更新和版本冲突返回对应错误', async () => {
+  const originalStages = [{ key: 's0', label: '准备', todos: [
+    { id: 't1', text: '未完成', done: false }, { id: 't2', text: '已完成', done: true },
+  ] }, { key: 's1', label: '交付', todos: [] }]
+  const fake = fakeRuntime(project({ stages_json: JSON.stringify(originalStages) }))
+  const update = createAgentProjectUpdater(fake.runtime)
+  await assert.rejects(update(ownerId, 17, {}), { code: 'invalid_request', message: '未提供可更新的项目内容' })
+  await assert.rejects(update(ownerId, 17, { version: 3, status: 'active' }), { code: 'conflict', message: '项目刚被其他端修改，请重试' })
+  await update(ownerId, 17, { status: 'done' }, { undoContextId: 'agent' })
+  const completed = JSON.parse(fake.row.stages_json)
+  assert.deepEqual(completed[0].todos[0], { id: 't1', text: '未完成', done: true, _savedDone: false, autoCompleted: true })
+  assert.deepEqual(completed[0].todos[1], originalStages[0]!.todos[1])
+  assert.equal(fake.row.progress, 100)
+  assert.equal(fake.row.current_stage, 's1')
+  assert.equal(fake.undo.length, 1)
+  const savedStages = fake.row.stages_json
+  await update(ownerId, 17, { status: 'done' })
+  assert.equal(fake.row.stages_json, savedStages)
+})
+
+test('PATCH 项目转换 camelCase 字段，按 owner/version CAS 更新，并同事务写 Undo、提交后发事件', async () => {
+  const fake = fakeRuntime()
+  const update = createProjectUpdater(fake.runtime)
+  const result = await update(ownerId, 17, {
+    version: 4,
+    name: '新项目',
+    startDate: '2026-11-02',
+    currentStage: 's1',
+    status: 'done',
+    progress: 60,
+  }, { undoContextId: 'tab-1', clientId: 'web-1' })
+
+  assert.equal(fake.row.name, '新项目')
+  assert.equal(fake.row.start_date, '2026-11-02')
+  assert.equal(fake.row.current_stage, 's1')
+  assert.equal(fake.row.version, 5)
+  assert.ok(fake.row.done_at)
+  assert.equal(fake.undo.length, 1)
+  const undo = fake.undo[0] as { resource: string; action: string; beforeState: any; afterState: any; baseVersions: any }
+  assert.equal(undo.resource, 'projects')
+  assert.equal(undo.action, 'update')
+  assert.equal(undo.beforeState.items['project:17'].version, 4)
+  assert.equal(undo.afterState.items['project:17'].version, 5)
+  assert.equal(undo.afterState.items['project:17'].done_at, '2026-11-13T00:00:00.000Z', '公开DTO格式修复不改内部Undo时间')
+  assert.deepEqual(undo.baseVersions, { 'project:17': { version: 4 } })
+  assert.equal(fake.events.length, 1)
+  assert.deepEqual(fake.events[0], {
+    userId: ownerId,
+    resource: 'projects',
+    origin: 'web-1',
+    operation: 'update',
+    entityId: 17,
+    payload: result,
+  })
+  assert.deepEqual(result, {
+    id: 17,
+    name: '新项目',
+    client: null,
+    status: 'done',
+    startDate: '2026-11-02',
+    deadline: '2026-12-01',
+    color: 'linear-gradient(135deg,#7b7fb2,#c4afc8)',
+    progress: 60,
+    stages,
+    currentStage: 's1',
+    archived: false,
+    priority: null,
+    version: 5,
+    doneAt: '2026-11-13T00:00:00+00:00',
+    updatedAt: '2026-11-13T00:00:00+00:00',
+    deletedAt: null,
+    createdAt: '2026-11-01',
+    fileCount: 3,
+  })
+})
+
+test('PATCH 要求 version；无字段更新只回当前响应且不增加 Undo/event（含陈旧 version）', async () => {
+  const fake = fakeRuntime()
+  const update = createProjectUpdater(fake.runtime)
+  await assert.rejects(update(ownerId, 17, { name: '缺版本' }), { code: 'invalid_request' })
+  const response = await update(ownerId, 17, { version: 3 })
+  assert.equal(response.name, '原项目')
+  assert.equal(fake.undo.length, 0)
+  assert.equal(fake.events.length, 0)
+})
+
+test('PATCH 按 owner 隔离并用 CAS 将陈旧 version 映射为冲突', async () => {
+  const fake = fakeRuntime()
+  const update = createProjectUpdater(fake.runtime)
+  await assert.rejects(update('ad0902a0-c899-44ee-b180-d54eb04e4604', 17, { version: 4, name: '越权' }), { code: 'not_found' })
+  await assert.rejects(update(ownerId, 17, { version: 3, name: '过期修改' }), { code: 'conflict' })
+  assert.equal(fake.row.name, '原项目')
+  assert.equal(fake.undo.length, 0)
+  assert.equal(fake.events.length, 0)
+})
+
+test('PATCH 缺少 version 时先按 owner 查找项目，且兼容 Python 接受的数字字符串', async () => {
+  const fake = fakeRuntime()
+  const update = createProjectUpdater(fake.runtime)
+
+  await assert.rejects(update(ownerId, 99, {}), { code: 'not_found' })
+  await assert.rejects(update('ad0902a0-c899-44ee-b180-d54eb04e4604', 17, {}), { code: 'not_found' })
+  await assert.rejects(update(ownerId, 17, {}), { code: 'invalid_request' })
+
+  const response = await update(ownerId, 17, { version: '4', name: '兼容更新' })
+  assert.equal(response.name, '兼容更新')
+  assert.equal(response.version, 5)
+})
+
+test('PATCH 先完成 Python schema 校验再查询 owner，并兼容整数/布尔字段的 Pydantic 转换', async () => {
+  const fake = fakeRuntime()
+  const update = createProjectUpdater(fake.runtime)
+  const foreignOwnerId = 'ad0902a0-c899-44ee-b180-d54eb04e4604'
+
+  for (const body of [
+    { version: 4, name: 42 },
+    { version: 4, status: 'blocked' },
+    { version: 4, startDate: '2026-02-30' },
+    { version: 4, color: 'not-a-preset' },
+    { version: 4, stages: [{ key: '', label: '阶段' }] },
+    { version: 4, progress: 101 },
+  ]) {
+    await assert.rejects(update(foreignOwnerId, 99, body), { code: 'invalid_request' })
+  }
+  await assert.rejects(update(foreignOwnerId, 99, { version: 4, name: '有效名称' }), { code: 'not_found' })
+
+  const response = await update(ownerId, 17, { version: '4', progress: '60', archived: 'false' })
+  assert.equal(response.progress, 60)
+  assert.equal(response.archived, false)
+})
+
+test('PATCH 校验字段、日期和 version 范围；不会部分写入', async () => {
+  const fake = fakeRuntime()
+  const update = createProjectUpdater(fake.runtime)
+  for (const body of [
+    { version: 4, name: '   ' },
+    { version: 4, startDate: '2026-02-30' },
+    { version: 4, startDate: '2026-12-02' },
+    { version: 0, progress: 5 },
+  ]) {
+    await assert.rejects(update(ownerId, 17, body), (error) => error instanceof CoreError && error.code === 'invalid_request')
+  }
+  assert.equal(fake.row.name, '原项目')
+  assert.equal(fake.row.version, 4)
+  assert.equal(fake.undo.length, 0)
+  assert.equal(fake.events.length, 0)
+  // Python Pydantic 默认忽略额外字段，且 PATCH 的无字段分支不做 version CAS。
+  const noKnownFields = await update(ownerId, 17, { version: 3, unknownField: true })
+  assert.equal(noKnownFields.name, '原项目')
+})
+
+test('Undo 写入失败回滚更新且不发布事件', async () => {
+  const fake = fakeRuntime()
+  const runtime: ProjectUpdateRuntime = {
+    ...fake.runtime,
+    async transaction<T>(work: (tx: ProjectUpdateTransaction) => Promise<T>): Promise<T> {
+      return fake.runtime.transaction((tx) => work({ ...tx, async recordUndo() { throw new Error('undo failed') } }))
+    },
+  }
+  const update = createProjectUpdater(runtime)
+  await assert.rejects(update(ownerId, 17, { version: 4, name: '待回滚' }, { undoContextId: 'tab-1' }), /undo failed/)
+  assert.equal(fake.row.name, '原项目')
+  assert.equal(fake.row.version, 4)
+  assert.equal(fake.events.length, 0)
+})
+
+test('PATCH 数据事务失败时反向移动已改名目录，避免数据库回滚后文件路径失配', async () => {
+  const fake = fakeRuntime()
+  const moves: Array<[string, string]> = []
+  const runtime: ProjectUpdateRuntime = {
+    ...fake.runtime,
+    async renameProjectDirectory(_owner, oldPrefix, newPrefix, onMoved) {
+      moves.push([oldPrefix, newPrefix])
+      onMoved?.()
+    },
+    async transaction<T>(work: (tx: ProjectUpdateTransaction) => Promise<T>): Promise<T> {
+      return fake.runtime.transaction((tx) => work({ ...tx, async recordUndo() { throw new Error('undo failed') } }))
+    },
+  }
+  const update = createProjectUpdater(runtime)
+
+  await assert.rejects(update(ownerId, 17, { version: 4, name: '新项目' }, { undoContextId: 'tab-1' }), /undo failed/)
+
+  assert.equal(moves.length, 2)
+  assert.equal(moves[0]![0].endsWith('/原项目 #17'), true)
+  assert.equal(moves[0]![1].endsWith('/新项目 #17'), true)
+  assert.deepEqual(moves[1], [moves[0]![1], moves[0]![0]])
+  assert.equal(fake.row.name, '原项目')
+  assert.equal(fake.row.version, 4)
+  assert.equal(fake.events.length, 0)
+})
+
+test('目录未移动时更新失败不反向移动已有目标目录', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gugu-project-rename-failure-'))
+  try {
+    const oldPath = join(root, ownerId, '项目文件', '2026', '11', '原项目 #17')
+    const newPath = join(root, ownerId, '项目文件', '2026', '11', '新项目 #17')
+    await mkdir(oldPath, { recursive: true })
+    await mkdir(newPath, { recursive: true })
+    await writeFile(join(newPath, '目标文件.txt'), '目标数据')
+    const fake = fakeRuntime()
+    const rename = createLocalProjectDirectoryRenamer(root)
+    const update = createProjectUpdater({ ...fake.runtime,
+      renameProjectDirectory: (owner, from, to, onMoved) => rename(owner, from, to, undefined, onMoved),
+    })
+    await assert.rejects(update(ownerId, 17, { version: 4, name: '新项目' }))
+    assert.equal(await readFile(join(newPath, '目标文件.txt'), 'utf8'), '目标数据')
+    await assert.rejects(readFile(join(oldPath, '目标文件.txt')), { code: 'ENOENT' })
+    assert.equal(fake.row.name, '原项目')
+    assert.equal(fake.events.length, 0)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})

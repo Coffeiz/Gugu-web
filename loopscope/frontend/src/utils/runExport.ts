@@ -1,4 +1,5 @@
 import type { TraceRoundExport, TraceRun, TraceSpan } from '../types'
+import { isModelSpan } from './spanKinds'
 
 function roundNumber(span: TraceSpan): number | null {
   const value = span.attributes?.round
@@ -21,7 +22,7 @@ export function buildTraceRounds(run: TraceRun): TraceRoundExport[] {
     const group = groups.get(round) ?? []
     group.push(span)
     groups.set(round, group)
-    if (span.kind === 'llm' || /^LLM round\b/i.test(span.name)) {
+    if (isModelSpan(span)) {
       llmRounds.push({ round, span })
     }
   }
@@ -40,7 +41,7 @@ export function buildTraceRounds(run: TraceRun): TraceRoundExport[] {
   return [...groups.entries()]
     .sort(([left], [right]) => left - right)
     .map(([round, spans]) => {
-      const primary = spans.find(span => span.kind === 'llm' || /^LLM round\b/i.test(span.name)) ?? spans[0]
+      const primary = spans.find(isModelSpan) ?? spans[0]
       return {
         round,
         span_id: primary.id,

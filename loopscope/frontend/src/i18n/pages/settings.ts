@@ -1,6 +1,5 @@
 export const en = {
   'settings.connection': 'Connection',
-  'settings.guguApiBase': 'Gugu API base',
   'settings.saveTab': 'Save for this tab',
   'settings.connected': 'Connected',
   'settings.notConnected': 'Not connected',
@@ -9,7 +8,6 @@ export const en = {
 }
 export const zh = {
   'settings.connection': '连接',
-  'settings.guguApiBase': 'Gugu API 地址',
   'settings.saveTab': '保存到当前标签页',
   'settings.connected': '已连接',
   'settings.notConnected': '未连接',

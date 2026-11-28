@@ -1,0 +1,64 @@
+{
+  "name": "gugu-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "咕咕本地桌面工作台",
+  "license": "Apache-2.0",
+  "author": "咕咕开发者",
+  "type": "module",
+  "main": "dist/main/index.cjs",
+  "engines": {
+    "node": ">=26.13.0 <27"
+  },
+  "scripts": {
+    "prepare:sidecar": "node scripts/build/prepare-sidecar.mjs",
+    "smoke:sidecar": "node scripts/verify/smoke-sidecar.mjs",
+    "dev": "node scripts/dev/dev.mjs",
+    "dev:prepare": "node scripts/build/prepare-sidecar.mjs && node scripts/build/build.mjs",
+    "dev:web": "node scripts/dev/dev.mjs --open",
+    "build": "node scripts/package/package.ts",
+    "build:fast": "node scripts/package/package.ts --fast --dir",
+    "build:host": "pnpm --filter @gugu/database build && pnpm --filter @gugu/auth build && pnpm --filter @gugu/search build && pnpm --filter @gugu/core build && pnpm --filter @gugu/gateway build && pnpm --filter @gugu/fs build && node scripts/build/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "pretest": "pnpm --filter @gugu/database build && pnpm --filter @gugu/auth build && pnpm --filter @gugu/search build && pnpm --filter @gugu/core build && pnpm --filter @gugu/gateway build && pnpm --filter @gugu/fs build && node scripts/build/build-agent-runtime.mjs",
+    "test": "vitest run",
+    "smoke": "node scripts/verify/smoke.ts",
+    "probe:mxc": "node scripts/verify/probe-mxc.mjs",
+    "smoke:mxc": "node scripts/verify/smoke-mxc.mjs --run"
+  },
+  "files": [
+    "dist",
+    "assets/icon.png",
+    "assets/icon-win-light.ico",
+    "assets/icon-win-dark.ico",
+    "assets/trayTemplate.png",
+    "assets/trayTemplate@2x.png",
+    "README.md"
+  ],
+  "dependencies": {
+    "@gugu/email": "workspace:*",
+    "@node-rs/jieba": "2.0.1",
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "@gugu/scheduler": "workspace:*",
+    "@gugu/auth": "workspace:*",
+    "@gugu/core": "workspace:*",
+    "@gugu/desktop-contracts": "workspace:*",
+    "@gugu/fs": "workspace:*",
+    "@gugu/search": "workspace:*",
+    "@gugu/gateway": "workspace:*",
+    "@gugu/log": "workspace:*",
+    "@microsoft/mxc-sdk": "1.1.0",
+    "@types/node": "26.6.6",
+    "electron": "45.3.1",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
+    "kysely": "0.29.8",
+    "playwright": "1.62.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.12",
+    "vue-i18n": "^11.4.10",
+    "vue-router": "^4.3.0"
+  }
+}

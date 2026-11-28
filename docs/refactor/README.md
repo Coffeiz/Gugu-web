@@ -7,9 +7,11 @@
 | 文档 | 职责 |
 | --- | --- |
 | [架构说明](Gugu-2.0-架构说明.md) | 多端与 Electron 目标架构、目录职责、依赖边界和数据约束 |
+| [多端连接与凭据设计](Gugu-2.0-多端连接与凭据设计.md) | 设备在线与会话、咕咕跨端对话、配置同步及 BYOK 授权 |
 | [迁移任务清单](Gugu-2.0-迁移任务清单.md) | 当前完成状态、先迁 Web Node 后端再产品化桌面的执行顺序、验收证据与待办 |
 | [Node WebUI API 迁移清单](Gugu-2.0-Node-WebUI-API迁移清单.md) | 从 Python FastAPI 路由逐项追踪 Node method/path、回归位置和未迁移接口 |
 | [Python → Node 依赖迁移矩阵](Gugu-2.0-Python-to-Node-Dependency-Migration.md) | 依赖盘点、候选库和逐项验收门槛；不单独维护整体完成状态 |
+| [IM Gateway 迁移清单](Gugu-2.0-IM-Gateway迁移清单.md) | 四平台运行时、共享 IM/Agent 链路、消费者切换和分层验收 |
 | [历史方案与验证记录](_archive/gugu-2.0/README.md) | 原多端/职责方案、Python 切片、Node 方案与桌面/MXC 实验，供追溯使用 |
 
 本轮已落地项目/联系人 Core 同逻辑回归和 pytest 语义分层、Electron 验证 Host 与共用 Executor 边界。具体行为及差异见 [测试对照清单](../testing/node-core-parity.md)；实现、CI 通过、合并与正式发行分别记录。

@@ -52,6 +52,7 @@ async def test_remember_removes_pattern_and_keeps_vec_cache_consistent(memory_st
     synced = []
 
     async def fake_sync(user_id, patterns, *args, **kwargs):
+        assert kwargs.get("require_current") is True
         synced.append(patterns)
 
     monkeypatch.setattr(memory_store, "sync_pattern_vecs", fake_sync)

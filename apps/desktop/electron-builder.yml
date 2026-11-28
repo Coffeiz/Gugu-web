@@ -1,0 +1,56 @@
+appId: com.gugu.desktop.preview
+productName: 咕咕桌面验证
+artifactName: gugu-desktop-${version}-${os}-${arch}.${ext}
+asar: true
+asarUnpack:
+  - dist/cli/gugu.cjs
+  - dist/native/chat-fab-glass.node
+npmRebuild: false
+directories:
+  output: release
+  buildResources: assets
+files:
+  - dist/**
+  - '!dist/gateway/**'
+  - '!dist/**/*.map'
+  - assets/icon.png
+  - assets/icon-win-*.ico
+  - assets/trayTemplate*.png
+  - ui/**
+  - node_modules/**
+  - package.json
+  - LICENSE
+publish: null
+win:
+  extraResources:
+    - from: resources/core-sidecar-sea
+      to: core-sidecar
+  extraFiles:
+    - from: assets/cli-win
+      to: cli
+  target: nsis
+  icon: assets/icon.ico
+  signExecutable: false
+nsis:
+  useZip: true
+  include: installer/windows/cli-install.nsh
+  differentialPackage: false
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  selectPerMachineByDefault: false
+  allowToChangeInstallationDirectory: true
+mac:
+  extraResources:
+    - from: resources/core-sidecar
+      to: core-sidecar
+  target: [dmg, zip]
+  icon: assets/icon.icns
+  category: public.app-category.productivity
+  extendInfo:
+    NSMicrophoneUsageDescription: 咕咕需要访问麦克风，以便录制你在聊天中发送的语音消息。
+  minimumSystemVersion: '13.5'
+  identity: '-'
+  hardenedRuntime: false
+  signIgnore:
+    - core-sidecar/

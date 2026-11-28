@@ -1,0 +1,405 @@
+import { effectScope, ref } from 'vue'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useChatSessions, type ChatSessionHistoryAccess } from '@/components/common/gugu-chat/composables/useChatSessions'
+import { agentApi } from '@/services/api'
+import { confirmDialog } from '@/composables/core/useConfirmDialog'
+import type { SessionScrollAnchor } from '@/components/common/gugu-chat/composables/sessionScrollLayout'
+import type { ChatMessage, ChatSession } from '@/components/common/gugu-chat/chatTypes'
+
+vi.mock('@/composables/core/useConfirmDialog', () => ({ confirmDialog: vi.fn() }))
+
+vi.mock('@/services/api', () => ({
+  agentApi: {
+    getMessages: vi.fn(),
+    deleteSession: vi.fn(),
+  },
+}))
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
+
+function createSessionManager(historyAccess?: ChatSessionHistoryAccess) {
+  const sessionId = ref<number | null>(null)
+  const messages = ref<ChatMessage[]>([])
+  const sessionList = ref<ChatSession[]>([])
+  const streaming = ref(false)
+  const abortCtrl = ref<AbortController | null>(null)
+  const sessionSettling = ref(false)
+  const setStatus = vi.fn()
+  const resumeStream = vi.fn(async () => {})
+  const restoreScrollPosition = vi.fn(async (_anchor: SessionScrollAnchor | null) => {})
+  const captureScrollAnchor = vi.fn<() => SessionScrollAnchor | null>()
+  const onHistoryLoaded = vi.fn()
+  const clearStatus = vi.fn()
+  const drainPendingQueue = vi.fn(async () => {})
+  const scope = effectScope()
+  const sessions = scope.run(() => {
+    let generation = 0
+    return useChatSessions({
+      historyAccess, onHistoryLoaded,
+      messages,
+      mkid: () => 1,
+      sessionId,
+      sessions: sessionList,
+      ownerPlatformUserId: ref(null),
+      isGroupSession: ref(false),
+      resolveSpeaker: (role) => ({ role: role === 'assistant' ? 'ai' : 'user' }),
+      bumpViewGeneration: () => ++generation,
+      getViewGeneration: () => generation,
+      composerRef: ref(null),
+      abortCtrl,
+      streaming,
+      resumeStream,
+      resetSessionTurn: () => {},
+      clearPendingQueue: () => {},
+      restorePendingQueue: () => {},
+      drainPendingQueue,
+      clearStatus,
+      setStatus,
+      contextCompactingItem: () => ({ kind: 'hide' as const }),
+      scrollBottom: async () => {},
+      captureScrollAnchor, restoreScrollPosition,
+      waitForSessionSettlement: async () => {},
+      shouldFollowBottom: () => false,
+      setSessionSettling: (value) => { sessionSettling.value = value },
+    })
+  })!
+  return { scope, sessionId, messages, sessions, onHistoryLoaded, clearStatus, drainPendingQueue, sessionList, streaming, abortCtrl, resumeStream, setStatus, captureScrollAnchor, restoreScrollPosition, sessionSettling }
+}
+
+describe('会话加载代次', () => {
+  afterEach(() => vi.resetAllMocks())
+
+  it('切回桌面运行中的会话时，旧订阅不阻塞续看', async () => {
+    const readHistory = vi.fn(async (id: number) => ({ messages: [], active: id === 1 }))
+    const { scope, sessions, sessionId, streaming, abortCtrl, resumeStream } = createSessionManager({
+      readHistory, deleteSession: vi.fn(), renameSession: vi.fn(),
+    })
+    const previous = new AbortController()
+    sessionId.value = 1
+    abortCtrl.value = previous
+    streaming.value = true
+    resumeStream.mockImplementation(async () => {
+      expect(abortCtrl.value).toBeNull()
+    })
+    try {
+      await sessions.loadSession(2)
+      expect(previous.signal.aborted).toBe(true)
+      await sessions.loadSession(1)
+      expect(resumeStream).toHaveBeenCalledExactlyOnceWith(1)
+      expect(abortCtrl.value).toBeNull()
+    } finally {
+      scope.stop()
+    }
+  })
+
+  it.each(['Web', '桌面'] as const)('%s 父会话流式输出时合并子确认卡', async (platform) => {
+    const data = { messages: [], active: true, interactions: [{
+      id: 21, kind: 'confirm', title: '合成子确认', body: '合成操作',
+      delegated: true, run_id: 'parent-run', tool_call_id: 'child-call',
+      options: [{ id: 'confirm', label: '确认', token: 'synthetic-token' }],
+    }] }
+    const readHistory = vi.fn(async () => data)
+    const { scope, sessions, sessionId, messages, streaming, resumeStream } = createSessionManager(platform === '桌面'
+      ? { readHistory, deleteSession: vi.fn(), renameSession: vi.fn() } : undefined)
+    vi.mocked(agentApi.getMessages).mockResolvedValue(data as never)
+    sessionId.value = 7
+    streaming.value = true
+    messages.value = [{ id: 10, role: 'ai', text: '父任务仍在输出', time: '00:00', streaming: true }]
+    try {
+      await sessions.refreshSessionMessages(7, true)
+      expect(messages.value).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 10, text: '父任务仍在输出', streaming: true }),
+        expect.objectContaining({ runId: 'parent-run', interaction: expect.objectContaining({ promptId: 21, delegated: true }) }),
+      ]))
+      expect(resumeStream).not.toHaveBeenCalled()
+      if (platform === 'Web') expect(agentApi.getMessages).toHaveBeenCalledWith(7, { restoreInteractions: true })
+    } finally { scope.stop() }
+  })
+
+  it.each(['Web', '桌面'] as const)('%s 会话取消时保留，确认后只删除一次', async (platform) => {
+    const deleteDesktop = vi.fn(async () => undefined)
+    const manager = createSessionManager(platform === '桌面'
+      ? { readHistory: vi.fn(), deleteSession: deleteDesktop, renameSession: vi.fn() }
+      : undefined)
+    const { sessions, sessionList, scope } = manager
+    const confirm = vi.mocked(confirmDialog)
+    const remove = platform === '桌面' ? deleteDesktop : vi.mocked(agentApi.deleteSession)
+    sessionList.value = [{ id: 42, title: '合成会话', source: 'web' } satisfies ChatSession]
+    try {
+      const choice = deferred<boolean>()
+      confirm.mockReturnValueOnce(choice.promise)
+      const cancelled = sessions.deleteSession(42)
+      await sessions.deleteSession(42)
+      expect(confirm).toHaveBeenCalledOnce()
+      expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ tone: 'danger', message: expect.stringContaining('合成会话') }))
+      expect(remove).not.toHaveBeenCalled()
+      choice.resolve(false)
+      await cancelled
+      expect(remove).not.toHaveBeenCalled()
+      expect(sessionList.value).toHaveLength(1)
+
+      confirm.mockResolvedValueOnce(true)
+      await sessions.deleteSession(42)
+      expect(remove).toHaveBeenCalledExactlyOnceWith(platform === '桌面' ? 42 : '42')
+      expect(sessionList.value).toEqual([])
+    } finally {
+      scope.stop()
+    }
+  })
+
+  it('删除确认后立即隐藏会话，保留已经发起的切换，失败时恢复列表', async () => {
+    const history = deferred<{ messages: unknown[] }>()
+    const deletion = deferred<boolean>()
+    const remove = vi.fn(async () => {
+      if (!await deletion.promise) throw new Error('合成删除失败')
+    })
+    const { scope, sessions, sessionId, sessionList } = createSessionManager({
+      readHistory: () => history.promise, deleteSession: remove, renameSession: vi.fn(),
+    })
+    sessionList.value = [{ id: 1, title: '旧会话' }, { id: 2, title: '目标会话' }]
+    sessionId.value = 1
+    try {
+      vi.mocked(confirmDialog).mockResolvedValueOnce(true)
+      const switching = sessions.loadSession(2)
+      const deleting = sessions.deleteSession(1)
+      await vi.waitFor(() => expect(remove).toHaveBeenCalledOnce())
+      expect(sessionList.value.map(row => row.id)).toEqual([2])
+      expect(sessions.isSessionHidden(1)).toBe(true)
+
+      history.resolve({ messages: [] })
+      expect(await switching).toBe('loaded')
+      expect(sessionId.value).toBe(2)
+      deletion.resolve(false)
+      await deleting
+      expect(sessionList.value.map(row => row.id)).toEqual([1, 2])
+      expect(sessions.isSessionHidden(1)).toBe(false)
+      expect(sessionId.value).toBe(2)
+    } finally {
+      scope.stop()
+    }
+  })
+
+  it('桌面上下文整理结束后通过本机状态收起提示', async () => {
+    vi.useFakeTimers()
+    const readExecutionState = vi.fn(async () => 'idle')
+    const { scope, sessions, clearStatus, drainPendingQueue } = createSessionManager({
+      readHistory: vi.fn(async () => ({ messages: [], active: false, executionState: 'baseline_updating' })),
+      readExecutionState, deleteSession: vi.fn(), renameSession: vi.fn(),
+    })
+    try {
+      await sessions.loadSession(7)
+      clearStatus.mockClear()
+      expect(drainPendingQueue).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(readExecutionState).toHaveBeenCalledWith(7)
+      expect(clearStatus).toHaveBeenCalledOnce()
+      expect(drainPendingQueue).toHaveBeenCalledOnce()
+    } finally {
+      scope.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('桌面补读跨页消息时追到现有历史并保留旧分页游标', async () => {
+    const page = (ids: number[], oldestId: number) => ({
+      messages: ids.map(id => ({ id, role: 'user', content: String(id), createdAt: '2026-10-15T00:00:00Z' })),
+      pagination: { hasMore: true, oldestId },
+    })
+    const readHistory = vi.fn()
+      .mockResolvedValueOnce(page([10, 11], 3))
+      .mockResolvedValueOnce(page([15, 16], 8))
+      .mockResolvedValueOnce(page([13, 14], 6))
+      .mockResolvedValueOnce(page([11, 12], 4))
+    const { scope, messages, sessions, onHistoryLoaded } = createSessionManager({
+      readHistory, deleteSession: vi.fn(), renameSession: vi.fn(),
+    })
+    try {
+      await expect(sessions.loadSession(7)).resolves.toBe('loaded')
+      await sessions.refreshSessionMessages(7)
+      expect(readHistory.mock.calls).toEqual([[7, undefined], [7, undefined], [7, 8], [7, 6]])
+      expect(messages.value.map(message => message.dbId)).toEqual([10, 11, 12, 13, 14, 15, 16])
+      expect(onHistoryLoaded.mock.calls).toEqual([[{ hasMore: true, oldestId: 3 }]])
+    } finally {
+      scope.stop()
+    }
+  })
+
+  it('切回桌面缓存会话时补齐离开期间跨页写入的消息', async () => {
+    const page = (ids: number[], oldestId: number, hasMore = true) => ({
+      messages: ids.map(id => ({ id, role: 'user', content: String(id), createdAt: '2026-10-15T00:00:00Z' })),
+      pagination: { hasMore, oldestId },
+    })
+    const readHistory = vi.fn()
+      .mockResolvedValueOnce(page([10, 11], 3))
+      .mockResolvedValueOnce(page([20], 1, false))
+      .mockResolvedValueOnce(page([14, 15], 7))
+      .mockResolvedValueOnce(page([12, 13], 5))
+      .mockResolvedValueOnce(page([10, 11], 3))
+    const { scope, messages, sessions, onHistoryLoaded } = createSessionManager({
+      readHistory, deleteSession: vi.fn(), renameSession: vi.fn(),
+    })
+    try {
+      await sessions.loadSession(7)
+      await sessions.loadSession(8)
+      await expect(sessions.loadSession(7)).resolves.toBe('loaded')
+      expect(messages.value.map(message => message.dbId)).toEqual([10, 11, 12, 13, 14, 15])
+      expect(onHistoryLoaded).toHaveBeenLastCalledWith({ hasMore: true, oldestId: 3 })
+    } finally {
+      scope.stop()
+    }
+  })
+
+  it('关闭窗口前保存阅读位置，布局暂不可测时保留已保存的锚点', async () => {
+    const { scope, sessions, captureScrollAnchor } = createSessionManager()
+    try {
+      vi.mocked(agentApi.getMessages).mockResolvedValue({
+        messages: [{ id: 101, role: 'user', content: '合成消息', createdAt: '2026-10-15T00:00:00Z' }],
+        timelineEvents: [], pagination: { newestId: 101 }, active: false,
+      })
+      await sessions.loadSession(101)
+      const anchor = { messageKey: 'message:101', offset: 42 }
+      captureScrollAnchor.mockReturnValueOnce(anchor).mockReturnValueOnce(undefined).mockReturnValueOnce(null)
+      expect(sessions.saveCurrentScrollPosition()).toEqual(anchor)
+      expect(sessions.saveCurrentScrollPosition()).toBeUndefined()
+      expect(sessions.currentScrollPosition()).toEqual(anchor)
+      sessions.saveCurrentScrollPosition()
+      expect(sessions.currentScrollPosition()).toBeNull()
+    } finally {
+      scope.stop()
+    }
+  })
+
+  it('切回缓存会话时，合并历史并校准位置后才展示消息', async () => {
+    const { scope, sessions, messages, sessionSettling, captureScrollAnchor, restoreScrollPosition } = createSessionManager()
+    const response = (id: number, content: string): Awaited<ReturnType<typeof agentApi.getMessages>> => ({
+      messages: [{ id, role: 'user', content, createdAt: '2026-10-15T00:00:00Z' }],
+      timelineEvents: [], pagination: { newestId: id }, active: false,
+    })
+    vi.mocked(agentApi.getMessages).mockImplementation(async (id) => response(Number(id), '缓存消息'))
+    try {
+      await sessions.loadSession(101)
+      expect(restoreScrollPosition).toHaveBeenLastCalledWith(null, true)
+      const anchor = { messageKey: 'message:101', offset: 128 }
+      captureScrollAnchor.mockReturnValueOnce(anchor)
+      await sessions.loadSession(202)
+      const history = deferred<ReturnType<typeof response>>()
+      const layout = deferred<void>()
+      vi.mocked(agentApi.getMessages).mockReturnValueOnce(history.promise)
+      restoreScrollPosition.mockClear()
+      restoreScrollPosition.mockReturnValueOnce(layout.promise)
+      const loading = sessions.loadSession(101)
+      try {
+        expect(sessionSettling.value).toBe(true)
+        expect(messages.value.map(message => message.text)).toEqual(['缓存消息'])
+        expect(restoreScrollPosition).not.toHaveBeenCalled()
+
+        history.resolve(response(103, '新消息'))
+        await vi.waitFor(() => expect(restoreScrollPosition).toHaveBeenCalledOnce())
+        expect(sessionSettling.value).toBe(true)
+        expect(restoreScrollPosition).toHaveBeenLastCalledWith(anchor, true)
+        expect(messages.value.map((message) => message.text)).toEqual(['缓存消息', '新消息'])
+      } finally {
+        history.resolve(response(103, '新消息'))
+        layout.resolve(undefined)
+        await loading
+      }
+      expect(sessionSettling.value).toBe(false)
+
+      captureScrollAnchor.mockReturnValueOnce(null)
+      await sessions.loadSession(202)
+      await sessions.loadSession(101)
+      expect(restoreScrollPosition).toHaveBeenLastCalledWith(null, true)
+    } finally {
+      scope.stop()
+    }
+  })
+
+  it('A 的消息与交互同页在途时切到 B，迟到页不能覆盖 B', async () => {
+    const response = (content: string) => ({
+      messages: [{ id: 1, role: 'user', content, createdAt: '2026-10-15T00:00:00Z' }],
+      timelineEvents: [], pagination: { newestId: 1 }, active: false,
+    } as any)
+    const pageA = deferred<ReturnType<typeof response>>()
+    vi.mocked(agentApi.getMessages).mockImplementation((id) =>
+      id === 101 ? pageA.promise : Promise.resolve(response('会话 B')),
+    )
+
+    const { scope, sessionId, messages, sessions } = createSessionManager()
+
+    const restoreA = sessions.loadSession(101, true)
+    await vi.waitFor(() => expect(agentApi.getMessages).toHaveBeenCalledWith(101, { restoreInteractions: true }))
+
+    // B 的导航使 A 的视图代次失效，并完整加载 B。
+    await expect(sessions.loadSession(202, true)).resolves.toBe('loaded')
+    expect(sessionId.value).toBe(202)
+    expect(messages.value.map((message) => message.text)).toEqual(['会话 B'])
+
+    pageA.resolve({ ...response('会话 A'), interactions: [{ id: 90, title: '旧会话交互卡' }] })
+    await expect(restoreA).resolves.toBe('superseded')
+    expect(sessionId.value).toBe(202)
+    expect(messages.value.map((message) => message.text)).toEqual(['会话 B'])
+
+    scope.stop()
+  })
+
+  it('仅会话历史接口明确返回 403 或 404 时判定为不可用', async () => {
+    const { scope, sessions } = createSessionManager()
+    vi.mocked(agentApi.getMessages).mockRejectedValueOnce(Object.assign(new Error('not found'), { status: 404 }))
+      .mockRejectedValueOnce(Object.assign(new Error('server error'), { status: 500 }))
+
+    await expect(sessions.loadSession(101, true)).resolves.toBe('unavailable')
+    await expect(sessions.loadSession(202, true)).resolves.toBe('failed')
+
+    scope.stop()
+  })
+
+  it('页面刷新后以服务端活跃态续接原会话，即使历史里已有助手回复', async () => {
+    const { scope, sessionId, sessions, resumeStream, setStatus, restoreScrollPosition } = createSessionManager()
+    sessionId.value = 101
+    vi.mocked(agentApi.getMessages).mockResolvedValue({
+      messages: [{ id: 1, role: 'assistant', content: '上一轮回复', createdAt: '2026-10-15T00:00:00Z' }],
+      timelineEvents: [], pagination: { newestId: 1 }, active: true,
+    } as Awaited<ReturnType<typeof agentApi.getMessages>>)
+
+    try {
+      await expect(sessions.loadSession(101, true)).resolves.toBe('loaded')
+      expect(resumeStream).toHaveBeenCalledExactlyOnceWith(101)
+      expect(setStatus).not.toHaveBeenCalled()
+      expect(restoreScrollPosition).toHaveBeenLastCalledWith(null, true)
+    } finally {
+      scope.stop()
+    }
+  })
+
+  it('切回时以服务端终态覆盖缓存运行态，不续接已结束会话也不保留动画', async () => {
+    const { scope, sessionId, messages, sessions, sessionList, streaming, resumeStream, restoreScrollPosition } = createSessionManager()
+    sessionList.value = [
+      { id: 101, title: '运行中的缓存会话', isRunning: true },
+      { id: 202, title: '另一个会话', isRunning: false },
+    ]
+    vi.mocked(agentApi.getMessages).mockImplementation(async (id) => ({
+      messages: [{ id: Number(id), role: 'user', content: '会话内容', createdAt: '2026-10-15T00:00:00Z' }],
+      timelineEvents: [], pagination: { newestId: Number(id) }, active: id === 101 && sessionId.value == null,
+    } as any))
+
+    await sessions.loadSession(101)
+    messages.value = [{ id: 7, dbId: 7, role: 'ai', text: '缓存中的回复', time: '12:00' }]
+    streaming.value = true
+    await sessions.loadSession(202)
+    streaming.value = false
+    resumeStream.mockClear()
+    restoreScrollPosition.mockClear()
+
+    // 会话 101 的内存快照仍记着曾在运行；服务器已返回 active=false。
+    await expect(sessions.loadSession(101)).resolves.toBe('loaded')
+
+    expect(sessionList.value.find(session => session.id === 101)?.isRunning).toBe(false)
+    expect(resumeStream).toHaveBeenCalledTimes(0)
+    expect(restoreScrollPosition).toHaveBeenCalledOnce()
+    scope.stop()
+  })
+})

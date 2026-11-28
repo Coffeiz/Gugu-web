@@ -7,6 +7,52 @@
 
 ## [Unreleased]
 
+## [1.7.10] - 2026-11-11
+
+### What's New
+
+#### New Features
+
+- None.
+
+#### Improvements
+
+- None.
+
+#### Fixes
+
+- Count daily memory consolidation under compaction in Admin usage so it no longer skews the main chat cache hit rate.
+
+#### Contributors
+
+- Thank you to [@Coffeiz](https://github.com/Coffeiz) for contributing this fix.
+
+#### Feedback & Issue Reporters
+
+- None.
+
+### 更新内容
+
+#### 新功能
+
+- 暂无。
+
+#### 改进
+
+- 暂无。
+
+#### 修复
+
+- 管理后台将每日记忆沉淀的用量归入压缩，避免影响主对话缓存命中率统计。
+
+#### 贡献者
+
+- 感谢 [@Coffeiz](https://github.com/Coffeiz) 参与修复。
+
+#### 反馈与问题报告
+
+- 暂无。
+
 ## [1.7.9] - 2026-11-10
 
 ### What's New
