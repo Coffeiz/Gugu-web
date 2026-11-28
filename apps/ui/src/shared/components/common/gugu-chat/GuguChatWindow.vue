@@ -876,7 +876,7 @@ defineExpose({
 :deep(.msg-bubble.md-body .md-view li) {
   line-height: 1.65;
 }
-:deep(.msg-bubble.md-body .md-view li + li:not(.chat-smart-timeline li)),
+:deep(.msg-bubble.md-body .md-view li + li:not(.chat-smart-timeline li, .chat-smart-rows > li)),
 :deep(.msg-bubble.md-body .md-view li > p + p) {
   margin-block-start: var(--space-sm);
 }
@@ -935,7 +935,7 @@ defineExpose({
 }
 :deep(.chat-smart-metrics > span) { color: var(--status-danger); }
 :deep(.md-view ul.chat-smart-rows) { list-style: none; margin: 8px 0 0; padding: 0; }
-:deep(.chat-smart-rows > li) { margin: 0; border-bottom: 1px solid var(--content-divider); }
+:deep(.md-view .chat-smart-rows > li) { margin: 0; border-bottom: 1px solid var(--content-divider); }
 :deep(.chat-smart-rows > li:last-child) { border-bottom: 0; }
 :deep(.md-view a.chat-smart-row) {
   display: grid; gap: 3px 12px; padding: 7px 8px; border-radius: var(--radius-xs);
