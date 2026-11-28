@@ -1451,9 +1451,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   background: var(--gugu-chat-voice-bg); border: 1px solid var(--gugu-chat-voice-border);
   border-radius: 14px; border-bottom-left-radius: 5px;
   box-shadow: inset 0 1px 0 var(--gugu-chat-voice-highlight), var(--elevation-card);
-  transition: background 0.15s, border-color 0.15s;
 }
-:deep(.msg-voice:hover) { background: var(--surface-glass-hover); box-shadow: inset 0 1px 0 var(--highlight-strong), var(--elevation-card-hover); }
 :deep(.msg-voice .mv-btn) {
   flex-shrink: 0; width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; color: var(--gugu-chat-user-fg);
@@ -1465,7 +1463,11 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.msg-voice .mv-dur) { font-size: 12.5px; color: var(--gugu-chat-voice-duration); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 /* 用户(右侧)发的附件卡：气泡尾巴翻到右下、左下回正常圆角、容器右对齐 */
 :deep(.msg.user .msg-files) { align-items: flex-end; }
-:deep(.msg.user .msg-voice) { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
+:deep(.msg.user .msg-voice) {
+  color: var(--gugu-chat-user-fg); background: var(--gugu-chat-user-bg);
+  border-color: transparent; border-bottom-left-radius: 14px; border-bottom-right-radius: 5px;
+  box-shadow: var(--gugu-chat-user-shadow);
+}
 :deep(.msg-footer) {
   display: flex; align-items: center; gap: 4px;
   margin-top: 3px; padding: 0 3px;

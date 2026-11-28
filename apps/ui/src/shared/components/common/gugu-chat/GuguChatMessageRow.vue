@@ -269,22 +269,38 @@ function onBodyClick(event: MouseEvent) {
 
 .msg-voice-transcript-toggle {
   flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  margin-left: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 2px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
-  background: color-mix(in srgb, currentColor 12%, transparent);
-  color: inherit;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--content-secondary);
   font: inherit;
   font-size: 11px;
+  font-weight: 600;
   line-height: 1;
   cursor: pointer;
-  opacity: 0.82;
+  opacity: 0.88;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
 
-.msg-voice-transcript-toggle:hover { opacity: 1; background: color-mix(in srgb, currentColor 20%, transparent); }
+.msg-voice-transcript-toggle:hover {
+  background: var(--surface-soft-hover);
+  color: var(--content-primary);
+  opacity: 1;
+}
+
+.msg-voice-transcript-toggle:focus-visible {
+  outline: 2px solid var(--input-border-focus);
+  outline-offset: 1px;
+}
 
 .msg-voice-transcript {
   max-width: min(34rem, 80vw);
