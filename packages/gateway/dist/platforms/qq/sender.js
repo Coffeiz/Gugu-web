@@ -269,7 +269,7 @@ export function createQqSender(options) {
             try {
                 const send = async (actual) => {
                     const result = await options.client.call('POST', path(actual), { body: { msg_type: 7, media: { file_info: uploaded.fileInfo }, msg_seq: await sequence(actual),
-                            ...(actual.messageId ? { msg_id: actual.messageId } : {}), content: uploaded.image ? ' ' : uploaded.filename }, signal, authorize });
+                            ...(actual.messageId ? { msg_id: actual.messageId } : {}) }, signal, authorize });
                     const id = messageId(result);
                     if (!id)
                         throw new QqApiError('message', 200, undefined, 'UNKNOWN');

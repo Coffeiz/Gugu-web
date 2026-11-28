@@ -679,7 +679,7 @@ test('生产 Host 立即运行经真实模型协议和任务工具续轮投递�
     assert.deepEqual([...qqParts.keys()].sort(), ['/synthetic-part-1', '/synthetic-part-2'])
     assert.equal(qqParts.get('/synthetic-part-1')! + qqParts.get('/synthetic-part-2')!, 'synthetic scheduled attachment')
     assert.equal(qqCalls.filter(item => item.path.endsWith('/upload_part_finish')).length, 2)
-    assert.deepEqual(qqCalls.at(-1)?.body, { msg_type: 7, msg_seq: 1, media: { file_info: 'synthetic-qq-file' }, content: 'synthetic-schedule.txt' })
+    assert.deepEqual(qqCalls.at(-1)?.body, { msg_type: 7, msg_seq: 1, media: { file_info: 'synthetic-qq-file' } })
     const content = qqCalls.find(item => item.path.endsWith('/upload_prepare'))?.body
     assert.equal(content?.file_size, 30)
     assert.equal(content?.file_type, 4)
