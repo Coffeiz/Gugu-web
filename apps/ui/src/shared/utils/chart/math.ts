@@ -343,7 +343,7 @@ export async function renderMarkdownMath(root: HTMLElement | null, labels: Markd
     const sourceButton = createChartControl({
       action: 'toggle-source',
       label: labels.showSource,
-      text: '</>',
+      content: createChartControlIcon('m8 6-6 6 6 6m8-12 6 6-6 6m-2-15-4 18'),
       className: 'md-math-source-toggle-btn',
       data: { mathAction: 'toggle-source' },
     })

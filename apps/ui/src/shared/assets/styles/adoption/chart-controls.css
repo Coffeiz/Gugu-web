@@ -5,6 +5,8 @@
   z-index: 1;
   display: flex;
   gap: 3px;
+  width: max-content;
+  flex-wrap: nowrap;
   padding: 3px;
   border: 1px solid var(--popup-border);
   border-radius: 7px;
@@ -15,14 +17,6 @@
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
-}
-.md-chart-controls--math {
-  top: 3px;
-  right: 3px;
-  flex-wrap: nowrap;
-  gap: 1px;
-  width: max-content;
-  padding: 2px;
   white-space: nowrap;
 }
 .md-mermaid:hover > .md-chart-controls,
@@ -52,32 +46,16 @@
   font: inherit;
   line-height: 1;
 }
-.md-chart-controls--math .md-math-source-toggle-btn {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 600;
-}
-.md-chart-controls--math button {
-  flex: 0 0 24px;
-  width: 24px;
-  min-width: 24px;
-  height: 24px;
-  padding: 0;
-  font-size: 11px;
-  white-space: nowrap;
-}
 .md-chart-controls button > svg {
-  width: 15px;
-  height: 15px;
+  display: block;
+  flex: none;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-.md-chart-controls--mermaid button > svg {
-  width: 16px;
-  height: 16px;
-  flex: none;
 }
 .md-chart-controls [data-chart-action='toggle-source'][aria-pressed='true'] {
   color: var(--content-primary);
@@ -96,10 +74,4 @@
 @media (max-width: 600px) {
   .md-chart-controls { top: 4px; right: 4px; gap: 1px; padding: 2px; }
   .md-chart-controls button { width: 24px; height: 24px; }
-  .md-chart-controls--math button {
-    flex-basis: 22px;
-    width: 22px;
-    min-width: 22px;
-    height: 22px;
-  }
 }
