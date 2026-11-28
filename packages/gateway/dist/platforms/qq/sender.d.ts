@@ -95,7 +95,7 @@ export declare function createQqSender(options: {
     text(target: QqTarget, text: string, signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<QqReceipt>;
     keyboard(target: QqTarget, text: string, prompt: QqInteractionPrompt, signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<QqReceipt>;
     interaction(target: QqTarget, prompt: QqInteractionPrompt, signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<QqButtonReceipt>;
-    linkButtons(target: QqTarget, message: string, buttons: readonly QqLinkButton[], signal?: AbortSignal): Promise<QqButtonReceipt>;
+    linkButtons(target: QqTarget, message: string, buttons: readonly QqLinkButton[], signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<QqButtonReceipt>;
     /** 只确认收到平台回调；授权/一次性action消费与Run恢复必须由Host另行执行。 */
     ackInteraction(eventId: string, code?: 0 | 3, signal?: AbortSignal): Promise<{
         outcome: Outcome;

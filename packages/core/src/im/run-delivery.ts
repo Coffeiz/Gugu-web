@@ -240,6 +240,8 @@ function createDelivery<C>(ports: Omit<ImRunDeliveryPorts<C>, 'runner'>) {
       : event.type === 'final' && event.payload.status !== 'cancelled' && Array.isArray(event.payload.files) ? event.payload.files : []
     for (const value of artifacts) {
       const artifact = normalizePersistentArtifact(value)
+      // 链接按钮由工具立即投递，此制品只供会话界面显示。
+      if (artifact && typeof artifact === 'object' && !Array.isArray(artifact) && 'kind' in artifact && artifact.kind === 'link_buttons') continue
       const key = `artifact:${ports.digest(artifact)}`
       await deliver(identity, key, artifact, deliveryId => ports.sender.artifact({ identity, deliveryId, artifact }), signal, { ...fact, final: false })
     }

@@ -7,10 +7,10 @@ import { getDesktopDeviceId } from '../../src/main/auth/device-id.ts'
 import { createRemoteSessionStore } from '../../src/main/auth/store.ts'
 import { createDesktopImInbox } from '../../src/main/im/gateway/inbound/inbox.ts'
 import { createDesktopImDispatch } from '../../src/main/im/gateway/delivery/dispatch.ts'
+import { createDesktopImAttachmentSender } from '../../src/main/im/gateway/delivery/attachments.ts'
 import { createDesktopImCallback } from '../../src/main/im/gateway/interactions/callback.ts'
 import { createDesktopQqPairing } from '../../src/main/im/connect/platforms/qq/index.ts'
 import { createDesktopQqGateway } from '../../src/main/im/gateway/platforms/qq/index.ts'
-import { createDesktopQqChildConnection } from '../../src/main/im/gateway/platforms/qq/connection-host.ts'
 import { createDesktopFeishuPairing } from '../../src/main/im/connect/platforms/feishu/index.ts'
 import { createDesktopFeishuGateway } from '../../src/main/im/gateway/platforms/feishu/index.ts'
 import { createDesktopWechatPairing } from '../../src/main/im/connect/platforms/wechat/index.ts'
@@ -116,6 +116,7 @@ export function desktopCorePreview(desktopRoot) {
           }
           if (method === 'agent.tools.policy' && Object.keys(params).length === 0) return { disabledTools: [] }
           if (method.startsWith('agent.schedules.im.')) return desktopScheduledImRequest(method, params, signal) ?? scheduledIm(method, params, signal)
+          if (method === 'agent.im.sendLinks') return imAttachments.sendLinks(params, signal)
           if (method === 'agent.im.authorizeGroupTool' || method === 'agent.im.readGroupMemoryContext') {
             const gateway = params.platform === 'qq' ? qq : params.platform === 'feishu' ? feishu
               : params.platform === 'telegram' ? telegram : undefined
@@ -217,7 +218,8 @@ export function desktopCorePreview(desktopRoot) {
         return lifecycle.request(method, params)
       } }
       const admit = createDesktopImInbox(host, encryption)
-      const dispatch = createDesktopImDispatch(host, encryption, model, () => host.request('preferences.desktop.get'), (code, error, rpcMethod) => report('gateway.degraded', { code, error, rpcMethod }))
+      const imAttachments = createDesktopImAttachmentSender(credentialDirectory, encryption)
+      const dispatch = createDesktopImDispatch(host, encryption, model, () => host.request('preferences.desktop.get'), (code, error, rpcMethod) => report('gateway.degraded', { code, error, rpcMethod }), imAttachments.register)
       const callback = createDesktopImCallback(host, model)
       const telegram = createDesktopTelegramGateway(credentialDirectory, encryption, undefined, resolveModelProxy, admit, dispatch, callback)
       const newTransport = () => createNodeProviderTransport(desktopTransportOptions(false, resolveModelProxy))
@@ -228,9 +230,8 @@ export function desktopCorePreview(desktopRoot) {
       const feishuPairing = createDesktopFeishuPairing(credentialDirectory, encryption, randomUUID(), newTransport(), () => refresh(feishu))
       const feishu = createDesktopFeishuGateway(feishuPairing, admit, dispatch, newTransport, undefined, callback)
       const qqPairing = createDesktopQqPairing(credentialDirectory, encryption, randomUUID(), newTransport(), () => qq.refresh())
-      const qqExecutable = process.platform === 'win32' ? join(artifactRoot, 'gugu-core.exe') : undefined
       const qq = createDesktopQqGateway(qqPairing, admit, dispatch, newTransport,
-        qqExecutable ? ports => createDesktopQqChildConnection(ports, qqExecutable) : undefined, callback,
+        undefined, callback,
         (code, error) => report('gateway.degraded', { code, error }), { host, encryption })
       const scheduledIm = bindDesktopScheduledIm({ feishuPairing, qqPairing, wechatPairing, wechatReach, telegram, transport: newTransport })
       const resolveEmbedding = createDesktopEmbeddingResolver(credentialDirectory, encryption)

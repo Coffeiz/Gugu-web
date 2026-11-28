@@ -115,12 +115,12 @@ export function createFeishuSender(options: { client: Pick<ReturnType<typeof cre
       if (actions.length) elements.push({ tag: 'action', actions })
       return send(receiveId, 'interactive', { config: { wide_screen_mode: true }, elements }, signal,authorize)
     },
-    linkCard(receiveId: string, text: string, buttons: readonly { label: string; url: string }[], signal?: AbortSignal): Promise<FeishuDeliveryReceipt> {
+    linkCard(receiveId: string, text: string, buttons: readonly { label: string; url: string }[], signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<FeishuDeliveryReceipt> {
       try { for (const button of buttons) { const url = new URL(button.url); if (url.protocol !== 'https:' || url.username || url.password) return Promise.resolve(rejected()) } }
       catch { return Promise.resolve(rejected()) }
       const elements: ObjectValue[] = text.trim() ? [{ tag: 'markdown', content: text.trim() }] : []
       elements.push({ tag: 'action', actions: buttons.map(button => ({ tag: 'button', text: { tag: 'plain_text', content: button.label }, type: 'primary', behaviors: [{ type: 'open_url', default_url: button.url }] })) })
-      return send(receiveId, 'interactive', { config: { wide_screen_mode: true }, elements }, signal)
+      return send(receiveId, 'interactive', { config: { wide_screen_mode: true }, elements }, signal, authorize)
     },
     uploadImage,
     async file(chatId: string, data: Uint8Array, name: string, ext: string, signal?: AbortSignal,authorize?:()=>Promise<boolean>): Promise<FeishuDeliveryReceipt> {

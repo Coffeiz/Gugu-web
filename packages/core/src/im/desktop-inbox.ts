@@ -54,16 +54,17 @@ export async function admitDesktopImEvent(db: Kysely<Database>, ownerId: string,
   })
 }
 
-export async function desktopImGroupRunEvent(db: Kysely<Database>, identity: RunIdentity, phase: 'active' | 'completed' = 'active') {
+export async function desktopImGroupRunEvent(db: Kysely<Database>, identity: RunIdentity, phase: 'active' | 'completed' = 'active', groupOnly = true) {
   const owner = identity.ownerId.toLowerCase().replaceAll('-', '')
   const session = Number(identity.sessionId)
   const { rows } = await sql<{ platform: string; connection_id: string; client_message_id: string; event_key: string; sealed_event: Buffer }>`
     SELECT im.platform,im.connection_id,m.client_message_id,i.event_key,i.sealed_event
     FROM agent_run_admissions a
     JOIN conversation_sessions s ON s.id=a.session_id AND s.user_id=a.user_id
-      AND s.chat_type='group'
+      ${groupOnly ? sql`AND s.chat_type='group'` : sql``}
     JOIN conversation_messages m ON m.id=a.user_message_id AND m.session_id=s.id
-    JOIN desktop_im_sessions im ON im.session_id=s.id AND im.owner_id=s.user_id AND im.platform IN ('feishu','qq','telegram')
+    JOIN desktop_im_sessions im ON im.session_id=s.id AND im.owner_id=s.user_id
+      ${groupOnly ? sql`AND im.platform IN ('feishu','qq','telegram')` : sql``}
     JOIN desktop_im_inbox i ON i.owner_id=im.owner_id AND i.platform=im.platform AND i.connection_id=im.connection_id
     WHERE a.user_id=${owner} AND a.session_id=${session} AND a.run_id=${identity.runId}
       AND (${phase}='active' AND s.active_run_id=a.run_id OR ${phase}='completed' AND EXISTS (

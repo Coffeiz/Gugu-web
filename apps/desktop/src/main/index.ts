@@ -15,8 +15,6 @@ import { createDesktopImAttachmentSender } from './im/gateway/delivery/attachmen
 import { createDesktopImCallback } from './im/gateway/interactions/callback.js'
 import { consumeDesktopImText } from './im/gateway/interactions/text.js'
 import { createDesktopQqReferences } from './im/gateway/platforms/qq/references.js'
-import { connectDesktopFeishuProcess, isolateDesktopImPolling } from './im/gateway/process-host.js'
-import { createDesktopQqChildConnection } from './im/gateway/platforms/qq/connection-host.js'
 import { createDesktopQqGateway } from './im/gateway/platforms/qq/index.js'
 import { createDesktopFeishuGateway } from './im/gateway/platforms/feishu/index.js'
 import { createDesktopRecordingTranscriber } from './agent/voice-recording.js'
@@ -36,7 +34,6 @@ import { directDesktopFetch } from './network.js'
 import { resolveDesktopSystemProxy } from './proxy.js'
 import { createDesktopImInbox } from './im/gateway/inbound/inbox.js'
 import { createDesktopImPendingAskStore } from './im/gateway/inbound/pending-asks.js'
-import { createTelegramAdapter } from '@gugu/gateway/telegram'
 import { createDesktopTelegramGateway } from './im/gateway/platforms/telegram/index.js'
 import { telegramHandlers, pairingHandlers } from './im/ipc.js'
 import { desktopTerminalHandlers } from './terminal/ipc.js'
@@ -75,7 +72,6 @@ import {
   screen,
   session,
   shell,
-  utilityProcess,
 } from 'electron'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { lstat, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
@@ -219,7 +215,6 @@ else {
         }
         : await verifyArtifact(join(resource, devCoreSea ? 'core-sidecar-sea' : 'core-sidecar'), { integrity: false })
       if (devCoreSea && runtime.manifest?.runtimeMode !== 'sea') throw new Error('开发测试制品不是 SEA')
-      const gatewayExecutable = runtime.manifest?.runtimeMode === 'sea' ? runtime.node : undefined
 
       mkdirSync(dataDirectory, { recursive: true })
       const filesRoot = join(smoke ? dataDirectory : app.getPath('documents'), 'Gugu-data')
@@ -293,26 +288,23 @@ else {
       const consumeGroupText: import('./im/gateway/interactions/text.js').DesktopImTextConsumer =
         (...args) => consumeDesktopImText(host, agentModel, ...args)
       const gateway = telegram = createDesktopTelegramGateway(dataDirectory, safeStorage,
-        options => createTelegramAdapter({ ...options, transport: isolateDesktopImPolling(options.transport!, 'telegram', resolveModelProxy, gatewayExecutable,
-          code => report('gateway.degraded', { code: `telegram-${code}` })) }), resolveModelProxy, admitIm, dispatchIm, callbackIm, imVoice, host, pendingImAsks, groupDisabledNotice, consumeGroupText)
+        undefined, resolveModelProxy, admitIm, dispatchIm, callbackIm, imVoice, host, pendingImAsks, groupDisabledNotice, consumeGroupText)
       const newImTransport = () => createNodeProviderTransport(desktopTransportOptions(false, resolveModelProxy))
       // 扫码任务只在本进程有效，使用本次启动的本地身份隔离。
       const wechatPairing = createDesktopWechatPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => { wechat?.refresh(); await wechat?.settled() })
       const wechatReach = createDesktopWechatReach(dataDirectory, safeStorage)
       const wechatGateway = wechat = createDesktopWechatGateway(wechatPairing, admitIm, dispatchIm,
-        () => isolateDesktopImPolling(newImTransport(), 'wechat', resolveModelProxy, gatewayExecutable,
-          code => report('gateway.degraded', { code: `wechat-${code}` })), createDesktopWechatCursor(dataDirectory, safeStorage), (code, error) => report('gateway.degraded', { code, error }), wechatReach, host)
+        newImTransport, createDesktopWechatCursor(dataDirectory, safeStorage), (code, error) => report('gateway.degraded', { code, error }), wechatReach, host)
       const feishuPairing = createDesktopFeishuPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => {
         feishu?.refresh()
         await feishu?.settled()
       })
       const feishuGateway = feishu = createDesktopFeishuGateway(feishuPairing, admitIm, dispatchIm, newImTransport,
-        options => connectDesktopFeishuProcess(options, resolveModelProxy, gatewayExecutable, code =>
-          report('gateway.degraded', { code: code.startsWith('gateway-worker-') ? `feishu-${code}` : code })), callbackIm, imVoice, { host, encryption: safeStorage }, pendingImAsks,
+        undefined, callbackIm, imVoice, { host, encryption: safeStorage }, pendingImAsks,
         code => report('gateway.degraded', { code }), groupDisabledNotice, consumeGroupText)
       const qqPairing = createDesktopQqPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), () => qq?.refresh())
       const qqGateway = qq = createDesktopQqGateway(qqPairing, admitIm, dispatchIm, newImTransport,
-        ports => createDesktopQqChildConnection(ports, gatewayExecutable, { app, utilityProcess }), callbackIm,
+        undefined, callbackIm,
         (code, error) => report('gateway.degraded', { code, error }), { host, encryption: safeStorage, dataDirectory, voice: imVoice, observeUpload: uploadMetrics => report('gateway.qq_upload_timing', { uploadMetrics }), references: createDesktopQqReferences(dataDirectory, safeStorage) }, groupDisabledNotice,
         consumeGroupText)
       const scheduledIm = bindDesktopScheduledIm({ feishuPairing, qqPairing, wechatPairing, wechatReach, telegram: gateway, transport: newImTransport,
@@ -604,6 +596,7 @@ else {
             throw error
           }
         }
+        if (method === 'agent.im.sendLinks') return imAttachments.sendLinks(params, signal)
         if (method === 'agent.im.sendAttachment') {
           const isQq = params.platform === 'qq'
           if (isQq) report('gateway.qq_file_delivery_started')

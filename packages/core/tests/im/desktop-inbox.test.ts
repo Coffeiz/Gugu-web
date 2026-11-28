@@ -71,6 +71,10 @@ it('重启后为同一收件恢复原会话和消息标识，隔离其他连接'
     const admitted = await createSqliteAgentAdmission(opened.runtime.db).prepare(opened.ownerId, {
       session_id: first.sessionId, message: '测试收件', client_message_id: first.clientId,
     })
+    expect(await desktopImGroupRunEvent(opened.runtime.db, admitted.identity, 'active', false)).toEqual({
+      ...connection, eventKey: event.eventKey, sealedEvent: event.sealedEvent,
+    })
+    expect(await desktopImGroupRunEvent(opened.runtime.db, admitted.identity)).toBeNull()
     await opened.runtime.close()
     opened = await openSqliteRuntime(path)
     expect(await prepareDesktopImEvent(opened.runtime.db, opened.ownerId, connection)).toEqual({

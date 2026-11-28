@@ -221,7 +221,7 @@ export function createQqSender(options: {
       const fallback = await sender.text(active, formatQqInteractionFallback({ ...presentation, native_keyboard: false }), signal,authorize)
       return { ...fallback, delivery: fallback.outcome === 'accepted' ? 'text' : 'none', buttonCount: 0 }
     },
-    async linkButtons(target: QqTarget, message: string, buttons: readonly QqLinkButton[], signal?: AbortSignal): Promise<QqButtonReceipt> {
+    async linkButtons(target: QqTarget, message: string, buttons: readonly QqLinkButton[], signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<QqButtonReceipt> {
       const checked = validateLinkButtons(message, [...buttons])
       if ('error' in checked) return { ...reject(), delivery: 'none', buttonCount: 0 }
       const prepared = prepareQqLinkButtonMessage(checked.message, checked.buttons), active = { ...target, messageId: undefined }
@@ -231,12 +231,12 @@ export function createQqSender(options: {
             render_data: { label: clip(button.label, 40), visited_label: clip(button.label, 40), style: 1 },
             action: { type: 0, permission: { type: 2 }, data: button.url, unsupport_tips: '当前客户端不支持打开链接' },
           })))
-          const native = await postKeyboard(active, prepared.text, wire, signal)
+          const native = await postKeyboard(active, prepared.text, wire, signal, authorize)
           if (native.outcome === 'accepted') return { ...native, delivery: 'native', buttonCount: prepared.supported.length }
           if (native.outcome === 'unknown') return { ...native, delivery: 'none', buttonCount: 0 }
         } catch (error) { if (!(error instanceof RangeError)) return { outcome: 'unknown', platformMessageIds: [], delivery: 'none', buttonCount: 0 } }
       }
-      const fallback = await sender.text(active, [prepared.text.trim(), ...prepared.supported.map(button => `· ${button.label}：${button.url}`)].filter(Boolean).join('\n'), signal)
+      const fallback = await sender.text(active, [prepared.text.trim(), ...prepared.supported.map(button => `· ${button.label}：${button.url}`)].filter(Boolean).join('\n'), signal, authorize)
       return { ...fallback, delivery: fallback.outcome === 'accepted' ? 'text' : 'none', buttonCount: 0 }
     },
     /** 只确认收到平台回调；授权/一次性action消费与Run恢复必须由Host另行执行。 */

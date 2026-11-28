@@ -145,6 +145,10 @@ export function createPersistentTelegramProjection(options) {
         state.inflight = { sequence: event.sequence, fingerprint: hash(event) };
         version = await store.checkpoint(version, snapshot());
         let operation = 0, acceptedFormal = false;
+        // 使用已持久化的正式消息回执，续跑或恢复后也只引用一次。
+        const nextTarget = () => state.visible.length
+            ? { chatId: target.chatId, chatType: target.chatType }
+            : target;
         async function perform(kind, body, work, apply) {
             snapshot();
             if (!await options.authorize())
@@ -179,7 +183,8 @@ export function createPersistentTelegramProjection(options) {
                 state.pending = '';
                 return;
             }
-            await perform('text', { text, target }, () => options.sender.text(target, text, { signal: options.signal, authorize: options.authorize }), ids => {
+            const recipient = nextTarget();
+            await perform('text', { text, target: recipient }, () => options.sender.text(recipient, text, { signal: options.signal, authorize: options.authorize }), ids => {
                 state.visible.push({ text, ids: [...ids] });
                 state.pending = '';
             });
@@ -239,7 +244,7 @@ export function createPersistentTelegramProjection(options) {
                     // 仅确定拒绝可回退源码，未知图片投递绝不再发源码制造重复。
                     let rejected = false;
                     try {
-                        await perform('chart', { source: hash(projected.source), bytes: createHash('sha256').update(projected.png).digest('hex') }, () => options.sender.file(target, projected.png, 'chart.png', options.signal, options.authorize), ids => state.visible.push({ text: '', ids: [...ids] }));
+                        await perform('chart', { source: hash(projected.source), bytes: createHash('sha256').update(projected.png).digest('hex') }, () => options.sender.file(nextTarget(), projected.png, 'chart.png', options.signal, options.authorize), ids => state.visible.push({ text: '', ids: [...ids] }));
                     }
                     catch (error) {
                         if (!(error instanceof Blocked) || error.outcome !== 'rejected')

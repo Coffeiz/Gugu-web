@@ -6,6 +6,28 @@ import { createDesktopImAttachmentSender } from '../src/main/im/gateway/delivery
 import { desktopImEventKey } from '../src/main/im/gateway/inbound/inbox.js'
 import { writeDesktopAgentAttachment } from '../src/main/agent/attachments.js'
 
+it('QQ 链接按钮只发往已验证的原会话，权限收回后不出站', async () => {
+  const connection = { platform: 'qq', ownerId: 'desktop', botId: 'bot' } as const
+  const event = { version: 1, kind: 'message.received', eventId: 'message:1', text: '', quotedText: null, botMentioned: false,
+    scope: { ...connection, chatType: 'c2c', chatId: null, platformUserId: 'member' } } as const
+  const sender = createDesktopImAttachmentSender(tmpdir(), { decryptStringAsync: async () => ({
+    result: JSON.stringify({ event }), shouldReEncrypt: false,
+  }) })
+  const linkButtons = vi.fn(async () => ({ outcome: 'accepted' as const, delivery: 'native' as const, buttonCount: 1, platformMessageIds: ['message:2'] }))
+  const signal = new AbortController().signal
+  let allowed = true
+  sender.register({ connection, connectionId: 'connection', userId: 'member', signal, authorize: async () => allowed,
+    linkMedia: { platform: 'qq', sender: { linkButtons } } })
+  const input = { platform: 'qq', connectionId: 'connection', eventKey: desktopImEventKey(event), sealedEvent: 'AQ==',
+    message: '查看', buttons: [{ id: 'a', label: '打开', url: 'https://example.test/' }] }
+  expect(await sender.sendLinks({ ...input, eventKey: 'other' }, signal)).toMatchObject({ status: 'failed' })
+  expect(await sender.sendLinks(input, signal)).toMatchObject({ status: 'sent', delivery: 'native' })
+  allowed = false
+  expect(await sender.sendLinks(input, signal)).toMatchObject({ status: 'failed' })
+  expect(linkButtons).toHaveBeenCalledExactlyOnceWith({ id: 'member', chatType: 'c2c' }, input.message, input.buttons,
+    expect.any(AbortSignal), expect.any(Function))
+})
+
 it('仅向仍授权的原会话发送密封收件中的本地附件', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-im-send-'))
   try {

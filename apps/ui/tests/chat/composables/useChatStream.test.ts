@@ -61,6 +61,25 @@ describe('useChatStream 展示事件与生命周期', () => {
   })
 
 
+  it('发送时在等待滚动和网络前同时显示用户气泡与准备状态', async () => {
+    const options = createOptions([])
+    options.inputText.value = '测试消息'
+    const scroll = Promise.withResolvers<void>()
+    vi.mocked(options.scrollBottom).mockReturnValueOnce(scroll.promise)
+    const fetch = vi.fn(async () => sseResponse([{ type: 'done' }]))
+    vi.stubGlobal('fetch', fetch)
+    const sending = useChatStream(options).send()
+    try {
+      expect(options.messages.value[0]).toMatchObject({ role: 'user', text: '测试消息' })
+      expect(options.setStatus).toHaveBeenCalledWith({ kind: 'dots' })
+      expect(options.scrollBottom).toHaveBeenCalledWith(true)
+      expect(fetch).not.toHaveBeenCalled()
+    } finally {
+      scroll.resolve()
+      await sending
+    }
+  })
+
   it('流式正文更新在同一气泡中保持生成态，流结束后恢复静态展示', async () => {
     const options = createOptions([])
     const stream = useChatStream(options)

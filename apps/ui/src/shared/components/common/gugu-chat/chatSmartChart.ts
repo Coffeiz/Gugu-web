@@ -95,6 +95,26 @@ const barValueLabels: Plugin<SmartChartKind> = {
   },
 }
 
+const lineHoverGuide: Plugin<SmartChartKind> = {
+  id: 'smart-view-line-hover-guide',
+  beforeDatasetsDraw(chart) {
+    const active = chart.getActiveElements()[0]
+    if (!active) return
+    const { ctx, chartArea } = chart
+    const x = active.element.x
+    const color = getComputedStyle(chart.canvas).getPropertyValue('--content-secondary').trim()
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2
+    ctx.setLineDash([4, 3])
+    ctx.beginPath()
+    ctx.moveTo(x, chartArea.top)
+    ctx.lineTo(x, chartArea.bottom)
+    ctx.stroke()
+    ctx.restore()
+  },
+}
+
 export function mountSmartChart(root: HTMLElement) {
   const canvas = root.querySelector('canvas')
   const frame = canvas?.parentElement
@@ -141,9 +161,19 @@ export function mountSmartChart(root: HTMLElement) {
       }
     }
     const bar = barChartOptions({ tooltipLabel })
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     return {
       ...bar,
-      plugins: { ...bar.plugins, legend: { ...bar.plugins.legend, display: multi } },
+      animation: reduceMotion ? false as const : { duration: 0 },
+      transitions: { active: { animation: { duration: reduceMotion ? 0 : 160 } } },
+      plugins: {
+        ...bar.plugins,
+        legend: { ...bar.plugins.legend, display: multi },
+        tooltip: {
+          ...bar.plugins.tooltip,
+          animations: { opacity: { duration: reduceMotion ? 0 : 160, easing: 'easeOutQuad' as const } },
+        },
+      },
       layout: { padding: { top: 8, right: 6 } },
       scales: {
         ...bar.scales,
@@ -166,7 +196,7 @@ export function mountSmartChart(root: HTMLElement) {
           : { borderWidth: 2, pointRadius: 3, spanGaps: false }),
     }] },
     options: options(),
-    plugins: [barValueLabels],
+    plugins: kind === 'line' ? [lineHoverGuide] : [barValueLabels],
   })
   function highlightSlice(index?: number) {
     chart.setActiveElements(index === undefined ? [] : [{ datasetIndex: 0, index }])

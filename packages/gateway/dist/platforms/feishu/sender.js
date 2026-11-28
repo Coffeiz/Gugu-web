@@ -129,7 +129,7 @@ export function createFeishuSender(options) {
                 elements.push({ tag: 'action', actions });
             return send(receiveId, 'interactive', { config: { wide_screen_mode: true }, elements }, signal, authorize);
         },
-        linkCard(receiveId, text, buttons, signal) {
+        linkCard(receiveId, text, buttons, signal, authorize) {
             try {
                 for (const button of buttons) {
                     const url = new URL(button.url);
@@ -142,7 +142,7 @@ export function createFeishuSender(options) {
             }
             const elements = text.trim() ? [{ tag: 'markdown', content: text.trim() }] : [];
             elements.push({ tag: 'action', actions: buttons.map(button => ({ tag: 'button', text: { tag: 'plain_text', content: button.label }, type: 'primary', behaviors: [{ type: 'open_url', default_url: button.url }] })) });
-            return send(receiveId, 'interactive', { config: { wide_screen_mode: true }, elements }, signal);
+            return send(receiveId, 'interactive', { config: { wide_screen_mode: true }, elements }, signal, authorize);
         },
         uploadImage,
         async file(chatId, data, name, ext, signal, authorize) {

@@ -55,6 +55,9 @@ it('IM 投递使用真实持久收据防止重发，未知投递和改参不能�
    const sender={resolve:async()=>({platform:'feishu' as const,binding:'target'}),send}
    const registry=createToolRegistry({tools:createLinkButtonsTools(createDurableImLinkButtonDeliveryPort(runtime,sender)),authorize:async()=>true})
    const call={id:'call',name:'send_link_buttons',input:{message:'入口',buttons:[{id:'a',label:'打开',url:'https://example.test'}]}}
+   const unavailable=createToolRegistry({tools:createLinkButtonsTools(createDurableImLinkButtonDeliveryPort(runtime,{...sender,resolve:async()=>null})),authorize:async()=>true})
+   expect(await unavailable.tools.dispatch(call,scope)).toMatchObject({kind:'completed',successful:false,mutated:false,value:{status:'failed',delivery:'none'}})
+   expect(send).not.toHaveBeenCalled()
    expect(await registry.tools.dispatch(call,scope)).toMatchObject({successful:true,value:{status:'sent',platform:'feishu'}})
    const rebuilt=createToolRegistry({tools:createLinkButtonsTools(createDurableImLinkButtonDeliveryPort(runtime,sender)),authorize:async()=>true})
    expect(await rebuilt.tools.reconcile(call,{...identity,roundId:'round'})).toMatchObject({successful:true,mutated:false,value:{status:'sent'}})

@@ -4,8 +4,6 @@ artifactName: gugu-desktop-${version}-${os}-${arch}.${ext}
 asar: true
 asarUnpack:
   - dist/cli/gugu.cjs
-  - dist/gateway/*.cjs
-  - dist/gateway/prompt.md
   - dist/native/chat-fab-glass.node
 npmRebuild: false
 directories:
@@ -13,6 +11,7 @@ directories:
   buildResources: assets
 files:
   - dist/**
+  - '!dist/gateway/**'
   - '!dist/**/*.map'
   - assets/icon.png
   - assets/icon-win-*.ico
@@ -21,11 +20,11 @@ files:
   - node_modules/**
   - package.json
   - LICENSE
-extraResources:
-  - from: resources/core-sidecar
-    to: core-sidecar
 publish: null
 win:
+  extraResources:
+    - from: resources/core-sidecar-sea
+      to: core-sidecar
   extraFiles:
     - from: assets/cli-win
       to: cli
@@ -42,6 +41,9 @@ nsis:
   selectPerMachineByDefault: false
   allowToChangeInstallationDirectory: true
 mac:
+  extraResources:
+    - from: resources/core-sidecar
+      to: core-sidecar
   target: [dmg, zip]
   icon: assets/icon.icns
   category: public.app-category.productivity

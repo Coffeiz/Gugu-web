@@ -116,11 +116,9 @@ const desktopBuildKey = fast ? fingerprintPaths([
 ], toolchain) : ''
 await runCachedStep('desktop-main', desktopBuildKey, [
   join(desktop, 'dist/main/index.cjs'),
+  join(desktop, 'dist/main/prompt.md'),
   join(desktop, 'dist/preload/index.cjs'),
   join(desktop, 'dist/preload/chat-fab.cjs'),
-  join(desktop, 'dist/gateway/qq.cjs'),
-  join(desktop, 'dist/gateway/platforms.cjs'),
-  join(desktop, 'dist/gateway/prompt.md'),
   join(desktop, '.tools/agent/runtime.mjs'),
 ], () => { run(join(desktop, 'scripts/build/build.mjs')) }, !process.env.GUGU_GMAIL_OAUTH_CLIENT_ID?.trim())
 

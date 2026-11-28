@@ -61,19 +61,6 @@ export async function buildCoreSea({ payload, temp, node }) {
     write: false,
   })).outputFiles[0].text.replace(/^#![^\n]*\n/, '')
 
-  const bundleGateway = async file => (await build({
-    entryPoints: [fileURLToPath(new URL(file, import.meta.url))],
-    bundle: true,
-    platform: 'node',
-    format: 'cjs',
-    target: 'node26',
-    external: ['@node-rs/jieba', '@aws-sdk/client-s3'],
-    define: { 'import.meta.url': 'gatewayEntryUrl' },
-    write: false,
-  })).outputFiles[0].text
-  const embeddedGateway = await bundleGateway('../../src/main/im/gateway/platforms/qq/connection-child.ts')
-  const embeddedPlatforms = await bundleGateway('../../src/main/im/gateway/process-child.ts')
-
   // 桥接模块只从磁盘加载固定的 ESM 入口及其原生依赖。
   await writeFile(join(payload, 'bridge.cjs'), `
   const { pathToFileURL } = require('node:url')
@@ -85,21 +72,6 @@ export async function buildCoreSea({ payload, temp, node }) {
   const [entry, chart, image, silk] = ${JSON.stringify([source, chart, image, silk].map(file => relative(payload, file)))}
     .map(file => join(dirname(process.execPath), file))
   const first = process.argv[2]
-  if (first === '--gateway' && process.argv[3] === 'qq') {
-    const gatewayEntryUrl = require('node:url').pathToFileURL(process.execPath).href
-    const gatewayRequire = createRequire(entry)
-    ;((require) => {
-  ${embeddedGateway}
-    })(gatewayRequire)
-    return
-  }
-  if (first === '--gateway' && process.argv[3] === 'platforms') {
-    const gatewayEntryUrl = require('node:url').pathToFileURL(process.execPath).href
-    ;((require) => {
-  ${embeddedPlatforms}
-    })(createRequire(entry))
-    return
-  }
   if (first === '--cli') {
     process.argv.splice(2, 1)
     ;(() => {

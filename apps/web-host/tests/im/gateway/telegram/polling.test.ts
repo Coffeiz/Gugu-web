@@ -38,9 +38,10 @@ function fixture(batches: unknown[], extra: Partial<TelegramPollingOptions> = {}
 }
 
 test('Telegram 真实解析器按update顺序入站，忽略编辑并从持久游标继续', async () => {
+  const states: string[] = []
   const f = fixture([[
     message(13), { update_id: 12, edited_message: message(12).message }, message(11),
-  ]])
+  ]], { onPollStatus: status => states.push(status) })
   const connection = await connectTelegramPolling(f.options)
   await until(f.waiting)
   assert.deepEqual(f.saved.map(item => item.id), [11, 12, 13])
@@ -48,6 +49,8 @@ test('Telegram 真实解析器按update顺序入站，忽略编辑并从持久�
   assert.equal(f.saved[0]!.payload?.owner_user_id, 'owner-a')
   assert.equal(f.saved[1]!.payload, null)
   assert.deepEqual(f.calls.filter(item => item.method === 'getUpdates').map(item => item.payload?.offset), [11, 14])
+  assert.deepEqual(f.calls.filter(item => item.method === 'getUpdates').map(item => item.payload?.timeout), [0, 50])
+  assert.deepEqual(states, ['ready'])
   await connection.stop()
   assert.equal(f.closed(), 1)
 })

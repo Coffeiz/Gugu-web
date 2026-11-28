@@ -1,10 +1,44 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { sendImLinkButtons } from '@gugu/gateway'
 import { createFeishuLinkButtonSender } from '../../../src/modules/agent/tools/links.js'
 
 const identity={ownerId:'00000000-0000-4000-8000-000000000001',sessionId:'1',runId:'run'}
 const target={botId:'synthetic-bot',receiveId:'ou_synthetic',accessToken:'synthetic-token'}
 const buttons=[{id:'a',label:'查看',url:'https://example.test/'}]
+
+test('共享投递为 Telegram 生成 URL 键盘，为微信发送链接文本，飞书结果未知时不重发', async () => {
+  const input = { recipient: '123', chatType: 'c2c' as const, contextToken: 'synthetic-context',
+    message: '入口', buttons, signal: new AbortController().signal, authorize: async () => true }
+  const accepted = { outcome: 'accepted' as const, platformMessageIds: ['1'] }
+  const telegram = await sendImLinkButtons({ ...input, wire: { platform: 'telegram', sender: {
+    async text(target, message, options) {
+      assert.equal(target.chatId, '123')
+      assert.equal(message, '入口')
+      assert.deepEqual(options?.replyMarkup, { inline_keyboard: [[{ text: '查看', url: buttons[0]!.url }]] })
+      return accepted
+    },
+  } } })
+  assert.equal(telegram.status, 'sent')
+  const wechat = await sendImLinkButtons({ ...input, wire: { platform: 'wechat', sender: {
+    async text(target, message) {
+      assert.equal(target.contextToken, input.contextToken)
+      assert.match(message, /查看：https:\/\/example\.test\//)
+      return accepted
+    },
+  } } })
+  assert.equal(wechat.status, 'sent_with_fallback')
+  const feishu = await sendImLinkButtons({ ...input, wire: { platform: 'feishu', sender: {
+    async linkCard(recipient, message, links) {
+      assert.equal(recipient, '123')
+      assert.equal(message, '入口')
+      assert.deepEqual(links, buttons)
+      return { outcome: 'unknown', platformMessageIds: [] }
+    },
+    async text() { assert.fail('结果未知时不能再次发送') },
+  } } })
+  assert.deepEqual(feishu, { status: 'unknown' })
+})
 
 test('飞书通过固定地址发送卡片，明确拒绝后才降级文本',async()=>{
  const requests:Array<{url:string;init:RequestInit}>=[]

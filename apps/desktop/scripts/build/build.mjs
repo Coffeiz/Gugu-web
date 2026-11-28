@@ -91,22 +91,6 @@ await build({
   external: ['electron'],
   sourcemap: true,
 })
-await build({
-  entryPoints: {
-    qq: resolve(root, 'src/main/im/gateway/platforms/qq/connection-child.ts'),
-    platforms: resolve(root, 'src/main/im/gateway/process-child.ts'),
-  },
-  outdir: resolve(root, 'dist/gateway'),
-  outExtension: { '.js': '.cjs' },
-  bundle: true,
-  platform: 'node',
-  target: 'node22',
-  format: 'cjs',
-  banner: { js: 'const guguGatewayModuleUrl = require("node:url").pathToFileURL(__filename).href;' },
-  define: { 'import.meta.url': 'guguGatewayModuleUrl' },
-  external: ['@node-rs/jieba', '@aws-sdk/client-s3'],
-})
-
 if (process.platform === 'darwin') {
   const nativeDir = resolve(root, 'dist/native')
   await mkdir(nativeDir, { recursive: true })
@@ -117,7 +101,6 @@ if (process.platform === 'darwin') {
   { stdio: 'inherit' })
 }
 await copyFile(resolve(root, '../../packages/core/src/agent/subagent/searcher/prompt.md'), resolve(root, 'dist/main/prompt.md'))
-await copyFile(resolve(root, '../../packages/core/src/agent/subagent/searcher/prompt.md'), resolve(root, 'dist/gateway/prompt.md'))
 await buildDesktopAgentRuntime()
 } finally {
   releaseBuildLock()

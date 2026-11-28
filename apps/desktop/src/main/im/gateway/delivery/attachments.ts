@@ -1,6 +1,6 @@
-import { downloadSendFileImage } from '@gugu/core/tools'
+import { downloadSendFileImage, type LinkButton } from '@gugu/core/tools'
 import type { safeStorage } from 'electron'
-import { imOutboundMediaLimits, parseImReceivedMessage, sendImMedia, type ImConnectionIdentity } from '@gugu/gateway'
+import { imOutboundMediaLimits, parseImReceivedMessage, sendImMedia, sendImLinkButtons, type ImConnectionIdentity, type ImLinkButtonWire } from '@gugu/gateway'
 import { readDesktopAgentAttachmentContent } from '../../../agent/attachments.js'
 import type { createDesktopFileService } from '../../../files/service.js'
 import { desktopImEventKey } from '../inbound/inbox.js'
@@ -10,11 +10,14 @@ type DesktopImMediaRouteBase = {
   connectionId: string
   signal: AbortSignal
   authorize(): Promise<boolean>
-  media: Parameters<typeof sendImMedia>[0]['platform']
+  media?: Parameters<typeof sendImMedia>[0]['platform']
+  linkMedia?: ImLinkButtonWire
 }
 export type DesktopImMediaRoute = DesktopImMediaRouteBase & (
   | { userId: string; group?: never }
-  | { group: { id: string; ownerPlatformUserId: string; authorizeFile(event: ReturnType<typeof parseImReceivedMessage>): Promise<boolean> }; userId?: never }
+  | { group: { id: string; ownerPlatformUserId: string;
+    authorizeMessage?(event: ReturnType<typeof parseImReceivedMessage>): Promise<boolean>;
+    authorizeFile(event: ReturnType<typeof parseImReceivedMessage>): Promise<boolean> }; userId?: never }
 )
 
 export function createDesktopImAttachmentSender(directory: string,
@@ -29,6 +32,32 @@ export function createDesktopImAttachmentSender(directory: string,
       routes.set(id, route)
       return () => { if (routes.get(id) === route) routes.delete(id) }
     },
+    async sendLinks(params: Record<string, unknown>, signal: AbortSignal) {
+      const { platform, connectionId, eventKey, sealedEvent, message, buttons } = params
+      if (typeof platform !== 'string' || typeof connectionId !== 'string' || typeof eventKey !== 'string'
+        || typeof sealedEvent !== 'string' || sealedEvent.length > 48_000 || typeof message !== 'string' || !Array.isArray(buttons))
+        return { status: 'failed', delivery: 'none', buttonCount: 0 }
+      const id = key(platform, connectionId)
+      const route = routes.get(id)
+      if (!route?.linkMedia) return { status: 'failed', delivery: 'none', buttonCount: 0 }
+      const active = AbortSignal.any([route.signal, signal])
+      const sealed = await encryption.decryptStringAsync(Buffer.from(sealedEvent, 'base64'))
+      const envelope = JSON.parse(sealed.result) as { event: unknown; replyContext?: unknown }
+      const event = parseImReceivedMessage(route.connection, envelope.event)
+      const { chatType, chatId, platformUserId } = event.scope
+      const group = route.group
+      if (desktopImEventKey(event) !== eventKey || (group
+        ? chatType !== 'group' || chatId !== group.id
+        : chatType !== 'c2c' || platformUserId !== route.userId))
+        return { status: 'failed', delivery: 'none', buttonCount: 0 }
+      const authorize = async () => !active.aborted && routes.get(id) === route && await route.authorize()
+        && (!group || await group.authorizeMessage?.(event) === true) && !active.aborted && routes.get(id) === route
+      const context = typeof envelope.replyContext === 'string' ? envelope.replyContext : undefined
+      return sendImLinkButtons({
+        wire: route.linkMedia, recipient: group ? group.id : platformUserId, chatType,
+        contextToken: context, message, buttons: buttons as LinkButton[], signal: active, authorize,
+      })
+    },
     async send(params: Record<string, unknown>, signal?: AbortSignal, readFile?: ReturnType<typeof createDesktopFileService>['agentReadSendFile'],
       openImage?: Parameters<typeof downloadSendFileImage>[1], authorizeRemoteGroup?: (signal: AbortSignal) => Promise<boolean>) {
       const { platform, connectionId, eventKey, sealedEvent, attachId, attachment, filePath, url } = params
@@ -39,7 +68,7 @@ export function createDesktopImAttachmentSender(directory: string,
         || (filePath !== undefined && (typeof filePath !== 'string' || attachId !== undefined || !readFile))) return 'rejected'
       const id = key(platform, connectionId)
       const route = routes.get(id)
-      if (!route) return 'rejected'
+      if (!route?.media) return 'rejected'
       const active = AbortSignal.any([route.signal, ...(signal ? [signal] : [])])
       const authorize = async () => !active.aborted && routes.get(id) === route && await route.authorize() && !active.aborted && routes.get(id) === route
       let started = false

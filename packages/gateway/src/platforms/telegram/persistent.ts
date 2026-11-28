@@ -122,6 +122,10 @@ export function createPersistentTelegramProjection(options: TelegramProjectionOp
     state.inflight = { sequence: event.sequence, fingerprint: hash(event) }
     version = await store.checkpoint(version, snapshot())
     let operation = 0, acceptedFormal = false
+    // 使用已持久化的正式消息回执，续跑或恢复后也只引用一次。
+    const nextTarget = (): TelegramTarget => state.visible.length
+      ? { chatId: target.chatId, chatType: target.chatType }
+      : target
     async function perform(kind: string, body: unknown, work: () => Promise<TelegramDeliveryReceipt>, apply: (ids: readonly string[]) => void) {
       snapshot()
       if (!await options.authorize()) throw new Blocked('rejected')
@@ -139,7 +143,8 @@ export function createPersistentTelegramProjection(options: TelegramProjectionOp
     async function flush() {
       const text = state.pending.trim()
       if (!text) { state.pending = ''; return }
-      await perform('text', { text, target }, () => options.sender.text(target, text, { signal: options.signal, authorize: options.authorize }), ids => {
+      const recipient = nextTarget()
+      await perform('text', { text, target: recipient }, () => options.sender.text(recipient, text, { signal: options.signal, authorize: options.authorize }), ids => {
         state.visible.push({ text, ids: [...ids] }); state.pending = ''
       })
     }
@@ -177,7 +182,7 @@ export function createPersistentTelegramProjection(options: TelegramProjectionOp
           let rejected = false
           try {
             await perform('chart', { source: hash(projected.source), bytes: createHash('sha256').update(projected.png).digest('hex') },
-              () => options.sender.file(target, projected.png, 'chart.png', options.signal, options.authorize), ids => state.visible.push({ text: '', ids: [...ids] }))
+              () => options.sender.file(nextTarget(), projected.png, 'chart.png', options.signal, options.authorize), ids => state.visible.push({ text: '', ids: [...ids] }))
           } catch (error) { if (!(error instanceof Blocked) || error.outcome !== 'rejected') throw error; rejected = true }
           if (rejected) { state.pending = projected.source; await flush() }
           state.chartStreaming = true; resetDraft(); state.roundText = ''; state.roundHasText = false; state.trimLeading = true

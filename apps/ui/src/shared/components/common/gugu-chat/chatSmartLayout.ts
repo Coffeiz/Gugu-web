@@ -323,7 +323,7 @@ export function renderSmartLayout(layout: unknown, t: Translate, initialState?: 
           return `<label class="chat-smart-checklist-item"><input type="checkbox" data-smart-checklist="${key}" value="${amount}"${item.checked === true ? ' checked' : ''}>
             <span><strong>${text(item.label)}</strong>${detail}</span></label>`
         })
-        return `<fieldset class="chat-smart-checklist"><legend>${text(component.label)}</legend>${items.join('')}</fieldset>`
+        return `<fieldset class="chat-smart-checklist"><legend>${text(component.label)}</legend><div class="chat-smart-checklist-items">${items.join('')}</div></fieldset>`
       }
       case 'button': {
         const action = component.action as Fields | null | undefined

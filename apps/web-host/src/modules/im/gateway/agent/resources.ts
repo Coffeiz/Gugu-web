@@ -1,6 +1,7 @@
 import { isVerifiedImOwner } from '@gugu/core/agent/scenes/im'
 import { describeAskUserPrompt, imAskUserPolicy } from '@gugu/core/agent'
-import { createImSendFileTool } from '@gugu/core/tools'
+import { createDurableImLinkButtonDeliveryPort, createImSendFileTool } from '@gugu/core/tools'
+import { sendImLinkButtons } from '@gugu/gateway'
 import { createPostgresFileReadOperations } from '../../../files/browse.js'
 import { createPublicAgentEgress } from '../../../../adapters/network/safe-egress-proxy.js'
 import { createImFileTools } from './files.js'
@@ -345,6 +346,26 @@ export function createImProductionResources(options: ImProductionResourcesOption
     })
     const ownerTools = isVerifiedImOwner(actor) && options.imOwnerTools
       ? await options.imOwnerTools(lease, await services.source.data.loadTimezone(identity), authorizeCurrent, binding, actor.verifiedOwner) : undefined
+    const linkProof = createImRunScope({ ...options, identity, actor, scope, messageIds, payload: route.payload,
+      authorize: () => authorizeTool(identity, 'send_link_buttons') })
+    const linkChannel = { platform: scope.platform, binding: digest([scope.botId, scope.chatType, scope.chatId, scope.platformUserId]) }
+    const linkButtons = options.core.receipts ? createDurableImLinkButtonDeliveryPort(options.core, {
+      async resolve(candidate) {
+        if (!same(candidate, identity)) return null
+        try { await linkProof.read(); return linkChannel } catch { return null }
+      },
+      async send(input) {
+        if (!same(input.identity, identity) || input.channel.binding !== linkChannel.binding || input.channel.platform !== linkChannel.platform)
+          return { status: 'unknown' }
+        const wire = options.sender(linkProof.binding)
+        if (!wire || wire.platform !== scope.platform) return { status: 'failed', delivery: 'none', buttonCount: 0 }
+        return sendImLinkButtons({ wire, recipient: scope.chatType === 'group' ? scope.chatId! : scope.platformUserId, chatType: scope.chatType,
+          contextToken: typeof route.payload.context_token === 'string' ? route.payload.context_token : undefined,
+          message: input.message, buttons: input.buttons, signal: input.signal,
+          async authorize() { try { await linkProof.read(); return true } catch { return false } },
+        })
+      },
+    }) : undefined
     const builtins = createAgentToolRegistry({ core: options.core, authorize: authorizeTool, ...search, callTool: true, skills: skills.tools, mcpManagement: mcpManagement?.tool,
       ...(isVerifiedImOwner(actor) ? {
         fileOverview: createProjectFileOverviewPort(options.pool, options.storageRoot),
@@ -354,6 +375,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
         canvases: createSqlMindCanvasReader(options.core.db, 'postgres'),
       } : {}),
       ...ownerTools?.tools,
+      linkButtons,
       askUser: imAskUserPolicy,
       ...(actor.platform !== 'wechat' ? { sendFile: createImSendFileTool(createImFileTools({
         ...options, identity, actor, scope, messageIds, payload: route.payload,

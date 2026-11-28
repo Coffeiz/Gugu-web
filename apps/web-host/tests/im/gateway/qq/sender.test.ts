@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ProviderHttpRequest } from '@gugu/core/providers'
+import { sendImLinkButtons } from '@gugu/gateway'
 import { createQqClient, QqApiError } from '@gugu/gateway/qq'
 import { buildQqKeyboard, formatQqInteractionFallback, createQqSender, splitQqGroupMentions, type QqSequencePort } from '@gugu/gateway/qq'
 
@@ -314,8 +315,11 @@ test('QQ按钮平台确定拒绝才文本降级，未知发送不重复交互', 
 
 test('QQ链接按钮使用跳转action且不带callback token，不支持链接保留旧说明', async () => {
   const f = fixture()
-  const native = await f.sender.linkButtons(target, '导航', [{ id: 'web', label: '网页', url: 'https://example.test/path' }, { id: 'map', label: '地图', url: 'baidumap://map/place/detail?uid=synthetic_uid' }])
-  assert.equal(native.delivery, 'native')
+  const native = await sendImLinkButtons({ wire: { platform: 'qq', sender: f.sender },
+    recipient: target.id, chatType: target.chatType, message: '导航',
+    buttons: [{ id: 'web', label: '网页', url: 'https://example.test/path' }, { id: 'map', label: '地图', url: 'baidumap://map/place/detail?uid=synthetic_uid' }],
+    signal: new AbortController().signal, authorize: async () => true })
+  assert.deepEqual(native, { status: 'sent', delivery: 'native', buttonCount: 2 })
   assert.equal(f.calls[0]!.body.msg_id, undefined)
   const wire = f.calls[0]!.body.keyboard as { content: { rows: { buttons: { action: Record<string, unknown> }[] }[] } }
   assert.deepEqual(wire.content.rows[0]!.buttons[0]!.action, { type: 0, permission: { type: 2 }, data: 'https://example.test/path', unsupport_tips: '当前客户端不支持打开链接' })

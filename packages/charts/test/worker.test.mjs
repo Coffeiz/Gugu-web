@@ -198,8 +198,35 @@ test('中文 Sankey 能通过图片渲染器输出 PNG', () => {
   const png = result.stdout.subarray(4, 4 + imageSize)
   assert.deepEqual(png.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
   assert.equal(png.readUInt32BE(16), 1_200, 'Sankey 应保持原 SVG 宽度的 2×栅格输出')
-  assert.equal(png.readUInt32BE(20), 800, 'Sankey 应保持原 SVG 高度的 2×栅格输出')
+  assert.equal(png.readUInt32BE(20), 840, 'Sankey 应在原图内容上下各保留 20 像素')
   assert.doesNotMatch(result.stderr.toString('utf8'), /MERMAID_RENDER_FAILURE/)
+})
+
+test('IM 持久渲染器连续生成流程图、时序图、甘特图和看板 PNG', () => {
+  const sources = [
+    'flowchart LR\n A[请求] --> B[服务]\n B --> C[(数据库)]',
+    'sequenceDiagram\n actor A as 用户\n participant B as API\n A->>B: 请求\n B-->>A: 结果',
+    'gantt\n title 项目计划\n dateFormat YYYY-MM-DD\n section 准备\n 草稿 :a, 2026-11-28, 1d\n section 收尾\n 验证 :b, after a, 1d',
+    'kanban\n  todo[待开始]\n    a[大纲初稿]\n    b[分镜脚本]\n  doing[进行中]\n    c[选封面候选]',
+  ]
+  const input = sources.map(source => JSON.stringify({ charts: [{ type: 'mermaid', source }] })).join('\n') + '\n'
+  const result = spawnSync(process.execPath, [workerPath, '--persistent'], {
+    input, maxBuffer: 4 * 1024 * 1024, timeout: 20_000,
+  })
+  assert.equal(result.error, undefined)
+  assert.equal(result.status, 0, result.stderr.toString())
+  let offset = 0
+  for (const source of sources) {
+    const size = result.stdout.readUInt32BE(offset)
+    assert.ok(size > 24, source.split('\n')[0])
+    const start = offset + 8
+    assert.deepEqual(result.stdout.subarray(start, start + 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    if (source.startsWith('sequenceDiagram')) {
+      assert.ok(result.stdout.readUInt32BE(start + 16) < 700, '时序图应收紧两侧超出绘制范围的留白')
+    }
+    offset = start + size
+  }
+  assert.equal(offset, result.stdout.length)
 })
 
 test('block-beta 能通过服务端 SVG DOM 渲染出 PNG', () => {

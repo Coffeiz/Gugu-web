@@ -1097,8 +1097,6 @@ export function useChatStream(options: {
       options.pendingAtt.value = []
       options.composerRef.value?.resetHeight()
       options.trackMessageSent?.(_sessionTurn)
-      await options.scrollBottom(true)
-      if (!mayContinue()) return
     }
     if (streaming.value) {
       if (queuedItemKey !== undefined) return
@@ -1115,6 +1113,7 @@ export function useChatStream(options: {
         sessionId: queuedSession, viewGeneration,
       }
       pendingQueue.value.push(item)
+      if (fromInput) void options.scrollBottom(true)
       setPendingQueueRecoveryNeeded(true)
       try {
         await persistQueueItem(item)
@@ -1129,7 +1128,8 @@ export function useChatStream(options: {
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
     const requestController = new AbortController()
     abortCtrl.value = requestController
-    await options.scrollBottom()
+    // 用户气泡与准备状态在同一次渲染中出现，再按完整布局滚动到底。
+    await options.scrollBottom(fromInput)
     // scrollBottom 等待期间切走了：队列请求继续按队列项的目标会话后台发送，
     // 普通输入则停止；不能醒来后读取新 sessionId 并错投。
     if (!mayContinue() || (isQueuedDispatch && targetSessionId != null && targetSessionId !== sessionId.value)) {

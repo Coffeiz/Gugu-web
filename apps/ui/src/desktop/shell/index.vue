@@ -348,7 +348,10 @@ onMounted(() => perform(async () => {
 </template>
 
 <style scoped>
-.desktop-shell.has-windows-chrome { --desktop-l0-surface: rgb(from var(--surface-card-solid, light-dark(#fafafa, #242424)) r g b / 80%); }
+.desktop-shell.has-windows-chrome {
+  --desktop-l0-surface: rgb(from var(--surface-card-solid, light-dark(#fafafa, #242424)) r g b / 80%);
+  --desktop-shell-corner: var(--radius-xs);
+}
 .has-windows-chrome .desktop-topbar { grid-column: 1 / -1; margin-inline: 0; pointer-events: auto; app-region: drag; -webkit-app-region: drag; }
 .has-windows-chrome :deep(.windows-chrome) { position: absolute; top: 0; left: 0; right: 0; height: var(--desktop-topbar-height); }
 .has-windows-chrome :deep(.dev-tool-button) { inset-inline-start: 280px; }
@@ -378,6 +381,9 @@ onMounted(() => perform(async () => {
 .topbar-search :deep(.search-input) { height: 36px; min-height: 36px; }
 
 .desktop-workbench {
+  /* 内层圆角按与窗口边缘的距离逐层收小。 */
+  --desktop-l2-corner: max(0px, calc(var(--desktop-shell-corner, var(--radius-md)) - var(--desktop-workspace-edge)));
+  --desktop-l3-corner: max(var(--space-xs), calc(var(--desktop-l2-corner) - var(--desktop-workspace-inset) - 1px));
   /* L2 的底色和边界独立于 Mono 材质和品牌配色，保留系统底层透出的空间。 */
   --desktop-workspace-surface: light-dark(#fafafa, var(--palette-page-mid));
   --desktop-workspace-border: light-dark(rgb(0 0 0 / 7%), rgb(255 255 255 / 7%));
@@ -391,13 +397,23 @@ onMounted(() => perform(async () => {
   padding: var(--desktop-workspace-inset);
   border: 1px solid var(--desktop-workspace-border);
   border-radius: var(--radius-md);
+  border-bottom-right-radius: var(--desktop-l2-corner);
   background: rgb(from var(--desktop-workspace-surface) r g b / 75%);
   box-shadow: 0 12px 34px rgb(0 0 0 / 8%);
   scroll-behavior: smooth;
 }
 .desktop-workbench:has(.desktop-calendar-page) { display: flex; flex-direction: column; }
 .desktop-workbench:has(.desktop-mind-page) { display: flex; overflow: hidden; }
-.desktop-workbench.is-canvas-workspace { padding: 0; }
+.desktop-workbench.is-canvas-workspace { --desktop-workspace-inset: 0px; }
+.desktop-workbench :deep(
+  .kanban > .glass-card,
+  .desktop-calendar-page > .glass-card,
+  .mail-columns > .glass-card,
+  .desktop-workbench > .desktop-file-panel,
+  .desktop-coming-soon
+) {
+  border-bottom-right-radius: var(--desktop-l3-corner);
+}
 .desktop-route-host { display: contents; }
 .desktop-workbench :deep(.page-toolbar :is(button, .seg-control)) {
   box-sizing: border-box;

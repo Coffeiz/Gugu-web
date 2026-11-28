@@ -86,9 +86,12 @@ test('草稿明确失败仅禁预览，仍需正式final；工具只投可信摘
   try {
     await push(stream, event(1, 'token', { text: '预览正文' }))
     await push(stream, event(2, 'tool_done', { name: 'list_projects', toolCallId: 'synthetic-tool', status: 'success', result: { private: 'synthetic-credential-do-not-send' } }))
-    await push(stream, event(3, 'final', { text: '正式回复', status: 'completed' }))
+    await push(stream, event(3, 'tool_done', { name: 'get_project', toolCallId: 'synthetic-failure', status: 'error' }))
+    await push(stream, event(4, 'final', { text: '正式回复', status: 'completed' }))
     assert.equal(p.calls.filter(call => call.method === 'sendMessageDraft').length, 1)
     assert.equal(texts(p).length, 1); assert.match(texts(p)[0]!, /查询项目列表完成/)
+    assert.match(texts(p)[0]!, /项目详情未完成/)
+    assert.equal((texts(p)[0]!.match(/未完成/g) ?? []).length, 1)
     assert.doesNotMatch(JSON.stringify(p.calls), /synthetic-credential-do-not-send/)
   } finally { await stream.close(); await p.api.close() }
 })
@@ -148,18 +151,28 @@ test('真实受限Mermaid/TeX renderer→PNG→Telegram multipart，未替换ren
 test('真实协议图表严格正文→图片→尾文；未知图片结果不退回源码、不重发前缀', async () => {
   for (const unknown of [false, true]) {
     const m = memory(), p = platform(); if (unknown) p.fail(method => method === 'sendPhoto' ? 503 : null)
-    const stream = create(m, p, { renderCharts: async () => [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0])] })
+    const renderCharts = async () => [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0])]
+    let stream = create(m, p, { renderCharts })
     try {
       const input = event(1, 'token', { text: '图前\n```mermaid\ngraph TD; A-->B\n```\n图后' })
       assert.equal(await push(stream, input), unknown ? 'unknown' : 'accepted')
       if (unknown) {
         const count = p.calls.length; assert.equal(await push(stream, input), 'unknown'); assert.equal(p.calls.length, count)
-      } else await push(stream, event(2, 'final', { text: input.payload.text, status: 'completed' }))
+      } else {
+        await stream.close()
+        stream = create(m, p, { renderCharts })
+        await push(stream, event(2, 'final', { text: input.payload.text, status: 'completed' }))
+      }
       const actual = p.calls.filter(call => call.method !== 'sendMessageDraft')
       assert.deepEqual(actual.map(call => call.method), unknown ? ['sendMessage', 'sendPhoto'] : ['sendMessage', 'sendPhoto', 'sendMessage'])
       assert.doesNotMatch(texts(p).join(''), /mermaid|graph TD/)
       assert.match(texts(p)[0]!, /图前/)
-      if (!unknown) assert.match(texts(p)[1]!, /图后/)
+      assert.equal(JSON.parse(actual[0]!.body.toString()).reply_to_message_id, 9)
+      assert.doesNotMatch(actual[1]!.body.toString(), /reply_to_message_id/)
+      if (!unknown) {
+        assert.match(texts(p)[1]!, /图后/)
+        assert.equal(JSON.parse(actual[2]!.body.toString()).reply_to_message_id, undefined)
+      }
     } finally { await stream.close(); await p.api.close() }
   }
 })

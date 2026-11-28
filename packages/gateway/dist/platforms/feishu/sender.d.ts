@@ -43,7 +43,7 @@ export declare function createFeishuSender(options: {
     linkCard(receiveId: string, text: string, buttons: readonly {
         label: string;
         url: string;
-    }[], signal?: AbortSignal): Promise<FeishuDeliveryReceipt>;
+    }[], signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<FeishuDeliveryReceipt>;
     uploadImage: (data: Uint8Array, signal?: AbortSignal, authorize?: () => Promise<boolean>) => Promise<{
         outcome: Outcome;
         imageKey: string | null;

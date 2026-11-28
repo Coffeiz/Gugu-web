@@ -58,22 +58,25 @@ export async function connectTelegramPolling(options: TelegramPollingOptions): P
 
   async function poll() {
     let backoff = 1_000
+    let ready = false
     try {
       while (!signal.aborted) {
         try {
           const cursor = await options.inbox.cursor()
-          const payload: ObjectValue = { timeout: 50, allowed_updates: ['message', 'callback_query'] }
+          // 首次和重连先确认轮询实际可用，避免空闲时等待整轮长轮询才显示接入。
+          const payload: ObjectValue = { timeout: ready ? 50 : 0, allowed_updates: ['message', 'callback_query'] }
           if (cursor !== null) {
             if (!Number.isSafeInteger(cursor + 1)) throw new Error('Telegram 游标越界')
             payload.offset = cursor + 1
           }
-          const updates = await call('getUpdates', payload, 60_000)
+          const updates = await call('getUpdates', payload, ready ? 60_000 : 20_000)
           if (!Array.isArray(updates)) throw new Error('Telegram 更新格式无效')
-          options.onPollStatus?.('ready')
-          backoff = 1_000
           const ordered = updates.filter(object)
           if (ordered.some(value => typeof value.update_id !== 'number' || !Number.isSafeInteger(value.update_id) || value.update_id < 0))
             throw new Error('Telegram 事件 ID 无效')
+          ready = true
+          options.onPollStatus?.('ready')
+          backoff = 1_000
           ordered.sort((a, b) => Number(a.update_id) - Number(b.update_id))
           for (const update of ordered) {
             signal.throwIfAborted()
@@ -110,6 +113,7 @@ export async function connectTelegramPolling(options: TelegramPollingOptions): P
           }
         } catch (error) {
           if (signal.aborted) return
+          ready = false
           options.onPollStatus?.(error instanceof TelegramApiError &&
             (error.statusCode === 409 || error.errorCode === 409) ? 'conflict' : 'retrying')
           options.report?.('poll-unavailable', error)

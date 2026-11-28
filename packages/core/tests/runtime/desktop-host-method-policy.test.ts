@@ -13,6 +13,7 @@ it('仅放行桌面 Agent 明确声明的宿主请求', () => {
     'agent.files.acquireSkillLock',
     'agent.files.releaseSkillLock',
     'agent.im.sendAttachment',
+    'agent.im.sendLinks',
   ]) expect(isAllowedDesktopAgentHostRequest(method)).toBe(true)
 
   for (const method of ['agent.email.delete', 'agent.email.send.raw', 'agent.sessions.delete', 'agent.files.recordSkillHistory.raw', 'agent.files'])

@@ -1,5 +1,5 @@
 import { resolveQqNoticeTarget, type QqNoticeKind } from '@gugu/gateway/qq'
-import { sendImGroupReplyCharts } from '@gugu/gateway'
+import { sendImGroupReplyCharts, type ImLinkButtonWire } from '@gugu/gateway'
 import { createDesktopImChartRenderer } from './projection.js'
 import { runDesktopWorkspaceExtra, type DesktopWorkspaceCommands } from '../../../agent/workspace-command.js'
 import type { DesktopImMediaRoute } from './attachments.js'
@@ -102,8 +102,9 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
     const mediaRoute = options.userId
       ? { connection, connectionId, signal, userId: options.userId }
       : options.group ? { connection, connectionId, signal, group: options.group } : undefined
-    const unregister = options.media && mediaRoute && registerMedia?.({
-      ...mediaRoute, media: options.media, authorize: options.authorize,
+    const linkMedia = options.chartMedia ?? options.media
+    const unregister = linkMedia && mediaRoute && registerMedia?.({
+      ...mediaRoute, media: options.media, linkMedia: linkMedia as ImLinkButtonWire, authorize: options.authorize,
     })
     const scope = { platform: connection.platform, connectionId }
     let projection: { runId: string; sessionId: number; cursor: number; messages: Map<string, string>; sentRound?: { text: string; outcome: Outcome }; finalText?: string; prompt?: Prompt; stream?: DesktopImStream; streamOutcome?: Outcome; streamFinal?: boolean } | undefined

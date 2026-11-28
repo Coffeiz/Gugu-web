@@ -15,7 +15,7 @@ export interface LinkButtonDeliveryPort {
 }
 type DeliveryInput = Parameters<LinkButtonDeliveryPort['reconcile']>[0]
 export interface ImLinkButtonChannel {
-  platform:'qq'|'feishu'|'wechat'
+  platform:'qq'|'feishu'|'wechat'|'telegram'
   /** 由可信 Host 生成的渠道和接收者绑定摘要，不含凭据。 */
   binding:string
 }
@@ -38,12 +38,17 @@ export function createDurableImLinkButtonDeliveryPort(core:SqlDataRuntime,sender
     return [id.slice(0,8),id.slice(8,12),id.slice(12,16),id.slice(16,20),id.slice(20)].join('-')
   }
   const params=(input:DeliveryInput,channel:ImLinkButtonChannel)=>({digest:createHash('sha256').update(JSON.stringify([channel.platform,channel.binding,input.message,input.buttons])).digest('hex')})
+  function completed(input: DeliveryInput, value: { status: string } & Record<string, string | number>, mutated: boolean): ToolResult {
+    const successful = value.status.startsWith('sent')
+    return { kind: 'completed', successful, mutated, value,
+      ...(successful ? { artifact: { kind: 'link_buttons', message: input.message, buttons: input.buttons } } : {}) }
+  }
   async function recover(input:DeliveryInput,channel:ImLinkButtonChannel):Promise<ToolResult>{
     const context=dataContext(input.identity.ownerId),fields=params(input,channel)
     try{
       await core.operationWithTransaction(context,operationId(input,'reserve'),'agent.link_buttons.reserve',fields,async()=>{throw absent})
       const outcome=await core.operationWithTransaction(context,operationId(input,'result'),'agent.link_buttons.result',fields,async()=>{throw absent})
-      return {kind:'completed',successful:(outcome.result as {status:string}).status.startsWith('sent'),mutated:false,value:outcome.result}
+      return completed(input, outcome.result as Parameters<typeof completed>[1], false)
     }catch{return {kind:'unknown'}}
   }
   return {
@@ -51,7 +56,8 @@ export function createDurableImLinkButtonDeliveryPort(core:SqlDataRuntime,sender
     async deliver(input){
       input.signal.throwIfAborted()
       const channel=await sender.resolve(input.identity)
-      if(!channel || !channel.binding)return {kind:'unknown'}
+      if(!channel || !channel.binding)return {kind:'completed',successful:false,mutated:false,
+        value:{status:'failed',delivery:'none',button_count:0,error:'当前运行没有可用的 IM 投递目标'}}
       input.signal.throwIfAborted()
       const context=dataContext(input.identity.ownerId),fields=params(input,channel)
       let reserved
@@ -66,7 +72,7 @@ export function createDurableImLinkButtonDeliveryPort(core:SqlDataRuntime,sender
       const value={status:outcome.status,platform:channel.platform,delivery:outcome.delivery,button_count:outcome.buttonCount}
       try{
         const receipt=await core.operationWithTransaction(context,operationId(input,'result'),'agent.link_buttons.result',fields,async()=>value)
-        return {kind:'completed',successful:receipt.result.status.startsWith('sent'),mutated:true,value:receipt.result}
+        return completed(input, receipt.result, true)
       }catch{return recover(input,channel)}
     },
   }
@@ -133,7 +139,10 @@ export function validateLinkButtons(message:string,buttons:LinkButton[]):{messag
 }
 export function createLinkButtonsTools(port:LinkButtonDeliveryPort):ToolDefinition[]{
   const limited=(max:number)=>z.string().min(1).refine(value=>[...value].length<=max).meta({maxLength:max})
-  const schema=z.object({message:limited(2000),buttons:z.array(z.object({id:limited(64),label:limited(40),url:limited(2048)}).strict()).min(1).max(5)}).strict()
+  const schema=z.object({message:limited(2000),buttons:z.array(z.object({id:limited(64),
+    label:limited(40).describe('按钮文字，按 Unicode 字符计最多 40 个'),
+    url:limited(2048).describe('直接填写原始 URL，例如 https://example.com/path，不能使用 Markdown 链接格式'),
+  }).strict()).min(1).max(5)}).strict()
   return [{definition:{name:'send_link_buttons',schema:{type:'function',function:{name:'send_link_buttons',description:'向当前会话发送导航链接，不等待点击。buttons 直接传含 1–5 个按钮对象的数组。',parameters:z.toJSONSchema(schema) as Record<string,import('../../models.js').Json>}}},effect:'write',validate:input=>schema.safeParse(input),
     async execute(input,scope,call){
       const value=input as z.infer<typeof schema>,result=validateLinkButtons(value.message,value.buttons)

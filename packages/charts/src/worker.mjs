@@ -395,17 +395,17 @@ async function renderDiagram(chart, colors, index) {
       if (type === 'timeline' || type === 'timeline-beta') normalizeMermaidTimelineSectionColors(root)
       normalizeMermaidEdgeLabelBounds(root)
       normalizeMermaidRasterColors(root)
+      const colorAllText = ['sequencediagram', 'journey', 'kanban'].includes(type)
       normalizeMermaidRasterText(root, colors.primaryTextColor, {
         allText: true,
         fontFamily: 'Noto Sans SC',
         fontWeight: type === 'ishikawa-beta' ? 700 : 600,
         strokeWidth: type === 'ishikawa-beta' ? '0.6px' : '0.4px',
-        colorAllText: type === 'sequencediagram' || type === 'journey',
+        colorAllText,
         strokeAllText: true,
       })
-      // 时序图和 Journey 的全部文字已经按图表主题强制着色。对比度修正会
-      // 从外层 SVG 分组猜背景色，可能把参与者标题误判为深色底并覆盖成白字。
-      if (type !== 'sequencediagram' && type !== 'journey') {
+      // 这些图表的标签与底色形状分组不同，按主题着色以免把卡片误判成深色底。
+      if (!colorAllText) {
         normalizeMermaidRasterTextContrast(root, colors.primaryTextColor)
       }
       normalizeMermaidEdgeStyles(root, colors.arrowheadColor)
@@ -444,30 +444,43 @@ async function renderDiagram(chart, colors, index) {
     let dimensions
     if (chartType === 'math') {
       dimensions = addMathImagePadding(root, MATH_IMAGE_PADDING)
-    } else {
-      const viewBox = getSvgViewBoxDimensions(root)
-      dimensions = { width: viewBox[2], height: viewBox[3] }
+    }
+    const serializer = new XMLSerializer()
+    const renderOptions = {
+      background: colors.background,
+      font: {
+        loadSystemFonts: await needsSystemFonts(document),
+        fontFiles: [CJK_FONT_FILE],
+        defaultFontFamily: 'Noto Sans SC',
+        sansSerifFamily: 'Noto Sans SC',
+      },
+    }
+    if (chartType === 'mermaid') {
+      const [originalX, , originalWidth, originalHeight] = getSvgViewBoxDimensions(root)
+      let width = originalWidth, height = originalHeight
+      root.setAttribute('width', String(width))
+      root.setAttribute('height', String(height))
+      const bounds = new Resvg(serializer.serializeToString(root), renderOptions).getBBox()
+      if (bounds && [bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
+        && bounds.width > 0 && bounds.height > 0) {
+        // 按光栅器的可见内容边界在四周各留 10 个 SVG 单位，避免 Mermaid 的布局留白偏向一侧。
+        // Sankey 的横向测量范围大于实际绘制区域，保留其原有的专用宽度。
+        const x = type === 'sankey' ? originalX : bounds.x - 10
+        if (type !== 'sankey') width = bounds.width + 20
+        height = bounds.height + 20
+        root.setAttribute('viewBox', `${x} ${bounds.y - 10} ${width} ${height}`)
+      }
+      dimensions = { width, height }
     }
     const width = Math.ceil(dimensions.width)
     const height = Math.ceil(dimensions.height)
-    // 保留 viewBox 坐标系，只增大 SVG 根元素的输出尺寸，让 Resvg 直接按矢量内容
-    // 栅格化；Mermaid 按 2x 输出，公式按原始尺寸输出，均受边长和像素预算约束。
-    const { width: rasterWidth, height: rasterHeight } = chartType === 'math'
+    const raster = chartType === 'math'
       ? calculateMathRasterDimensions(width, height)
       : calculateMermaidRasterDimensions(width, height)
-    root.setAttribute('width', String(rasterWidth))
-    root.setAttribute('height', String(rasterHeight))
-    const validatedSvg = new XMLSerializer().serializeToString(root)
+    root.setAttribute('width', String(raster.width))
+    root.setAttribute('height', String(raster.height))
     try {
-      png = new Resvg(validatedSvg, {
-        background: colors.background,
-        font: {
-          loadSystemFonts: await needsSystemFonts(document),
-          fontFiles: [CJK_FONT_FILE],
-          defaultFontFamily: 'Noto Sans SC',
-          sansSerifFamily: 'Noto Sans SC',
-        },
-      }).render().asPng()
+      png = new Resvg(serializer.serializeToString(root), renderOptions).render().asPng()
     } catch {
       throw new Error('png_conversion_failed')
     }

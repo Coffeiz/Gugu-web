@@ -24,7 +24,7 @@ import { openDroppedFile, readDroppedFileExcerpt } from '#core-source/runtime/de
 import { createDesktopContinuationStore } from '#core-source/runtime/desktop-continuation.js'
 import { createFirstTurnTitleWriter } from '#core-source/agent/sessions/title.js'
 import { createAgentLog } from '@gugu/log'
-import { createWebLinkButtonDeliveryPort } from '#core-source/agent/tools/im/link-buttons.js'
+import { createDurableImLinkButtonDeliveryPort, createWebLinkButtonDeliveryPort, type ImLinkButtonSender } from '#core-source/agent/tools/im/link-buttons.js'
 import { readPreferenceDocument } from '#core-source/preferences/general.js'
 import { createClientDeletePort } from '#core-source/agent/tools/clients/index.js'
 import type { ProjectFileOverview } from '#core-source/agent/tools/projects/index.js'
@@ -668,6 +668,28 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         core, ownerId, imPlatform: imSession?.platform, hasImSession: Boolean(imSession), groupChat,
         hostRequest, currentScheduledIm, scheduledTasks, authorizeWrite,
       })
+    async function resolveLinkEvent(identity: RunIdentity) {
+      if (!await authorize(identity)) return null
+      const event = await desktopImGroupRunEvent(db, identity, 'active', false)
+      const platform = event?.platform
+      if (!event || (platform !== 'qq' && platform !== 'feishu' && platform !== 'telegram' && platform !== 'wechat')) return null
+      const channel: NonNullable<Awaited<ReturnType<ImLinkButtonSender['resolve']>>> = {
+        platform, binding: digest([event.connectionId, event.eventKey]),
+      }
+      return { event, channel }
+    }
+    const linkButtons = imSession
+      ? core.receipts ? createDurableImLinkButtonDeliveryPort(core, {
+        async resolve(identity) { return (await resolveLinkEvent(identity))?.channel ?? null },
+        async send(input) {
+          const target = await resolveLinkEvent(input.identity)
+          if (!target || target.channel.platform !== input.channel.platform || target.channel.binding !== input.channel.binding)
+            return { status: 'unknown' }
+          return await hostRequest('agent.im.sendLinks', { ...target.event, message: input.message, buttons: input.buttons },
+            input.signal) as Awaited<ReturnType<ImLinkButtonSender['send']>>
+        },
+      }) : undefined
+      : createWebLinkButtonDeliveryPort(authorize)
     const registry = createOwnerToolRegistry({
       ...(listMail ? { listMail } : {}),
       ...(sendEmail ? { sendEmail } : {}),
@@ -677,7 +699,7 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       mcpManagement,
       ...(shell ? { shell } : {}),
       ...(interactive ? { diskTrashTools: [deleteItem] } : {}),
-      linkButtons: createWebLinkButtonDeliveryPort(authorize),
+      linkButtons,
       core, authorize, webSearch,
       webDownload: createDesktopWebDownload({
         dataRoot: dirname(databasePath), authorized: authorize,

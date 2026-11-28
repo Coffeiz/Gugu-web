@@ -12,10 +12,6 @@ export async function configureWindowsInstaller(input: {
   prepackaged?: string
 }) {
   const { stage, feed, options, seaConfig, packageRequire, prepackaged } = input
-  const sidecar = seaConfig.extraResources.find((item: { from?: string; to?: string }) =>
-    item.from === 'resources/core-sidecar' && item.to === 'core-sidecar')
-  if (!sidecar) throw new Error('打包配置缺少 Core sidecar 映射')
-  sidecar.from = 'resources/core-sidecar-sea'
   seaConfig.asarUnpack = seaConfig.asarUnpack.filter((path: string) => path !== 'dist/cli/gugu.cjs')
   let builtWindowsInstaller = false
   if (!options.includes('--dir')) {
@@ -48,8 +44,20 @@ export async function configureWindowsInstaller(input: {
       prepackaged,
       targets: createTargets([Platform.WINDOWS], 'nsis', arch),
       config: {
-        ...seaConfig,
-        afterPack: ({ appOutDir }: { appOutDir: string }) => { packedDirectory = appOutDir },
+        // electron-builder 会自动加载仓库配置，这里只传安装器专用覆盖项。
+        asarUnpack: seaConfig.asarUnpack,
+        directories: seaConfig.directories,
+        nsis: { include },
+        ...(feed ? { publish: seaConfig.publish, forceCodeSigning: true, win: {
+          signExecutable: true, publisherName: seaConfig.win.publisherName,
+        } } : {}),
+        afterPack: ({ appOutDir }: { appOutDir: string }) => {
+          const packedManifest = join(appOutDir, 'resources/core-sidecar/manifest.json')
+          const builtManifest = resolve('resources/core-sidecar-sea/manifest.json')
+          if (!readFileSync(packedManifest).equals(readFileSync(builtManifest)))
+            throw new Error('Windows 安装包的 Core 与本次构建不一致')
+          packedDirectory = appOutDir
+        },
       },
       publish: 'never',
       effectiveOptionComputed: ([defines]: [Record<string, string | null>]) => {

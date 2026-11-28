@@ -876,7 +876,7 @@ defineExpose({
 :deep(.msg-bubble.md-body .md-view li) {
   line-height: 1.65;
 }
-:deep(.msg-bubble.md-body .md-view li + li),
+:deep(.msg-bubble.md-body .md-view li + li:not(.chat-smart-timeline li)),
 :deep(.msg-bubble.md-body .md-view li > p + p) {
   margin-block-start: var(--space-sm);
 }
@@ -1034,9 +1034,15 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   box-sizing: border-box; max-inline-size: 100%; font: inherit; font-size: var(--font-size-sm);
   border-radius: var(--radius-xs); color: var(--content-primary); background-color: var(--action-soft);
   text-decoration: none; overflow-wrap: anywhere; cursor: pointer;
-  transition: background-color var(--motion-hover-control) var(--motion-ease-standard);
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-:deep(.md-view .chat-smart-button:hover) { background-color: var(--surface-soft-hover); }
+:deep(.md-view .chat-smart-button:hover) {
+  background-color: var(--surface-soft-hover); border-color: var(--action-primary);
+}
+@media (prefers-reduced-motion: reduce) {
+  :deep(.md-view .chat-smart-button) { transition: none; }
+}
 :deep(.md-view .chat-smart-button:focus-visible) { outline: 2px solid var(--border-focus); }
 :deep(.md-view .chat-smart-button[data-smart-button-variant="icon"]) {
   justify-self: start; flex: 0 0 34px; justify-content: center;
@@ -1082,7 +1088,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.chat-smart-panel > .chat-smart-panel-body) { grid-row: 2; }
 :deep(.chat-smart-panel > footer) { grid-row: 3; border-block-start: 1px solid var(--content-divider); }
 :deep(.chat-smart-panel[data-smart-height]:not([data-smart-height="auto"]) > .chat-smart-panel-body) {
-  overflow: auto; overscroll-behavior-y: contain;
+  overflow: auto;
 }
 :deep(.chat-smart-panel-body:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: -2px; }
 :deep(.chat-smart-toolbar) { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); min-width: 0; }
@@ -1090,22 +1096,31 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
 :deep(.chat-smart-toolbar > .chat-smart-button:not([data-smart-button-variant="icon"])) { flex: 0 1 auto; }
 :deep(.chat-smart-timeline ol),
 :deep(.chat-smart-ranking ol) { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-:deep(.chat-smart-timeline ol) { --timeline-gap: 12px; gap: var(--timeline-gap); }
+:deep(.md-view .chat-smart-timeline ol) {
+  --timeline-dot-top: 5px;
+  --timeline-dot-size: 8px;
+  --timeline-dot-gap: 4px;
+  gap: 0;
+}
 :deep(.md-view .chat-smart-timeline li) {
-  position: relative; display: grid; gap: 3px; margin: 0; padding: 0 0 4px 23px;
+  position: relative; display: grid; gap: 3px; margin: 0; padding: 0 0 16px 23px;
   overflow-wrap: anywhere;
 }
+:deep(.md-view .chat-smart-timeline li:last-child) { padding-block-end: 4px; }
 :deep(.chat-smart-timeline li:not(:last-child)::after) {
   content: ''; position: absolute;
-  inset-block: 9px calc(-9px - var(--timeline-gap)); inset-inline-start: 8px;
+  inset-block: calc(var(--timeline-dot-top) + var(--timeline-dot-size) + var(--timeline-dot-gap))
+    calc(var(--timeline-dot-gap) - var(--timeline-dot-top));
+  inset-inline-start: 8px;
   inline-size: 2px; background: var(--content-divider);
 }
 :deep(.chat-smart-timeline li[data-smart-time-state="done"]:not(:last-child)::after) {
   background: color-mix(in srgb, var(--status-success) 55%, var(--content-divider));
 }
 :deep(.chat-smart-timeline li::before) {
-  content: ''; position: absolute; z-index: 1; inset-block-start: 5px; inset-inline-start: 5px;
-  inline-size: 8px; block-size: 8px; border-radius: 50%; background: var(--content-tertiary);
+  content: ''; position: absolute; z-index: 1; inset-block-start: var(--timeline-dot-top); inset-inline-start: 5px;
+  inline-size: var(--timeline-dot-size); block-size: var(--timeline-dot-size);
+  border-radius: 50%; background: var(--content-tertiary);
 }
 :deep(.chat-smart-timeline li[data-smart-time-state="done"]::before) { background: var(--status-success); }
 :deep(.chat-smart-timeline li[data-smart-time-state="current"]::before) {
@@ -1176,11 +1191,22 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   display: flex; justify-content: space-between; gap: 8px;
   padding-block: 3px; border-bottom: 1px solid var(--content-divider); overflow-wrap: anywhere;
 }
-:deep(.chat-smart-input),
-:deep(.chat-smart-checklist) {
+:deep(.chat-smart-input) {
   display: grid; gap: 6px; min-inline-size: 0; margin: 0; padding: 8px 10px;
   border: 0; border-radius: var(--radius-xs); background: var(--surface-soft);
   font-size: var(--font-size-sm);
+}
+:deep(.chat-smart-checklist) {
+  min-inline-size: 0; margin: 0; padding: 0; border: 0;
+  font-size: var(--font-size-sm);
+}
+:deep(.chat-smart-checklist > legend) {
+  max-inline-size: 100%; margin-block-end: 6px; padding: 0;
+  font-weight: 600; overflow-wrap: anywhere;
+}
+:deep(.chat-smart-checklist-items) {
+  display: grid; gap: 6px; padding: 8px 10px;
+  border-radius: var(--radius-xs); background: var(--surface-soft);
 }
 :deep(.chat-smart-input input) {
   padding-inline: 8px;
@@ -1428,7 +1454,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--content-divider);
 }
 :deep(.msg-link-buttons .interaction-option) {
-  flex: 0 1 auto; min-width: 0; max-width: 100%; height: auto; min-height: 34px;
+  flex: 1 1 auto; min-width: 0; max-width: 100%; height: auto; min-height: 34px;
   white-space: normal; word-break: normal; overflow-wrap: anywhere;
   line-height: var(--line-height-body);
 }
