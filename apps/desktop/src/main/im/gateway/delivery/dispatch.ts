@@ -26,7 +26,7 @@ interface DesktopImStream {
 type Outcome = 'accepted' | 'rejected' | 'unknown'
 type SendResult = Outcome | { outcome: Outcome; platformMessageIds?: readonly string[] }
 type AcceptedReplyFact = { platformMessageIds: readonly string[]; recipientSenderId: string; sentAtMs: number; sourceAttentionKind?: string }
-type Prepared = { sessionId: number; runId: string | null; eventKey: string; sealedEvent: string; clientId: string }
+type Prepared = { sessionId: number; runId: string | null; eventKey: string; sealedEvent: string; clientId: string; hasPending?: true }
 
 export async function stopDesktopImRun(host: IpcHost, event: ImReceivedMessage, connectionId: string, ownerPlatformUserId?: string) {
   const hash = createHash('sha256').update(JSON.stringify([connectionId, desktopImEventKey(event), 'stop'])).digest('hex')
@@ -455,6 +455,9 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                 rejected: null,
               })
               current.prompt = undefined
+            }
+            if (status === 'waiting' && options.group && item.hasPending) {
+              await sendNotice('waiting-queued', '已收到新消息，上一轮正在等待回答或确认。完成上一轮后会继续处理队列。')
             }
             if (['completed', 'failed', 'startup_failed', 'cancelled', 'unknown'].includes(status)) {
               const messages = [...current.messages.values()].filter(message => message.trim())

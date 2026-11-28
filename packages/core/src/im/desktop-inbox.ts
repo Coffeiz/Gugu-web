@@ -301,7 +301,8 @@ export function prepareDesktopImEvent(db: Kysely<Database>, ownerId: string, fie
         await storage.settleInbound({ ownerId: owner, platform, connectionId, eventKey: event.event_key, sessionId, runId })
       }
     }
-    return { sessionId, runId, eventKey: event.event_key,
+    const hasPending = chatType === 'group' && runId !== null && (await storage.claimInbound(scope)) !== null
+    return { sessionId, runId, eventKey: event.event_key, ...(hasPending ? { hasPending: true } : {}),
       sealedEvent: event.sealed_event.toString('base64'), clientId }
   })
 }

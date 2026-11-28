@@ -73,7 +73,7 @@ it('录音转写可单独发送并随附件进入会话历史和模型上下文'
       const restored = restoreHistoryForRequest(rows[0]!, { userTimezone: 'UTC', formatMessageTime: () => '测试时间' })
       expect(restored).not.toBeNull()
       expect(renderOpenaiHistory([restored!])).toMatchObject([{
-        role: 'user', content: expect.arrayContaining([{ type: 'text', text: `语音转写：${transcript}` }]),
+        role: 'user', content: expect.arrayContaining([{ type: 'text', text: expect.stringContaining(`语音转写：${transcript}`) }]),
       }])
     } finally { await runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }

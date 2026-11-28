@@ -132,6 +132,34 @@ it.each([
   expect(send).not.toHaveBeenCalled()
 })
 
+it('群聊等待回答期间有新收件时，通过持久收据提示排队', async () => {
+  const controller = new AbortController()
+  const connection = { platform: 'qq', botId: 'bot', ownerId: 'desktop' } as const
+  const event = { version: 1, kind: 'message.received', eventId: 'event', text: '测试', quotedText: null, botMentioned: true,
+    scope: { ...connection, chatType: 'group', chatId: 'group', platformUserId: 'user' } } as const
+  const actions: unknown[] = []
+  const request = async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'im.inbox.prepare') return { sessionId: 1, runId: 'run', eventKey: desktopImEventKey(event),
+      sealedEvent: 'AQ==', clientId: 'client', hasPending: true }
+    if (method === 'agent.sessions.events') return { status: 'waiting', cursor: 1, hasMore: false, events: [] }
+    if (method === 'im.inbox.delivery') {
+      expect(params?.noticeKey).toEqual(expect.any(String))
+      actions.push(params?.action)
+      if (params?.action === 'accepted') controller.abort()
+      return true
+    }
+    throw new Error('未预期的请求')
+  }
+  const send = vi.fn(async () => 'accepted' as const)
+  const dispatch = createDesktopImDispatch({ request: request as IpcHost['request'] }, {
+    async decryptStringAsync() { return { result: JSON.stringify({ event }), shouldReEncrypt: false } },
+  }, { resolveRunModelSelection: vi.fn() })
+  await dispatch({ connection, connectionId: 'a'.repeat(64), signal: controller.signal, authorize: async () => true, send,
+    group: { id: 'group', ownerPlatformUserId: 'owner', authorizeMessage: async () => true, authorizeFile: async () => false } })
+  expect(actions).toEqual(['begin', 'accepted'])
+  expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('已收到新消息') }), undefined)
+})
+
 it('投递已登记后绑定被撤销时结案且不发送平台回复', async () => {
   const controller = new AbortController()
   const connection = { platform: 'telegram', botId: 'bot', ownerId: 'desktop' } as const

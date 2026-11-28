@@ -24,6 +24,28 @@ async function fixture(fn:(root:string)=>Promise<void>){
  try{await fn(root)}finally{await rm(root,{recursive:true,force:true})}
 }
 const signal=()=>new AbortController().signal
+const silkWorker=fileURLToPath(new URL('../../../../../../packages/gateway/dist/runtime/media/silk-worker.js',import.meta.url))
+
+function assertSilkWav(actual:Uint8Array|null,reference:Buffer){
+ assert.ok(actual)
+ const wav=Buffer.from(actual)
+ assert.equal(wav.subarray(0,4).toString(),'RIFF')
+ assert.equal(wav.readUInt32LE(4),wav.length-8)
+ assert.equal(wav.subarray(8,12).toString(),'WAVE')
+ assert.equal(wav.readUInt16LE(20),1)
+ assert.equal(wav.readUInt16LE(22),1)
+ assert.equal(wav.readUInt32LE(24),16000)
+ assert.equal(wav.readUInt16LE(34),16)
+ assert.equal(wav.subarray(36,40).toString(),'data')
+ assert.equal(wav.readUInt32LE(40),wav.length-44)
+ assert.equal((wav.length-44)/2,Math.floor(reference.length/3))
+ for(let i=0;i+6<=reference.length;i+=6){
+  const a=reference.readInt16LE(i),b=reference.readInt16LE(i+2),c=reference.readInt16LE(i+4)
+  const offset=44+i/3*2
+  assert.equal(wav.readInt16LE(offset),Math.round((2*a+b)/3))
+  assert.equal(wav.readInt16LE(offset+2),Math.round((b+2*c)/3))
+ }
+}
 
 test('真实WAV探测保留毫秒精度，转码得到16k单声道PCM且全部临时目录清理',async()=>fixture(async root=>{
  const audio=createImAudioProcessor({temporaryRoot:root})
@@ -110,6 +132,21 @@ test('SILK帧边界拒绝截断、超大长度、零包、非法结束和预测P
  assert.equal(prepareSilk(valid,100),null);assert.deepEqual(await readdir(root),[])
 }))
 
+test('无FFmpeg或ffprobe也能将合成QQ语音转成16 kHz WAV',async()=>fixture(async root=>{
+ // 合成的 440 Hz 正弦波，腾讯 SILK 封装，40 ms。
+ const bytes=Buffer.from('AiMhU0lMS19WMzIAv8LGfYTJHW0sgtFJ2nAJpeJXJ6AupeNSDSli6w6M8cbeUwxTJDiHlPYa6J/qEeqhev9BALxEGAEIoO5yKnJTYGZb0hOtO0WZWILqwI/wrvVT51UeBduNit7NEpApxUSRvB42GDhQ8MrfPUzq+cCqp/qFZL8f','base64')
+ const absent=join(root,'absent-tool')
+ const audio=createImAudioProcessor({temporaryRoot:root,ffmpegPath:absent,ffprobePath:absent})
+ assert.equal(await audio.probeAudioDuration(bytes,'silk',signal()),.04)
+ const wav=await audio.toWav(bytes,signal())
+ assert.ok(wav)
+ assert.equal(wav.readUInt32LE(24),16000)
+ assert.equal(wav.readUInt16LE(22),1)
+ assert.equal(wav.readUInt32LE(40),1280)
+ assert.ok(wav.subarray(44).some(byte=>byte!==0))
+ assert.deepEqual(await readdir(root),[])
+}))
+
 test('真实pilk合成SILK经独立受限WASM解码，与24k PCM参考相符、标准头兼容且取消超时清理',{
  skip:process.env.GUGU_IM_FIXTURE_PYTHON?false:'需显式已安装pilk的隔离Python，仅用于生成合成参考，不参与生产解码',
 },async()=>fixture(async root=>{
@@ -119,17 +156,16 @@ test('真实pilk合成SILK经独立受限WASM解码，与24k PCM参考相符、�
  const bytes=await readFile(encoded),reference=await readFile(decoded)
  const normalized=prepareSilk(bytes,64*1024*1024)
  assert.ok(normalized)
- const audio=createImAudioProcessor({temporaryRoot:root}),duration=Math.round(reference.length/48000*1000)/1000
+ const absent=join(root,'absent-tool')
+ const audio=createImAudioProcessor({temporaryRoot:root,ffmpegPath:absent,ffprobePath:absent})
+ const duration=Math.round(reference.length/48000*1000)/1000
  assert.ok(duration>.9&&duration<1.1)
  assert.equal(await audio.probeAudioDuration(bytes,'silk',signal()),duration)
- const actual=await audio.toWav(bytes,signal());assert.ok(actual)
- const expected=await run('ffmpeg',['-nostdin','-hide_banner','-loglevel','error','-f','s16le','-ar','24000','-ac','1','-i',decoded,
-  '-ac','1','-ar','16000','-c:a','pcm_s16le','-f','wav','pipe:1'],{timeout:30_000,windowsHide:true,encoding:'buffer'})
- assert.ok(Buffer.from(actual).equals(expected.stdout),'真实WASM输出须与pilk参考经同参数ffmpeg转换的PCM一致')
- assert.equal(await audio.probeAudioDuration(actual,'wav',signal()),duration)
+ const actual=await audio.toWav(bytes,signal())
+ assertSilkWav(actual,reference)
  const standard=bytes[0]===2?bytes.subarray(1):bytes
  assert.deepEqual(await audio.toWav(standard,signal()),actual)
- await assert.rejects(run(process.execPath,[fileURLToPath(new URL('../../../../../../packages/gateway/dist/runtime/media/silk-worker.js',import.meta.url))],{timeout:5000,windowsHide:true}),
+ await assert.rejects(run(process.execPath,[silkWorker],{timeout:5000,windowsHide:true}),
   error=>!!error&&typeof error==='object'&&'code'in error&&error.code===1)
  assert.equal(await createImAudioProcessor({temporaryRoot:root,transcodeTimeoutMs:1}).toWav(bytes,signal()),null)
  assert.equal(await createImAudioProcessor({temporaryRoot:root,probeTimeoutMs:1}).probeAudioDuration(bytes,'silk',signal()),null)
@@ -139,7 +175,7 @@ test('真实pilk合成SILK经独立受限WASM解码，与24k PCM参考相符、�
  assert.deepEqual((await readdir(root)).sort(),['reference.pcm','synthetic.pcm','synthetic.silk'])
 }))
 
-test('四种采样率和音调/静音/扫频/噪声的标准与腾讯SILK经正式worker均与pilk逐字节一致',{
+test('四种采样率和音调/静音/扫频/噪声的标准与腾讯SILK WAV均符合pilk参考PCM',{
  skip:process.env.GUGU_IM_FIXTURE_PYTHON?false:'需显式已有pilk隔离Python以生成跨实现参考',timeout:120_000,
 },async()=>fixture(async root=>{
  const generate=`import pathlib,math,struct,pilk,random,sys,json
@@ -159,11 +195,9 @@ print(json.dumps(cases))`
  const audio=createImAudioProcessor({temporaryRoot:root})
  for(const name of JSON.parse(stdout) as string[]){
   const input=await readFile(join(root,name+'.silk'))
-  const expected=await run('ffmpeg',['-nostdin','-hide_banner','-loglevel','error','-f','s16le','-ar','24000','-ac','1','-i',join(root,name+'.reference.pcm'),
-   '-ac','1','-ar','16000','-c:a','pcm_s16le','-f','wav','pipe:1'],{timeout:30_000,windowsHide:true,encoding:'buffer'})
+  const reference=await readFile(join(root,name+'.reference.pcm'))
   for(const bytes of [input,input.subarray(1)]){
-   const actual=await audio.toWav(bytes,signal())
-   assert.ok(actual&&Buffer.from(actual).equals(expected.stdout),`${name}的真实SILK解码与参考不符`)
+   assertSilkWav(await audio.toWav(bytes,signal()),reference)
   }
  }
 }))

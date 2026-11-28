@@ -41,6 +41,34 @@ function wav(raw:Buffer):boolean{
  return false
 }
 
+function silkPcmToWav(pcm:Buffer,limit:number):Buffer|null{
+ const inputSamples=pcm.length/2
+ const outputSamples=Math.floor(inputSamples*2/3)
+ const dataBytes=outputSamples*2
+ if(!dataBytes||44+dataBytes>limit)return null
+ const output=Buffer.allocUnsafe(44+dataBytes)
+ output.write('RIFF')
+ output.writeUInt32LE(output.length-8,4)
+ output.write('WAVEfmt ',8)
+ output.writeUInt32LE(16,16)
+ output.writeUInt16LE(1,20)
+ output.writeUInt16LE(1,22)
+ output.writeUInt32LE(16000,24)
+ output.writeUInt32LE(32000,28)
+ output.writeUInt16LE(2,32)
+ output.writeUInt16LE(16,34)
+ output.write('data',36)
+ output.writeUInt32LE(dataBytes,40)
+ // 24 kHz 转 16 kHz。每个输出样本平均覆盖 1.5 个输入样本。
+ for(let i=0;i<outputSamples;i++){
+  const start=Math.floor(i*3/2)*2
+  const first=pcm.readInt16LE(start),second=pcm.readInt16LE(start+2)
+  const sample=i%2===0?(2*first+second)/3:(first+2*second)/3
+  output.writeInt16LE(Math.round(sample),44+i*2)
+ }
+ return output
+}
+
 /** 实际安全进程边界；与Core ASR dependencies同签名，不负责选模、密钥或网络。 */
 export function createImAudioProcessor(options:{
  nodePath?:string;ffmpegPath?:string;ffprobePath?:string;temporaryRoot?:string;maxInputBytes?:number;maxOutputBytes?:number
@@ -58,7 +86,7 @@ export function createImAudioProcessor(options:{
  async function processAudio(raw:Uint8Array,signal:AbortSignal,operation:'probe'|'wav'):Promise<Buffer|null>{
   check(signal)
   if(!(raw instanceof Uint8Array)||!raw.byteLength||raw.byteLength>inputLimit||active>=concurrency)return null
-  let demuxer=format(raw)
+  const demuxer=format(raw)
   const silk=demuxer?null:prepareSilk(raw,outputLimit)
   if(!demuxer&&!silk)return null
   // 在第一次await前复制已准入字节，避免调用方修改header或内容改变已验证输入。
@@ -67,7 +95,6 @@ export function createImAudioProcessor(options:{
   try{
    directory=await mkdtemp(join(options.temporaryRoot??tmpdir(),'gugu-im-audio-'))
    await chmod(directory,0o700);check(signal)
-   let input:Buffer=copy
    if(silk){
     const worker=fileURLToPath(new URL(import.meta.url.endsWith('.ts')?'./silk-worker.ts':'./silk-worker.js',import.meta.url))
     const binary=options.nodePath??process.execPath
@@ -78,12 +105,11 @@ export function createImAudioProcessor(options:{
      Math.min(outputLimit,silk.maximumPcmBytes),operation==='probe'?probeTimeout:Math.min(convertTimeout,30_000),signal,silk.bytes)
     if(!pcm||!pcm.length||pcm.length%2)return null
     if(operation==='probe')return Buffer.from(JSON.stringify({streams:[{codec_type:'audio'}],format:{duration:pcm.length/48000}}))
-    input=pcm;demuxer='s16le'
+    return silkPcmToWav(pcm,outputLimit)
    }
    const file=join(directory,'input.bin')
-   await writeFile(file,input,{flag:'wx',mode:0o600});check(signal)
+   await writeFile(file,copy,{flag:'wx',mode:0o600});check(signal)
    const source=['-max_alloc','33554432','-protocol_whitelist','file,pipe','-format_whitelist',demuxer!,'-f',demuxer!,
-    ...(silk?['-ar','24000','-ac','1']:[]),
     ...(demuxer==='mov'?['-enable_drefs','0']:[]),'-i',file]
    if(operation==='probe')return await execute(options.ffprobePath??'ffprobe',['-v','error',...source,'-select_streams','a:0','-show_entries','format=duration:stream=codec_type','-of','json'],directory,16_384,probeTimeout,signal)
    return await execute(options.ffmpegPath??'ffmpeg',['-nostdin','-hide_banner','-loglevel','error','-threads','1',...source,
