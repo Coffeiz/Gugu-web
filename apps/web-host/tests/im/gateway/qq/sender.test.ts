@@ -51,6 +51,21 @@ test('QQ明确被动ID失效才主动fallback，Markdown权限拒绝可纯文本
   assert.deepEqual(markdown.calls.map(call => call.body.msg_seq), [1, 2])
 })
 
+test('QQ群文件被动额度用尽时改发主动消息，服务端失败不盲目重发', async () => {
+  const f = fixture()
+  f.setHandler(async () => { if (f.calls.length === 1) throw new QqApiError('message', 400, 40034128); return { id: 'active-media-message' } })
+  const result = await f.sender.media(target, { fileInfo: 'real-uploaded-synthetic-file-info', image: true })
+  assert.equal(result.outcome, 'accepted')
+  assert.deepEqual(result.platformMessageIds, ['active-media-message'])
+  assert.equal(f.calls[0]!.body.msg_id, target.messageId)
+  assert.equal(f.calls[1]!.body.msg_id, undefined)
+  assert.deepEqual(f.calls[1]!.body, { msg_type: 7, media: { file_info: 'real-uploaded-synthetic-file-info' }, msg_seq: 1 })
+  const failed = fixture()
+  failed.setHandler(async () => { throw new QqApiError('message', 503) })
+  assert.deepEqual(await failed.sender.media(target, { fileInfo: 'real-uploaded-synthetic-file-info', image: true }), { outcome: 'unknown', platformMessageIds: [] })
+  assert.equal(failed.calls.length, 1)
+})
+
 test('QQ5xx、超时与缺消息ID均UNKNOWN不盲目主动重发', async () => {
   for (const mode of ['server', 'timeout', 'missing']) {
     const f = fixture()

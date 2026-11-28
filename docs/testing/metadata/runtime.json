@@ -1,0 +1,18 @@
+{
+  "packages/core/tests/runtime/desktop-host-shell.test.ts": {
+    "domain": "runtime",
+    "layer": "L2",
+    "owner": "packages/core/src/runtime/desktop-host-shell.ts",
+    "productionEntry": "桌面宿主 Shell 工具 → Windows 原生命令执行 → 桌面终端回显",
+    "keyBehavior": "Windows 中文与管道输出原样返回不乱码；命令不存在或脚本语法错误时给出可读错误文案",
+    "ci": "core-node"
+  },
+  "packages/core/tests/runtime/windows-output.test.ts": {
+    "domain": "runtime",
+    "layer": "L1",
+    "owner": "packages/sandbox/src/windows/output.ts",
+    "productionEntry": "桌面宿主 Shell 工具 → Windows 控制台输出解码 → 终端回显",
+    "keyBehavior": "控制台命令输出保留 UTF-8，OEM936 字节按 GBK 解码成中文",
+    "ci": "core-node"
+  }
+}

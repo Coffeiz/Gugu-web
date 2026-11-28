@@ -126,5 +126,13 @@
     "productionEntry": "apps/web-host/src/modules/undo/persistence/core-operations.ts",
     "keyBehavior": "PG 项目撤销的日志锁序、提交不确定与恢复协调；目录使用显式内存能力端口，不验收 Local 目录原语",
     "ci": "web-host-node"
+  },
+  "apps/ui/tests/projects/project-contact-select.test.ts": {
+    "domain": "projects",
+    "layer": "L1",
+    "owner": "apps/ui/src/views/Projects/components/ProjectContactSelect.vue",
+    "productionEntry": "项目联系人选择组件 → projectAccessKey.listContacts 联系人列表",
+    "keyBehavior": "只提供已有联系人与「无」选项，不开放手工输入；联系人为空时仍保留「无」",
+    "ci": "frontend-test"
   }
 }

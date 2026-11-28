@@ -286,5 +286,13 @@
     "productionEntry": "Node Host 与 @gugu/charts 的隔离渲染调用入口",
     "keyBehavior": "Mermaid 与 TeX 返回有效 PNG、请求上限和取消不返回残帧",
     "ci": "backend-ts"
+  },
+  "apps/desktop/tests/named-workspaces.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "apps/desktop/src/main/files/workspaces.ts",
+    "productionEntry": "桌面文件工作区登记 → fileWorkspaces 按名称创建与列出",
+    "keyBehavior": "按名称创建独立工作区目录，拒绝路径逃逸与重名覆盖",
+    "ci": "desktop-vitest"
   }
 }

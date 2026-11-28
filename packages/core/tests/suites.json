@@ -977,5 +977,7 @@
   "tests/scheduled-tasks/run-now-read.test.ts": {"markers": [], "layer": "L2", "purpose": "contract"},
   "tests/scheduled-tasks/shell.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
   "tests/agent/interactions/consume-secret.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
-  "tests/agent/interactions/grant-filesystem.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"}
+  "tests/agent/interactions/grant-filesystem.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"},
+  "tests/runtime/desktop-host-shell.test.ts": {"markers": ["process"], "layer": "L2", "purpose": "contract"},
+  "tests/runtime/windows-output.test.ts": {"markers": [], "layer": "L1", "purpose": "contract"}
 }

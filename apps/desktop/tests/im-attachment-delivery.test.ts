@@ -74,7 +74,8 @@ it('QQ 群媒体投递复核原群、群工具权限与发言人，且拒绝群�
     const encryption = { decryptStringAsync: async () => ({
       result: JSON.stringify({ event, attachments: [attachId] }), shouldReEncrypt: false,
     }) }
-    const sender = createDesktopImAttachmentSender(directory, encryption)
+    const onQqMessageFailure = vi.fn()
+    const sender = createDesktopImAttachmentSender(directory, encryption, undefined, onQqMessageFailure)
     const upload = vi.fn(async () => ({ file_info: 'synthetic-file-info' }))
     const media = vi.fn(async () => ({ outcome: 'accepted' as const }))
     let authorized = true
@@ -91,7 +92,10 @@ it('QQ 群媒体投递复核原群、群工具权限与发言人，且拒绝群�
     expect(await sender.send({ ...request, filePath: '/personal/private.txt', attachId: undefined })).toBe('rejected')
     expect(await sender.send(request)).toBe('accepted')
     expect(upload).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ target: 'groups', openid: 'group-1', data: bytes }))
-    expect(media).toHaveBeenCalledExactlyOnceWith({ id: 'group-1', chatType: 'group' }, expect.objectContaining({ fileInfo: 'synthetic-file-info' }), expect.any(AbortSignal), expect.any(Function))
+    expect(media).toHaveBeenCalledExactlyOnceWith(
+      { id: 'group-1', chatType: 'group', messageId: 'group-message:1' },
+      { fileInfo: 'synthetic-file-info', filename: '群附件.png', image: true },
+      expect.any(AbortSignal), expect.any(Function), onQqMessageFailure)
     fileAllowed = false
     expect(await sender.send(request)).toBe('rejected')
     unregister()

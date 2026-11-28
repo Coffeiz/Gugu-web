@@ -182,5 +182,13 @@
     "productionEntry": "Undo 保留 Worker → owner-scoped Local artifact 目录",
     "keyBehavior": "限定 owner 和操作目录，拒绝路径穿越及符号链接逃逸，删除不越出存储根",
     "ci": "node-webui"
+  },
+  "apps/ui/tests/files/file-drop-hover.test.ts": {
+    "domain": "files",
+    "layer": "L1",
+    "owner": "apps/ui/src/composables/files/useFileDropHover.ts",
+    "productionEntry": "文件区拖拽悬浮层 → useFileDropHover 覆盖层状态",
+    "keyBehavior": "嵌套进入不累积悬浮层，离开外边界或取消拖动后覆盖层被清理",
+    "ci": "frontend-test"
   }
 }

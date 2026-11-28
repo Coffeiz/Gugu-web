@@ -257,7 +257,9 @@ export function createQqSender(options: {
           if (!id) throw new QqApiError('message', 200, undefined, 'UNKNOWN')
           return id
         }
-        const id = await send(target)
+        // 被动回复次数或时效用尽（40034128）时改发主动消息，与文字回复同一降级口径，
+        // 避免群文件在一次会话里用满被动额度后永久失败。
+        const id = await withPassiveFallback(target, send)
         return { outcome: 'accepted', platformMessageIds: [id] }
       } catch (error) {
         onFailure?.(error instanceof QqApiError ? error.statusCode : undefined,

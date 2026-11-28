@@ -250,7 +250,7 @@ it('桌面收件与附件暂存原子提交，重复收件不创建附件', asyn
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
-it('群聊附件只能由当前群运行发送，个人路径仍仅限私聊', async () => {
+it('QQ群文字请求可以发送同群历史附件，拒绝其他群的附件', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gugu-im-inbox-group-file-'))
   const path = join(directory, 'test.db')
   try {
@@ -259,20 +259,25 @@ it('群聊附件只能由当前群运行发送，个人路径仍仅限私聊', a
     try {
       const connection = { platform: 'qq', connectionId: 'd'.repeat(64) }
       const attachId = 'b'.repeat(32)
-      const event = { ...connection, eventKey: 'group-file-event', sealedEvent: 'AQ==',
-        attachments: [{ attachId, name: '群图片', ext: 'png', mime: 'image/png', size: 3, voice: false }] }
+      const otherAttachId = 'c'.repeat(32)
+      const attachment = { attachId, name: '群图片', ext: 'png', mime: 'image/png', size: 3, voice: false }
+      const earlier = { ...connection, eventKey: 'a'.repeat(64), text: '', attachments: [attachment] }
+      await recordDesktopImGroupMessage(runtime.db, ownerId, earlier)
+      await recordDesktopImGroupMessage(runtime.db, ownerId, {
+        ...earlier, connectionId: 'e'.repeat(64), attachments: [{ ...attachment, attachId: otherAttachId }],
+      })
+      const event = { ...connection, eventKey: 'group-file-event', sealedEvent: 'AQ==' }
       await admitDesktopImEvent(runtime.db, ownerId, event)
       const prepared = await prepareDesktopImEvent(runtime.db, ownerId, { ...connection, chatType: 'group', ownerPlatformUserId: 'owner-platform-user' })
       if (!prepared) throw new Error('群收件未准备')
       const { identity } = await createSqliteAgentAdmission(runtime.db).prepare(ownerId, {
-        session_id: prepared.sessionId, message: '查看这张图', client_message_id: prepared.clientId, attachments: [attachId],
+        session_id: prepared.sessionId, message: '重新发送刚才的图片', client_message_id: prepared.clientId,
       })
       const delivery = (source: string, action: Parameters<typeof desktopImAttachmentDelivery>[3]) =>
         desktopImAttachmentDelivery(runtime.db, identity, source, action)
       expect(await delivery(attachId, 'begin')).toMatchObject({ state: 'new', ...connection, eventKey: event.eventKey })
       expect(await delivery(attachId, 'accepted')).toEqual({ state: 'accepted' })
-      expect(await delivery('/personal/private.png', 'begin')).toBeNull()
-      expect(await delivery('c'.repeat(32), 'begin')).toBeNull()
+      expect(await delivery(otherAttachId, 'begin')).toBeNull()
     } finally { await runtime.close() }
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
