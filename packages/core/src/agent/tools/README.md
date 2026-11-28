@@ -17,6 +17,7 @@
 | 知识 | [knowledge](./knowledge/README.md) |
 | MCP 管理 | [mcp-management](./mcp-management/README.md) |
 | 记忆 | [memory](./memory/README.md) |
+| 媒体生成 | [media-generation](./media-generation/README.md) |
 | 元工具 | [meta](./meta/README.md) |
 | 笔记 | [note](./note/README.md) |
 | 总览 | [overview](./overview/README.md) |

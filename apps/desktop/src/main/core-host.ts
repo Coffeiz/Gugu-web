@@ -38,6 +38,7 @@ interface Manifest {
 }
 export async function verifyArtifact(
   directory: string,
+  options: { integrity?: boolean } = {},
 ): Promise<{ node: string; entry: string; workerEntry: string; agentRuntimeModule: string; manifest: Manifest }> {
   const root = await realpath(directory)
   const bytes = await readFile(join(root, 'manifest.json'))
@@ -73,20 +74,23 @@ export async function verifyArtifact(
   for (const required of [executable, sea ? 'bridge.cjs' : manifest.entry, workerEntry, agentRuntimeModule])
     if (!Object.hasOwn(manifest.files, required))
       throw new DesktopError('artifact_invalid', 'Node 制品缺少必要文件')
-  const actual = new Set<string>()
-  async function inventory(path: string) {
-    for (const item of await readdir(path, { withFileTypes: true })) {
-      const file = join(path, item.name)
-      if (item.isDirectory()) await inventory(file)
-      else if (item.isFile()) actual.add(relative(root, file).split(sep).join('/'))
-      else throw new DesktopError('artifact_invalid', 'Node 制品包含链接或特殊资源')
-    }
-  }
-  await inventory(root)
-  actual.delete('manifest.json')
-  if (actual.size !== Object.keys(manifest.files).length)
-    throw new DesktopError('artifact_invalid', 'Node 制品资源集合不匹配')
+  // 启动路径可跳过全目录哈希；构建、预览和显式制品检查仍默认执行完整校验。
   const files = Object.entries(manifest.files) as [string, string][]
+  const actual = options.integrity === false ? null : new Set<string>()
+  if (actual) {
+    async function inventory(path: string) {
+      for (const item of await readdir(path, { withFileTypes: true })) {
+        const file = join(path, item.name)
+        if (item.isDirectory()) await inventory(file)
+        else if (item.isFile()) actual.add(relative(root, file).split(sep).join('/'))
+        else throw new DesktopError('artifact_invalid', 'Node 制品包含链接或特殊资源')
+      }
+    }
+    await inventory(root)
+    actual.delete('manifest.json')
+    if (actual.size !== files.length)
+      throw new DesktopError('artifact_invalid', 'Node 制品资源集合不匹配')
+  }
   async function verifyFile([name, hash]: [string, string]) {
     if (
       name.includes('\\') ||
@@ -95,19 +99,20 @@ export async function verifyArtifact(
       name.split('/').some((part) => !part || part === '.' || part === '..') ||
       typeof hash !== 'string' ||
       !/^[a-f0-9]{64}$/.test(hash) ||
-      !actual.has(name)
+      (actual !== null && !actual.has(name))
     )
       throw new DesktopError('artifact_invalid', 'Node 制品资源路径或摘要无效')
     const file = await realpath(resolve(root, name))
-    if (
-      !file.startsWith(root + sep) ||
-      createHash('sha256')
-        .update(await readFile(file))
-        .digest('hex') !== hash
-    )
+    if (!file.startsWith(root + sep))
+      throw new DesktopError('artifact_invalid', 'Node 制品完整性验证失败')
+    if (options.integrity !== false && createHash('sha256').update(await readFile(file)).digest('hex') !== hash)
       throw new DesktopError('artifact_invalid', 'Node 制品完整性验证失败')
   }
-  if (process.platform === 'win32') {
+  if (options.integrity === false) {
+    await Promise.all([executable, sea ? 'bridge.cjs' : manifest.entry, workerEntry, agentRuntimeModule]
+      .filter((name, index, names) => names.indexOf(name) === index)
+      .map(name => verifyFile([name, manifest.files[name]!])))
+  } else if (process.platform === 'win32') {
     // 并行处理文件读取，减少 Windows 逐个打开小文件的等待，并限制同时读取的文件数。
     const batchSize = 8
     for (let start = 0; start < files.length; start += batchSize) {

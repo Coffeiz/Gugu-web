@@ -23,9 +23,11 @@ import { createWechatMedia } from '@gugu/gateway/wechat'
 import { WECHAT_MISSING_VOICE_NOTICE, createWechatSender } from '@gugu/gateway/wechat'
 import { connectWechatPolling } from '@gugu/gateway/wechat'
 import { createPlatformMedia, type PlatformAttachmentStore } from './media/platform.js'
-import { createImInboundPreflight, type ImPreflightPorts, type ImPreflightScope, GatewayConnectionCleanupError, parseGatewayInteraction, readImConversationScope, readImReceivedMessage, receiveMessage, type GatewayClock, type GatewayConnection } from '@gugu/gateway'
+import { createImInboundPreflight, type ImPreflightPorts, type ImPreflightScope, GatewayConnectionCleanupError, qqInteractionEventId, readImConversationScope, readImReceivedMessage, receiveMessage, type GatewayClock, type GatewayConnection } from '@gugu/gateway'
 import { ImGatewayAdmissionError, type ImGatewayAdmissionPort } from './inbound/admission.js'
 import { chooseImInstantReactionEmoji } from '@gugu/core/im/shortcut'
+import { groupDisabledNoticeText } from '@gugu/gateway'
+import type { createPostgresGroupDisabledNotice } from './group-disabled-notice.js'
 
 type Payload = Record<string, unknown>
 type Scope = Omit<ImPreflightScope, 'eventId'>
@@ -63,6 +65,7 @@ function trustedScope(spec: TrustedGatewayBot, payload: Payload): Scope {
 /** Supervisor实际连接工厂：平台协议→Core预检→真实媒体暂存→密封→Node专属队列。 */
 export function createPlatformConnections(options: {
   redis: RedisCommandClient
+  groupDisabledNotice?: ReturnType<typeof createPostgresGroupDisabledNotice>
   inbound?: Pick<ReturnType<typeof createPostgresImInbox>, 'enqueue' | 'telegram'>
   secretKey: string
   services(spec: TrustedGatewayBot): GatewayConnectionServices | Promise<GatewayConnectionServices>
@@ -89,6 +92,14 @@ export function createPlatformConnections(options: {
     if (!spec || !['feishu', 'qq', 'wechat', 'telegram'].includes(spec.platform) || !/^[1-9]\d*$/u.test(spec.id) ||
       spec.key !== `${spec.platform}:${spec.id}` || active.has(spec.key) || blocked.has(spec.key) || !spec.owner || !spec.credentials?.appSecret || typeof spec.credentials.appId !== 'string') throw invalid()
     const binding: NodeImBotBinding = Object.freeze({ platform: spec.platform, botId: spec.id, ownerId: spec.owner })
+    async function handleDisabledGroup(payload: Payload, signal: AbortSignal,
+      send: (group: string, authorize: () => Promise<boolean>) => Promise<'accepted' | 'rejected' | 'unknown'>) {
+      if (!options.groupDisabledNotice || payload.chat_type !== 'group'
+        || (payload.group_mentioned !== true && payload.bot_mentioned !== true)) return false
+      const group = trustedScope(spec, payload).chatId
+      if (!group) return false
+      return options.groupDisabledNotice(spec, group, signal, authorize => send(group, authorize))
+    }
     const services = await options.services(spec)
     if (!services?.admission || ['begin', 'finish', 'markUnknown'].some(name => typeof services.admission[name as keyof ImGatewayAdmissionPort] !== 'function')) throw invalid()
     for (const name of ['authorize', 'inspectSecret', 'applySecret', 'bindQqOwnerIfUnbound', 'consumeBinding', 'consumeTextChoice', 'decideShortcut', 'cancel'] as const)
@@ -176,7 +187,10 @@ export function createPlatformConnections(options: {
         connection = await connect({ botId: spec.id, ownerId: spec.owner,
           inbox: options.inbound?.telegram(binding, previousInbox) ?? previousInbox, signal,
           sleep: options.clock ? (ms, signal) => options.clock!.sleep(ms, signal) : undefined,
-          preflight: (p, signal) => { mediaFeedback = undefined
+          preflight: async (p, signal) => { mediaFeedback = undefined
+            if (await handleDisabledGroup(p, signal, async (chatId, authorize) =>
+              (await out.text({ chatId, chatType: 'group', replyToMessageId: String(p.message_id) },
+                groupDisabledNoticeText, { signal, authorize })).outcome)) return 'consumed'
             return preflight(p, p.attachments.length > 0 || p.quoted_attachments.length > 0, signal,
               [...p.attachments, ...p.quoted_attachments].map((item, index) => `${index}:${String(item.file_id)}`), undefined, authorize => {
                 mediaFeedback = { route: Object.fromEntries(['platform', 'owner_user_id', 'bot_id', 'channel_id', 'chat_type', 'chat_id', 'platform_user_id', 'message_id'].map(key => [key, p[key]])), authorize }
@@ -200,9 +214,7 @@ export function createPlatformConnections(options: {
             await api.call(spec.credentials.appSecret, 'answerCallbackQuery', { payload: { callback_query_id: data.id, text: result.accepted ? '已收到选择' : '交互已失效', show_alert: !result.accepted }, signal })
             if(result.accepted){
               try{
-                const message=object(data.message)?data.message:{},chat=object(message.chat)?message.chat:{}
-                if(!/^-?[1-9]\d*$/u.test(String(chat.id))||!Number.isSafeInteger(Number(chat.id))||!Number.isSafeInteger(message.message_id)||Number(message.message_id)<1)throw invalid()
-                await api.call(spec.credentials.appSecret,'editMessageReplyMarkup',{payload:{chat_id:chat.id,message_id:message.message_id,reply_markup:{inline_keyboard:[]}},signal})
+                await out.clearInteractionKeyboard(data, signal)
               }catch{
                 // 已提交的业务消费不因键盘清理失败回滚，也不让poller重做业务。
                 try{options.report?.('callback-cleanup-pending')}catch{/* 固定诊断失败不改变消费事实。 */}
@@ -247,9 +259,8 @@ export function createPlatformConnections(options: {
           onEvent: async (kind, data, signal) => {
             assertAccepting()
             if (kind === 'INTERACTION_CREATE') {
-              const { eventId } = parseGatewayInteraction('qq', data)
               // 平台回执只确认收件。按钮授权和一次性消费仍由宿主处理。
-              const receipt = await out.ackInteraction(eventId, 0, signal)
+              const receipt = await out.ackInteraction(qqInteractionEventId(data), 0, signal)
               if (!receipt.acknowledged) options.report?.('qq-interaction-ack-failed')
               signal.throwIfAborted()
               const result = await services.callback!({ binding, platform: 'qq', data: { ...data } }, signal)
@@ -257,6 +268,10 @@ export function createPlatformConnections(options: {
               return
             }
             const parsed = parseQqMessage(kind, data, { botId: spec.id, ownerId: spec.owner })
+            if (parsed && (parsed.payload.bot_mentioned || kind === 'GROUP_AT_MESSAGE_CREATE')
+              && await handleDisabledGroup(parsed.payload, signal, async (id, authorize) =>
+              (await out.text({ id, chatType: 'group', messageId: parsed.payload.message_id },
+                groupDisabledNoticeText, signal, authorize)).outcome)) return
             let freshAuthorize:(()=>Promise<boolean>)|undefined
             if (!parsed || await preflight({ ...parsed.payload, text: parsed.preflight.text }, parsed.mediaItems.length > 0 || parsed.payload.emoji_refs.length > 0, signal,
               parsed.mediaItems.map(item => `${item.source}:${item.sourcePlatformMessageId ?? parsed.payload.platform_message_id}:${item.attachmentIndex}`),async authorize=>{freshAuthorize=authorize}) === 'consumed') return
@@ -303,6 +318,8 @@ export function createPlatformConnections(options: {
         connection = await createFeishuConnection({ appId: spec.credentials.appId, appSecret: spec.credentials.appSecret, signal,
           wsNetwork: options.feishuNetwork(spec), createSdkClient: options.createFeishuSdk, transport: options.transport?.(spec, 'discovery'),
           onMessage: async (data, signal) => { const parsed = parse(data, 'im.message.receive_v1'); if (!parsed || parsed.kind !== 'message') return
+            if (await handleDisabledGroup(parsed.payload, signal, async (group, authorize) =>
+              (await out.text(group, groupDisabledNoticeText, signal, authorize)).outcome)) return
             let authorizeMediaNotice: (() => Promise<boolean>) | undefined
             if (await preflight({ ...parsed.payload, text: parsed.preflight.text }, parsed.mediaItems.length > 0 || Array.isArray(parsed.preflight.attachments) && parsed.preflight.attachments.length > 0, signal,
               parsed.mediaItems.map(item => `${item.messageId}:${item.resourceType}:${item.resourceKey}`), async authorize => {

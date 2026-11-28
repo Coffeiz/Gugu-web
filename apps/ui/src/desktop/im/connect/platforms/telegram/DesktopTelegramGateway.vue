@@ -11,7 +11,7 @@ import type { DesktopImGroupSettingsPatch } from '@/im/connect/desktopAdapter'
 const props = defineProps<{ savedSnapshot?: DesktopTelegramSnapshot }>()
 const emit = defineEmits<{ configured: [value: boolean] }>()
 
-const { t, locale } = i18n.global
+const { t } = i18n.global
 const available = hasDesktopTelegramGateway()
 const snapshot = ref<DesktopTelegramSnapshot | null>(null)
 const busy = ref(false)
@@ -83,10 +83,6 @@ async function toggleConnection() {
   }
 }
 
-function formatTime(value: string) {
-  return new Date(value).toLocaleString(locale.value)
-}
-
 onMounted(() => { if (available) void run({ action: 'status' }) })
 </script>
 
@@ -121,14 +117,6 @@ onMounted(() => { if (available) void run({ action: 'status' }) })
       @group-memory="saveGroupSettings({ groupMemoryEnabled: $event })"
       @member-memory="saveGroupSettings({ memberMemoryEnabled: $event })"
       @toggle-tool="toggleTool" />
-    <template v-if="snapshot?.bound">
-      <h4 class="pm-section-label">{{ t('desktopTelegram.inbox') }}</h4>
-      <p v-if="!snapshot.messages.length" class="pm-field-hint">{{ t('desktopTelegram.empty') }}</p>
-      <div v-for="message in snapshot.messages.slice().reverse()" :key="message.id" class="pm-bot-item">
-        <time class="pm-field-hint" :datetime="message.receivedAt">{{ formatTime(message.receivedAt) }}</time>
-        <div>{{ message.text }}</div>
-      </div>
-    </template>
   </ImBotCard>
   <p v-if="error" class="pm-msg err" role="alert">{{ error }}</p>
 </template>

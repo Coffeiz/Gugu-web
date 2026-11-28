@@ -21,9 +21,9 @@ const provider = ref<MailProvider | null>(
   props.account ? mailProviderForAccount(props.account).id : null,
 )
 const selectedProvider = computed(() => mailProviders.find(option => option.id === provider.value))
-// 桌面新接入 Gmail 使用 Google 授权，重新连接时沿用账号已保存的认证方式。
-const oauthProvider = computed(() => props.account?.oauthProvider
-  ?? (!props.account && oauth && provider.value === 'gmail' ? 'gmail' : null))
+// Outlook 继续使用 OAuth；Gmail 统一通过 IMAP/SMTP 应用专用密码连接。
+const oauthProvider = computed(() => props.account?.oauthProvider === 'outlook'
+  ? 'outlook' : (!props.account && oauth && provider.value === 'outlook' ? 'outlook' : null))
 const loadingOAuthProviders = ref(Boolean(oauth && !oauth.preview && (!props.account || props.account.oauthProvider)))
 const oauthAvailable = computed(() => oauthProvider.value !== null && oauthProviders.value.includes(oauthProvider.value))
 const oauthHint = computed(() => {

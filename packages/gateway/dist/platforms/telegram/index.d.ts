@@ -17,6 +17,7 @@ export declare function createTelegramAdapter(options: {
         close(): Promise<void>;
     };
     sender: {
+        clearInteractionKeyboard(data: Record<string, unknown>, signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<void>;
         text(target: import("./sender.js").TelegramTarget, text: string, args?: {
             replyMarkup?: Record<string, unknown>;
             signal?: AbortSignal;

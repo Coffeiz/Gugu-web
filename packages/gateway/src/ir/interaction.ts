@@ -30,5 +30,6 @@ export function matchesImInteractionScope(event: ImReceivedInteraction,
   const { connection, action } = event
   return connection.ownerId === scope.ownerId && connection.botId === scope.botId
     && connection.platform === scope.platform && (!action.chatType || action.chatType === scope.chatType)
-    && (scope.chatType === 'group' ? action.chatId === scope.chatId : action.operator === scope.platformUserId)
+    && action.operator === scope.platformUserId
+    && (scope.chatType !== 'group' || action.chatId === scope.chatId)
 }

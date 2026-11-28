@@ -63,7 +63,7 @@ async function run(work: GatewayWork) {
 
   const handle = await createFeishuConnection({
     appId: work.appId, appSecret: work.appSecret, readyTimeoutMs: work.readyTimeoutMs, signal,
-    wsNetwork: createFeishuWsNetwork({ allowDirect: true }),
+    wsNetwork: createFeishuWsNetwork({ allowDirect: true, resolve: desktopTransportOptions().resolve }),
     transport: createNodeProviderTransport(desktopTransportOptions(false, async () => work.proxy)),
     async onMessage(data, eventSignal) { await forward(false, data, eventSignal) },
     onCardAction: (data, eventSignal) => forward(true, data, eventSignal),

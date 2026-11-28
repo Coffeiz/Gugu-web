@@ -8,6 +8,8 @@ import AutoImport from 'unplugin-auto-import/vite'
 import { ArcoResolver } from 'unplugin-vue-components/resolvers'
 import { legacySkillKeys } from '../../packages/core/src/agent/skills/legacy-keys.ts'
 
+const __dirname = import.meta.dirname
+
 // 仅将内置技能的公开名称和描述注入对话卡片，技能正文留在宿主。
 const builtinSkillCards = Object.fromEntries([...legacySkillKeys].flatMap(([id, key]) => {
   const metadata = readFileSync(resolve(__dirname, '../../packages/core/resources/skills', `${key}.md`), 'utf8')

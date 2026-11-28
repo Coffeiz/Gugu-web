@@ -41,3 +41,20 @@ it('QQ 无消息 ID 回调仍需绑定用户和已投递的提示', async () => 
   ])
   expect(request).toHaveBeenCalledWith('im.inbox.prompt', expect.objectContaining({ platform: 'qq', messageId: null, promptId: 7 }))
 })
+
+it('QQ 群确认只能由原群中的任务发起人提交', async () => {
+  const connection = { platform: 'qq', ownerId: 'desktop', botId: 'app' } as const
+  const user = qqPrivateInteraction.user_openid
+  const scope = 'a'.repeat(64)
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) =>
+    method === 'im.inbox.prompt' && params?.initiator === user && params.connectionId === scope
+      ? { sessionId: 8, runId: 'run' } : null)
+  const config = { model: 'synthetic' } as Awaited<ReturnType<Parameters<typeof createDesktopImCallback>[1]['resolveRunModel']>>
+  const callback = createDesktopImCallback({ request: request as IpcHost['request'] }, { resolveRunModel: async () => config })
+  const payload = { ...qqPrivateInteraction, group_openid: 'group' }
+  const authorize = async () => true
+  expect(await callback(connection, scope, user, payload, authorize, 'other-group')).toMatchObject({ accepted: false })
+  expect(await callback(connection, scope, 'other-user', { ...payload, user_openid: 'other-user' }, authorize, 'group')).toMatchObject({ accepted: false })
+  expect(await callback(connection, scope, user, payload, authorize, 'group')).toMatchObject({ accepted: true })
+  expect(request.mock.calls.filter(([method]) => method === 'agent.sessions.respond')).toHaveLength(1)
+})

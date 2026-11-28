@@ -1,11 +1,34 @@
+; 支持可选的整机安装时，使用当前令牌可获得的最高权限级别。
+!ifndef MULTIUSER_EXECUTIONLEVEL
+  !define MULTIUSER_EXECUTIONLEVEL Highest
+!endif
+
 !include "WinMessages.nsh"
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
 
+!macro GuguUpgradeExistingInstall
+  ReadRegStr $0 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${If} $0 != ""
+    GetFullPathName $0 "$0\."
+    GetFullPathName $1 "$INSTDIR\."
+  ${EndIf}
+  ${If} $0 == ""
+  ${OrIf} $0 != $1
+    !insertmacro uninstallOldVersion SHELL_CONTEXT
+    !insertmacro handleUninstallResult SHELL_CONTEXT
+  ${EndIf}
+!macroend
+
 !macro customHeader
   ; 允许目录页接受盘符根目录，进入安装页前会改写为应用子目录。
   AllowRootDirInstall true
-  ShowInstDetails show
+  ShowInstDetails nevershow
+  !ifndef BUILD_UNINSTALLER
+    !ifdef GUGU_INSTALL_SECTION_DIR
+      !cd "${GUGU_INSTALL_SECTION_DIR}"
+    !endif
+  !endif
 !macroend
 
 !macro customPageAfterChangeDir
@@ -30,27 +53,18 @@
   FunctionEnd
 !macroend
 
-; NSIS 的解包进度仅覆盖当前阶段，不能作为整个安装的百分比。
 !ifndef BUILD_UNINSTALLER
 Function GuguShowInstallProgress
-  Push $0
-  Push $1
-  FindWindow $0 "#32770" "" $HWNDPARENT
-  GetDlgItem $0 $0 1004
-  ${If} $0 != 0
-    System::Call 'user32::GetWindowLong(p r0, i -16) i .r1'
-    IntOp $1 $1 | 0x08
-    System::Call 'user32::SetWindowLong(p r0, i -16, i r1)'
-    SendMessage $0 0x040A 1 35
-  ${EndIf}
-  DetailPrint "正在准备安装并解包应用文件…"
-  Pop $1
-  Pop $0
+  DetailPrint "正在写入应用文件…"
+  ; NSIS 默认在 InstFiles 页禁用取消按钮；安装步骤支持取消确认后显式启用。
+  GetDlgItem $0 $HWNDPARENT 2
+  EnableWindow $0 1
 FunctionEnd
+; electron-builder 的 MUI_ABORTWARNING 已提供取消确认，避免重复定义 .onUserAbort。
 !endif
 
 !macro customInstall
-  SetDetailsPrint listonly
+  SetDetailsPrint textonly
   DetailPrint "应用文件已写入，安装信息和快捷方式已处理。"
   DetailPrint "正在注册咕咕命令行工具…"
   ${If} $installMode == "all"

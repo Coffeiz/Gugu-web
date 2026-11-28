@@ -61,7 +61,7 @@ export function createMailService(store: MailStore, transport: MailTransport) {
       if (command.accountId && !previous) throw new MailError(404, '邮箱账户不存在')
       const account = { ...command.account, id: command.accountId ?? randomUUID() }
       if (!account.password) {
-        if (!previous || previous.oauth || previous.email !== account.email || previous.username !== account.username || previous.imapHost !== account.imapHost)
+        if (!previous || previous.email !== account.email || previous.username !== account.username || previous.imapHost !== account.imapHost)
           throw new MailError(400, '请填写邮箱授权码')
         account.password = previous.password
       }

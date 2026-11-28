@@ -1,7 +1,7 @@
 export * from './contracts.js';
 export * from './runtime.js';
 export * from './ports.js';
-export { parseGatewayInteraction } from './interaction.js';
+export { parseGatewayInteraction, qqInteractionEventId } from './interaction.js';
 export * from './ir/inbound.js';
 export * from './runtime/admission.js';
 export * from './ir/interaction.js';
@@ -20,3 +20,4 @@ export * from './runtime/media-rollback.js';
 export * from './runtime/media-delivery.js';
 export * from './runtime/command-reply.js';
 export * from './runtime/receive-message.js';
+export * from './runtime/group-disabled-notice.js';

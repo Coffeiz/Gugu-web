@@ -18,7 +18,8 @@ export async function deliverImPrompt(ports) {
 }
 /** 原生卡片只投递可消费的单选动作，自定义回复沿用普通文本续接。 */
 export function projectImChoiceButtons(prompt, includeTextHint = false) {
-    if (prompt.selection_mode === 'multiple' || (prompt.task_paused !== true && prompt.kind !== 'choice' && prompt.kind !== 'question'))
+    if (prompt.resolved === true || prompt.secret_fields?.length || prompt.selection_mode === 'multiple'
+        || (prompt.task_paused !== true && prompt.kind !== 'confirm' && prompt.kind !== 'choice' && prompt.kind !== 'question'))
         return null;
     const options = prompt.options.filter(option => Boolean(option.token));
     if (!options.length)

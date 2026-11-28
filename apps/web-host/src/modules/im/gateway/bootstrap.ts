@@ -37,6 +37,7 @@ import { createImInteractionRecovery } from './interactions/recover.js'
 import { createGatewayBotConfig, createGatewayConfigChangePublisher, type TrustedGatewayBot } from './bot-config.js'
 import { createGatewaySupervisor } from '@gugu/gateway'
 import { createPlatformConnections } from './connections.js'
+import { createPostgresGroupDisabledNotice } from './group-disabled-notice.js'
 import { createQqSocketFactory } from '@gugu/gateway/qq'
 import { createQqMessagePreparer } from './platforms/qq/prepare.js'
 import { readTrustedQqMessageFormat } from './reply-settings.js'
@@ -196,6 +197,8 @@ export function createNodeImHostRuntime(options: NodeImHostOptions) {
       const config = createGatewayBotConfig({ pool: options.pool, secretKey: options.secretKey, normalizeOwner: normalizeOwnerId, supportedPlatforms })
       const admission = createPostgresImGatewayAdmission({ pool: options.pool, secretKey: options.secretKey, supportedPlatforms })
       const connections = createPlatformConnections({ redis: gatewayRedis, inbound, secretKey: options.secretKey, sanitizeText: stripThinking,
+        groupDisabledNotice: createPostgresGroupDisabledNotice(options.pool, async bot =>
+          (await config.read()).some(current => current.key === bot.key && current.owner === bot.owner && current.revision === bot.revision)),
         qqSocket: createQqSocketFactory({ allowDirect: true }), feishuNetwork: () => createFeishuWsNetwork({ allowDirect: true }),
         ...options.testing?.platform, report,
         services: () => ({ controls: controls.ports, admission, attachments, callback: (...args) => native.callback(...args), prepareQq: qq.prepare,

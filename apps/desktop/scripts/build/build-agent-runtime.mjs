@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const root = resolve(desktop, '../..')
 const core = resolve(root, 'packages/core')
 const outfile = resolve(desktop, '.tools/agent/runtime.mjs')

@@ -3,8 +3,8 @@ import type { RunIdentity, ToolResult } from '../../models.js'
 import type { ToolDefinition } from '../contracts.js'
 import { downloadSendFileImage, type RemoteSendFileImage } from './send-file-image.js'
 
-const sourceKeys = ['file', 'attach_id', 'url'] as const
-type Source = { key: 'file'; value: string } | { key: 'attach_id'; value: string }
+const sourceKeys = ['path', 'attach_id', 'url'] as const
+type Source = { key: 'path'; value: string } | { key: 'attach_id'; value: string }
 type Artifact = { name: string; ext: string; size_bytes: number } & ({ file_path: string } | { attach_id: string })
 type RemoteImagePort = {
   open: Parameters<typeof downloadSendFileImage>[1]
@@ -13,7 +13,7 @@ type RemoteImagePort = {
 }
 
 const input = z.object({
-  file: z.string().trim().min(1).max(4096).regex(/^\/(personal|project|workspace)\/[^\\\p{Cc}]+$/u).optional(),
+  path: z.string().trim().min(1).max(4096).regex(/^\/(personal|project|workspace)\/[^\\\p{Cc}]+$/u).optional(),
   attach_id: z.string().trim().regex(/^[A-Za-z0-9_-]{1,128}$/u).optional(),
   url: z.string().trim().min(1).max(4096).optional(),
   title: z.string().max(4096).optional(), source_type: z.enum(sourceKeys).optional(),
@@ -31,10 +31,10 @@ export function createScheduledSendFileTool(resolve: (identity: RunIdentity, sou
     definition: { name: 'send_item', schema: { type: 'function', function: {
       name: 'send_item', description: '用户要求发送文件时，按文件库沙盒绝对路径、已有聊天附件或公网图片 URL 准备本轮投递。' + (archiveFolder ? '文件夹使用 kind=folder 和沙盒绝对路径，打包为 ZIP 随本轮发送。' : ''),
       parameters: { type: 'object', additionalProperties: false, properties: {
-        file: { type: 'string', description: '文件的沙盒绝对路径，例如 /personal/报告.pdf' }, attach_id: { type: 'string' }, url: { type: 'string' },
-        ...(archiveFolder ? { kind: { type: 'string', enum: ['folder'] }, path: { type: 'string' } } : {}),
+        path: { type: 'string', description: '文件的沙盒绝对路径，例如 /personal/报告.pdf' }, attach_id: { type: 'string' }, url: { type: 'string' },
+        ...(archiveFolder ? { kind: { type: 'string', enum: ['folder'] } } : {}),
         title: { type: 'string' }, source_type: { type: 'string', enum: [...sourceKeys] },
-      }, oneOf: [...sourceKeys.map(key => ({ required: [key] })), ...(archiveFolder ? [{ required: ['kind', 'path'] }] : [])] },
+      }, oneOf: sourceKeys.map(key => ({ required: [key] })) },
     } } },
     effect: 'read',
     effectForInput: args => (archiveFolder && folderInput.safeParse(args).success) || input.parse(args).url !== undefined ? 'write' : 'read',
@@ -47,7 +47,7 @@ export function createScheduledSendFileTool(resolve: (identity: RunIdentity, sou
         return { kind: 'completed', successful: true, mutated: true,
           value: { ok: true, message: '已将文件夹打包为 ZIP，附件随本轮结果投递。' }, artifact }
       }
-      const { file, attach_id, url, title } = input.parse(args)
+      const { path, attach_id, url, title } = input.parse(args)
       const label = [...(title ?? '').trim()].slice(0, 80).join('')
       const value = { ok: true, message: '已准备好附件，将随本轮结果尝试投递，是否送达以后续回执为准。' }
       if (url !== undefined) {
@@ -62,7 +62,7 @@ export function createScheduledSendFileTool(resolve: (identity: RunIdentity, sou
           img_width: width, img_height: height,
         } }
       }
-      const source: Source = file !== undefined ? { key: 'file', value: file } : { key: 'attach_id', value: attach_id! }
+      const source: Source = path !== undefined ? { key: 'path', value: path } : { key: 'attach_id', value: attach_id! }
       const artifact = await resolve(scope.identity, source, scope.signal)
       scope.signal.throwIfAborted()
       if ('error' in artifact) return { kind: 'completed', successful: false, mutated: false, value: artifact }
@@ -74,36 +74,43 @@ export function createScheduledSendFileTool(resolve: (identity: RunIdentity, sou
   }
 }
 
-export interface ImSendFileInput { identity: RunIdentity; roundId: string; toolCallId: string; attachId?: string; filePath?: string }
+export interface ImSendFileInput { identity: RunIdentity; roundId: string; toolCallId: string; attachId?: string; filePath?: string; url?: string }
 export interface ImSendFilePort {
   /** 附件和文件路径由 Host 逐次核对授权。 */
   readonly allowFilePath?: boolean
+  readonly allowRemoteImage?: boolean
   send(input: ImSendFileInput & {signal:AbortSignal}): Promise<'sent'|'failed'|'unknown'>
   recover(input: ImSendFileInput): Promise<'sent'|'failed'|'unknown'>
 }
 const output=(status:'sent'|'failed'|'unknown'):ToolResult=>status==='unknown'?{kind:'unknown'}:{kind:'completed',successful:status==='sent',mutated:status==='sent',
   value:{delivery_status:status,message:status==='sent'?'平台已接受文件发送':'文件未能发送'}}
 
-/** 最小已接线来源；URL、文件名和Shell逻辑路径尚无正式授权端口，不向模型宣称支持。 */
+/** 由宿主声明可投递的来源，并在实际发送前再次校验。 */
 export function createImSendFileTool(port:ImSendFilePort):ToolDefinition {
   const attach = z.string().min(1).max(256).refine(value => !/[\x00-\x1f\x7f]/u.test(value))
   const path = z.string().max(2048).regex(/^\/(personal|project|workspace)\/[^\x00-\x1f\x7f\\]+$/u)
   const schema = z.strictObject({
     attach_id: attach.optional(),
-    ...(port.allowFilePath ? { file: path.optional() } : {}),
+    ...(port.allowRemoteImage ? { url: z.string().trim().min(1).max(4096).regex(/^https?:\/\//iu).optional() } : {}),
+    ...(port.allowFilePath ? { path: path.optional() } : {}),
   }).refine(value => Object.values(value).filter(item => item !== undefined).length === 1)
   const args = (raw: unknown) => {
     const value = schema.parse(raw)
-    if (typeof value.file === 'string') return { filePath: value.file }
+    if (typeof value.url === 'string') return { url: value.url }
+    if (typeof value.path === 'string') return { filePath: value.path }
     return { attachId: value.attach_id }
   }
   const properties = {
-    ...(port.allowFilePath ? { file: { type: 'string', description: '文件库逻辑路径，例如 /personal/示例.pdf' } } : {}),
-    attach_id: { type: 'string', minLength: 1, maxLength: 256 },
+    ...(port.allowRemoteImage ? { url: { type: 'string', description: '仅填 HTTP(S) 公网图片直链。PDF、本地路径、file:// 和 gugu:// 均不支持。' } } : {}),
+    ...(port.allowFilePath ? {
+      path: { type: 'string', description: '文件库逻辑路径，例如 /personal/示例.pdf' },
+    } : {}),
+    attach_id: { type: 'string', minLength: 1, maxLength: 256, description: '当前会话已授权附件的 ID，从近期附件结果中获取。' },
   }
   const keys = Object.keys(properties)
   return { definition: { name: 'send_item', schema: { type: 'function', function: {
-    name: 'send_item', description: '仅在用户明确要求时发送已授权文件或本会话附件；平台结果不明确时不会重发。',
+    name: 'send_item', description: '仅在用户明确要求时发送已授权内容；平台结果不明确时不会重发。'
+      + (port.allowFilePath ? '本地文件路径填 path。' : '当前会话不接受直接读取文件库路径，请使用本群已授权的附件 ID。'),
     parameters: { type: 'object', properties, additionalProperties: false,
       ...(keys.length > 1 ? { oneOf: keys.map(key => ({ required: [key] })) } : { required: keys }) },
   } } }, effect: 'write',

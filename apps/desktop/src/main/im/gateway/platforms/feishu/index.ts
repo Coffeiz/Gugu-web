@@ -1,5 +1,9 @@
 import { chooseImInstantReactionEmoji } from '@gugu/core/im/shortcut'
-import { classifyGatewayGroupMessage, type ImReceivedMessage } from '@gugu/gateway'
+import { classifyGatewayGroupMessage, groupDisabledNoticeText, type ImReceivedMessage } from '@gugu/gateway'
+import type { DesktopGroupDisabledNotice } from '../../group-disabled-notice.js'
+import type { DesktopImTextConsumer } from '../../interactions/text.js'
+import { readImReceivedInteraction } from '@gugu/gateway'
+import { parseImControlCommand } from '@gugu/core/im/shortcut'
 import { readImAddressedCommand } from '@gugu/gateway'
 import { desktopImGroupToolAllowed } from '@gugu/core/agent/scenes/im'
 import { redactToolError } from '@gugu/core/agent'
@@ -18,7 +22,7 @@ import { createGatewaySupervisor, createImGroupAttentionGate, readImReceivedMess
 import { buildFeishuCompletedActionCard, createPersistentFeishuProjection, createFeishuClient, createFeishuConnection, createFeishuSender, createFeishuWsNetwork } from '@gugu/gateway/feishu'
 import type { createDesktopFeishuPairing } from '../../../connect/platforms/feishu/index.js'
 import type { createDesktopImCallback } from '../../interactions/callback.js'
-import { tryDesktopImRunControl, type createDesktopImDispatch } from '../../delivery/dispatch.js'
+import { isDesktopImTextCancel, tryDesktopImRunControl, type createDesktopImDispatch } from '../../delivery/dispatch.js'
 import { MAX_DESKTOP_ATTACHMENT_BYTES } from '../../../../agent/attachments.js'
 import { desktopImEventKey, type DesktopImFile, type createDesktopImInbox } from '../../inbound/inbox.js'
 import { parseImReceivedMessage } from '@gugu/gateway'
@@ -34,7 +38,8 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
   admit: ReturnType<typeof createDesktopImInbox>, dispatch: ReturnType<typeof createDesktopImDispatch>,
   transport: () => Transport, connect = createFeishuConnection, callback?: ReturnType<typeof createDesktopImCallback>, voice?: DesktopImVoice,
   projection?: { host: IpcHost; encryption: Pick<typeof safeStorage, 'encryptStringAsync' | 'decryptStringAsync'> }, pendingAsks?: ImPendingAskStore,
-  report?: (code: 'feishu-reaction-rejected' | 'feishu-reaction-unknown') => void) {
+  report?: (code: 'feishu-reaction-rejected' | 'feishu-reaction-unknown') => void, notice?: DesktopGroupDisabledNotice,
+  consumeGroupText?: DesktopImTextConsumer) {
   const supervisor = createGatewaySupervisor({
     async read() {
       const bot = await pairing.read()
@@ -81,6 +86,10 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
         if (!groupDeliveries.has(groupConnection)) {
           const work = dispatch({ connection, connectionId: groupConnection, signal: active, authorize: allow,
             group: { id: groupId, ownerPlatformUserId, authorizeMessage: allowMessage, authorizeFile: allowFile },
+            ...(callback ? { async sendGroupPrompt(prompt: Parameters<typeof sender.interaction>[1], event: ImReceivedMessage) {
+              const receipt = await sender.interaction(groupId, prompt, active, () => allowMessage(event))
+              return receipt.outcome === 'accepted' && receipt.platformMessageIds.length === 1 ? receipt.platformMessageIds[0]! : null
+            } } : {}),
             async sendOwnerPrivate(text) {
               const authorized = async () => (await readActive())?.userId === ownerPlatformUserId && await allow()
               if (!await authorized()) return 'rejected'
@@ -142,10 +151,34 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             const isGroup = parsed.payload.chat_type === 'group'
             if (isGroup) {
               const current = await readActive()
-              if (!current?.userId || !current.groupChatEnabled || !parsed.payload.chat_id) return
+              const groupId = parsed.payload.chat_id
+              if (!current?.userId || !groupId) return
+              if (!current.groupChatEnabled) {
+                await notice?.(['feishu', bot.appId, current.userId, groupId, current.groupDisabledEpoch], {
+                  mentioned: parsed.payload.bot_mentioned,
+                  async authorize() {
+                    const latest = await readActive()
+                    return !!latest && !messageSignal.aborted && latest.userId === current.userId && !latest.groupChatEnabled
+                      && latest.groupDisabledEpoch === current.groupDisabledEpoch
+                  },
+                  async send(authorize) {
+                    return (await sender.text(groupId, groupDisabledNoticeText, messageSignal, authorize)).outcome
+                  },
+                })
+                return
+              }
               const decision = classifyGatewayGroupMessage({ platform: 'feishu', chatType: 'group', chatId: parsed.payload.chat_id,
                 groupMentioned: parsed.payload.bot_mentioned, mentionsOtherBot: parsed.payload.mentions_other_bot === true },
               current.groupReplyMode)
+              const event = readImReceivedMessage(connection, parsed.payload)
+              if (consumeGroupText && current.groupReplyMode !== 'record_only' && !parsed.mediaItems.length
+                && event.text.trim() && !parseImControlCommand(event.text.trim()) && !isDesktopImTextCancel(event)
+                && await consumeGroupText(event, groupConnectionId(bot.appId, groupId, current.userId), desktopImEventKey(event),
+                  async () => {
+                    const latest = await readActive()
+                    return !messageSignal.aborted && latest?.userId === current.userId
+                      && latest.groupChatEnabled && latest.groupReplyMode !== 'record_only'
+                  }, messageSignal)) return
               if (current.groupReplyMode !== 'record_only' && decision !== 'reply') return
             } else if (parsed.payload.platform_user_id !== bot.userId) return
             const messageId = parsed.payload.platform_message_id
@@ -244,8 +277,16 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             try {
               if (callback && object(data) && await authorize()) {
                 const parsed = parse(data, 'card.action.trigger')
-                if (parsed?.kind === 'card_action')
-                  outcome = await callback(connection, connectionId, bot.userId, { ...parsed, raw: data }, authorize)
+                if (parsed?.kind === 'card_action') {
+                  const payload = { ...parsed, raw: data }
+                  const { action } = readImReceivedInteraction(connection, 'feishu', payload)
+                  outcome = await callback(connection, connectionId, bot.userId, payload, authorize)
+                  if (!outcome.accepted) {
+                    const groupId = action.chatId
+                    outcome = await callback(connection, groupConnectionId(bot.appId, groupId, bot.userId), action.operator,
+                      payload, async () => await authorizeGroup(groupId) && (await readActive())?.groupReplyMode !== 'record_only', groupId)
+                  }
+                }
               }
             } catch { /* 平台只收到脱敏的交互结果。 */ }
             if (!outcome.accepted) return { toast: { type: 'error', content: '交互已失效' } }

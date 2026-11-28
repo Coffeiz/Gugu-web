@@ -1,4 +1,5 @@
 import {sql,type Kysely} from 'kysely'
+import {randomUUID} from 'node:crypto'
 import {CoreError,dataContext} from '../contracts/index.js'
 import {strip} from '../shared/values.js'
 import {allowedUserBotTools,normalizeUserBotTools,userBotResponse} from './user-bots.js'
@@ -28,6 +29,9 @@ export function createUserBotUpdater<DB>(db:Kysely<DB>,options:UserBotUpdateOpti
    if(input.app_id!=null)patch.app_id=strip(input.app_id)
    if(input.app_secret&&!input.app_secret.includes('•'))patch.app_secret=await options.encrypt(strip(input.app_secret))
    for(const key of ['group_chat_enabled','feishu_group_chat_enabled','sandbox','enabled','group_requires_at','group_read_enabled','group_memory_enabled','group_owner_memory_enabled','member_memory_enabled'] as const)if(input[key]!=null)patch[key]=input[key]
+   const groupSwitch=current.platform==='feishu'?'feishu_group_chat_enabled':'group_chat_enabled'
+   const groupWasEnabled=current.platform==='feishu'?current[groupSwitch]!==false:current[groupSwitch]===true
+   if(groupWasEnabled&&patch[groupSwitch]===false)patch.group_disabled_epoch=randomUUID()
    if(input.group_response_mode!=null){
     if(!['reply_all','reply_mentions','record_only'].includes(input.group_response_mode))invalid('无效的群聊回应方式')
     patch.group_requires_at=input.group_response_mode!=='reply_all';patch.group_read_enabled=input.group_response_mode==='record_only'

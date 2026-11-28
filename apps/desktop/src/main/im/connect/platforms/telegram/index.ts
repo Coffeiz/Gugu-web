@@ -8,6 +8,7 @@ export type DesktopTelegramEncryption = Parameters<typeof createEncryptedDesktop
 export type DesktopTelegramBot = { token: string; chatId: string | null; enabled: boolean; revision: string
   privateStreamingEnabled: boolean
   groupChatEnabled: boolean; groupReplyMode: ImGroupReplyMode
+  groupDisabledEpoch?: string
   groupAttentionMode: ImGroupAttentionMode; groupAllowedTools: string[]
   groupOwnerMemoryEnabled: boolean; groupMemoryEnabled: boolean; memberMemoryEnabled: boolean }
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -39,6 +40,7 @@ export function parseDesktopTelegramBot(value: unknown): DesktopTelegramBot {
     throw new DesktopError('invalid_request', 'Telegram Bot Token 格式无效')
   }
   return { token, chatId: value.chatId, enabled: value.enabled, revision: value.revision,
+    groupDisabledEpoch: typeof value.groupDisabledEpoch === 'string' ? value.groupDisabledEpoch : undefined,
     groupChatEnabled, groupReplyMode: groupReplyMode as DesktopTelegramBot['groupReplyMode'],
     groupAttentionMode: groupAttentionMode as DesktopTelegramBot['groupAttentionMode'], groupAllowedTools,
     groupOwnerMemoryEnabled, groupMemoryEnabled, memberMemoryEnabled, privateStreamingEnabled }

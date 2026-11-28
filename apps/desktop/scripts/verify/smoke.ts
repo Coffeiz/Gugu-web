@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
-const desktop = resolve(fileURLToPath(new URL('../', import.meta.url)))
+const desktop = resolve(fileURLToPath(new URL('../../', import.meta.url)))
 const require = createRequire(import.meta.url)
 const appIndex = process.argv.indexOf('--app'),
   executable = appIndex >= 0 ? process.argv[appIndex + 1] : undefined

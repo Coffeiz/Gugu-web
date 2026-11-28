@@ -1,5 +1,5 @@
 import type { ChatImAccess } from '@/components/common/gugu-chat/composables/useChatImConnect'
-import { hasDesktopTelegramGateway, requestDesktopTelegram } from '@desktop/bridge/bridge'
+import { hasDesktopTelegramGateway, nativeDesktopBridge, requestDesktopTelegram } from '@desktop/bridge/bridge'
 import { desktopFeishuConnectApi, hasDesktopFeishuPairing } from './connect/platforms/feishu/desktop'
 import { desktopQqConnectApi, hasDesktopQqPairing } from './connect/platforms/qq/desktop'
 import { desktopWechatConnectApi, hasDesktopWechatPairing } from './connect/platforms/wechat/desktop'
@@ -14,6 +14,7 @@ export function createDesktopChatImAccess(): ChatImAccess | undefined {
   const telegramAvailable = hasDesktopTelegramGateway()
   if (!available.length && !telegramAvailable) return undefined
   return {
+    subscribeBotStatus: listener => nativeDesktopBridge()?.onTelegramConnectionChanged?.(listener),
     connectTelegram: telegramAvailable ? token => requestDesktopTelegram({ action: 'save', input: { token } }) : undefined,
     generateTelegramBinding: telegramAvailable ? async () => {
       const snapshot = await requestDesktopTelegram({ action: 'bindingCode' })

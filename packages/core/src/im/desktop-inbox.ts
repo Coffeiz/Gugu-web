@@ -423,6 +423,13 @@ export async function desktopImPrompt(db: Kysely<Database>, ownerId: string, fie
   const owner = ownerId.toLowerCase().replaceAll('-', '')
   const { platform, connectionId } = connectionScope(fields)
   const { action, promptId, messageId, eventKey, runId } = fields
+  const initiator = fields.initiator
+  if (initiator !== undefined && (typeof initiator !== 'string' || !initiator || initiator.length > 256)) return null
+  const matchInitiator = initiator === undefined ? sql`` : sql`AND EXISTS (
+    SELECT 1 FROM agent_run_admissions a
+    JOIN conversation_messages m ON m.id=a.user_message_id AND m.session_id=a.session_id
+    WHERE a.user_id=i.owner_id AND a.session_id=i.session_id AND a.run_id=i.run_id AND m.platform_user_id=${initiator}
+  )`
   if (action === 'lookup-text') {
     if (typeof eventKey !== 'string' || !/^[a-f0-9]{64}$/u.test(eventKey)) return null
     const { rows } = await sql<{ sessionId: number; runId: string; promptId: number; replayed: number; schema_json: string }>`
@@ -437,6 +444,9 @@ export async function desktopImPrompt(db: Kysely<Database>, ownerId: string, fie
         AND json_extract(q.schema_json,'$.source')='agent'
         AND json_extract(q.schema_json,'$.context.tool_name')='ask_user'
         AND json_extract(q.schema_json,'$.allow_text_input')=1
+        ${matchInitiator}
+        ${initiator === undefined ? sql`` : sql`AND (json_extract(q.schema_json,'$.desktop_text_event_id')=${eventKey}
+          OR json_extract(q.schema_json,'$.custom_input_active')=1)`}
         AND (json_extract(q.schema_json,'$.desktop_text_event_id')=${eventKey}
           OR (i.state='running' AND r.status='waiting' AND q.status='active'
             AND julianday(q.expires_at)>julianday('now')))
@@ -460,7 +470,8 @@ export async function desktopImPrompt(db: Kysely<Database>, ownerId: string, fie
       SELECT i.session_id AS sessionId, i.run_id AS runId
       FROM desktop_im_prompts p JOIN desktop_im_inbox i USING (owner_id,platform,connection_id,event_key)
       WHERE p.owner_id=${owner} AND p.platform=${platform} AND p.connection_id=${connectionId}
-        AND p.prompt_id=${promptId} AND p.state='accepted' AND (${messageId} IS NULL OR p.message_id=${messageId}) AND i.state='running'`.execute(db)
+        AND p.prompt_id=${promptId} AND p.state='accepted' AND (${messageId} IS NULL OR p.message_id=${messageId}) AND i.state='running'
+        ${matchInitiator}`.execute(db)
     return result.rows[0] ?? null
   }
   if (typeof eventKey !== 'string' || !eventKey || typeof runId !== 'string' || !runId)
@@ -593,7 +604,8 @@ export async function desktopImAttachmentDelivery(
   const session = Number(identity.sessionId)
   const attachId = /^[0-9a-f]{32}$/u.test(source) ? source : null
   const filePath = source.length <= 2048 && /^\/(personal|project|workspace)\/[^\x00-\x1f\x7f\\]+$/u.test(source) ? source : null
-  if (!Number.isSafeInteger(session) || session <= 0 || (!attachId && !filePath)) return null
+  const url = source.length <= 4096 && /^https?:\/\//iu.test(source) ? source : null
+  if (!Number.isSafeInteger(session) || session <= 0 || (!attachId && !filePath && !url)) return null
   const noticeKey = createHash('sha256').update(JSON.stringify(['im-attachment', identity.runId, source])).digest('hex')
 
   return db.transaction().execute(async tx => {
@@ -611,7 +623,6 @@ export async function desktopImAttachmentDelivery(
       JOIN desktop_im_sessions im ON im.session_id=s.id AND im.owner_id=s.user_id
       JOIN desktop_im_inbox i ON i.owner_id=im.owner_id AND i.platform=im.platform AND i.connection_id=im.connection_id
       WHERE a.user_id=${owner} AND a.session_id=${session} AND a.run_id=${identity.runId}
-        AND (${filePath} IS NULL OR coalesce(s.chat_type,'c2c')='c2c')
         AND (${attachId} IS NULL OR f.state='attached' AND f.storage_key=${`agent-attachments/${attachId}`}
           AND source.id IS NOT NULL AND (coalesce(s.chat_type,'c2c')='c2c' OR source.id=m.id))
         AND (i.run_id=a.run_id AND i.state='running' OR i.run_id IS NULL AND i.state='pending')
@@ -628,7 +639,7 @@ export async function desktopImAttachmentDelivery(
       if (inserted.rows.length) return {
         state: 'new' as const, platform: event.platform, connectionId: event.connection_id,
         eventKey: event.event_key, sealedEvent: event.sealed_event.toString('base64'), deliveryId: noticeKey,
-        ...(filePath ? { filePath } : { attachId,
+        ...(url ? { url } : filePath ? { filePath } : { attachId,
           attachment: { name: event.name, ext: event.ext, mime: event.mime, size: event.size, storageKey: event.storage_key } }),
       }
     } else if (action !== 'read') {

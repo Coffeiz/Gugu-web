@@ -5,6 +5,7 @@ asar: true
 asarUnpack:
   - dist/cli/gugu.cjs
   - dist/gateway/*.cjs
+  - dist/gateway/prompt.md
   - dist/native/chat-fab-glass.node
 npmRebuild: false
 directories:
@@ -32,7 +33,9 @@ win:
   icon: assets/icon.ico
   signExecutable: false
 nsis:
-  include: assets/cli-install.nsh
+  useZip: true
+  include: installer/windows/cli-install.nsh
+  differentialPackage: false
   oneClick: false
   perMachine: false
   allowElevation: true

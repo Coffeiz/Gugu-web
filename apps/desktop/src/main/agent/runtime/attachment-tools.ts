@@ -4,9 +4,10 @@ import { openLocalFile } from '@gugu/fs/node'
 import { dataContext } from '#core-source/contracts/index.js'
 import type { RunIdentity } from '#core-source/agent/models.js'
 import type { SqlDataRuntime } from '#core-source/data/runtime.js'
-import { createImSendFileTool } from '#core-source/agent/tools/files/send-file.js'
+import { createImSendFileTool, type ImSendFilePort } from '#core-source/agent/tools/files/send-file.js'
 import { createSaveAttachmentTool } from '#core-source/agent/tools/files/index.js'
 import { desktopImAttachmentDelivery } from '#core-source/im/desktop-inbox.js'
+import { imFilePathPermission } from '#core-source/agent/scenes/im/index.js'
 
 type AttachmentScope = 'turn' | 'session' | 'owner'
 
@@ -15,6 +16,7 @@ export function createDesktopAttachmentTools(options: {
   interactive: boolean
   allowFilePath: boolean
   groupChat: boolean
+  authorizeGroupImTool: (identity: RunIdentity, name: string, signal?: AbortSignal) => Promise<boolean>
   workspaceBinding: { directory_id?: unknown } | null
   authorize: (identity: RunIdentity) => Promise<boolean>
   attachmentScope: (identity: RunIdentity, signal: AbortSignal) => Promise<AttachmentScope>
@@ -26,11 +28,13 @@ export function createDesktopAttachmentTools(options: {
 }) {
   const { db, interactive, allowFilePath, groupChat, workspaceBinding, authorize,
     attachmentScope, resolveOwnedAttachment, hostRequest, digest } = options
-  const sendFile = allowFilePath || groupChat ? createImSendFileTool({
+  const sendPort: ImSendFilePort = {
     allowFilePath,
-    async send({ identity, attachId, filePath, signal }) {
-      const source = attachId ?? filePath
+    allowRemoteImage: true,
+    async send({ identity, attachId, filePath, url, signal }) {
+      const source = attachId ?? filePath ?? url
       if (!source || !await authorize(identity)) return 'failed'
+      if (filePath && groupChat && !await options.authorizeGroupImTool(identity, imFilePathPermission, signal)) return 'failed'
       signal.throwIfAborted()
       const attempt = await desktopImAttachmentDelivery(db, identity, source, 'begin')
       if (!attempt) return 'failed'
@@ -43,13 +47,16 @@ export function createDesktopAttachmentTools(options: {
       const receipt = await desktopImAttachmentDelivery(db, identity, source, outcome)
       return receipt?.state === 'accepted' ? 'sent' : receipt?.state === 'rejected' ? 'failed' : 'unknown'
     },
-    async recover({ identity, attachId, filePath }) {
-      const source = attachId ?? filePath
+    async recover({ identity, attachId, filePath, url }) {
+      const source = attachId ?? filePath ?? url
       if (!source || !await authorize(identity)) return 'unknown'
+      if (filePath && groupChat && !await options.authorizeGroupImTool(identity, imFilePathPermission)) return 'unknown'
       const receipt = await desktopImAttachmentDelivery(db, identity, source, 'read')
       return receipt?.state === 'accepted' ? 'sent' : receipt?.state === 'rejected' ? 'failed' : 'unknown'
     },
-  }) : undefined
+  }
+  const sendFile = allowFilePath || groupChat ? createImSendFileTool(sendPort) : undefined
+  const memberSendFile = groupChat ? createImSendFileTool({ ...sendPort, allowFilePath: false }) : undefined
   const saveAttachment = interactive ? createSaveAttachmentTool({
     async save(identity, input, roundId, call, signal) {
       signal.throwIfAborted()
@@ -136,5 +143,5 @@ export function createDesktopAttachmentTools(options: {
       } }
     },
   }) : undefined
-  return { sendFile, saveAttachment }
+  return { sendFile, memberSendFile, saveAttachment }
 }

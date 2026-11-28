@@ -375,6 +375,7 @@ test('QQ 群聊和私聊按钮先确认收件，业务拒绝不改写平台回�
   const callbacks = [
     { id: 'group-click', group_openid: 'group-a', group_member_openid: 'member-a', data: qqPrivateInteraction.data },
     qqPrivateInteraction,
+    { id: 'old-click', data: {} },
   ]
   const order: string[] = []
   p.services.callback = async event => {
@@ -409,8 +410,9 @@ test('QQ 群聊和私聊按钮先确认收件，业务拒绝不改写平台回�
     qqSocket: async (_url, signal) => { socketSignal = signal; return socket } })
   const connection = await runtime.connect(spec('qq'), new AbortController().signal)
   try {
-    await until(() => order.length >= 4)
-    assert.deepEqual(order, ['ack:group-click:0', 'consume:group-click', 'ack:private-click:0', 'consume:private-click'])
+    await until(() => order.length >= 6)
+    assert.deepEqual(order, ['ack:group-click:0', 'consume:group-click', 'ack:private-click:0', 'consume:private-click',
+      'ack:old-click:0', 'consume:old-click'])
     assert.equal(p.entries().length, 0)
   } finally {
     await connection.stop()

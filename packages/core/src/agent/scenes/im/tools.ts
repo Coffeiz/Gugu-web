@@ -1,6 +1,8 @@
 import { canonicalAgentToolName, filterConfiguredAgentTools } from '../../tools/configuration.js'
 import { allowedUserBotTools, normalizeUserBotTools } from '../../../im/user-bots.js'
 import type { ImActor } from '../../../im/access.js'
+import { isVerifiedImOwner, imOwnerAllowsTool, imFilePathPermission } from './owner/tools.js'
+import { imMemberAllowsTool } from './member/tools.js'
 
 const imSkillBlacklist = new Set(['im-bind'])
 const imToolBlacklist = new Set(['open_item', 'canvas_focus_node'])
@@ -9,11 +11,12 @@ export function imAllowsTool(name: string, delivery?: 'app_card' | 'native'): bo
 }
 
 export function imOwnerPrivate(actor: Pick<ImActor, 'role' | 'chatType' | 'verifiedOwner'>): boolean {
-  return actor.role === 'owner' && actor.verifiedOwner && actor.chatType === 'c2c'
+  return isVerifiedImOwner(actor) && actor.chatType === 'c2c'
 }
 
 /** 平台校验可信群事件和 Bot 绑定后，将发言者身份交给共享策略。 */
 export function desktopImGroupToolAllowed(platform: ImActor['platform'], verifiedOwner: boolean, configured: unknown, name: string): boolean {
+  if (name === imFilePathPermission) return verifiedOwner && publicPlatforms.has(platform)
   return imCanUseTool({
     platform, chatType: 'group', role: verifiedOwner ? 'owner' : 'member', verifiedOwner,
     allowedToolNames: verifiedOwner ? null : normalizeUserBotTools(configured),
@@ -31,12 +34,8 @@ export function imCanUseTool(actor: Pick<ImActor, 'platform' | 'chatType' | 'rol
   name = canonicalAgentToolName(name)
   if (!publicPlatforms.has(actor.platform) || !imAllowsTool(name)) return false
   if (name === 'choose_no_reply') return actor.chatType === 'group' && groupAutoReply === true
-  if (actor.chatType === 'group' && !groupTools.has(name)) return false
-  if (safe.has(name)) return true
-  if (actor.role === 'unknown' || actor.role === 'owner' && !actor.verifiedOwner) return false
-  if (isImInternalDelegationTool(name) || ownerPrivateTools.has(name)) return imOwnerPrivate(actor)
-  if (name === 'react' && actor.platform !== 'feishu') return false
-  return fixed.has(name) || actor.role === 'owner' || (actor.allowedToolNames?.includes(name) ?? false)
+  if (isVerifiedImOwner(actor)) return imOwnerAllowsTool(actor.platform, name)
+  return imMemberAllowsTool(actor, name)
 }
 
 export function imVisibleToolNames(actor: ImActor, system: readonly string[], groupAutoReply = false): string[] {
@@ -50,16 +49,15 @@ const groupTools = new Set([
   ...allowedUserBotTools, ...safe, ...fixed, 'choose_no_reply', 'react', 'send_link_buttons',
   'deep_research', 'search_memory', 'list_scheduled_tasks', 'create_scheduled_task', 'update_scheduled_task',
 ])
-const ownerPrivateTools = new Set(['save_attachment', 'bind_web_session', 'list_skills', 'create_skill', 'update_skill', 'delete_skill'])
 const publicPlatforms = new Set(['qq', 'telegram', 'feishu', 'wechat'])
 
 export function imAllowsBuiltinSkill(key: string | undefined): boolean {
   return !imSkillBlacklist.has(key ?? '')
 }
 
-/** 群技能正文可能要求调用关联工具，目录和读取共用同一条件。 */
-export function imSkillToolsAvailable(skill: { readonly key?: string; readonly related_tools?: readonly string[] }, available: ReadonlySet<string>): boolean {
-  return imAllowsBuiltinSkill(skill.key) && (skill.related_tools ?? []).every(name => available.has(canonicalAgentToolName(name)))
+/** 关联工具用于说明技能用途，业务工具仍在实际调用时单独授权。 */
+export function imSkillToolsAvailable(skill: { readonly key?: string }, available: ReadonlySet<string>): boolean {
+  return imAllowsBuiltinSkill(skill.key) && available.has('use_skill')
 }
 
 /** 只使用公开的工具名和场景规则生成错误，不泄漏私有注册器或 MCP 目录。 */

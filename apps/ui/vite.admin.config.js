@@ -5,6 +5,8 @@ import { execSync } from 'node:child_process'
 import Components from 'unplugin-vue-components/vite'
 import AutoImport from 'unplugin-auto-import/vite'
 
+const __dirname = import.meta.dirname
+
 // 发版门版本号（admin dev server 用；生产构建走 vite.config.js）。同 vite.config.js 口径。
 const APP_VER = (() => {
   try { return execSync('git rev-parse --short HEAD').toString().trim() } catch { return String(Date.now()) }

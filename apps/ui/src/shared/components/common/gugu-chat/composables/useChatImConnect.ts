@@ -23,6 +23,7 @@ interface ImPlatformApi { start: () => Promise<any>; poll: (id: any) => Promise<
 export type TelegramBindingStep = { code?: { code: string; expiresAt: number } }
 
 export interface ChatImAccess {
+  subscribeBotStatus?(listener: () => void): (() => void) | undefined
   generateTelegramBinding?(): Promise<TelegramBindingStep['code']>
   listBots(): Promise<{ items?: ChatImBot[]; supported_platforms?: ImPlatformKey[] }>
   connectTelegram?(token: string): Promise<unknown>
@@ -84,6 +85,7 @@ export function useChatImConnect(options: {
     } catch {}
   }
   watch(() => liveStore.rev.im_channels, () => { void loadBots() })
+  const unsubscribeBotStatus = options.access?.subscribeBotStatus?.(() => { void loadBots() })
   function toggleImPlatform(key: ImPlatformKey) {
     imOpen[key] = !imOpen[key]
     if (imOpen[key]) void loadBots()
@@ -258,7 +260,7 @@ export function useChatImConnect(options: {
   function _stopChatBindPoll() { if (chatBindPoll) { clearInterval(chatBindPoll); chatBindPoll = null } }
   function closeChatBind() { chatBindGeneration++; _stopChatBindPoll(); chatBind.open = false }
 
-  onUnmounted(() => { cancelImConnect(); closeChatBind() })
+  onUnmounted(() => { unsubscribeBotStatus?.(); cancelImConnect(); closeChatBind() })
 
   return {
     bots, imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,

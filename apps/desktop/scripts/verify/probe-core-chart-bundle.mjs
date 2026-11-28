@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, rename, rm, rmdir, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { bundleChartWorker, bundledChartPackages } from './bundle-chart-worker.mjs'
+import { bundleChartWorker, bundledChartPackages } from '../build/bundle-chart-worker.mjs'
 
-const defaultRoot = fileURLToPath(new URL('../resources/core-sidecar/', import.meta.url))
+const defaultRoot = fileURLToPath(new URL('../../resources/core-sidecar/', import.meta.url))
 const root = resolve(process.argv[2] ?? defaultRoot)
 const charts = join(root, 'host', 'node_modules', '@gugu', 'charts')
 const source = join(charts, 'src', 'worker.mjs')

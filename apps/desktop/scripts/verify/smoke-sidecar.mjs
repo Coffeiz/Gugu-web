@@ -11,7 +11,7 @@ const rootIndex = process.argv.indexOf('--root')
 const root =
   rootIndex >= 0
     ? resolve(process.argv[rootIndex + 1])
-    : resolve(fileURLToPath(new URL(process.platform === 'win32' ? '../resources/core-sidecar-sea/' : '../resources/core-sidecar/', import.meta.url)))
+    : resolve(fileURLToPath(new URL(process.platform === 'win32' ? '../../resources/core-sidecar-sea/' : '../../resources/core-sidecar/', import.meta.url)))
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'))
 const workerEntry = manifest.workerEntry ?? 'host/dist/runtime/worker.js'
 const agentRuntimeModule = manifest.agentRuntimeModule

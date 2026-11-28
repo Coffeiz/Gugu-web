@@ -103,19 +103,19 @@ it('QQ 绑定消息只用于认证，随后只登记绑定用户的私聊', asyn
     expect(groupDelivery?.group?.id).toBe('group-test')
     expect(admit).toHaveBeenLastCalledWith(expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), groupDelivery?.connectionId, expect.objectContaining({
       botMentioned: true, scope: expect.objectContaining({ chatType: 'group', chatId: 'group-test' }),
-    }))
+    }), undefined, expect.objectContaining({ authorize: expect.any(Function) }))
     bot.groupReplyMode = 'reply_all'
     await onEvent('GROUP_MESSAGE_CREATE', { ...groupMessage, id: 'unmentioned', mentions: [] }, signal)
     expect(admit).toHaveBeenCalledTimes(7)
     expect(admit).toHaveBeenLastCalledWith(expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), groupDelivery?.connectionId, expect.objectContaining({
       eventId: 'unmentioned', botMentioned: false,
-    }))
+    }), undefined, expect.objectContaining({ authorize: expect.any(Function) }))
 
     await onEvent('GROUP_AT_MESSAGE_CREATE', { ...groupMessage, id: 'member-message', author: { member_openid: 'other' } }, signal)
     expect(admit).toHaveBeenCalledTimes(8)
     expect(admit).toHaveBeenLastCalledWith(expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), groupDelivery?.connectionId, expect.objectContaining({
       scope: expect.objectContaining({ chatId: 'group-test', platformUserId: 'other' }),
-    }))
+    }), undefined, expect.objectContaining({ authorize: expect.any(Function) }))
     const member = admit.mock.lastCall?.[2]
     if (!member || !groupDelivery?.group) throw new Error('群成员消息未准入')
     expect(await groupDelivery.group.authorizeMessage(member)).toBe(true)
@@ -137,7 +137,7 @@ it('QQ 绑定消息只用于认证，随后只登记绑定用户的私聊', asyn
     expect(admit).toHaveBeenCalledTimes(callsBeforeAtOnly + 1)
     expect(admit).toHaveBeenLastCalledWith(expect.objectContaining({ platform: 'qq', ownerId: 'desktop' }), groupDelivery.connectionId, expect.objectContaining({
       eventId: 'at-event-only', text: '@咕咕', qqAtEventOnly: true, botMentioned: false,
-    }))
+    }), undefined, expect.objectContaining({ authorize: expect.any(Function) }))
     expect(await groupDelivery.group.authorizeMessage(admit.mock.lastCall![2])).toBe(true)
 
   } finally { await gateway.stop() }

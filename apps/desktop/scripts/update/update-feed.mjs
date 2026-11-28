@@ -11,7 +11,7 @@ const { load } = createRequire(require.resolve('electron-updater/package.json'))
 const [action, repository, target, destination] = process.argv.slice(2)
 if (!['publish', 'sync'].includes(action) || !/^ghcr\.io\/[a-z0-9][a-z0-9_/-]*\/[a-z0-9][a-z0-9_-]*$/.test(repository ?? '')
   || !/^(darwin|win32)-(arm64|x64)$/.test(target ?? '') || !destination) {
-  throw new Error('用法：node scripts/update-feed.mjs publish|sync ghcr.io/<组织>/<包> <平台>-<架构> <目录>')
+  throw new Error('用法：node scripts/update/update-feed.mjs publish|sync ghcr.io/<组织>/<包> <平台>-<架构> <目录>')
 }
 const channel = `stable-${target}`
 const metadata = target.startsWith('darwin-') ? 'latest-mac.yml' : 'latest.yml'

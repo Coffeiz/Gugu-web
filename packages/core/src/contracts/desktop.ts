@@ -225,6 +225,7 @@ export const DESKTOP_CHANNELS = {
   agentAttachment: 'gugu:agent:attachment',
   agentChatEvent: 'gugu:agent:chat-event',
   agentRunChanged: 'gugu:agent:run-changed',
+  telegramConnectionChanged: 'gugu:telegram:connection-changed',
   agentModel: 'gugu:agent:model',
   auxiliaryModel: 'gugu:agent:auxiliary-model',
   telegramGateway: 'gugu:im:telegram',
@@ -575,6 +576,7 @@ export interface DesktopBridge {
   agentSessions(command: DesktopAgentSessionCommand): Promise<DesktopReply<DesktopAgentSession[] | DesktopAgentSession | DesktopAgentMessage[] | DesktopAgentHistoryPage | DesktopAgentEventPage | DesktopAgentRunCancellation | DesktopAgentInteractionReply | DesktopAgentQueueSnapshot | DesktopAgentImportedQueue[] | Record<string, unknown> | boolean | null>>
   agentAttachment?(command: DesktopAgentAttachmentCommand): Promise<DesktopReply<DesktopAgentAttachment | DesktopAgentAttachmentDownload | null>>
   onAgentRunChanged?(callback: (sessionId: number, interactionChanged?: true) => void): () => void
+  onTelegramConnectionChanged?(callback: () => void): () => void
   onAgentChatEvent?(callback: (event: DesktopAgentChatEvent) => void): () => void
   terminal(command: DesktopTerminalCommand): Promise<DesktopReply<DesktopTerminalResult>>
   remoteByok(target: ByokTarget, command: ByokCommand): Promise<DesktopReply<ByokResult>>

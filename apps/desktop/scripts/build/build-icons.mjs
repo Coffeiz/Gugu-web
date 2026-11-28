@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const desktop = fileURLToPath(new URL('../', import.meta.url))
+const desktop = fileURLToPath(new URL('../../', import.meta.url))
 const master = join(desktop, 'assets/icon-macos.svg')
 const target = join(desktop, 'assets/icon.icns')
 const preview = join(desktop, 'assets/icon-macos.png')

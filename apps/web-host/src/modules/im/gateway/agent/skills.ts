@@ -20,7 +20,7 @@ export async function createImProductionSkills(options: {
     .filter(skill => imAllowsBuiltinSkill(skill.key))
   const canRead = async (candidate: RunIdentity) => same(candidate, identity) && imCanUseTool(actor, 'use_skill') && await options.authorize()
   if (!await options.authorize()) throw failure()
-  const fileSkills = options.storageRoot && actor.chatType !== 'group' && actor.role === 'owner' && options.loadOwnerContext
+  const fileSkills = options.storageRoot && actor.role === 'owner' && actor.verifiedOwner
     ? (await createFileSkillDefinitions({ dataRoot: options.storageRoot, ownerId: identity.ownerId,
       mapPath: (_path, slug, source = 'user') => `/skills/${source}/${slug}`,
       isEnabled: (owner, slug, source) => isUserSkillBundleEnabled(options.storageRoot!, owner, slug, source),
@@ -32,7 +32,7 @@ export async function createImProductionSkills(options: {
       if (!options.availableTools) return true
       const available = await options.availableTools()
       const skill = builtins.find(item => item.id === id)
-      return available.has('use_skill') && !!skill && imSkillToolsAvailable(skill, available)
+      return !!skill && imSkillToolsAvailable(skill, available)
     }
     if (fileIds.has(id)) return !!options.storageRoot && await isUserSkillBundleEnabled(options.storageRoot, identity.ownerId, id,
       fileSkills.find(skill => skill.id === id)?.storage_source ?? 'user')

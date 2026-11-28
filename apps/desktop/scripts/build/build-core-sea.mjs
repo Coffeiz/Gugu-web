@@ -53,7 +53,7 @@ export async function buildCoreSea({ payload, temp, node }) {
   })
   const embeddedEntry = embedded.outputFiles[0].text
   const embeddedCli = (await build({
-    entryPoints: [fileURLToPath(new URL('../../../packages/cli/src/bin.ts', import.meta.url))],
+    entryPoints: [fileURLToPath(new URL('../../../../packages/cli/src/bin.ts', import.meta.url))],
     bundle: true,
     platform: 'node',
     format: 'cjs',
@@ -71,8 +71,8 @@ export async function buildCoreSea({ payload, temp, node }) {
     define: { 'import.meta.url': 'gatewayEntryUrl' },
     write: false,
   })).outputFiles[0].text
-  const embeddedGateway = await bundleGateway('../src/main/im/gateway/platforms/qq/connection-child.ts')
-  const embeddedPlatforms = await bundleGateway('../src/main/im/gateway/process-child.ts')
+  const embeddedGateway = await bundleGateway('../../src/main/im/gateway/platforms/qq/connection-child.ts')
+  const embeddedPlatforms = await bundleGateway('../../src/main/im/gateway/process-child.ts')
 
   // 桥接模块只从磁盘加载固定的 ESM 入口及其原生依赖。
   await writeFile(join(payload, 'bridge.cjs'), `

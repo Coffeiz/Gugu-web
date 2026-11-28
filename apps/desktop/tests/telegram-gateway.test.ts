@@ -51,6 +51,7 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
   })
   const outbound: Array<Record<string, unknown>> = []
   const callbackAcks: unknown[] = []
+  const keyboardEdits: unknown[] = []
   const adapter: typeof createTelegramAdapter = ({ token }) => ({
     api: {
       async call(_token, method, request) {
@@ -63,6 +64,10 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
       async close() {},
     } as ReturnType<typeof createTelegramAdapter>['api'],
     sender: createTelegramSender({ token, api: { async call(_token, method, options) {
+      if (method === 'editMessageReplyMarkup') {
+        keyboardEdits.push(options?.payload)
+        return true
+      }
       if (method !== 'sendMessage' || options?.authorize && !await options.authorize()) throw new Error('发送未获允许')
       outbound.push(options?.payload ?? {})
       if (options?.payload?.reply_to_message_id === 8) throw new Error('提示发送结果未知')
@@ -107,7 +112,8 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
                 { update_id: 9, message: { ...update(9, 42, 'private', '引用图片').message, reply_to_message: photo.message } },
                 { update_id: 10, message: { ...update(10, 42, 'private', '外部引用').message,
                   reply_to_message: { ...photo.message, chat: { id: 99, type: 'private' } } } },
-                { update_id: 11, callback_query: { id: 'synthetic-custom-answer' } },
+                { update_id: 11, callback_query: { id: 'synthetic-custom-answer', data: '12:synthetic-token',
+                  from: { id: 42 }, message: { message_id: 20, chat: { id: 42, type: 'private' } } } },
               ]
             }
             await delay(60_000, undefined, { signal: request?.signal })
@@ -175,6 +181,7 @@ it('Telegram 使用一次性私聊绑定码，收件箱仅保存绑定后的授�
     const hint = '请直接发送你的回复，咕咕会继续处理。'
     await vi.waitFor(() => expect(outbound).toContainEqual(expect.objectContaining({ chat_id: '42', text: hint })))
     expect(callbackAcks).toEqual([{ callback_query_id: 'synthetic-custom-answer', text: hint, show_alert: false }])
+    expect(keyboardEdits).toEqual([{ chat_id: 42, message_id: 20, reply_markup: { inline_keyboard: [] } }])
     const delivery = await dispatched.promise
     const reply = { version: 1, kind: 'reply.requested', ...telegramPrivateReply,
       scope: { ...delivery.connection, chatType: 'c2c', chatId: null, platformUserId: telegramPrivateReply.recipient } } as const

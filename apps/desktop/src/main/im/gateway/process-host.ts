@@ -6,9 +6,12 @@ import type { NodeProviderTransportOptions } from '@gugu/core/providers/node'
 import type { createFeishuConnection } from '@gugu/gateway/feishu'
 import type { ChildMessage, GatewayWork, HostMessage, PollResult } from './process-protocol.js'
 
+type GatewayDiagnostic = Extract<ChildMessage, { kind: 'diagnostic' }>['code']
+  | 'gateway-worker-exited' | 'gateway-worker-request-failed'
+
 function startGatewayWork(work: GatewayWork, signal: AbortSignal,
   executable?: string, onEvent?: (card: boolean, data: unknown, signal: AbortSignal) => Promise<unknown>,
-  onDiagnostic?: (code: Extract<ChildMessage, { kind: 'diagnostic' }>['code']) => void) {
+  onDiagnostic?: (code: GatewayDiagnostic) => void) {
   signal.throwIfAborted()
   const root = app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath()
   const binary = executable ? fork('--gateway', ['platforms'], {
@@ -51,7 +54,10 @@ function startGatewayWork(work: GatewayWork, signal: AbortSignal,
   })
   const result = new Promise<unknown>((resolve, reject) => {
     void closed.then(() => {
-      if (!received) reject(new Error('网关子进程未完成请求'))
+      if (!received) {
+        if (!signal.aborted) onDiagnostic?.('gateway-worker-exited')
+        reject(new Error('网关子进程未完成请求'))
+      }
     })
     child.on('message', (message: ChildMessage) => {
       if (message.kind === 'result') {
@@ -61,7 +67,12 @@ function startGatewayWork(work: GatewayWork, signal: AbortSignal,
         return
       }
       if (message.kind === 'diagnostic') { onDiagnostic?.(message.code); return }
-      if (message.kind === 'failure') { reject(new Error('网关子进程请求失败')); return }
+      if (message.kind === 'failure') {
+        received = true
+        if (!signal.aborted) onDiagnostic?.('gateway-worker-request-failed')
+        reject(new Error('网关子进程请求失败'))
+        return
+      }
       if (message.kind === 'cancel') { requests.get(message.id)?.abort(); return }
       const request = new AbortController()
       requests.set(message.id, request)
@@ -82,7 +93,7 @@ function startGatewayWork(work: GatewayWork, signal: AbortSignal,
 
 export async function connectDesktopFeishuProcess(options: Parameters<typeof createFeishuConnection>[0],
   resolveProxy?: NodeProviderTransportOptions['resolveProxy'], executable?: string,
-  onDiagnostic?: (code: Extract<ChildMessage, { kind: 'diagnostic' }>['code']) => void) {
+  onDiagnostic?: (code: GatewayDiagnostic) => void) {
   await Promise.all([options.wsNetwork.close(), options.transport?.close?.()])
   const signal = options.signal ?? new AbortController().signal
   const proxy = await resolveProxy?.(new URL('https://open.feishu.cn/callback/ws/endpoint'), signal)
@@ -96,7 +107,8 @@ export async function connectDesktopFeishuProcess(options: Parameters<typeof cre
 
 /** 仅远程执行长轮询 HTTP；游标在宿主持久化确认后仍由共享轮询器推进。 */
 export function isolateDesktopImPolling(transport: ProviderTransport, platform: 'telegram' | 'wechat',
-  resolveProxy?: NodeProviderTransportOptions['resolveProxy'], executable?: string): ProviderTransport {
+  resolveProxy?: NodeProviderTransportOptions['resolveProxy'], executable?: string,
+  onDiagnostic?: (code: GatewayDiagnostic) => void): ProviderTransport {
   return {
     async request(request, signal) {
       const url = new URL(request.url)
@@ -110,7 +122,7 @@ export function isolateDesktopImPolling(transport: ProviderTransport, platform: 
       const worker = startGatewayWork({
         kind: 'poll', proxy,
         request: { url: request.url, method: request.method, headers: request.headers, timeoutMs: request.timeoutMs, body },
-      }, signal, executable)
+      }, signal, executable, undefined, onDiagnostic)
       try {
         const response = await worker.result as PollResult
         signal.throwIfAborted()

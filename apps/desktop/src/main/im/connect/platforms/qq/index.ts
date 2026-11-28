@@ -21,6 +21,7 @@ interface QqCredential {
   privateMessageFormat: 'compat' | 'markdown'
   privateStreamingEnabled: boolean
   groupChatEnabled?: boolean
+  groupDisabledEpoch?: string
   groupHistorySearchEnabled?: boolean
   groupWebToolsEnabled?: boolean
   groupProviderSearchEnabled?: boolean
@@ -55,7 +56,8 @@ function parseCredential(input: unknown): QqCredential {
     || typeof revision !== 'string' || !revision
     || (userId !== null && (typeof userId !== 'string' || !userId))
     || (bindingEventId !== null && (userId === null || typeof bindingEventId !== 'string' || !bindingEventId))) throw invalid()
-  return { appId, appSecret, enabled, revision, userId, groupChatEnabled, groupHistorySearchEnabled, groupWebToolsEnabled, groupProviderSearchEnabled, groupOwnerMemoryEnabled, groupMemoryEnabled, memberMemoryEnabled, groupReplyMode, groupMessageFormat, privateMessageFormat, privateStreamingEnabled, bindingEventId: bindingEventId as string | null }
+  const epoch = (input as QqCredential).groupDisabledEpoch
+  return { appId, appSecret, enabled, revision, userId, groupChatEnabled, groupDisabledEpoch: typeof epoch === 'string' ? epoch : undefined, groupHistorySearchEnabled, groupWebToolsEnabled, groupProviderSearchEnabled, groupOwnerMemoryEnabled, groupMemoryEnabled, memberMemoryEnabled, groupReplyMode, groupMessageFormat, privateMessageFormat, privateStreamingEnabled, bindingEventId: bindingEventId as string | null }
 }
 
 function invalid() { return new DesktopError('invalid_request', 'QQ 连接缺少有效凭据') }
@@ -140,6 +142,7 @@ export function createDesktopQqPairing(directory: string, encryption: Encryption
       const next = {
         ...current,
         ...(patch.groupChatEnabled === undefined ? {} : { groupChatEnabled: patch.groupChatEnabled }),
+        ...(current.groupChatEnabled && patch.groupChatEnabled === false ? { groupDisabledEpoch: randomUUID() } : {}),
         ...(patch.groupReplyMode === undefined ? {} : { groupReplyMode: patch.groupReplyMode }),
         ...(patch.groupOwnerMemoryEnabled === undefined ? {} : { groupOwnerMemoryEnabled: patch.groupOwnerMemoryEnabled }),
         ...(patch.groupMemoryEnabled === undefined ? {} : { groupMemoryEnabled: patch.groupMemoryEnabled }),

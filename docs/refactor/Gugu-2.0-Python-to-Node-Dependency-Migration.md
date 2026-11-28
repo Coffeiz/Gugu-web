@@ -181,7 +181,7 @@ Node IM 自动保留复用现有 Core PG session 删除与 Host 本地文件引�
 | `gugu-desktop-host` Python 管道进程 | 独立 Node 26 Core 进程 | Node 已替换 Python；Electron Main 继续使用 NDJSON v2、Worker 与收据契约 | 中 |
 | 旧 Rust 桌面 Host | Electron + TS Main/Preload | 已迁入窗口/生命周期与 IPC 的安全、恢复契约；Core 不依赖 Electron | 高 |
 | `@microsoft/mxc-sdk@1.0.1` | **复用（PoC）** | 通过 `packages/sandbox/src/mxc/executor.ts` 适配 Host 注入的原生后端；保留有界协议/能力校验，不导入 Electron | 高 |
-| 旧 Rust 桌面构建 CLI | `electron` + `electron-builder` | 已从活动依赖、源码和构建链移除；用 `electron-builder.yml` 及 `scripts/package.ts` / `smoke.ts` 验证依赖与资源 | 中～高 |
+| 旧 Rust 桌面构建 CLI | `electron` + `electron-builder` | 已从活动依赖、源码和构建链移除；用 `electron-builder.yml` 及 `apps/desktop/scripts/package/package.ts` / `apps/desktop/scripts/verify/smoke.ts` 验证依赖与资源 | 中～高 |
 | Vue `apps/web/` 独立 desktop 入口 | **复用** | 将旧桌面 bridge 改为最小 Preload API；不暴露通用 IPC/FS/进程接口 | 中 |
 | `gugu-desktop` Node engines 约束 | 构建 Node、Electron 内嵌 Node、Core Node 分别声明 | Core 保持已声明的 Node 26；不假设 Electron 内嵌版本相同 | 中 |
 | 现有 Node sidecar 制品 | Electron 真实资源目录中的独立 Node/Core 制品 | 重用装配/完整性契约；原生依赖按独立 Node ABI 构建，安装后脱离开发目录验证 | 高 |

@@ -8,6 +8,10 @@ const id=(v:unknown,max=8192):string=>{
   return value
 }
 const fail=()=>new Error('IM 原生交互暂不可用')
+/** QQ 协议 ACK 只依赖事件 ID，旧按钮参数仍由业务入口独立校验。 */
+export function qqInteractionEventId(data: Payload): string {
+  return id(data.id || record(data.data).id, 200)
+}
 function actionData(value:unknown,limit=1024){
   if(typeof value!=='string'||Buffer.byteLength(value)>limit)throw fail()
   const match=/^([1-9]\d{0,9}):([^:\s]{1,256})$/u.exec(value)
@@ -33,7 +37,7 @@ export function parseGatewayInteraction(platform:string,data:Payload):Parsed{
     const chatType=group||data.chat_type===1?'group':'c2c'
     if(chatType==='group'&&!group)throw fail()
     const messageId=data.message_id??nested.message_id??resolved.message_id
-    return{...actionData(value),operator,eventId:id(data.id||nested.id,200),messageId:messageId==null?null:id(messageId,256),
+    return{...actionData(value),operator,eventId:qqInteractionEventId(data),messageId:messageId==null?null:id(messageId,256),
       chatId:chatType==='group'?id(group,256):operator,chatType}
   }
   if(platform==='feishu'){

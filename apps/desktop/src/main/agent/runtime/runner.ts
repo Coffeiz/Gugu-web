@@ -142,6 +142,7 @@ const unavailable = async (): Promise<never> => { throw new CoreError('conflict'
 import { createDesktopScheduledAgent } from '../../schedules/agent.js'
 import { createDesktopScheduledShellBinding } from '../../schedules/shell.js'
 import { createDesktopScheduledImContext } from '../../schedules/context.js'
+import { desktopImGroupRunEvent } from '#core-source/im/desktop-inbox.js'
 
 export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: string, ownerId: string,
   notify: (sessionId: number, runId: string, interactionChanged?: true) => void,
@@ -332,7 +333,8 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     const imChatType = imSession ? imSession.chat_type ?? 'c2c' : undefined
     const askUserPolicy = imSession ? imAskUserPolicy : {}
     const groupChat = imChatType === 'group'
-    if (groupChat) interactive = false
+    // 群聊仍走 IM 的持久交互/确认回调；工具发现和每次派发会再按可信群身份限权。
+    if (groupChat) interactive = true
     const embeddingGenerationAtStart = embeddingGeneration
     // 当前运行身份必须按 RunRuntime 隔离；多个会话可以并行执行。
     if (config) {
@@ -432,6 +434,15 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
           AND session_id=${Number(identity.sessionId)} AND platform=${target.platform}
           AND connection_id=${desktopScheduleImConnection(target)}`.execute(db)
       return rows.length ? { platform, chatType: 'c2c', role: 'owner', verifiedOwner: true, allowedToolNames: null } as const : null
+    }
+    async function authorizeGroupImTool(identity: RunIdentity, name: string, signal?: AbortSignal) {
+      signal?.throwIfAborted()
+      if (!groupChat || !await authorize(identity)) return false
+      const receipt = await desktopImGroupRunEvent(db, identity)
+      if (!receipt) return false
+      const allowed = await hostRequest('agent.im.authorizeGroupTool', { ...receipt, name }, signal)
+      signal?.throwIfAborted()
+      return allowed === true
     }
     async function attachmentScope(identity: RunIdentity, signal: AbortSignal) {
       if (groupChat) return 'session'
@@ -630,9 +641,11 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       ? createLocalAgentKnowledgeDeletePort(core, knowledgeRoot, knowledgeStore, knowledgeConfirmation, publishDesktopKnowledgeFile)
       : undefined
     const { sendEmail, listMail, emailConfirmation, availableMailPrompt: loadAvailableMail } = createDesktopEmailTool({
-      core, ownerId, hostRequest, authorizeWrite, digest, enabled: interactive && !groupChat,
+      core, ownerId, hostRequest, authorizeWrite, digest, enabled: interactive,
       imConfirmation: Boolean(imSession),
-      authorize: async identity => await authorize(identity) && (!imSession || Boolean(await desktopPrivateImOwner(identity))),
+      authorize: async identity => await authorize(identity) && (!imSession || (groupChat
+        ? await authorizeGroupImTool(identity, 'send_email')
+        : Boolean(await desktopPrivateImOwner(identity)))),
     })
     const { shell, deleteItem, presentFile, isHostFilePath, authorizeHostFile, shellConfirmation, deleteItemConfirmation,
       presentConfirmation, sendItemConfirmation, viewImageConfirmation } = await createDesktopFileTools({
@@ -644,8 +657,9 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
       createDesktopMcpManagement({
         core, ownerId, databasePath, interactive, authorizeWrite, resolveProxy, getRuntime: () => mcpRuntime,
       })
-    const { sendFile, saveAttachment } = createDesktopAttachmentTools({
-      db, interactive, allowFilePath: imChatType === 'c2c', groupChat, workspaceBinding: selection.workspaceBinding,
+    const { sendFile, memberSendFile, saveAttachment } = createDesktopAttachmentTools({
+      db, interactive, allowFilePath: imChatType === 'c2c' || groupChat, groupChat, workspaceBinding: selection.workspaceBinding,
+      authorizeGroupImTool,
       authorize, attachmentScope, resolveOwnedAttachment, hostRequest, digest,
     })
     const { privateScheduleImTarget, scheduleImTarget, resolveScheduleDelivery, scheduleWrites, groupScheduleList } =
@@ -793,10 +807,10 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
     if (config === null || sessionId === null) return { kind: 'catalog' as const, catalog: registry.catalog(), definitions: registry.definitions }
     const { tools, mcpRuntime, groupTools, groupSkillRegistry, delegation, configuredTools } =
       createDesktopToolRuntime({
-        db, ownerId, sessionId, interactive, imSession: Boolean(imSession), imChatType, groupChat, registry,
+        db, ownerId, sessionId, interactive, imSession: Boolean(imSession), groupChat, registry,
         mcpCrypto, resolveProxy, authorize, hostRequest, configuredAgentTools, desktopPrivateImOwner, sceneBuiltins,
         agentClock, groupScheduleList, scheduleWrites, scheduleImTarget, researchAvailable, imageSearchAvailable,
-        deepResearch, similarImageSearch, webSearch, httpGet, sendFile,
+        deepResearch, similarImageSearch, webSearch, httpGet, sendFile, memberSendFile,
         delegationTools: () => createSubagentServiceTools(desktopSubagents(secret)),
       })
     const adapter = adapterFor(config)

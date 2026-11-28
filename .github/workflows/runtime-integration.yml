@@ -107,10 +107,10 @@ jobs:
             application=$(find apps/desktop/release -maxdepth 2 -name '*.app' -type d -print -quit)
             test -n "$application"
             executable="$application/Contents/MacOS/咕咕桌面验证"
-            node apps/desktop/scripts/smoke-sidecar.mjs --root "$application/Contents/Resources/core-sidecar"
+            node apps/desktop/scripts/verify/smoke-sidecar.mjs --root "$application/Contents/Resources/core-sidecar"
           fi
           test -n "$executable"
-          node apps/desktop/scripts/smoke.ts --app "$executable"
+          node apps/desktop/scripts/verify/smoke.ts --app "$executable"
       - name: 保留平台安装制品
         shell: bash
         run: tar -czf desktop-electron-${{ runner.os }}-${{ runner.arch }}.tar.gz -C apps/desktop/release .

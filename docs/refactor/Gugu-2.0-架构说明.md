@@ -89,7 +89,7 @@ flowchart LR
 - **Core 进程**：首个 Electron 版本继续随包独立 Node 26，通过固定可执行路径、固定参数和 `shell: false` 启动，清理环境注入；复用现有 NDJSON v2、Worker、schema 17 和操作收据。schema 17 增加可重建的 `knowledge_index_entries` RAG 索引表，schema 16 增加用户偏好文档，schema 15 增加反馈表，schema 14 增加引导状态表，schema 13 增加 SMTP 设置表，schema 12 增加交互动作表，schema 11 增加通知和交互提示表，schema 10 增加定时任务及触发收据表，schema 9 增加画布项和关系表，schema 8 增加日历事件与 RAG 任务表，schema 7 增加 Mind 画布表，schema 6 增加 Agent 会话表，schema 5 增加 Mind 节点表，schema 4 增加 Undo 持久化基础，旧库需显式备份升级；这不代表各业务的双库迁移已经完成。Core 不导入 Electron，不在 UI/Main 执行同步数据库工作，不启动 localhost HTTP 服务或依赖系统 PATH。
 - **运行时版本与 ABI**：Electron 自带 Node 的版本不等于 Core 声明的 Node 26。本阶段保留独立 Node，接受新增包体成本并纳入 N0 预算；`better-sqlite3` 仅在独立 Node 的 Worker 加载，按该 Node ABI 和目标架构装配。未来若改为 Electron `utilityProcess`，须先验证内嵌 Node、Core engines 和原生模块 ABI，再单独决策；启动失败不能自动切换运行时。Electron 原生模块的 ABI 差异见 [官方说明](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)。
 - **Executor / 原生 Broker**：`packages/sandbox/` 定义执行请求、确认/取消、策略与能力协商，并提供可选的 MXC/平台适配；授权材料、真实目录和可用原生后端由 Host 注入。`mxc/executor.ts` 封装 SDK 或版本化 native bridge 调用，不依赖 Electron；`mxc/platform.ts` 仅选择已授权且能落实策略的 Adapter。必要的原生 helper 保持有界协议和能力校验。桌面 `sandbox/diagnostics.ts` 只负责探测与脱敏诊断，不再复制执行策略或另建业务执行器。Electron 渲染沙箱不能据此替代 OS 隔离或放宽 MXC 策略。
-- **装配与发行**：按 `electron-builder.yml` 使用 **electron-builder**，由 `scripts/package.ts` 装配 Core 制品、目标架构依赖与许可证，并生成安装包；`scripts/smoke.ts` 运行独立制品冒烟。固定 Electron、electron-builder 及后续更新依赖的稳定版本后再改锁文件。UI/Main/Preload 可放 ASAR；独立 Node、Core/Worker、生产依赖及原生 helper 通过真实资源目录分发，独立 Node 不依赖 Electron 的 ASAR 虚拟文件系统。pnpm workspace 依赖收集、资源摘要和安装后路径必须实测。参见 [electron-builder 稳定版配置](https://www.electron.build/v26/docs/configuration/) 与 [ASAR 限制](https://www.electronjs.org/docs/latest/tutorial/asar-archives)。
+- **装配与发行**：按 `apps/desktop/electron-builder.yml` 使用 **electron-builder**，由 `apps/desktop/scripts/package/package.ts` 装配 Core 制品、目标架构依赖与许可证，并生成安装包；`apps/desktop/scripts/verify/smoke.ts` 运行独立制品冒烟。Windows NSIS 定制归入 `apps/desktop/installer/windows/`。固定 Electron、electron-builder 及后续更新依赖的稳定版本后再改锁文件。UI/Main/Preload 可放 ASAR；独立 Node、Core/Worker、生产依赖及原生 helper 通过真实资源目录分发，独立 Node 不依赖 Electron 的 ASAR 虚拟文件系统。pnpm workspace 依赖收集、资源摘要和安装后路径必须实测。参见 [electron-builder 稳定版配置](https://www.electron.build/v26/docs/configuration/) 与 [ASAR 限制](https://www.electronjs.org/docs/latest/tutorial/asar-archives)。
 - **更新**：`main/updater.ts` 管理版本检查、下载/校验及用户确认安装；调用 `lifecycle.ts` 停止接收写入、收敛未完成操作并退出 Core 后再安装。发行签名、更新来源校验、失败后的可启动版本及数据 schema 回滚分别验收；验证版不默认开启生产更新通道。后续可接入 `electron-updater`，具体格式及平台要求按 [官方更新文档](https://www.electron.build/v26/docs/features/auto-update/) 冻结。
 
 当前替换窗口壳未升级数据 schema。Electron 必须复用既有稳定 owner 和数据位置；数据目录规则变化时须显式停写、备份并验证搬迁，不能启动成空库。不得让多个 Host 同时写同一库；CI、正式签名和产品发行分别验收。
@@ -192,9 +192,16 @@ apps/desktop/
       index.ts                     # 最小 contextBridge API；无通用 IPC 透传
     sandbox/
       diagnostics.ts               # 平台能力/版本探测与脱敏诊断，无执行策略副本
+  installer/
+    windows/
+      build.ts                     # Windows NSIS 安装包定制
+      cli-install.nsh              # 安装/卸载时注册 CLI
   scripts/
-    package.ts                     # 装配 Core/原生资源、依赖与许可证，调用打包
-    smoke.ts                       # 干净临时环境中的安装资源与重启/故障冒烟
+    build/                         # Main/Preload、Core 和资源构建
+    dev/                           # 开发启动与预览
+    package/package.ts             # 装配 Core/原生资源、依赖与许可证，调用打包
+    verify/smoke.ts                # 干净临时环境中的安装资源与重启/故障冒烟
+    update/                        # 更新清单处理
   electron-builder.yml             # 资源布局、平台安装包、签名与更新配置
 apps/web-host/                     # Linux/NAS 自托管版 Node HTTP Host 与部署装配
   package.json                     # workspace 包；依赖 @gugu/core，不复制 Core 源码

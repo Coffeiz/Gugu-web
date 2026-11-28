@@ -148,8 +148,6 @@ export function createDesktopMailService(
     const command = parsed.data
     const previous = (command.action === 'disconnect' || command.action === 'connect' && command.accountId)
       ? await store.get('desktop', command.accountId!) : null
-    if (command.action === 'connect' && previous?.oauth)
-      throw new MailError(409, '请通过原服务商重新授权')
     const result = await cachedMail.execute('desktop', command)
     oauth?.forget(previous)
     return result

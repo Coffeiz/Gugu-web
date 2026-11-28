@@ -1,3 +1,4 @@
+import { downloadSendFileImage } from '@gugu/core/tools'
 import type { safeStorage } from 'electron'
 import { imOutboundMediaLimits, parseImReceivedMessage, sendImMedia, type ImConnectionIdentity } from '@gugu/gateway'
 import { readDesktopAgentAttachmentContent } from '../../../agent/attachments.js'
@@ -28,15 +29,17 @@ export function createDesktopImAttachmentSender(directory: string,
       routes.set(id, route)
       return () => { if (routes.get(id) === route) routes.delete(id) }
     },
-    async send(params: Record<string, unknown>, signal?: AbortSignal, readFile?: ReturnType<typeof createDesktopFileService>['agentReadSendFile']) {
-      const { platform, connectionId, eventKey, sealedEvent, attachId, attachment, filePath } = params
+    async send(params: Record<string, unknown>, signal?: AbortSignal, readFile?: ReturnType<typeof createDesktopFileService>['agentReadSendFile'],
+      openImage?: Parameters<typeof downloadSendFileImage>[1], authorizeRemoteGroup?: (signal: AbortSignal) => Promise<boolean>) {
+      const { platform, connectionId, eventKey, sealedEvent, attachId, attachment, filePath, url } = params
       if (typeof platform !== 'string' || typeof connectionId !== 'string' || typeof eventKey !== 'string'
         || typeof sealedEvent !== 'string' || sealedEvent.length > 48_000
-        || (filePath === undefined && (typeof attachId !== 'string' || !/^[0-9a-f]{32}$/.test(attachId)))
+        || (url !== undefined && (typeof url !== 'string' || url.length > 4096 || attachId !== undefined || filePath !== undefined || !openImage))
+        || (url === undefined && filePath === undefined && (typeof attachId !== 'string' || !/^[0-9a-f]{32}$/.test(attachId)))
         || (filePath !== undefined && (typeof filePath !== 'string' || attachId !== undefined || !readFile))) return 'rejected'
       const id = key(platform, connectionId)
       const route = routes.get(id)
-      if (!route || filePath !== undefined && !('userId' in route && route.userId)) return 'rejected'
+      if (!route) return 'rejected'
       const active = AbortSignal.any([route.signal, ...(signal ? [signal] : [])])
       const authorize = async () => !active.aborted && routes.get(id) === route && await route.authorize() && !active.aborted && routes.get(id) === route
       let started = false
@@ -46,15 +49,27 @@ export function createDesktopImAttachmentSender(directory: string,
         const envelope = JSON.parse(sealed.result) as { event: unknown; replyContext?: unknown; attachments?: unknown }
         const event = parseImReceivedMessage(route.connection, envelope.event)
         if (desktopImEventKey(event) !== eventKey) return 'rejected'
-        if ('group' in route && route.group) {
-          if (event.scope.chatType !== 'group' || event.scope.chatId !== route.group.id
-            || event.scope.platformUserId !== route.group.ownerPlatformUserId || !await route.group.authorizeFile(event)) return 'rejected'
+        const group = route.group
+        const authorizeGroupFile = async () => {
+          if (!group) return true
+          if (event.scope.chatType !== 'group' || event.scope.chatId !== group.id) return false
+          const owner = event.scope.platformUserId === group.ownerPlatformUserId
+          if (typeof url === 'string') return await authorizeRemoteGroup?.(active) === true
+          if (typeof filePath === 'string') return owner && await authorizeRemoteGroup?.(active) === true
+          return owner && await group.authorizeFile(event)
+        }
+        if (group) {
+          if (!await authorizeGroupFile()) return 'rejected'
         } else if (event.scope.chatType !== 'c2c' || event.scope.platformUserId !== route.userId) return 'rejected'
-        const authorizeEvent = async () => await authorize() && (!('group' in route && route.group) || await route.group.authorizeFile(event))
+        const authorizeEvent = async () => await authorize() && await authorizeGroupFile()
         if (!await authorizeEvent()) return 'rejected'
         const maxBytes = imOutboundMediaLimits[route.connection.platform]
         let file: { name: string; ext: string; mime: string; data: Uint8Array; authorize?(): Promise<boolean> } | null
-        if (typeof filePath === 'string' && readFile) {
+        if (typeof url === 'string' && openImage) {
+          const image = await downloadSendFileImage(url, openImage, active)
+          if ('error' in image || image.bytes.byteLength > maxBytes) return 'rejected'
+          file = { name: '图片', ext: image.ext, mime: image.mime, data: image.bytes }
+        } else if (typeof filePath === 'string' && readFile) {
           file = await readFile(filePath, active, maxBytes)
         } else {
           if (typeof attachId !== 'string' || !attachment || typeof attachment !== 'object') return 'rejected'

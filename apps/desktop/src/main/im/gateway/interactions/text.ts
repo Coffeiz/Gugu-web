@@ -2,13 +2,20 @@ import { createImTextChoiceConsumer, type ImReceivedMessage } from '@gugu/gatewa
 import type { IpcHost } from '../../../ipc/types.js'
 import type { createDesktopAgentModelService } from '../../../agent/model.js'
 
+export type DesktopImTextConsumer = (
+  event: ImReceivedMessage, connectionId: string, eventKey: string,
+  authorize: () => Promise<boolean>, signal: AbortSignal,
+) => ReturnType<typeof consumeDesktopImText>
+
 export function consumeDesktopImText(host: IpcHost,
   model: Pick<ReturnType<typeof createDesktopAgentModelService>, 'resolveRunModel'>,
-  event: ImReceivedMessage, connectionId: string, eventKey: string, authorize: () => Promise<boolean>) {
+  event: ImReceivedMessage, connectionId: string, eventKey: string, authorize: () => Promise<boolean>,
+  signal = new AbortController().signal) {
   const consume = createImTextChoiceConsumer({
     async find(scope) {
       const target = await host.request<{ sessionId: number; runId: string; promptId: number; replayed: number } | null>(
-        'im.inbox.prompt', { action: 'lookup-text', platform: scope.platform, connectionId, eventKey })
+        'im.inbox.prompt', { action: 'lookup-text', platform: scope.platform, connectionId, eventKey,
+          ...(scope.chatType === 'group' ? { initiator: scope.platformUserId } : {}) })
       if (!target) return []
       if (target.replayed) return { replayed: true }
       // SQLite 已选定可接收文本的已授权提示，选项令牌由原生按钮单独持有。
@@ -24,5 +31,5 @@ export function consumeDesktopImText(host: IpcHost,
       return { session_id: id, prompt_id: promptId, result: { status: 'answered' } }
     },
   })
-  return consume({ ...event.scope, eventId: eventKey }, event.text, new AbortController().signal)
+  return consume({ ...event.scope, eventId: eventKey }, event.text, signal)
 }

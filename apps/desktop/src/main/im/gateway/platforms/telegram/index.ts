@@ -1,4 +1,8 @@
-import { classifyGatewayGroupMessage } from '@gugu/gateway'
+import { classifyGatewayGroupMessage, groupDisabledNoticeText } from '@gugu/gateway'
+import type { DesktopGroupDisabledNotice } from '../../group-disabled-notice.js'
+import type { DesktopImTextConsumer } from '../../interactions/text.js'
+import { readImReceivedInteraction } from '@gugu/gateway'
+import { parseImControlCommand } from '@gugu/core/im/shortcut'
 import { readImAddressedCommand } from '@gugu/gateway'
 import { desktopImGroupToolAllowed } from '@gugu/core/agent/scenes/im'
 import { redactToolError } from '@gugu/core/agent'
@@ -40,7 +44,8 @@ function parseInbox(value: unknown): Inbox {
 export function createDesktopTelegramGateway(directory: string, encryption: DesktopTelegramEncryption, connect = createTelegramAdapter,
   resolveProxy?: NonNullable<Parameters<typeof createNodeProviderTransport>[0]>['resolveProxy'],
   admit?: ReturnType<typeof createDesktopImInbox>, dispatch?: ReturnType<typeof createDesktopImDispatch>, callback?: ReturnType<typeof createDesktopImCallback>, voice?: DesktopImVoice,
-  attachmentHost?: IpcHost, pendingAsks?: ImPendingAskStore) {
+  attachmentHost?: IpcHost, pendingAsks?: ImPendingAskStore, notice?: DesktopGroupDisabledNotice,
+  consumeGroupText?: DesktopImTextConsumer) {
   const store = createDesktopTelegramConfig(directory, encryption)
   const emptyInbox: Inbox = { cursor: null, messages: [] }
   const botId = (bot: DesktopTelegramBot) => bot.token.split(':', 1)[0]!
@@ -59,6 +64,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
   }
   let binding: { code: string; expiresAt: number; revision: string; attempts: number } | undefined
   let pollStatus: { revision: string; status: 'ready' | 'conflict' | 'retrying' } | undefined
+  let notifyConnectionChanged: (() => void) | undefined
   const gateway = createGatewaySupervisor({
     async read() {
       const bot = await store.read()
@@ -105,6 +111,11 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
         if (!groupDeliveries.has(id) && dispatch) {
           const work = dispatch({ connection, connectionId: id, signal: dispatchSignal, authorize: allow,
             group: { id: groupId, ownerPlatformUserId: bot.chatId!, authorizeMessage: allowMessage, authorizeFile: allowFile },
+            ...(callback ? { async sendGroupPrompt(prompt: Parameters<typeof adapter.sender.interaction>[1], event: ImReceivedMessage) {
+              const receipt = await adapter.sender.interaction({ chatId: groupId, chatType: 'group' }, prompt,
+                dispatchSignal, () => allowMessage(event))
+              return receipt.outcome === 'accepted' && receipt.platformMessageIds.length === 1 ? receipt.platformMessageIds[0]! : null
+            } } : {}),
             media: { platform: 'telegram', sender: adapter.sender },
             async sendOwnerPrivate(text) {
               const ownerId = bot.chatId!
@@ -151,8 +162,12 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
       let mediaNotice: { updateId: number; text: string; messageId: string } | undefined
       const handle = await adapter.connect({
         botId: botId(bot), ownerId: 'desktop', expectedPlatformBotId: botId(bot), signal,
-        onPollStatus(status) { if (!signal.aborted) pollStatus = { revision: bot.revision, status } },
-        async preflight(message) {
+        onPollStatus(status) {
+          if (signal.aborted || (pollStatus?.revision === bot.revision && pollStatus.status === status)) return
+          pollStatus = { revision: bot.revision, status }
+          notifyConnectionChanged?.()
+        },
+        async preflight(message, signal) {
           const event = readImReceivedMessage(connection, { ...message })
           if (message.telegram_command === 'bind') {
             const sender = event.scope.platformUserId
@@ -197,8 +212,31 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
             return message.chat_id === bot.chatId && event.scope.platformUserId === bot.chatId ? 'enqueue' : 'consumed'
           const latest = await store.read()
           if (event.scope.chatType !== 'group' || !latest?.enabled || !latest.chatId
-            || !latest.groupChatEnabled || !event.scope.chatId) return 'consumed'
-          const decision = classifyGatewayGroupMessage({ platform: 'telegram', chatType: 'group', chatId: event.scope.chatId,
+            || !event.scope.chatId) return 'consumed'
+          if (!latest.groupChatEnabled) {
+            const groupId = event.scope.chatId
+            await notice?.(['telegram', botId(bot), latest.chatId, groupId, latest.groupDisabledEpoch], {
+              mentioned: event.botMentioned,
+              async authorize() {
+                const current = await store.read()
+                return !dispatchSignal.aborted && current?.enabled === true && current.revision === bot.revision
+                  && current.chatId === latest.chatId && !current.groupChatEnabled && current.groupDisabledEpoch === latest.groupDisabledEpoch
+              },
+              async send(authorize) {
+                return (await adapter.sender.text({ chatId: groupId, chatType: 'group', replyToMessageId: event.eventId },
+                  groupDisabledNoticeText, { signal: dispatchSignal, authorize })).outcome
+              },
+            })
+            return 'consumed'
+          }
+          const groupId = event.scope.chatId
+          if (consumeGroupText && latest.groupReplyMode !== 'record_only' && event.text.trim()
+            && !message.attachments.length && !message.quoted_attachments.length
+            && !parseImControlCommand(event.text.trim()) && !isDesktopImTextCancel(event)
+            && await consumeGroupText(event, groupConnectionId(latest, groupId), desktopImEventKey(event),
+              async () => !signal.aborted && await authorizeGroup(groupId)
+                && (await store.read())?.groupReplyMode !== 'record_only', signal)) return 'consumed'
+          const decision = classifyGatewayGroupMessage({ platform: 'telegram', chatType: 'group', chatId: groupId,
             groupMentioned: event.botMentioned, mentionsOtherBot: false },
           latest.groupReplyMode, isDesktopImTextCancel(event, message.attachments.length > 0 || message.quoted_attachments.length > 0))
           return latest.groupReplyMode === 'record_only' || decision === 'reply' ? 'enqueue' : 'consumed'
@@ -299,7 +337,18 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
         async callback(data, signal) {
           if (!callback || !bot.chatId || typeof data.id !== 'string') return true
           let outcome: Awaited<ReturnType<typeof callback>> = { accepted: false }
-          try { outcome = await callback(connection, connectionId(bot), bot.chatId, data, authorize) }
+          let target = { chatId: bot.chatId, chatType: 'c2c' as 'c2c' | 'group' }
+          let authorizeAction = authorize
+          try {
+            const { action } = readImReceivedInteraction(connection, 'telegram', data)
+            if (action.chatType === 'group') {
+              const groupId = action.chatId
+              target = { chatId: groupId, chatType: 'group' }
+              authorizeAction = async () => !signal.aborted && await authorizeGroup(groupId)
+                && (await store.read())?.groupReplyMode !== 'record_only'
+              outcome = await callback(connection, groupConnectionId(bot, groupId), action.operator, data, authorizeAction, groupId)
+            } else outcome = await callback(connection, connectionId(bot), bot.chatId, data, authorize)
+          }
           catch { /* 回调验证或消费失败，返回通用状态。 */ }
           const awaitingText = outcome.accepted && outcome.awaitingText
           const hint = '请直接发送你的回复，咕咕会继续处理。'
@@ -307,8 +356,13 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
             callback_query_id: data.id, text: awaitingText ? hint : outcome.accepted ? '已收到选择' : '交互已失效',
             show_alert: !outcome.accepted,
           }, signal, authorize }) } catch { /* 平台提示失败不重放已消费动作。 */ }
+          if (outcome.accepted) {
+            try {
+              await adapter.sender.clearInteractionKeyboard(data, signal, authorizeAction)
+            } catch { /* 键盘清理失败不影响已保存的选择。 */ }
+          }
           if (awaitingText) {
-            try { await adapter.sender.text({ chatId: bot.chatId, chatType: 'c2c' }, hint, { signal, authorize }) }
+            try { await adapter.sender.text(target, hint, { signal, authorize: authorizeAction }) }
             catch { /* 聊天提示失败不重放已消费动作。 */ }
           }
           return true
@@ -476,6 +530,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
     resume: gateway.resume,
     health: gateway.health,
     onConfigurationChanged: gateway.onConfigurationChanged,
+    onConnectionChanged(listener: () => void) { notifyConnectionChanged = listener },
     stop() { return stopping ??= gateway.stop() },
     snapshot: () => serialize(snapshot),
     readScheduledBot: store.read,
@@ -497,7 +552,7 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
       if (stopping) throw new DesktopError('busy', '网关正在停止')
       const previous = await store.read()
       if (previous && botId(previous) === botId(next)) Object.assign(next, {
-        chatId: previous.chatId, groupChatEnabled: previous.groupChatEnabled,
+        chatId: previous.chatId, groupChatEnabled: previous.groupChatEnabled, groupDisabledEpoch: previous.groupDisabledEpoch,
         privateStreamingEnabled: previous.privateStreamingEnabled,
         groupReplyMode: previous.groupReplyMode, groupAttentionMode: previous.groupAttentionMode,
         groupAllowedTools: previous.groupAllowedTools, groupOwnerMemoryEnabled: previous.groupOwnerMemoryEnabled,
@@ -570,7 +625,8 @@ export function createDesktopTelegramGateway(directory: string, encryption: Desk
       const { groupWebToolsEnabled, groupProviderSearchEnabled, groupHistorySearchEnabled, ...settings } = patch
       const groupAllowedTools = updateUserBotGroupTools(current.groupAllowedTools,
         { groupWebToolsEnabled, groupProviderSearchEnabled, groupHistorySearchEnabled })
-      await store.write({ ...current, ...settings, groupAllowedTools })
+      await store.write({ ...current, ...settings, groupAllowedTools,
+        ...(current.groupChatEnabled && settings.groupChatEnabled === false ? { groupDisabledEpoch: randomUUID() } : {}) })
       return snapshot()
     }),
     setPrivateStreaming: (enabled: boolean) => serialize(async () => {

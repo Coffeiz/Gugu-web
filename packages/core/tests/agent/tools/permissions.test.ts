@@ -9,16 +9,20 @@ type Actor = Parameters<typeof imCanUseTool>[0]
 const member: Actor = { allowedToolNames: [], role: 'member', platform: 'qq', chatType: 'group', verifiedOwner: false }
 
 describe('工具发现与派发权限规则', () => {
-  it('空白名单保留固定入口，技能管理只向已验证的私聊 owner 开放', () => {
+  it('旧 Python owner 权限在群聊保留，群成员不能通过白名单提升权限', () => {
     for (const name of ['get_current_time', 'call_tool', 'search_tools', 'use_skill', 'ask_user'])
       expect(imCanUseTool(member, name)).toBe(true)
     for (const name of ['list_skills', 'create_skill', 'update_skill', 'delete_skill']) {
       const owner = { ...member, role: 'owner' as const, verifiedOwner: true }
       expect(imCanUseTool({ ...owner, chatType: 'c2c' }, name)).toBe(true)
-      expect(imCanUseTool(owner, name)).toBe(false)
+      expect(imCanUseTool(owner, name)).toBe(true)
       expect(imCanUseTool({ ...member, allowedToolNames: [name] }, name)).toBe(false)
       expect(imCanUseTool({ ...owner, chatType: 'c2c', verifiedOwner: false }, name)).toBe(false)
     }
+    expect(imCanUseTool({ ...member, role: 'owner', verifiedOwner: true }, 'save_attachment')).toBe(true)
+    expect(imCanUseTool({ ...member, role: 'owner', verifiedOwner: true }, 'mcp_weather_lookup')).toBe(true)
+    expect(imCanUseTool({ ...member, role: 'owner', verifiedOwner: true }, 'bind_web_session')).toBe(true)
+    expect(imCanUseTool({ ...member, role: 'owner', verifiedOwner: true }, 'agent_message')).toBe(true)
   })
   it('限制 IM 界面工具和原生回复控制，未知平台拒绝工具', () => {
     expect(sceneAllowsTool('default', 'open_item')).toBe(true)
@@ -34,7 +38,7 @@ describe('工具发现与派发权限规则', () => {
   })
   it('桌面群聊区分已验证 owner、群设置和固定入口', () => {
     expect(desktopImGroupToolAllowed('qq', true, [], 'web_search')).toBe(true)
-    expect(desktopImGroupToolAllowed('qq', true, [], 'list_projects')).toBe(false)
+    expect(desktopImGroupToolAllowed('qq', true, [], 'list_projects')).toBe(true)
     expect(desktopImGroupToolAllowed('qq', true, [], 'canvas_focus_node')).toBe(false)
     expect(desktopImGroupToolAllowed('qq', false, [], 'web_search')).toBe(false)
     expect(desktopImGroupToolAllowed('qq', false, ['web_search'], 'web_search')).toBe(true)

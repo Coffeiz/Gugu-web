@@ -58,9 +58,9 @@ export function createUseSkillTool(ports: AgentSkillRuntimePorts): ToolDefinitio
       catch (error) {
         scope.signal.throwIfAborted()
         if (!(error instanceof SkillRegistryError) || error.code !== 'unavailable') throw error
-        const available = (await ports.skills.catalog(scope.identity)).filter(item => /^S[1-9][0-9]*$/.test(item.id)).map(item => item.id).join('、')
+        const available = (await ports.skills.catalog(scope.identity)).map(item => item.id).join('、')
         return { kind: 'completed', successful: false, mutated: false,
-          value: { error: `没有 Skill ID 为「${id}」的技能`, available } }
+          value: { error: `技能「${id}」在当前会话中不可用`, available } }
       }
       const origin = await ports.origin(scope.identity, id, scope.signal)
       if ((/^U[1-9][0-9]*$/u.test(id) && origin.source !== 'user') || (/^S[1-9][0-9]*$/u.test(id) && origin.source !== 'builtin')

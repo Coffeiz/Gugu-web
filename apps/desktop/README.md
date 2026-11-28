@@ -15,19 +15,21 @@ pnpm --dir apps/desktop dev
 pnpm --filter gugu-desktop typecheck
 pnpm --filter gugu-desktop test
 pnpm --dir apps/desktop build
+# 本地快速生成目录包，按输入指纹复用未变化的构建阶段
+pnpm --dir apps/desktop build:fast
 # 只生成目录包
 pnpm --dir apps/desktop build -- --dir
 # 源码运行的真实界面/重启回归
 pnpm --dir apps/desktop smoke
 # 从仓库根验证 Windows 目录包
-node apps/desktop/scripts/smoke.ts --app apps/desktop/release/win-unpacked/咕咕桌面验证.exe
+node apps/desktop/scripts/verify/smoke.ts --app apps/desktop/release/win-unpacked/咕咕桌面验证.exe
 ```
 
-`dev` 使用工作区的增量构建产物启动 Core，界面由 Vite 热更新。仅 Core 子进程使用的代码改动时，桌面窗口保持打开；Main、Preload 或它们实际打包的共享代码改动时，Electron 自动重启。Core 重载期间，正在执行的本地请求可能中断。`scripts/package.ts` 调用 electron-builder 26.18.0，先装配并冒烟 Core，再装配应用；构建始终 `--publish never`。生成资源在 `resources/core-sidecar/`，平台制品在 `release/`，均不入 Git。
+`dev` 使用工作区的增量构建产物启动 Core，界面由 Vite 热更新。仅 Core 子进程使用的代码改动时，桌面窗口保持打开；Main、Preload 或它们实际打包的共享代码改动时，Electron 自动重启。Core 重载期间，正在执行的本地请求可能中断。`scripts/package/package.ts` 调用 electron-builder 26.18.0，先装配并冒烟 Core，再装配应用；构建始终 `--publish never`。`build:fast` 面向本机迭代，默认只生成目录包，并将输入指纹与生产依赖部署缓存保存在 `.tools/package-cache/`；源码、依赖产物、Node/平台架构变化时重建对应阶段。需要完整重建时可删除该缓存目录。正式 `build` 不读写快速缓存，仍执行完整打包检查。生成资源在 `resources/core-sidecar/`，平台制品在 `release/`，均不入 Git。
 
-Core 制品包含固定 Node、编译后的 Core/Worker、生产依赖、许可证、版本/ABI 与逐文件摘要。Main/Preload 不加载 SQLite/MXC 原生模块，它们只在独立 Node 使用相应 ABI。运行不下载解释器或从系统 PATH 查找 Node。
+Core 制品包含固定 Node、编译后的 Core/Worker、生产依赖、许可证、版本/ABI 与逐文件摘要。构建/冒烟阶段完整校验制品文件与摘要；正常启动只检查清单、关键文件路径和 Core 握手，不再逐文件读取计算哈希，以避免冷启动磁盘扫描。自动更新仍按更新链验证下载制品。Main/Preload 不加载 SQLite/MXC 原生模块，它们只在独立 Node 使用相应 ABI。运行不下载解释器或从系统 PATH 查找 Node。
 
-`scripts/smoke.ts` 将目录包复制到仓库外的新建临时目录，隐藏窗口完成创建、重启、收据查询、导航拒绝和 Renderer 无 Node 验证；子进程 PATH 不含开发 Node/Python。显式测试目录必须有冒烟标记，不可指向用户数据。`smoke:sidecar` 也在临时副本中运行。
+`scripts/verify/smoke.ts` 将目录包复制到仓库外的新建临时目录，隐藏窗口完成创建、重启、收据查询、导航拒绝和 Renderer 无 Node 验证；子进程 PATH 不含开发 Node/Python。显式测试目录必须有冒烟标记，不可指向用户数据。`smoke:sidecar` 也在临时副本中运行。
 
 ## 进程、数据与恢复
 

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { prepareDesktopPty } from './prepare-pty.mjs'
 
-const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const ui = resolve(desktop, '../ui')
 const viteCli = resolve(ui, 'node_modules/vite/bin/vite.js')
 const electronCli = resolve(desktop, 'node_modules/electron/cli.js')
@@ -243,7 +243,7 @@ async function rebuild() {
     console.log(level === 2 ? '检测到共享包改动，正在重建桌面 Core' : '检测到宿主改动，正在重建 Electron')
     try {
       if (level === 2) await buildWorkspace()
-      await runBuild([resolve(desktop, 'scripts/build.mjs')])
+      await runBuild([resolve(desktop, 'scripts/build/build.mjs')])
     }
     catch (error) {
       if (!stopping) console.error(error.message + '，保留当前桌面进程，等待下次修改')
@@ -312,7 +312,7 @@ function watchSource(path, level) {
 
 try {
   await buildWorkspace()
-  await runBuild([resolve(desktop, 'scripts/build.mjs')])
+  await runBuild([resolve(desktop, 'scripts/build/build.mjs')])
   if (stopping) throw new Error('桌面开发已停止')
   vite = spawn(process.execPath, viteArgs, {
     cwd: ui,

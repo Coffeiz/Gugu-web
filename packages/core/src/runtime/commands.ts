@@ -56,7 +56,7 @@ const commandFields: Readonly<Record<string, readonly string[]>> = {
   'im.qq.sequence': ['botId', 'messageId'],
   'im.inbox.projection': ['platform', 'connectionId', 'eventKey', 'runId', 'action', 'key', 'fingerprint', 'version', 'state', 'outcome', 'uploadId', 'part', 'total', 'chunk'],
   'im.inbox.delivery': ['platform', 'connectionId', 'eventKey', 'runId', 'action', 'noticeKey', 'replyFact'],
-  'im.inbox.prompt': ['platform', 'connectionId', 'action', 'promptId', 'messageId', 'eventKey', 'runId'],
+  'im.inbox.prompt': ['platform', 'connectionId', 'action', 'promptId', 'messageId', 'eventKey', 'runId', 'initiator'],
   'im.inbox.reject': ['platform', 'connectionId', 'eventKey'],
   'im.inbox.recordGroup': ['platform', 'connectionId', 'eventKey', 'text', 'quotedText', 'attachments', 'platformUserId', 'platformUserName', 'ownerPlatformUserId', 'platformBotUserId', 'otherBotNames', 'platformSentMs', 'eventReceivedMs'],
   'im.inbox.groupAttentionHistory': ['platform', 'connectionId'],

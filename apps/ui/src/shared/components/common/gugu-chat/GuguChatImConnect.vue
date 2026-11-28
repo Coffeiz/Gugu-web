@@ -70,7 +70,7 @@ function statusLabel(bots: ChatImBot[]) {
     return t(`desktopTelegram.${bot.telegramStatus}`)
   }
   const state = bot.connectionState
-  return t(state && state !== 'running' ? `profileImUi.${state}` : 'profileImUi.connecting')
+  return state && state !== 'running' ? t(`profileImUi.desktopGateway.${state}`) : t('profileImUi.connecting')
 }
 
 interface ImPlatformOption { key: ImPlatformKey; label: string }

@@ -5,14 +5,15 @@ import type { createDesktopAgentModelService } from '../../../agent/model.js'
 
 export function createDesktopImCallback(host: IpcHost, model: Pick<ReturnType<typeof createDesktopAgentModelService>, 'resolveRunModel'>) {
   return async (connection: ImConnectionIdentity, connectionId: string, userId: string,
-    data: Record<string, unknown>, authorize: () => Promise<boolean>): Promise<{ accepted: boolean; awaitingText?: boolean }> => {
+    data: Record<string, unknown>, authorize: () => Promise<boolean>, groupId?: string): Promise<{ accepted: boolean; awaitingText?: boolean }> => {
     const event = readImReceivedInteraction(connection, connection.platform, data)
     const action = event.action
     if ((!action.messageId && connection.platform !== 'qq') || !matchesImInteractionScope(event, {
-      ...connection, chatType: 'c2c', chatId: null, platformUserId: userId,
+      ...connection, chatType: groupId ? 'group' : 'c2c', chatId: groupId ?? null, platformUserId: userId,
     }) || !await authorize()) return { accepted: false }
     const target = await host.request<{ sessionId: number; runId: string } | null>('im.inbox.prompt', {
       action: 'lookup', platform: connection.platform, connectionId, promptId: action.promptId, messageId: action.messageId,
+      ...(groupId ? { initiator: action.operator } : {}),
     })
     if (!target) return { accepted: false }
     const { sessionId: id, runId } = target

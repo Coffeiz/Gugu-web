@@ -1,4 +1,7 @@
-import { classifyGatewayGroupMessage, type ImReceivedMessage } from '@gugu/gateway'
+import { classifyGatewayGroupMessage, groupDisabledNoticeText, type ImReceivedMessage } from '@gugu/gateway'
+import { readImReceivedInteraction } from '@gugu/gateway'
+import type { DesktopGroupDisabledNotice } from '../../group-disabled-notice.js'
+import type { DesktopImTextConsumer } from '../../interactions/text.js'
 import { desktopImGroupToolAllowed } from '@gugu/core/agent/scenes/im'
 import { transcribeDesktopImFile, type DesktopImVoice } from '../../inbound/voice.js'
 import { resolveImActor } from '@gugu/core/im/access'
@@ -7,7 +10,7 @@ import { createHash } from 'node:crypto'
 import { desktopTransportOptions } from '@gugu/core/providers/node'
 import { isExplicitImCancel, parseImControlCommand } from '@gugu/core/im/shortcut'
 import { describeQqMedia, type QqMediaRequirement, createQqInboundPreparation, createQqFaceResolver, processQqMedia, handleQqBinding, parseQqMessage, QqMediaIngressError } from '@gugu/gateway/qq'
-import { createImMediaBudget, createGatewaySupervisor, imSemanticText, readImReceivedInteraction, readImReceivedMessage, parseImReceivedMessage } from '@gugu/gateway'
+import { createImMediaBudget, createGatewaySupervisor, imSemanticText, qqInteractionEventId, readImReceivedMessage, parseImReceivedMessage } from '@gugu/gateway'
 import { createPersistentQqProjection, createQqChartPreparation, createQqMediaUploader, sendQqChart, createQqClient, createQqConnection, createQqSender, createQqSocketFactory } from '@gugu/gateway/qq'
 import type { createDesktopQqPairing } from '../../../connect/platforms/qq/index.js'
 import type { createDesktopImCallback } from '../../interactions/callback.js'
@@ -28,7 +31,8 @@ function groupConnectionId(botId: string, groupId: string, userId: string) {
 export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDesktopQqPairing>, 'read' | 'consumeBinding'>,
   admit: ReturnType<typeof createDesktopImInbox>, dispatch: ReturnType<typeof createDesktopImDispatch>,
   transport: () => Transport, connect = createQqConnection, callback?: ReturnType<typeof createDesktopImCallback>,
-  report?: (code: string, error?: unknown) => void, runtime?: ProjectionRuntime) {
+  report?: (code: string, error?: unknown) => void, runtime?: ProjectionRuntime, notice?: DesktopGroupDisabledNotice,
+  consumeGroupText?: DesktopImTextConsumer) {
   const { resolve } = desktopTransportOptions()
   let ready = false
   const supervisor = createGatewaySupervisor({
@@ -162,11 +166,18 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
         const authorizeFile = async (message: ImReceivedMessage) => {
           const current = await readActive()
           return current?.groupChatEnabled === true && userBotGroupFileToolsAllowed(current) && current.userId === userId
-            && current.groupReplyMode !== 'record_only' && (message.botMentioned || current.groupReplyMode === 'reply_all')
+            && current.groupReplyMode !== 'record_only' && (message.botMentioned || message.qqAtEventOnly || current.groupReplyMode === 'reply_all')
         }
         if (!groupDeliveries.has(connectionId)) {
           const work = dispatch({ connection, connectionId, signal: active, authorize,
             group: { id: groupId, ownerPlatformUserId: userId, authorizeMessage, authorizeFile },
+            ...(callback ? { async sendGroupPrompt(prompt: Parameters<typeof sender.keyboard>[2], event: ImReceivedMessage) {
+              const canSend = async () => !active.aborted && event.scope.chatId === groupId && await authorizeMessage(event)
+              if (!await canSend()) return null
+              const receipt = await sender.keyboard({ id: groupId, chatType: 'group' },
+                [prompt.title || '请选择', prompt.body].filter(Boolean).join('\n'), prompt, active, canSend)
+              return receipt.outcome === 'accepted' && receipt.platformMessageIds.length === 1 ? receipt.platformMessageIds[0]! : null
+            } } : {}),
             ...(uploader ? { media: { platform: 'qq' as const, sender, mediaUpload: uploader } } : {}),
             async sendOwnerPrivate(text) {
               const current = await readActive()
@@ -233,11 +244,22 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
           const current = await readActive()
           if (!current || signal.aborted) return
           if (kind === 'INTERACTION_CREATE' && callback && current.userId) {
-            const { action } = readImReceivedInteraction(connection, 'qq', { ...data })
             const userId = current.userId
             const authorize = async () => !signal.aborted && (await readActive())?.userId === userId
             if (!await authorize()) return
-            await sender.ackInteraction(action.eventId, 0, signal)
+            const receipt = await sender.ackInteraction(qqInteractionEventId(data), 0, signal)
+            if (!receipt.acknowledged) report?.('qq-interaction-ack-failed')
+            const { action } = readImReceivedInteraction(connection, 'qq', { ...data })
+            if (action.chatType === 'group') {
+              const groupId = action.chatId
+              await callback(connection, groupConnectionId(bot.appId, groupId, userId), action.operator,
+                { ...data }, async () => {
+                  const latest = await readActive()
+                  return !signal.aborted && latest?.userId === userId
+                    && latest.groupChatEnabled === true && latest.groupReplyMode !== 'record_only'
+                }, groupId)
+              return
+            }
             await callback(connection, scopeFor(userId), userId, { ...data }, authorize)
             return
           }
@@ -254,6 +276,22 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
           const explicitStatus = (!group || mentioned) && slash?.name === 'status' && !slash.argument
           const cancelControl = !parsed.mediaItems.length && !parsed.quoteRequest && !event.quotedText
             && (explicitStop || isExplicitImCancel(semantic))
+          if (group && !current.groupChatEnabled && current.userId && event.scope.chatId) {
+            const groupId = event.scope.chatId
+            await notice?.(['qq', bot.appId, current.userId, groupId, current.groupDisabledEpoch], {
+              mentioned: event.botMentioned || (kind === 'GROUP_AT_MESSAGE_CREATE' && event.qqAtEventOnly === true),
+              async authorize() {
+                const latest = await readActive()
+                return !!latest && !signal.aborted && latest.userId === current.userId && !latest.groupChatEnabled
+                  && latest.groupDisabledEpoch === current.groupDisabledEpoch
+              },
+              async send(authorize) {
+                return (await sender.text({ id: groupId, chatType: 'group', messageId: event.eventId },
+                  groupDisabledNoticeText, signal, authorize)).outcome
+              },
+            })
+            return
+          }
           if (group && (!current.groupChatEnabled || !current.userId || current.bindingEventId === event.eventId)) return
           const groupFacts = { platform: 'qq', chatType: 'group', chatId: event.scope.chatId,
             groupMentioned: event.botMentioned || event.qqAtEventOnly === true,
@@ -276,6 +314,17 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
             return
           }
           if ((!group && current.userId !== userId) || current.bindingEventId === event.eventId || signal.aborted) return
+          if (group && event.scope.chatId && current.groupReplyMode !== 'record_only'
+            && semantic.trim() && !slash && !cancelControl && !parsed.mediaItems.length && !parsed.quoteRequest) {
+            const connectionId = groupConnectionId(bot.appId, event.scope.chatId, current.userId)
+            const authorizeText = async () => {
+              const latest = await readActive()
+              return !signal.aborted && latest?.userId === current.userId
+                && latest?.groupChatEnabled === true && latest.groupReplyMode !== 'record_only'
+            }
+            if (await authorizeText() && await consumeGroupText?.({ ...event, text: semantic },
+              connectionId, desktopImEventKey(event), authorizeText, signal)) return
+          }
           const disposition = group ? groupDisposition(current.groupReplyMode) : 'reply'
           if (!disposition) return
           const recordOnly = disposition === 'passive'
@@ -332,6 +381,8 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
           if (!parsed.mediaItems.length) {
             if (recordOnly) {
               if (event.text.trim() || event.quotedText) await admit(connection, connectionId, event, undefined, { files: [], recordOnly, ownerPlatformUserId: current.userId, authorize })
+            } else if (group) {
+              await admit(connection, connectionId, event, undefined, { files: [], authorize })
             } else await admit(connection, connectionId, event)
             return
           }

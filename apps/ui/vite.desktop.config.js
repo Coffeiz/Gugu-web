@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite'
 import { resolve } from 'node:path'
 import base from './vite.config.js'
-import { desktopCorePreview } from '../desktop/scripts/vite-core-preview.mjs'
+import { desktopCorePreview } from '../desktop/scripts/dev/vite-core-preview.mjs'
+
+const __dirname = import.meta.dirname
 
 // 本地共享模块随源码更新，避免浏览器继续加载旧的预构建导出。
 const desktopSourceEntries = {

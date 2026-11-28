@@ -30,5 +30,6 @@ test('已投递的确认提示拒绝跨连接、跨群和其他私聊用户的�
   const groupScope = { ...privateScope, chatType: 'group', chatId: 'group' }
   assert.equal(matchesImInteractionScope(groupEvent, groupScope), true)
   assert.equal(matchesImInteractionScope(groupEvent, { ...groupScope, chatId: 'other' }), false)
+  assert.equal(matchesImInteractionScope(groupEvent, { ...groupScope, platformUserId: 'other' }), false)
   assert.equal(matchesImInteractionScope(groupEvent, privateScope), false)
 })

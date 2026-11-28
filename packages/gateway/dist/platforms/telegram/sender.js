@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { splitMarkdownV2 as splitTelegramMarkdownV2 } from '@gugu/core/im/telegram-format';
 import { TelegramApiError } from './client.js';
 import { packButtonRows } from '../button-rows.js';
+import { parseGatewayInteraction } from '../../interaction.js';
 const object = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
 /** 每 Bot 一个实例，跨 chat 串行维护 bot/chat 限速；未知结果不自动重试。 */
 export function createTelegramSender(options) {
@@ -58,6 +59,19 @@ export function createTelegramSender(options) {
         return { outcome: rejected ? 'rejected' : 'unknown', platformMessageIds: ids };
     }
     const sender = {
+        /** 仅在宿主确认已消费选项后清理原消息的键盘。 */
+        async clearInteractionKeyboard(data, signal, authorize) {
+            const action = parseGatewayInteraction('telegram', data);
+            const chatId = Number(action.chatId), messageId = Number(action.messageId);
+            if (!/^-?[1-9]\d*$/u.test(action.chatId) || !Number.isSafeInteger(chatId)
+                || !/^[1-9]\d*$/u.test(action.messageId ?? '') || !Number.isSafeInteger(messageId))
+                throw new Error('Telegram 交互消息定位无效');
+            if (authorize && !await authorize())
+                throw new Error('Telegram 投递授权已撤销');
+            await options.api.call(options.token, 'editMessageReplyMarkup', { payload: {
+                    chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] },
+                }, signal, authorize });
+        },
         text(target, text, args = {}) {
             return serialize(async () => {
                 checkTarget(target);

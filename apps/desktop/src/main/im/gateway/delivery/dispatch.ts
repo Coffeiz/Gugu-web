@@ -87,6 +87,7 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
     startTyping?(replyContext: string): () => Promise<void>
     sendOwnerPrivate?(text: string): Promise<Outcome>
     sendPrompt?(prompt: Prompt, recipient: string): Promise<string | null>
+    sendGroupPrompt?(prompt: Prompt, event: ImReceivedMessage): Promise<string | null>
     media?: DesktopImMediaRoute['media']
     authorize(): Promise<boolean>
     sendActiveNotice?(reply: NonNullable<ReturnType<typeof createImRequestedReply>>): Promise<Outcome>
@@ -436,12 +437,16 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
             if (keepTyping && !typing && replyContext && options.startTyping)
               typing = { runId: item.runId, stop: options.startTyping(replyContext) }
             const prompt = current.prompt
-            if (status === 'waiting' && prompt && options.sendPrompt && options.userId) {
+            const sendPrompt = prompt && (options.group
+              ? options.sendGroupPrompt && (() => options.sendGroupPrompt!(prompt, event))
+              : options.sendPrompt && options.userId && (() => options.sendPrompt!(prompt, options.userId!)))
+            if (status === 'waiting' && prompt && sendPrompt) {
               const request = { ...target, promptId: prompt.prompt_id }
               await deliverImPrompt<string | null>({
                 reserve: () => callRpc<boolean>('im.inbox.prompt', { ...request, action: 'begin' }),
-                authorize: options.authorize,
-                send: () => options.sendPrompt!(prompt, options.userId!),
+                authorize: async () => await options.authorize()
+                  && (!options.group || await options.group.authorizeMessage(event)),
+                send: sendPrompt,
                 async settle(messageId) { await callRpc('im.inbox.prompt', { ...request, action: 'settle', messageId }) },
                 rejected: null,
               })

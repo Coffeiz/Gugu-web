@@ -1,4 +1,6 @@
 type Payload = Record<string, unknown>;
+/** QQ 协议 ACK 只依赖事件 ID，旧按钮参数仍由业务入口独立校验。 */
+export declare function qqInteractionEventId(data: Payload): string;
 interface Parsed {
     promptId: number;
     token: string;

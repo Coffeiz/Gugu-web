@@ -3,7 +3,7 @@ import { createAgentRunToolPorts, contextAccessScopeHash, stableJson, type Canon
 import type { ProviderContextFactoryInput, ProviderFactoryContext } from '@gugu/core/providers'
 import { assembleSubagentCatalog, builtinSubagentCatalog } from '@gugu/core/agent'
 import { imActorInputFromPayload, type ImActor, type ImActorInput } from '@gugu/core/im/access'
-import { createImAgentContextBuilder, imOwnerPrivate, imCanUseTool, imContextPolicy, imUnavailableTool } from '@gugu/core/agent/scenes/im'
+import { createImAgentContextBuilder, imCanUseTool, imContextPolicy, imUnavailableTool } from '@gugu/core/agent/scenes/im'
 import { createImRunDelivery, ImRunDeliveryBlocked, type ImRunDeliveryPorts } from '@gugu/core/im/run-delivery'
 import type { AgentDispatchLease, ImAgentDispatchInput } from '../../../agent/run/dispatch.js'
 import { agentDispatchSource } from '../../../agent/run/dispatch.js'
@@ -195,7 +195,7 @@ export function createImAgentReconstructor(options: ImAgentReconstructorOptions)
       const load: CanonicalContextPorts['load'] = async (identity, signal) => {
         try {
           const loaded = await source.load(identity, signal)
-          if (imOwnerPrivate(actor) && 'input' in loaded
+          if (actor.role === 'owner' && actor.verifiedOwner && 'input' in loaded
             && (await resources.toolRegistry.capabilities(identity)).some(tool => tool.name === 'agent_message')) {
             loaded.input.systemPrompt = assembleSubagentCatalog(loaded.input.systemPrompt, builtinSubagentCatalog)
           }

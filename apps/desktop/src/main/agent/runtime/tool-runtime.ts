@@ -18,7 +18,7 @@ import { createGroupContextSearchTool } from '#core-source/agent/tools/im/group-
 import { createDesktopGroupContextSearch } from '#core-source/im/desktop-group-context.js'
 import { desktopImGroupRunEvent } from '#core-source/im/desktop-inbox.js'
 import { createHttpGetTool, type HttpGetPort } from '#core-source/agent/tools/web/index.js'
-import { imCanUseTool, imSkillToolsAvailable, imUnavailableTool } from '#core-source/agent/scenes/im/index.js'
+import { imCanUseTool, imFilePathPermission, imSkillToolsAvailable, imUnavailableTool } from '#core-source/agent/scenes/im/index.js'
 import { canonicalAgentToolName } from '#core-source/agent/index.js'
 
 export function createDesktopToolRuntime(options: {
@@ -27,7 +27,6 @@ export function createDesktopToolRuntime(options: {
   sessionId: number
   interactive: boolean
   imSession: boolean
-  imChatType: string | undefined
   groupChat: boolean
   registry: ReturnType<typeof createOwnerToolRegistry>
   mcpCrypto: ReturnType<typeof createDesktopMcpCrypto>
@@ -48,9 +47,10 @@ export function createDesktopToolRuntime(options: {
   webSearch: ToolDefinition | undefined
   httpGet: HttpGetPort
   sendFile: ToolDefinition | undefined
+  memberSendFile?: ToolDefinition
   delegationTools: () => readonly ToolDefinition[]
 }) {
-  const { db, ownerId, sessionId, interactive, imSession, imChatType, groupChat, registry, mcpCrypto,
+  const { db, ownerId, sessionId, interactive, imSession, groupChat, registry, mcpCrypto,
     resolveProxy, authorize, hostRequest, configuredAgentTools, desktopPrivateImOwner, sceneBuiltins, agentClock,
     groupScheduleList, scheduleWrites, scheduleImTarget, researchAvailable, imageSearchAvailable, deepResearch,
     similarImageSearch, webSearch, httpGet, sendFile, delegationTools } = options
@@ -77,10 +77,10 @@ export function createDesktopToolRuntime(options: {
       return identity.ownerId === ownerId && identity.sessionId === String(sessionId) && await authorize(identity)
     },
   })
-  async function authorizeGroupTool(identity: RunIdentity, name: string) {
+  async function authorizeGroupTool(identity: RunIdentity, name: string, signal?: AbortSignal) {
     if (!await authorize(identity)) return false
     const receipt = await desktopImGroupRunEvent(db, identity)
-    return receipt !== null && await hostRequest('agent.im.authorizeGroupTool', { ...receipt, name }) === true
+    return receipt !== null && await hostRequest('agent.im.authorizeGroupTool', { ...receipt, name }, signal) === true
   }
   const groupSkillRegistry = createSkillRegistry({
     skills: sceneBuiltins,
@@ -88,21 +88,23 @@ export function createDesktopToolRuntime(options: {
       const skill = sceneBuiltins.find(candidate => candidate.id === id)
       if (!skill || !await authorizeGroupTool(identity, 'use_skill')) return false
       const available = new Set((await configuredTools(identity)).map(tool => tool.name))
-      return available.has('use_skill') && imSkillToolsAvailable(skill, available)
+      return imSkillToolsAvailable(skill, available)
     },
   })
-  const groupTools = groupChat ? createToolRegistry({
+  const groupDefinitions = [
+    createTimeTool(agentClock), createCallToolAdapter(), createSearchToolsTool(identity => configuredTools(identity)),
+    createUseSkillTool({ skills: groupSkillRegistry, async origin() { return { source: 'builtin' } } }),
+    groupScheduleList, ...scheduleWrites,
+    createGroupContextSearchTool(createDesktopGroupContextSearch(db, identity => authorizeGroupTool(identity, 'group_context_search'))),
+    ...(webSearch ? [webSearch] : []),
+    ...(imageSearchAvailable === true ? [similarImageSearch] : []),
+    createHttpGetTool(httpGet),
+    ...(sendFile ? [sendFile] : []),
+  ]
+  const groupNames = new Set(groupDefinitions.map(tool => tool.definition.name))
+  const groupRegistry = groupChat ? createToolRegistry({
     unavailableTool: imUnavailableTool,
-    tools: [
-      createTimeTool(agentClock), createCallToolAdapter(), createSearchToolsTool(identity => configuredTools(identity)),
-      createUseSkillTool({ skills: groupSkillRegistry, async origin() { return { source: 'builtin' } } }),
-      groupScheduleList, ...scheduleWrites,
-      createGroupContextSearchTool(createDesktopGroupContextSearch(db, identity => authorizeGroupTool(identity, 'group_context_search'))),
-      ...(webSearch ? [webSearch] : []),
-      ...(imageSearchAvailable === true ? [similarImageSearch] : []),
-      createHttpGetTool(httpGet),
-      ...(sendFile ? [sendFile] : []),
-    ],
+    tools: [...groupDefinitions, ...registry.definitions.filter(tool => !groupNames.has(tool.definition.name))],
     async authorize(identity, name) {
       if (!(await configuredAgentTools([name])).length || !await authorizeGroupTool(identity, name)) return false
       if (['list_scheduled_tasks', 'create_scheduled_task', 'update_scheduled_task'].includes(name))
@@ -110,12 +112,34 @@ export function createDesktopToolRuntime(options: {
       return true
     },
   }) : undefined
-  const delegation = (imSession ? (imChatType ?? 'c2c') === 'c2c' : interactive) ? createToolRegistry({
+  const groupTools = groupRegistry ? createMcpAgentToolPorts({
+    base: groupRegistry,
+    directory: mcpRuntime.directory,
+    services: mcpRuntime.services,
+    runtime: mcpRuntime,
+    configured: async (_identity, name, signal) => (await configuredAgentTools([name], signal)).length === 1,
+    authorize: (identity, name, signal) => authorizeGroupTool(identity, name, signal),
+  }) : undefined
+  const delegation = (imSession || interactive) ? createToolRegistry({
     tools: delegationTools(), authorize,
   }) : undefined
   const delegationNames = new Set(delegation?.catalog().map(tool => tool.name))
   async function configuredTools(identity: RunIdentity, lookup?: McpToolLookup): Promise<PreparedToolDefinition[]> {
-    if (groupTools) return groupTools.capabilities(identity)
+    if (groupTools) {
+      const [group, delegated] = await Promise.all([
+        groupTools.capabilities(identity, lookup),
+        lookup || !delegation ? [] : delegation.capabilities(identity),
+      ])
+      const allowedDelegation = await Promise.all(delegated.filter(tool => delegationNames.has(tool.name)
+        && canonicalAgentToolName(tool.name) !== 'call_tool').map(async tool =>
+        await authorizeGroupTool(identity, tool.name) ? tool : null))
+      const memberSchema = options.memberSendFile?.definition.schema
+      const visible = memberSchema && group.some(tool => tool.name === 'send_item')
+        && !await authorizeGroupTool(identity, imFilePathPermission)
+        ? group.map(tool => tool.name === 'send_item' ? { ...tool, schema: memberSchema } : tool)
+        : group
+      return [...visible, ...allowedDelegation.filter((tool): tool is PreparedToolDefinition => tool !== null)]
+    }
     const actor = imSession ? await desktopPrivateImOwner(identity) : null
     if (imSession && !actor) return []
     const definitions = [...await mcpTools.capabilities(identity, lookup),
@@ -133,8 +157,8 @@ export function createDesktopToolRuntime(options: {
       const actor = await desktopPrivateImOwner(identity, signal)
       if (!actor || !imCanUseTool(actor, call.name)) return null
     }
-    if (groupTools) return groupTools.tools
     if (delegation && delegationNames.has(call.name)) return delegation.tools
+    if (groupTools) return groupTools.tools
     if (unavailableSearch.has(call.name)) {
       if (call.adapter === 'call_tool' && !await mayForward('call_tool', identity, signal)) return null
       return searchRecovery
@@ -159,6 +183,10 @@ export function createDesktopToolRuntime(options: {
           const rejection = imUnavailableTool(call.name)
           return rejectAdapterCall(rejection.error, rejection.error_code)
         }
+      }
+      if (groupTools && delegation && delegationNames.has(call.name)) {
+        if (!await authorizeGroupTool(scope.identity, call.name)) return rejectAdapterCall('工具不存在或未开放')
+        return delegation.tools.dispatch(call, scope)
       }
       if (groupTools) return groupTools.tools.dispatch(call, {
         ...scope, discoverRelatedTools: () => configuredTools(scope.identity),

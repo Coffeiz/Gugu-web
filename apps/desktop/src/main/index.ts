@@ -10,8 +10,10 @@ import { buildApplicationMenu, buildStatusMenu } from './application-menu.js'
 import { createNativeFileDialogs } from './native-file-dialogs.js'
 import { shouldOpenFileInSystem } from '@gugu/desktop-contracts/file-preview'
 import { createGatewayPowerPolicy } from './im/gateway-power.js'
+import { createDesktopGroupDisabledNotice } from './im/gateway/group-disabled-notice.js'
 import { createDesktopImAttachmentSender } from './im/gateway/delivery/attachments.js'
 import { createDesktopImCallback } from './im/gateway/interactions/callback.js'
+import { consumeDesktopImText } from './im/gateway/interactions/text.js'
 import { createDesktopQqReferences } from './im/gateway/platforms/qq/references.js'
 import { connectDesktopFeishuProcess, isolateDesktopImPolling } from './im/gateway/process-host.js'
 import { createDesktopQqChildConnection } from './im/gateway/platforms/qq/connection-host.js'
@@ -24,6 +26,7 @@ import { randomUUID } from 'node:crypto'
 import { createDesktopQqPairing } from './im/connect/platforms/qq/index.js'
 import { createDesktopFeishuPairing } from './im/connect/platforms/feishu/index.js'
 import { createDesktopWechatPairing } from './im/connect/platforms/wechat/index.js'
+import { openStreamedAgentGet } from '@gugu/core/tools'
 import { createNodeProviderTransport, desktopTransportOptions } from '@gugu/core/providers/node'
 import { createDesktopImDispatch } from './im/gateway/delivery/dispatch.js'
 import { startDesktopPreviewAgent } from './preview-agent.js'
@@ -213,7 +216,7 @@ else {
           agentRuntimeModule: resolve(app.getAppPath(), '.tools/agent/runtime.mjs'),
           manifest: undefined,
         }
-        : await verifyArtifact(join(resource, devCoreSea ? 'core-sidecar-sea' : 'core-sidecar'))
+        : await verifyArtifact(join(resource, devCoreSea ? 'core-sidecar-sea' : 'core-sidecar'), { integrity: false })
       if (devCoreSea && runtime.manifest?.runtimeMode !== 'sea') throw new Error('开发测试制品不是 SEA')
       const gatewayExecutable = runtime.manifest?.runtimeMode === 'sea' ? runtime.node : undefined
 
@@ -285,25 +288,32 @@ else {
         return (await imTranscriber).transcribe(input, signal, authorize)
       }
       const imVoice = { transcribe: transcribeImVoice, report: (error: unknown) => report('gateway.degraded', { code: 'im_voice_failed', error }) }
+      const groupDisabledNotice = createDesktopGroupDisabledNotice(dataDirectory)
+      const consumeGroupText: import('./im/gateway/interactions/text.js').DesktopImTextConsumer =
+        (...args) => consumeDesktopImText(host, agentModel, ...args)
       const gateway = telegram = createDesktopTelegramGateway(dataDirectory, safeStorage,
-        options => createTelegramAdapter({ ...options, transport: isolateDesktopImPolling(options.transport!, 'telegram', resolveModelProxy, gatewayExecutable) }), resolveModelProxy, admitIm, dispatchIm, callbackIm, imVoice, host, pendingImAsks)
+        options => createTelegramAdapter({ ...options, transport: isolateDesktopImPolling(options.transport!, 'telegram', resolveModelProxy, gatewayExecutable,
+          code => report('gateway.degraded', { code: `telegram-${code}` })) }), resolveModelProxy, admitIm, dispatchIm, callbackIm, imVoice, host, pendingImAsks, groupDisabledNotice, consumeGroupText)
       const newImTransport = () => createNodeProviderTransport(desktopTransportOptions(false, resolveModelProxy))
       // 扫码任务只在本进程有效，使用本次启动的本地身份隔离。
       const wechatPairing = createDesktopWechatPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => { wechat?.refresh(); await wechat?.settled() })
       const wechatReach = createDesktopWechatReach(dataDirectory, safeStorage)
       const wechatGateway = wechat = createDesktopWechatGateway(wechatPairing, admitIm, dispatchIm,
-        () => isolateDesktopImPolling(newImTransport(), 'wechat', resolveModelProxy, gatewayExecutable), createDesktopWechatCursor(dataDirectory, safeStorage), (code, error) => report('gateway.degraded', { code, error }), wechatReach, host)
+        () => isolateDesktopImPolling(newImTransport(), 'wechat', resolveModelProxy, gatewayExecutable,
+          code => report('gateway.degraded', { code: `wechat-${code}` })), createDesktopWechatCursor(dataDirectory, safeStorage), (code, error) => report('gateway.degraded', { code, error }), wechatReach, host)
       const feishuPairing = createDesktopFeishuPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), async () => {
         feishu?.refresh()
         await feishu?.settled()
       })
       const feishuGateway = feishu = createDesktopFeishuGateway(feishuPairing, admitIm, dispatchIm, newImTransport,
-        options => connectDesktopFeishuProcess(options, resolveModelProxy, gatewayExecutable, code => report('gateway.degraded', { code })), callbackIm, imVoice, { host, encryption: safeStorage }, pendingImAsks,
-        code => report('gateway.degraded', { code }))
+        options => connectDesktopFeishuProcess(options, resolveModelProxy, gatewayExecutable, code =>
+          report('gateway.degraded', { code: code.startsWith('gateway-worker-') ? `feishu-${code}` : code })), callbackIm, imVoice, { host, encryption: safeStorage }, pendingImAsks,
+        code => report('gateway.degraded', { code }), groupDisabledNotice, consumeGroupText)
       const qqPairing = createDesktopQqPairing(dataDirectory, safeStorage, randomUUID(), newImTransport(), () => qq?.refresh())
       const qqGateway = qq = createDesktopQqGateway(qqPairing, admitIm, dispatchIm, newImTransport,
         ports => createDesktopQqChildConnection(ports, gatewayExecutable), callbackIm,
-        (code, error) => report('gateway.degraded', { code, error }), { host, encryption: safeStorage, dataDirectory, voice: imVoice, observeUpload: uploadMetrics => report('gateway.qq_upload_timing', { uploadMetrics }), references: createDesktopQqReferences(dataDirectory, safeStorage) })
+        (code, error) => report('gateway.degraded', { code, error }), { host, encryption: safeStorage, dataDirectory, voice: imVoice, observeUpload: uploadMetrics => report('gateway.qq_upload_timing', { uploadMetrics }), references: createDesktopQqReferences(dataDirectory, safeStorage) }, groupDisabledNotice,
+        consumeGroupText)
       const scheduledIm = bindDesktopScheduledIm({ feishuPairing, qqPairing, wechatPairing, wechatReach, telegram: gateway, transport: newImTransport,
         async readScheduledGroup(params, signal) {
           const reader = params.platform === 'qq' ? qqGateway : params.platform === 'feishu' ? feishuGateway : params.platform === 'telegram' ? gateway : null
@@ -596,7 +606,12 @@ else {
         if (method === 'agent.im.sendAttachment') {
           const isQq = params.platform === 'qq'
           if (isQq) report('gateway.qq_file_delivery_started')
-          const outcome = await imAttachments.send(params, signal, files.agentReadSendFile)
+          const outcome = await imAttachments.send(params, signal, files.agentReadSendFile,
+            (url, active) => openStreamedAgentGet(newImTransport(), url, active), async active => {
+              const groupGateway = params.platform === 'feishu' ? feishuGateway
+                : params.platform === 'telegram' ? gateway : params.platform === 'qq' ? qqGateway : undefined
+              return !!groupGateway && await groupGateway.authorizeGroupTool({ ...params, name: 'send_item' }, active)
+            })
           if (isQq) report('gateway.qq_file_delivery_result', { deliveryOutcome: outcome })
           return outcome
         }
@@ -666,6 +681,11 @@ else {
         createDroppedReference: path => droppedReferences.create(path, undefined, true),
         mainWindow: () => mainWindow,
         enabled: () => !smoke && !closing && !quitting && !process.env.WAYLAND_DISPLAY,
+      })
+      gateway.onConnectionChanged(() => {
+        if (mainWindow && !mainWindow.isDestroyed())
+          mainWindow.webContents.send(DESKTOP_CHANNELS.telegramConnectionChanged)
+        chatFab.sendToPanel(DESKTOP_CHANNELS.telegramConnectionChanged)
       })
       host.onAgentRunChanged((sessionId, _runId, interactionChanged) => {
         if (mainWindow && !mainWindow.isDestroyed())

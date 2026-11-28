@@ -14,6 +14,8 @@ export declare function projectImChoiceButtons<T extends {
     selection_mode?: unknown;
     task_paused?: unknown;
     body?: string;
+    resolved?: unknown;
+    secret_fields?: readonly unknown[];
     options: {
         id: string;
         token: string;

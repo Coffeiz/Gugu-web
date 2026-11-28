@@ -1,6 +1,6 @@
 // 裁剪桌面制品中的开发期文件与异平台二进制，只保留当前平台运行所需内容。
 // 必须在清单生成前执行，裁剪结果才会被 manifest.json 的文件摘要覆盖。
-import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync, rmdirSync, statSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 // 明确的开发期目录，删除后不影响运行时。
@@ -29,6 +29,44 @@ function remove(path, stats) {
   rmSync(path, { recursive: true, force: true })
   stats.removed += 1
   stats.bytes += 0
+}
+
+export function packageSupportsTarget(pkg, platform, arch) {
+  return (!Array.isArray(pkg.os) || pkg.os.includes(platform)) &&
+    (!Array.isArray(pkg.cpu) || pkg.cpu.includes(arch))
+}
+
+function pruneCanvasDependencies(nodeModules, platform, arch, stats) {
+  const canvas = join(nodeModules, '@napi-rs', 'canvas')
+  if (!existsSync(canvas)) return
+
+  const canvasPackage = JSON.parse(readFileSync(join(canvas, 'package.json'), 'utf8'))
+  for (const name of Object.keys(canvasPackage.optionalDependencies ?? {})) {
+    const dependency = join(nodeModules, name)
+    const manifest = join(dependency, 'package.json')
+    if (!existsSync(manifest)) continue
+    const nativePackage = JSON.parse(readFileSync(manifest, 'utf8'))
+    if (!packageSupportsTarget(nativePackage, platform, arch)) remove(dependency, stats)
+  }
+
+  // pdfjs-dist 与 Core 共用同一版本 Canvas。让它解析根依赖，避免复制一套原生绑定。
+  const pdfjsModules = join(nodeModules, 'pdfjs-dist', 'node_modules')
+  const nestedScope = join(pdfjsModules, '@napi-rs')
+  const nestedCanvas = join(nestedScope, 'canvas')
+  if (!existsSync(nestedCanvas)) return
+  const nestedPackage = JSON.parse(readFileSync(join(nestedCanvas, 'package.json'), 'utf8'))
+  if (nestedPackage.version !== canvasPackage.version) return
+
+  remove(nestedCanvas, stats)
+  for (const name of Object.keys(nestedPackage.optionalDependencies ?? {})) {
+    const dependency = join(pdfjsModules, name)
+    if (existsSync(dependency)) remove(dependency, stats)
+  }
+  try {
+    rmdirSync(nestedScope)
+  } catch {
+    // 若未来该作用域出现其他包，保留它们。
+  }
 }
 
 // 计算目录占用，用于给出裁剪前后的体积对比。
@@ -69,6 +107,9 @@ export function pruneSidecarHost(host, platform = process.platform, arch = proce
       return false
     })
   }
+
+  // Canvas 的 optionalDependencies 同时包含多个系统和架构的原生包。
+  if (existsSync(nodeModules)) pruneCanvasDependencies(nodeModules, platform, arch, stats)
 
   // 3. 只保留当前平台的预编译二进制。
   const keepPrebuild = `${platform}-${arch}`

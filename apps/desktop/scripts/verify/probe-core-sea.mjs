@@ -6,10 +6,12 @@ import { cp, mkdtemp, readFile, readdir, rename, stat, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { buildCoreSea } from './build-core-sea.mjs'
+import { fileURLToPath } from 'node:url'
+import { buildCoreSea } from '../build/build-core-sea.mjs'
 
 if (process.platform !== 'win32') throw new Error('此原型仅验证 Windows')
-const root = resolve(process.argv[2] ?? 'apps/desktop/resources/core-sidecar')
+const defaultRoot = fileURLToPath(new URL('../../resources/core-sidecar/', import.meta.url))
+const root = resolve(process.argv[2] ?? defaultRoot)
 const temp = await mkdtemp(join(tmpdir(), 'gugu-core-sea-'))
 const payload = join(temp, 'payload')
 const database = join(temp, 'probe.db')

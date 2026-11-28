@@ -1,6 +1,7 @@
 import { describeAskUserPrompt, imAskUserPolicy } from '@gugu/core/agent'
 import { createImSendFileTool } from '@gugu/core/tools'
 import { createPostgresFileReadOperations } from '../../../files/browse.js'
+import { createPublicAgentEgress } from '../../../../adapters/network/safe-egress-proxy.js'
 import { createImFileTools } from './files.js'
 import { createSafeEgressSettingsReader } from '../../../admin/network.js'
 import { resolveConfigOverridePath } from '../../../../adapters/config/config-override-file.js'
@@ -18,7 +19,6 @@ import { buildAgentStaticPrompt, createCompactionSummarizer, projectPersistentTo
 import { ProviderError, ProviderStreamSanitizer, adapterFor, capabilitySnapshot, stripThinking, type ProviderWire, type ProviderTransport } from '@gugu/core/providers'
 import { createNodeProviderTransportFactory } from '@gugu/core/providers/node'
 import { imDisplayPolicy, imActorInputFromPayload, type ImActor } from '@gugu/core/im/access'
-import { imOwnerPrivate } from '@gugu/core/agent/scenes/im'
 import type { ImAgentDispatchInput } from '../../../agent/run/dispatch.js'
 import { createMcpAgentToolPorts, type AgentMcpToolPortsOptions } from '../../../agent/tools/mcp/ports.js'
 import type { createMcpRuntime } from '../../../mcp/runtime.js'
@@ -334,7 +334,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
       return { identity: { ownerId: identity.ownerId, workspaceId: null, subject: { kind: 'session', id: identity.sessionId } },
         source: actor.platform, toolNames: (await registry.capabilities(identity)).map(tool => tool.name) }
     }
-    const mcpManagement = imOwnerPrivate(actor) ? options.mcpManagement : undefined
+    const mcpManagement = actor.role === 'owner' && actor.verifiedOwner ? options.mcpManagement : undefined
     const authorizeTool = async (candidate: RunIdentity, name: string) => same(candidate, identity) && await authorizeCurrent()
       && (name !== 'manage_mcp_servers' || mcpManagement?.enabled() === true)
       && await options.access.authorizeTool(actorInput, name, lease.input.im.attention?.disposition === 'run')
@@ -342,10 +342,10 @@ export function createImProductionResources(options: ImProductionResourcesOption
       identity, binding, secretKey: options.secretKey, digest,
       readSafeEgress: createSafeEgressSettingsReader(options.environment, options.configOverridePath ?? resolveConfigOverridePath(options.environment)),
     })
-    const ownerTools = imOwnerPrivate(actor) && options.imOwnerTools
+    const ownerTools = actor.role === 'owner' && actor.verifiedOwner && options.imOwnerTools
       ? await options.imOwnerTools(lease, await services.source.data.loadTimezone(identity), authorizeCurrent, binding, actor.verifiedOwner) : undefined
     const builtins = createAgentToolRegistry({ core: options.core, authorize: authorizeTool, ...search, callTool: true, skills: skills.tools, mcpManagement: mcpManagement?.tool,
-      ...(imOwnerPrivate(actor) ? {
+      ...(actor.role === 'owner' && actor.verifiedOwner ? {
         fileOverview: createProjectFileOverviewPort(options.pool, options.storageRoot),
         calendar: createAgentCalendarReader(createKyselyCalendarAgentReadPort(options.core.db, 'postgres')),
         events: createKyselyCalendarReadPort(options.core.db, 'postgres'),
@@ -356,15 +356,17 @@ export function createImProductionResources(options: ImProductionResourcesOption
       askUser: imAskUserPolicy,
       ...(actor.platform !== 'wechat' ? { sendFile: createImSendFileTool(createImFileTools({
         ...options, identity, actor, scope, messageIds, payload: route.payload,
+        openImage: createPublicAgentEgress(createSafeEgressSettingsReader(options.environment,
+          options.configOverridePath ?? resolveConfigOverridePath(options.environment)), options.secretKey).open,
         files: createPostgresFileReadOperations(options.pool, options.storageRoot),
         authorizeTool: name => authorizeTool(identity, name),
       }).sendFile) } : {}),
-      ...(process.platform === 'linux' && imOwnerPrivate(actor) ? {
+      ...(process.platform === 'linux' && actor.role === 'owner' && actor.verifiedOwner ? {
         saveAttachment: createImSaveAttachmentTool({ ...options, identity, actor, scope, messageIds, payload: route.payload,
           ownerAttachment: actor.verifiedOwner ? ownerTools?.historicalSaveAttachment : undefined,
           authorize: () => authorizeTool(identity, 'save_attachment') }),
       } : {}),
-      ...(imOwnerPrivate(actor) ? { imOwnerSession: options.ownerSessions.tool({ lease,actor,payload:route.payload,messageIds,authorize:()=>authorizeTool(identity,'bind_web_session') }) } : {}),
+      ...(actor.role === 'owner' && actor.verifiedOwner ? { imOwnerSession: options.ownerSessions.tool({ lease,actor,payload:route.payload,messageIds,authorize:()=>authorizeTool(identity,'bind_web_session') }) } : {}),
       time: { now: () => new Date(), timezone: () => services.source.data.loadTimezone(identity) },
       memorySearch: createPostgresImMemorySearch({ ...options, lease, actor, bot, configuration }),
       ...(actor.chatType === 'group' && actor.platform !== 'wechat' ? { groupContext: createPostgresImGroupContextSearch({ pool: options.pool,
@@ -372,7 +374,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
         authorize: (id, _actor, signal) => { signal.throwIfAborted(); return authorizeTool(id, 'group_context_search') }, isTombstoned: tombstoned }) } : {}),
       ...(actor.platform === 'feishu' ? { imReaction: { platform: 'feishu' as const, port: createPostgresImReaction({ ...options, lease, actor, bot, configuration }) } } : {}),
     })
-    const mcpTools = imOwnerPrivate(actor) ? options.mcpTools : undefined
+    const mcpTools = actor.role === 'owner' && actor.verifiedOwner ? options.mcpTools : undefined
     registry = mcpTools ? createMcpAgentToolPorts({
       base: builtins,
       directory: mcpTools.directory,
@@ -437,7 +439,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
         if (reasoning) await reasoning.checkpointHook(client, id, next, previous)
         else if (next.context?.continuationRef) throw unavailable()
       } },
-      source: { ...services.source, ...(imOwnerPrivate(actor) && selection.contextPolicy.loadOwnerContext ? { skillDataRoot: options.storageRoot } : {}) },
+      source: { ...services.source, ...(actor.role === 'owner' && actor.verifiedOwner && options.storageRoot ? { skillDataRoot: options.storageRoot } : {}) },
       builder: services.builder, materialize: materializer.materialize, toolRegistry: readyRegistry, ragContext, executor,
       ...delivery,
       preparation: { configuration, capabilities: {

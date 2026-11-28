@@ -1,10 +1,10 @@
 // 将已固定的当前平台 Node 和生产依赖装配为自包含制品；不在用户启动时下载。
 import { createHash } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
-import { buildCore } from '../../../packages/core/scripts/build.mjs'
+import { buildCore } from '../../../../packages/core/scripts/build.mjs'
 import { buildDesktopAgentRuntime } from './build-agent-runtime.mjs'
-import { prepareDesktopPty } from './prepare-pty.mjs'
-import { pruneSidecarHost } from './prune-sidecar.mjs'
+import { prepareDesktopPty } from '../dev/prepare-pty.mjs'
+import { packageSupportsTarget, pruneSidecarHost } from './prune-sidecar.mjs'
 import { buildCoreSea } from './build-core-sea.mjs'
 import { bundleChartWorker, bundledChartPackages } from './bundle-chart-worker.mjs'
 import {
@@ -22,7 +22,7 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const desktop = resolve(fileURLToPath(new URL('..', import.meta.url))),
+const desktop = resolve(fileURLToPath(new URL('../..', import.meta.url))),
   root = resolve(desktop, '../..')
 const core = join(root, 'packages/core')
 const pnpm = process.env.npm_execpath
@@ -110,7 +110,10 @@ async function prepareSidecar() {
   const canvasPackage = JSON.parse(readFileSync(join(canvasSource, 'package.json'), 'utf8'))
   const nativeCanvas = Object.keys(canvasPackage.optionalDependencies ?? {}).flatMap(name => {
     const source = resolve(canvasSource, '../..', name)
-    return existsSync(source) ? [[name, source]] : []
+    const manifest = join(source, 'package.json')
+    if (!existsSync(manifest)) return []
+    const nativePackage = JSON.parse(readFileSync(manifest, 'utf8'))
+    return packageSupportsTarget(nativePackage, process.platform, process.arch) ? [[name, source]] : []
   })
   if (!nativeCanvas.length) throw new Error('图片处理缺少 Canvas 原生绑定')
   for (const [name, source] of [[canvas, canvasSource], ['image-size', join(gateway, 'node_modules/image-size')], ...nativeCanvas]) {

@@ -92,11 +92,16 @@ it.each([
   { first: false, kind: 'confirm', paused: true },
   { first: true, kind: 'choice', paused: false },
   { first: false, kind: 'choice', paused: false },
-])('QQ $kind 卡片先登记，重复登记时不发送（首次 $first）', async ({ first, kind, paused }) => {
+  ...(['qq', 'feishu', 'telegram'] as const).flatMap(platform => [
+    { platform, group: true, first: true, kind: 'confirm', paused: true },
+    { platform, group: true, first: false, kind: 'confirm', paused: true },
+    { platform, group: true, first: true, kind: 'choice', paused: false },
+  ]),
+].map(item => ({ platform: 'qq' as 'qq' | 'feishu' | 'telegram', group: false, ...item })))('$platform $kind 卡片先登记，重复登记时不发送（群聊 $group，首次 $first）', async ({ platform, group, first, kind, paused }) => {
   const controller = new AbortController()
-  const connection = { platform: 'qq', botId: 'bot', ownerId: 'desktop' } as const
+  const connection = { platform, botId: 'bot', ownerId: 'desktop' } as const
   const event = { version: 1, kind: 'message.received', eventId: 'event', text: '测试', quotedText: null, botMentioned: false,
-    scope: { ...connection, chatType: 'c2c' as const, chatId: null, platformUserId: 'user' } }
+    scope: { ...connection, chatType: group ? 'group' as const : 'c2c' as const, chatId: group ? 'group' : null, platformUserId: 'user' } }
   const eventKey = desktopImEventKey(event)
   const choice = { id: 'yes', label: '继续', token: 'synthetic' }
   const prompt = { type: 'interaction_required', kind, task_paused: paused, prompt_id: 3, title: '合成提示',
@@ -116,10 +121,14 @@ it.each([
   const dispatch = createDesktopImDispatch({ request: request as IpcHost['request'] }, {
     async decryptStringAsync() { return { result: JSON.stringify({ event }), shouldReEncrypt: false } },
   }, { resolveRunModelSelection: vi.fn() })
-  await dispatch({ connection, connectionId: 'a'.repeat(64), userId: 'user', signal: controller.signal,
-    authorize: async () => !controller.signal.aborted, send, sendPrompt })
+  await dispatch({ connection, connectionId: 'a'.repeat(64), signal: controller.signal,
+    authorize: async () => !controller.signal.aborted, send,
+    ...(group ? { group: { id: 'group', ownerPlatformUserId: 'owner',
+      authorizeMessage: async () => true, authorizeFile: async () => false }, sendGroupPrompt: sendPrompt }
+      : { userId: 'user', sendPrompt }) })
   expect(operations).toEqual(first ? ['begin', 'send', 'settle'] : ['begin'])
-  if (first) expect(sendPrompt).toHaveBeenCalledWith(expect.objectContaining({ options: prompt.options }), 'user')
+  if (first) expect(sendPrompt).toHaveBeenCalledWith(expect.objectContaining({ options: prompt.options }),
+    group ? expect.objectContaining({ scope: event.scope }) : 'user')
   expect(send).not.toHaveBeenCalled()
 })
 

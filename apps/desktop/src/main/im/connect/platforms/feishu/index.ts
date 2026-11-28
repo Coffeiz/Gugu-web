@@ -20,6 +20,7 @@ interface FeishuCredential {
   appId: string; appSecret: string; userId: string; enabled: boolean; revision: string
   privateStreamingEnabled: boolean
   groupChatEnabled: boolean; groupReplyMode: GroupReplyMode; groupAttentionMode: GroupAttentionMode
+  groupDisabledEpoch?: string
   groupOwnerMemoryEnabled: boolean; groupMemoryEnabled: boolean; memberMemoryEnabled: boolean
   groupAllowedTools: string[]
 }
@@ -46,6 +47,7 @@ function parseCredential(input: unknown) {
     || typeof memberMemoryEnabled !== 'boolean' || typeof privateStreamingEnabled !== 'boolean' || !Array.isArray(groupAllowedTools)
     || !groupAllowedTools.every(tool => typeof tool === 'string' && ['web_search', 'http_get', 'similar_image_search', 'send_item', 'group_context_search'].includes(tool))) throw invalid()
   return { appId, appSecret, userId, enabled, revision, groupChatEnabled, groupReplyMode, groupAttentionMode, privateStreamingEnabled,
+    groupDisabledEpoch: typeof values.groupDisabledEpoch === 'string' ? values.groupDisabledEpoch : undefined,
     groupOwnerMemoryEnabled, groupMemoryEnabled, memberMemoryEnabled, groupAllowedTools } as FeishuCredential
 }
 
@@ -79,7 +81,8 @@ export function createDesktopFeishuPairing(directory: string, encryption: Encryp
   async function update(patch: Partial<FeishuCredential>) {
     const current = await credentials.read()
     if (!current) throw invalid()
-    await credentials.write(parseCredential({ ...current, ...patch }))
+    await credentials.write(parseCredential({ ...current, ...patch,
+      ...(current.groupChatEnabled && patch.groupChatEnabled === false ? { groupDisabledEpoch: randomUUID() } : {}) }))
     return status()
   }
   return {

@@ -75,6 +75,11 @@ type CanvasRelationBody = Parameters<DesktopBridge['createCanvasRelation']>[0]
 type CanvasNoteBody = Parameters<DesktopBridge['createCanvasNote']>[1]
 
 const bridge: DesktopBridge = Object.freeze({
+  onTelegramConnectionChanged: (callback: () => void) => {
+    const listener = () => callback()
+    ipcRenderer.on(DESKTOP_CHANNELS.telegramConnectionChanged, listener)
+    return () => ipcRenderer.removeListener(DESKTOP_CHANNELS.telegramConnectionChanged, listener)
+  },
   remoteByok: (...args: Parameters<DesktopBridge['remoteByok']>) => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteByok, ...args),
   deviceInfo: () => ipcRenderer.invoke(DESKTOP_CHANNELS.deviceInfo),
   remoteAccount: () => ipcRenderer.invoke(DESKTOP_CHANNELS.remoteAccount),

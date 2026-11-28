@@ -84,6 +84,13 @@ export function createPostgresImNativeInteractions(options:{
         const projected=event.payload.kind==='credential'&&actor.chatType==='c2c'&&actor.role==='owner'
           ?await withPostgresTransaction(options.pool,client=>projectPrivateImSecretPromptLocked(client,identity,String(event.payload.interactionId),scope,options.secretKey),fail)
           :await projection.interaction(event)
+        if (dispatched.im.chatType === 'group' && projected.secret_fields.length) {
+          // 群凭据说明由文本回退发送，不投递可操作的凭据组件。
+          await options.pool.query(`UPDATE gugu_im_native_deliveries SET state='rejected'
+            WHERE user_id=$1 AND delivery_hash=$2 AND attempt_id=$3 AND state='pending'`,
+          [identity.ownerId, deliveryHash, attempt])
+          return 'rejected'
+        }
         const questions = readQuestionBatch({ questions: projected.questions })
         const questionIndex = input.questionIndex ?? 0
         const question = questions?.[questionIndex]
@@ -91,7 +98,9 @@ export function createPostgresImNativeInteractions(options:{
         const stepOptions = question?.options?.map((_option, index) => questionStepOptionId(questionIndex, index)) ?? []
         const presentation = questions ? { ...projected, title: question!.title,
           body: questionBatchText(questions, questionIndex),
-          options: projected.options.filter(option => stepOptions.includes(option.id) || option.id === '__cancel_questions__') } : projectImChoiceButtons(projected) ?? projected
+          options: projected.options.filter(option => stepOptions.includes(option.id) || option.id === '__cancel_questions__') }
+          : projectImChoiceButtons(projected, dispatched.im.chatType === 'group')
+            ?? (dispatched.im.chatType === 'group' ? { ...projected, options: [] } : projected)
         const sender=options.sender(route.binding)
         if(presentation.resolved||!sender||sender.platform!==dispatched.im.platform||!await access.authorizeDelivery(actor,snapshot.bot))throw fail()
         const rawChat=dispatched.im.chatType==='group'?dispatched.im.chatId:dispatched.im.platformUserId

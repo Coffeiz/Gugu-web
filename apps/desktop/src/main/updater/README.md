@@ -17,8 +17,8 @@ GHCR 是更新制品的发布源，HTTPS 静态目录是客户端读取的更新
 4. 在静态服务的部署环境运行同步。服务需要支持 HEAD 和 HTTP Range。清单文件应配置短缓存或重新验证，版本化文件可以配置长缓存。把同步设为发布流程的部署步骤，同一目标目录的同步任务应串行执行。
 
 ```sh
-node apps/desktop/scripts/update-feed.mjs publish ghcr.io/<组织>/<包> darwin-arm64 apps/desktop/release/darwin-arm64
-node apps/desktop/scripts/update-feed.mjs sync ghcr.io/<组织>/<包> darwin-arm64 <静态站点更新根目录>
+node apps/desktop/scripts/update/update-feed.mjs publish ghcr.io/<组织>/<包> darwin-arm64 apps/desktop/release/darwin-arm64
+node apps/desktop/scripts/update/update-feed.mjs sync ghcr.io/<组织>/<包> darwin-arm64 <静态站点更新根目录>
 ```
 
 发布先上传版本制品，之后更新 GHCR 稳定标签。同步先完整下载并校验 SHA-512，再复制版本化文件，最后原子替换客户端清单。旧的安装制品会保留，供差分下载和排查。私有 GHCR 包只需在同步服务器上配置读取凭据。

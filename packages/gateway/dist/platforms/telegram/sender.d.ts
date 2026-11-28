@@ -18,6 +18,8 @@ export declare function createTelegramSender(options: {
     now?(): number;
     sleep?(ms: number, signal?: AbortSignal): Promise<void>;
 }): {
+    /** 仅在宿主确认已消费选项后清理原消息的键盘。 */
+    clearInteractionKeyboard(data: Record<string, unknown>, signal?: AbortSignal, authorize?: () => Promise<boolean>): Promise<void>;
     text(target: TelegramTarget, text: string, args?: {
         replyMarkup?: Record<string, unknown>;
         signal?: AbortSignal;

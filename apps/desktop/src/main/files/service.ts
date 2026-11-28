@@ -12,6 +12,7 @@ import { createLocalSkillPackageMover, patchSkillDocument, skillPackageDigest, t
 import { scanFilesystem } from '@gugu/search'
 import { DesktopError } from '../core-host.js'
 import { fileWorkspaces } from './workspaces.js'
+import { isRemoteFilesystem } from '../platform/remote-filesystem.js'
 import { resolveProjectFileRoot, stageDesktopProjectDirectory, type ReadProjectFilesMetadata } from './project-root.js'
 import type { DesktopFileDirectory } from '@gugu/core/desktop'
 
@@ -180,7 +181,7 @@ async function copyDroppedWithProgress(source: string, target: string, report: (
 type DropOptions = { negotiate?: unknown; choice?: unknown; identity?: unknown }
 
 function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Promise<string>, native?: NativeFileOperations,
-  thumbnailCache?: ReturnType<typeof createThumbnailCache>, smb = false) {
+  thumbnailCache?: ReturnType<typeof createThumbnailCache>, remote = false) {
   async function locate(parts: string[]) {
     const base = await workspace()
     let path = base
@@ -499,11 +500,16 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
   }
 
   async function trash(path: unknown) {
-    if (!native) throw new DesktopError('unsupported', '请在桌面应用中移入系统回收站')
     const parts = segments(path)
     if (directoryId === 'personal' && parts.join('/').toLowerCase() === 'download')
       throw new DesktopError('forbidden', '不能删除系统下载目录')
     const source = await locate(parts)
+    if (remote || await isRemoteFilesystem(source)) {
+      // SMB/FTP 挂载盘沿用文件系统的直接删除语义，不调用系统回收站接口。
+      await rm(source, { recursive: true })
+      return
+    }
+    if (!native) throw new DesktopError('unsupported', '请在桌面应用中移入系统回收站')
     try {
       await native.trash(source)
     } catch {
@@ -627,7 +633,7 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
     }
   }
 
-  return { smb, list, scan, reference, search, destination, upload, replaceSelection, writeAtomically, move, moveDropped, trash, download, locate, locateFile, content, scanOverview, resolveAgentPath, preview, read }
+  return { remote, list, scan, reference, search, destination, upload, replaceSelection, writeAtomically, move, moveDropped, trash, download, locate, locateFile, content, scanOverview, resolveAgentPath, preview, read }
 }
 
 export function createDesktopFileService(root: string, native?: NativeFileOperations, registry?: string, protectedRoot?: string | readonly string[], readProject?: ReadProjectFilesMetadata) {
@@ -1122,18 +1128,6 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
       throw new DesktopError('conflict', '文件或目录已变化，无法撤销或重做')
     if (expected?.packageDigest && await skillPackageDigest(file.source) !== expected.packageDigest)
       throw new DesktopError('conflict', '技能文件已变化，无法撤销或重做')
-    if (files.smb) {
-      const holding = await mkdtemp(join(dirname(file.source), '.gugu-trash-'))
-      const shareTrash = join(holding, basename(file.source))
-      try {
-        await files.locateFile(path, file.identity, file.directory ? 'folder' : 'file')
-        await rename(file.source, shareTrash)
-      } catch (error) {
-        await rmdir(holding)
-        throw error
-      }
-      return { ...file, created: expected?.created, packageDigest: expected?.packageDigest, operationId: expected?.operationId, operationFingerprint: expected?.operationFingerprint, shareTrash, heldIdentity: identityOf(await lstat(shareTrash, { bigint: true })) }
-    }
     const holding = await mkdtemp(join(tmpdir(), 'gugu-file-undo-'))
     fileUndoCopies.add(holding)
     if (!fileUndoCleanupRegistered) {
@@ -1149,7 +1143,12 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
       if (file.directory) await cp(file.source, backup, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true })
       else await copyFile(file.source, backup, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
       await files.locateFile(path, file.identity, file.directory ? 'folder' : 'file')
-      await files.trash(path)
+      if (files.remote || await isRemoteFilesystem(file.source)) {
+        // SMB/FTP 挂载盘沿用文件系统的直接删除语义，不调用系统回收站接口。
+        await rm(file.source, { recursive: true })
+      } else {
+        await files.trash(path)
+      }
       return { ...file, created: expected?.created, packageDigest: expected?.packageDigest, operationId: expected?.operationId, operationFingerprint: expected?.operationFingerprint, backup }
     } catch (error) {
       await discardFileUndoCopy(holding).catch(() => {})
@@ -1883,7 +1882,7 @@ export function createDesktopFileService(root: string, native?: NativeFileOperat
         const files = await scope(directoryId)
         if (!files) throw new DesktopError('not_found', '项目目录尚未创建')
         if (url.searchParams.get('watch') === '1') {
-          if (files.smb) return new Response(null, { status: 204 })
+          if (files.remote) return new Response(null, { status: 204 })
           const directory = await files.locate(segments(url.searchParams.get('path'), true))
           if (!(await lstat(directory)).isDirectory()) throw new DesktopError('invalid_request', '请选择文件夹')
           return new Response(Readable.toWeb(watchDirectoryChanges(directory)) as ReadableStream<Uint8Array>, {
