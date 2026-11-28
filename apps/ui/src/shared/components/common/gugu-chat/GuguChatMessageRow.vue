@@ -25,7 +25,10 @@
       <img v-else-if="isImageFile(f)" class="msg-quoted-thumb" v-lazy-thumb="f.file_path || f.attach_id" draggable="false" :alt="t('chat.quotedImage')" @click.stop="$emit('openFile', f)" />
       <!-- 非图片引用文件（文档/压缩包等）：小 chip 展示文件名，可点开预览。
            之前两头都不渲染（msg-files 又排除 quoted），引用条看起来是空的。 -->
-      <span v-else class="msg-quoted-file" @click.stop="$emit('openFile', f)">{{ f.name }}{{ f.ext ? `.${f.ext}` : '' }}</span>
+      <button v-else type="button" class="msg-quoted-file" :title="attachmentName(f)" @click.stop="$emit('openFile', f)">
+        <component :is="fileListIcon(f.ext)" :size="14" aria-hidden="true" />
+        {{ attachmentName(f) }}
+      </button>
     </template>
   </div>
   <GuguChatCitations v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)"
@@ -34,7 +37,7 @@
     @body-click="onBodyClick" />
   <!-- 用户消息也走 MD 渲染（sanitize 后），和 AI 气泡同一条链路；样式差异由
        .user-md 在 GuguChat.vue 里按紫底气泡重映射。输入框侧保持纯文本不渲染。 -->
-  <div v-else-if="(!msg.subagentOutput || subagentExpanded) && (msg.text || msg.references?.length)" class="msg-bubble" :class="msg.role === 'member' ? 'md-body' : 'user-md'" @click="onBodyClick">
+  <div v-else-if="(!msg.subagentOutput || subagentExpanded) && !isQqAttachmentPlaceholder && (msg.text || msg.references?.length)" class="msg-bubble" :class="msg.role === 'member' ? 'md-body' : 'user-md'" @click="onBodyClick">
     <MarkdownView :html="msg.html ?? renderChatMd(displayQQFaces(visibleUserText), msg.references)" :text="visibleUserText" chat render-math />
   </div>
   <div v-if="msg.role === 'user' && msg.runOutcome" class="msg-run-outcome" role="status">
@@ -164,6 +167,12 @@ const props = defineProps<{
   voiceBars: number[]
 }>()
 const visibleUserText = computed(() => selectionMessageText(props.msg.text ?? '', props.msg.references))
+const isQqAttachmentPlaceholder = computed(() =>
+  (props.msg.role === 'user' || props.msg.role === 'member')
+  && props.msg.text?.trim() === '[QQ 附件]'
+  && !props.msg.references?.length
+  && props.msg.files?.some(file => !file.quoted),
+)
 const showCopy = computed(() => props.msg.role !== 'tool' && props.msg.role !== 'interaction' && Boolean(props.msg.text?.trim()))
 const { displayed, presenting } = useStreamText(() => ({
   key: `${props.sessionId}:${props.msg._syncKey ?? props.msg.id}`,

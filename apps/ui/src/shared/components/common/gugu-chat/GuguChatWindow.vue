@@ -1410,6 +1410,7 @@ html[data-theme='light'] .chat-window :deep(.chat-smart-layout-view :is(progress
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 :deep(.msg-quoted-file:hover) { background: var(--gugu-chat-quoted-chip-bg-hover); }
+:deep(.msg-quoted-file svg) { vertical-align: -0.18em; margin-inline-end: var(--space-xs); }
 :deep(.msg-image-attachment) {
   align-self: flex-start;
   display: block;
