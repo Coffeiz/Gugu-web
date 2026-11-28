@@ -87,9 +87,7 @@ export function createDesktopImAttachmentSender(directory: string,
           if (typeof filePath === 'string') return owner && await authorizeRemoteGroup?.(active) === true
           return owner && await group.authorizeFile(event)
         }
-        if (group) {
-          if (!await authorizeGroupFile()) return 'rejected'
-        } else if (event.scope.chatType !== 'c2c' || event.scope.platformUserId !== route.userId) return 'rejected'
+        if (!group && (event.scope.chatType !== 'c2c' || event.scope.platformUserId !== route.userId)) return 'rejected'
         const authorizeEvent = async () => await authorize() && await authorizeGroupFile()
         if (!await authorizeEvent()) return 'rejected'
         const maxBytes = imOutboundMediaLimits[route.connection.platform]
