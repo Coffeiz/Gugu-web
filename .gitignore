@@ -46,7 +46,7 @@ backend/env/
 backend/.env
 # 误将 venv 示例路径作为真实目录创建时产生的本地虚拟环境
 backend/path/
-/node_modules/
+node_modules/
 *.sqlite
 *.db
 .pytest_cache/
@@ -119,6 +119,11 @@ Gugu-data/
 backup/
 
 # 构建产物 / 大字体资源
+/apps/desktop/apps/desktop/.tools/
+/packages/auth/dist/
+/packages/email/dist/
+/packages/search/dist/
+*.tsbuildinfo
 gugu-backend-*.tar.gz
 docs/smiley-sans/
 # pip install -e 产生的 egg-info（LoopScope 后端本地安装产物）
