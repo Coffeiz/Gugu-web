@@ -357,7 +357,11 @@ export function createDesktopImDispatch(host: IpcHost, encryption: Pick<typeof s
                 return { outcome, ...(trackAcceptedFact && outcome === 'accepted' && ids.length && recipientSenderId
                   ? { replyFact: { platformMessageIds: ids, recipientSenderId, sentAtMs: Date.now(),
                     ...(envelope?.sourceAttentionKind ? { sourceAttentionKind: envelope.sourceAttentionKind } : {}) } } : {}) }
-              } catch { return { outcome: 'unknown' } }
+              } catch (error) {
+                // 回复发送失败必须留痕：否则「模型答了但用户没收到」在日志里完全看不出来。
+                report?.('im_reply_send_failed', error)
+                return { outcome: 'unknown' }
+              }
             }
             async function sendNotice(key: string, text: string, kind: QqNoticeKind = 'reply') {
               const noticeKey = createHash('sha256').update(JSON.stringify([clientId, key])).digest('hex')

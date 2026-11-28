@@ -19,14 +19,16 @@ export class FeishuMediaIngressError extends Error {
 /** 在同一批次额度内下载飞书附件，并按消息顺序交给宿主暂存。 */
 export async function processFeishuMedia(items, client, options, stage) {
     const { signal, authorize } = options;
-    const budget = createImMediaBudget(options.maxBytes, options.maxFiles);
+    const budget = createImMediaBudget(options.maxBytes, options.maxFiles, options.maxFileBytes);
     for (const [index, item] of items.entries()) {
         signal.throwIfAborted();
         let bytes;
         try {
-            if (!budget.remaining || authorize && !await authorize())
+            // 单个附件按自己的上限下载，不让一个文件吃光整批额度。
+            const allowance = budget.fileRemaining;
+            if (!allowance || authorize && !await authorize())
                 throw new FeishuMediaIngressError('feishu_media_download');
-            bytes = await client.downloadResource(item.messageId, item.resourceKey, item.resourceType, { signal, maxBytes: budget.remaining, ...(authorize ? { authorize } : {}) });
+            bytes = await client.downloadResource(item.messageId, item.resourceKey, item.resourceType, { signal, maxBytes: allowance, ...(authorize ? { authorize } : {}) });
         }
         catch (error) {
             signal.throwIfAborted();

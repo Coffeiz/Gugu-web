@@ -127,3 +127,19 @@ test('view_image 已授权 owner 可凭精确 ID 跨会话查看附件，其他 
     assert.equal(opened, 1)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
+
+test('view_image 对非 200 图片直链给出明确状态并把内部失败交给宿主诊断', async () => {
+  const reported: unknown[] = []
+  const tool = createViewImageTool({
+    authorize: async () => true, supportsImage: async () => true, mount: async () => null,
+    async open() { return { status: 400, headers: {}, body: (async function* () { yield Buffer.from('<html/>') })(), cancel() {} } },
+    report(error) { reported.push(error) },
+  })
+  const registry = createToolRegistry({ tools: [tool], authorize: async () => true })
+  const result = await registry.tools.dispatch({ id: 'image', name: 'view_image', input: { url: 'https://example.test/denied.jpg' } }, scope)
+  assert.equal(result.kind, 'completed')
+  if (result.kind !== 'completed') return
+  assert.equal(result.successful, false)
+  assert.match(stableJson(result.value), /HTTP 400/u)
+  assert.equal(reported.length, 1)
+})

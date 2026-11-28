@@ -10,13 +10,13 @@ import { createHash } from 'node:crypto'
 import { desktopTransportOptions } from '@gugu/core/providers/node'
 import { isExplicitImCancel, parseImControlCommand } from '@gugu/core/im/shortcut'
 import { describeQqMedia, type QqMediaRequirement, createQqInboundPreparation, createQqFaceResolver, processQqMedia, handleQqBinding, parseQqMessage, QqMediaIngressError } from '@gugu/gateway/qq'
-import { createImMediaBudget, createGatewaySupervisor, imSemanticText, qqInteractionEventId, readImReceivedMessage, parseImReceivedMessage } from '@gugu/gateway'
+import { createImMediaBudget, createGatewaySupervisor, imSemanticText, qqInteractionEventId, readImReceivedMessage, parseImReceivedMessage, IM_MEDIA_BATCH_BYTES, IM_MEDIA_MAX_FILES, IM_MEDIA_MAX_FILE_BYTES } from '@gugu/gateway'
 import { createPersistentQqProjection, createQqChartPreparation, createQqMediaUploader, sendQqChart, createQqClient, createQqConnection, createQqSender, createQqSocketFactory } from '@gugu/gateway/qq'
 import type { createDesktopQqPairing } from '../../../connect/platforms/qq/index.js'
 import type { createDesktopImCallback } from '../../interactions/callback.js'
 import { cancelDesktopImRunFromText, readDesktopImRunStatus, stopDesktopImRun, type createDesktopImDispatch } from '../../delivery/dispatch.js'
 import { DesktopError } from '../../../../core-host.js'
-import { MAX_DESKTOP_ATTACHMENT_BYTES, readDesktopAgentAttachment } from '../../../../agent/attachments.js'
+import { readDesktopAgentAttachment } from '../../../../agent/attachments.js'
 import { desktopImEventKey, type createDesktopImInbox, type DesktopImFile } from '../../inbound/inbox.js'
 
 import { createDesktopImProjectionReceipts } from '../../delivery/projection.js'
@@ -393,9 +393,16 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
             let faceImage = false
             let quotedOversize = false
             const sourceIndices = new Map<number, number>()
-            const budget = createImMediaBudget(MAX_DESKTOP_ATTACHMENT_BYTES, 16)
+            // 引用附件若既不能复用已存副本、也没法重新下载，等于根本没收到：
+            // 记下来，保留消息本身并说明该附件未载入，而不是把整条消息丢掉。
+            const quotedPending = new Set<string>()
+            for (const media of parsed.mediaItems)
+              if (media.source === 'quote') quotedPending.add(`${media.source}:${media.attachmentIndex}`)
+            // IM 入站额度与桌面附件的 IPC 传输上限无关：这里限的是网络下载的单文件与整批大小。
+            const budget = createImMediaBudget(IM_MEDIA_BATCH_BYTES, IM_MEDIA_MAX_FILES, IM_MEDIA_MAX_FILE_BYTES)
             async function appendFile(media: QqMediaRequirement, file: DesktopImFile) {
               const prepared = await transcribeDesktopImFile(file, recordOnly ? undefined : runtime?.voice, downloadSignal, authorize)
+              quotedPending.delete(`${media.source}:${media.attachmentIndex}`)
               if (media.item.qface_generated === true) faceImage = true
               if (media.source === 'message' && media.attachmentIndex < 256)
                 sourceIndices.set(media.attachmentIndex, files.length)
@@ -409,19 +416,24 @@ export function createDesktopQqGateway(pairing: Pick<ReturnType<typeof createDes
                 const id = await runtime.references.attachment(event.scope, sourcePlatformMessageId, media.attachmentIndex, downloadSignal)
                 if (!id) return false
                 try {
-                  const quoted = await readDesktopAgentAttachment(runtime.host, runtime.dataDirectory, id)
+                  if (!budget.fileRemaining) throw new QqMediaIngressError('qq_media_size')
+                  const quoted = await readDesktopAgentAttachment(runtime.host, runtime.dataDirectory, id, budget.fileRemaining)
                   if (!budget.consume(quoted.data.byteLength)) throw new QqMediaIngressError('qq_media_size')
                   const metadata = describeQqMedia({ filename: quoted.name, content_type: quoted.mime }, quoted.data)
                   if (!metadata) return false
                   await appendFile(media, { ...metadata, bytes: quoted.data, quoted: true })
                   return true
                 } catch (error) {
-                  if (!(error instanceof DesktopError && error.code === 'not_found')) throw error
+                  // 已存附件读不回来（不存在、已过期或超出可复用上限）时回落到重新下载，
+                  // 不能让「引用一个暂时读不了的大附件」把整条消息打掉。
+                  if (!(error instanceof DesktopError && (error.code === 'not_found' || error.code === 'invalid_request'))) throw error
                   return false
                 }
               },
             })
             if (!processed || !await authorize()) return
+            // 引用附件最终没能载入：保留消息本身并标注未载入，避免整条消息被丢掉。
+            if (quotedPending.size) quotedOversize = true
             if (!files.length && !event.text.trim() && !event.quotedText && !quotedOversize) return
             const incoming = quotedOversize
               ? { ...event, text: [event.text, '［引用附件超出大小限制，未载入，无法读取或保存该附件。］'].filter(Boolean).join('\n\n') }

@@ -22,6 +22,7 @@ export declare function describeQqMedia(item: Readonly<Record<string, unknown>>,
 /** 直传、引用图片与表情补图共用下载规则。 */
 export declare function materializeQqMedia(item: Readonly<Record<string, unknown>>, budget: {
     readonly remaining: number;
+    readonly fileRemaining?: number;
     consume(size: number): boolean;
 }, signal: AbortSignal, options: Parameters<typeof downloadQqMedia>[3]): Promise<{
     bytes: Uint8Array<ArrayBufferLike>;

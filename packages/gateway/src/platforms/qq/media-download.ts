@@ -70,14 +70,16 @@ export function describeQqMedia(item: Readonly<Record<string, unknown>>, bytes: 
 /** 直传、引用图片与表情补图共用下载规则。 */
 export async function materializeQqMedia(
   item: Readonly<Record<string, unknown>>,
-  budget: { readonly remaining: number; consume(size: number): boolean },
+  budget: { readonly remaining: number; readonly fileRemaining?: number; consume(size: number): boolean },
   signal: AbortSignal,
   options: Parameters<typeof downloadQqMedia>[3],
 ) {
   let bytes: Uint8Array
   try {
-    if (!budget.remaining) throw new QqMediaIngressError('qq_media_size')
-    bytes = await downloadQqMedia(item.url || item.file_url || item.download_url, signal, budget.remaining, options)
+    // 单个附件按自己的上限下载，不让一个文件吃光整批额度。
+    const allowance = budget.fileRemaining ?? budget.remaining
+    if (!allowance) throw new QqMediaIngressError('qq_media_size')
+    bytes = await downloadQqMedia(item.url || item.file_url || item.download_url, signal, allowance, options)
   } catch (error) {
     signal.throwIfAborted()
     if (item.qface_generated === true) return null
@@ -105,11 +107,13 @@ export async function processQqMedia(
     signal.throwIfAborted()
     if (options.authorize && !await options.authorize()) return false
     const quoted = media.source === 'quote'
+    const quoteName = String(media.item.filename || media.item.file_name || '')
+    const quotedVideo = quoted && /\.(mov|mp4|m4v|webm)$/iu.test(quoteName)
     try {
       if (quoted) {
         if (media.sourcePlatformMessageId && await options.quote(media, media.sourcePlatformMessageId)) continue
         const mime = String(media.item.content_type || media.item.type || '').split(';', 1)[0]!.trim().toLowerCase()
-        if (mime.includes('/') && mime !== 'application/octet-stream' && !mime.startsWith('image/')) continue
+        if (!quotedVideo && mime.includes('/') && mime !== 'application/octet-stream' && !mime.startsWith('image/')) continue
         if (!media.item.url && !media.item.file_url && !media.item.download_url) continue
         signal.throwIfAborted()
         if (options.authorize && !await options.authorize()) return false
@@ -119,6 +123,8 @@ export async function processQqMedia(
       if (!file) continue
       if (!quoted) await options.file(media, { ...file, quoted }, index)
       else if (imImageFormat(file.bytes)) await options.file(media, { ...file, quoted, voice: false }, index)
+      else if (quotedVideo && !file.voice)
+        await options.file(media, { ...file, quoted, voice: false }, index)
     } catch (error) {
       signal.throwIfAborted()
       if (!quoted || !options.quotedOversize || !(error instanceof QqMediaIngressError) || error.code !== 'qq_media_size') throw error

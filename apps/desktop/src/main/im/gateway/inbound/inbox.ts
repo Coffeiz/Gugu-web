@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises'
 import { writeDesktopAgentAttachment } from '../../../agent/attachments.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type { safeStorage } from 'electron'
-import { imAdmissionKeys, receiveMessage, rollbackImMedia, type ImConnectionIdentity, type ImConversationScope, type ImReceivedMessage } from '@gugu/gateway'
+import { imAdmissionKeys, receiveMessage, rollbackImMedia, IM_MEDIA_MAX_FILE_BYTES, type ImConnectionIdentity, type ImConversationScope, type ImReceivedMessage } from '@gugu/gateway'
 import type { IpcHost } from '../../../ipc/types.js'
 import type { createDesktopAgentModelService } from '../../../agent/model.js'
 import { parseImControlCommand } from '@gugu/core/im/shortcut'
@@ -54,7 +54,7 @@ export function createDesktopImInbox(host: IpcHost, encryption: Pick<typeof safe
           if (media && attachments?.length) {
             if (!dataDirectory) throw new DesktopError('storage_error', 'IM 附件存储目录不可用')
             for (const [index, attachment] of attachments.entries())
-              written.push(await writeDesktopAgentAttachment(dataDirectory, attachment.attachId, media.files[index]!.bytes))
+              written.push(await writeDesktopAgentAttachment(dataDirectory, attachment.attachId, media.files[index]!.bytes, IM_MEDIA_MAX_FILE_BYTES))
           }
           if (media && !await media.authorize()) return { status: 'ignored' }
           retain = true

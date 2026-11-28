@@ -212,7 +212,7 @@ export function createWechatMedia(options) {
 }
 /** 共享微信图片筛选、配额和顺序，宿主提供已授权的暂存端口。 */
 export async function processWechatImages(items, media, options, stage) {
-    const budget = createImMediaBudget(options.maxBytes, options.maxFiles);
+    const budget = createImMediaBudget(options.maxBytes, options.maxFiles, options.maxFileBytes);
     for (const [index, item] of items.entries()) {
         options.signal.throwIfAborted();
         if (item.kind !== 'image')

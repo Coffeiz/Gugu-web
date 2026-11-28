@@ -17,6 +17,7 @@ export function createViewImageTool(options: {
   mount(identity: RunIdentity, signal: AbortSignal): Promise<ShellMountPlan | null>
   attachments?: { pool: Pick<Pool, 'query'>; download(ownerId: string, attachId: string): Promise<{ handle: FileHandle }> }
   open(url: string, signal: AbortSignal): Promise<ProviderHttpResponse>
+  report?(error: unknown, identity: RunIdentity): void
 }) {
   const attachments = options.attachments
   return createCoreViewImageTool({
@@ -55,5 +56,6 @@ export function createViewImageTool(options: {
       return null
     } } : {}),
     open: options.open,
+    ...(options.report ? { report: options.report } : {}),
   })
 }

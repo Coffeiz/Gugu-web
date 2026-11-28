@@ -141,7 +141,16 @@ const bridge: DesktopBridge = Object.freeze({
     return () => ipcRenderer.removeListener(DESKTOP_CHANNELS.agentChatEvent, listener)
   },
   agentSessions: (command: Parameters<DesktopBridge['agentSessions']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentSessions, command),
-  agentAttachment: (command: Parameters<NonNullable<DesktopBridge['agentAttachment']>>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.agentAttachment, command),
+  agentAttachment: (command: Parameters<NonNullable<DesktopBridge['agentAttachment']>>[0]) => {
+    if (Object.hasOwn(command, 'sourcePath')) throw new Error('请通过文件选择器上传本机附件')
+    return ipcRenderer.invoke(DESKTOP_CHANNELS.agentAttachment, command)
+  },
+  // 大附件不走整块 IPC：在这里把用户挑定的 File 解析成本机路径，主进程流式落盘。
+  uploadAgentAttachment: (file: File, options: { name: string; mime: string | null; voice: boolean }) =>
+    ipcRenderer.invoke(DESKTOP_CHANNELS.agentAttachment, {
+      action: 'upload', name: options.name, mime: options.mime, voice: options.voice,
+      sourcePath: webUtils.getPathForFile(file),
+    }),
   resources: (command: Parameters<DesktopBridge['resources']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.resources, command),
   scheduleTask: (command: Parameters<DesktopBridge['scheduleTask']>[0]) => ipcRenderer.invoke(DESKTOP_CHANNELS.scheduleTask, command),
   onScheduleChanged: (callback: () => void) => subscribeDesktopEvent(DESKTOP_CHANNELS.scheduleChanged, callback),

@@ -81,9 +81,11 @@ export function describeQqMedia(item, bytes) {
 export async function materializeQqMedia(item, budget, signal, options) {
     let bytes;
     try {
-        if (!budget.remaining)
+        // 单个附件按自己的上限下载，不让一个文件吃光整批额度。
+        const allowance = budget.fileRemaining ?? budget.remaining;
+        if (!allowance)
             throw new QqMediaIngressError('qq_media_size');
-        bytes = await downloadQqMedia(item.url || item.file_url || item.download_url, signal, budget.remaining, options);
+        bytes = await downloadQqMedia(item.url || item.file_url || item.download_url, signal, allowance, options);
     }
     catch (error) {
         signal.throwIfAborted();
@@ -105,12 +107,14 @@ export async function processQqMedia(items, budget, signal, options) {
         if (options.authorize && !await options.authorize())
             return false;
         const quoted = media.source === 'quote';
+        const quoteName = String(media.item.filename || media.item.file_name || '');
+        const quotedVideo = quoted && /\.(mov|mp4|m4v|webm)$/iu.test(quoteName);
         try {
             if (quoted) {
                 if (media.sourcePlatformMessageId && await options.quote(media, media.sourcePlatformMessageId))
                     continue;
                 const mime = String(media.item.content_type || media.item.type || '').split(';', 1)[0].trim().toLowerCase();
-                if (mime.includes('/') && mime !== 'application/octet-stream' && !mime.startsWith('image/'))
+                if (!quotedVideo && mime.includes('/') && mime !== 'application/octet-stream' && !mime.startsWith('image/'))
                     continue;
                 if (!media.item.url && !media.item.file_url && !media.item.download_url)
                     continue;
@@ -125,6 +129,8 @@ export async function processQqMedia(items, budget, signal, options) {
             if (!quoted)
                 await options.file(media, { ...file, quoted }, index);
             else if (imImageFormat(file.bytes))
+                await options.file(media, { ...file, quoted, voice: false }, index);
+            else if (quotedVideo && !file.voice)
                 await options.file(media, { ...file, quoted, voice: false }, index);
         }
         catch (error) {

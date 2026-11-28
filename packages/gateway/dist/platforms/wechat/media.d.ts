@@ -36,6 +36,7 @@ export declare function createWechatMedia(options: {
 export declare function processWechatImages(items: readonly WechatMediaRequirement[], media: Pick<ReturnType<typeof createWechatMedia>, 'downloadImage'>, options: {
     maxBytes: number;
     maxFiles?: number;
+    maxFileBytes?: number;
     signal: AbortSignal;
     authorize?: () => Promise<boolean>;
 }, stage: (file: {

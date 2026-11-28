@@ -539,7 +539,13 @@ export function createDesktopAgentRuns(core: SqlDataRuntime, databasePath: strin
         const file = await fileSources.resolveFilePath(identity, path, signal)
         return file ? openLocalFile(file.root, file.relativePath) : null
       },
-      open: (url, signal) => egress.withTransport(signal, transport => transport.request({ url, method: 'GET', headers: {} }, signal)),
+      // 响应体由调用方流式消费，传输层必须在读取结束后才关闭；不能经 withTransport 提前 close。
+      open: (url, signal) => openStreamedAgentGet(createNodeProviderTransport({
+        ...desktopTransportOptions(false, resolveProxy), connectTimeoutMs: 10_000, writeTimeoutMs: 10_000,
+      }), url, signal),
+      report(error, identity) {
+        agentLog.diagnose('view_image_failed', { identity, phase: 'read', error })
+      },
     })
     let runMemoryRebuild: MemoryRebuild | undefined
     const buildRag = createDesktopContextRag({

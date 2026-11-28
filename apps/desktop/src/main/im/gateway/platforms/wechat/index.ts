@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
-import { createGatewaySupervisor, readImReceivedMessage } from '@gugu/gateway'
+import { createGatewaySupervisor, readImReceivedMessage, IM_MEDIA_BATCH_BYTES, IM_MEDIA_MAX_FILES, IM_MEDIA_MAX_FILE_BYTES } from '@gugu/gateway'
 import { connectWechatPolling, createILinkClient, createWechatTypingIndicator, createWechatTypingTicketCache, createWechatMedia, processWechatImages, createWechatSender, WECHAT_MISSING_VOICE_NOTICE } from '@gugu/gateway/wechat'
 import { createEncryptedDesktopStore } from '../../../../auth/store.js'
 import type { createDesktopWechatPairing } from '../../../connect/platforms/wechat/index.js'
-import { MAX_DESKTOP_ATTACHMENT_BYTES } from '../../../../agent/attachments.js'
 import type { DesktopImFile, createDesktopImInbox } from '../../inbound/inbox.js'
 import type { IpcHost } from '../../../../ipc/types.js'
 import { tryDesktopImRunControl, type createDesktopImDispatch } from '../../delivery/dispatch.js'
@@ -99,7 +98,7 @@ export function createDesktopWechatGateway(pairing: Pick<ReturnType<typeof creat
         async materialize(items, _payload, signal) {
           const files: DesktopImFile[] = []
           await processWechatImages(items, media, {
-            maxBytes: MAX_DESKTOP_ATTACHMENT_BYTES, maxFiles: 16, signal, authorize,
+            maxBytes: IM_MEDIA_BATCH_BYTES, maxFiles: IM_MEDIA_MAX_FILES, maxFileBytes: IM_MEDIA_MAX_FILE_BYTES, signal, authorize,
           }, async file => { files.push(file) })
           return { files }
         },

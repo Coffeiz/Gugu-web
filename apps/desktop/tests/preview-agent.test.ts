@@ -1,4 +1,5 @@
 import { createServer, request } from 'node:http'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -164,9 +165,13 @@ it('同一桌面宿主向受信预览返回模型和会话，拒绝未授权连�
     expect(attachment).not.toHaveBeenCalled()
     const uploaded = await call(path, '', secret, binary, headers)
     expect(JSON.parse(uploaded.body)).toEqual({ ok: true, result: { attach_id: 'synthetic' } })
+    // 预览上传改为把本机源路径交给主进程流式复制，不再把整块字节塞进 IPC。
     expect(attachment).toHaveBeenCalledWith({
-      action: 'upload', name: '合成.txt', mime: 'text/plain', voice: false, data: binary,
+      action: 'upload', name: '合成.txt', mime: 'text/plain', voice: false,
+      sourcePath: expect.stringContaining('gugu-preview-attachment-'),
     })
+    // 临时文件在上传完成后必须清掉，不能把用户文件留在临时目录里。
+    expect(existsSync(String((attachment.mock.calls[0]![0] as { sourcePath: string }).sourcePath))).toBe(false)
     const downloaded = await call(path, '', secret, JSON.stringify({ action: 'download', attachId: 'synthetic' }))
     expect(JSON.parse(downloaded.body)).toMatchObject({ ok: true, result: { data: 'AP8=', name: '合成.txt' } })
     await expect(call('/__desktop-preview/reload-core', '', secret)).resolves.toEqual({

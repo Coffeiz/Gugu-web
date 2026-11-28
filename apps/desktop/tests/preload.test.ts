@@ -34,6 +34,7 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'canvases',
     'clearAgentAttachments',
     'clearAgentMemory',
+    'clientRelated',
     'clients',
     'createBoardProject',
     'createCalendarEvent',
@@ -53,6 +54,7 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'deleteCanvasRelation',
     'deleteClient',
     'deleteNote',
+    'deviceInfo',
     'exportBusinessArchive',
     'feishuPairing',
     'files',
@@ -62,6 +64,7 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'onAgentChatEvent',
     'onAgentRunChanged',
     'onScheduleChanged',
+    'onTelegramConnectionChanged',
     'onboarding',
     'openDroppedFileReference',
     'preflightBusinessArchive',
@@ -96,6 +99,7 @@ it('Preload 只暴露固定业务函数，不透传任意 channel 或 Electron �
     'updateCanvasItem',
     'updateCanvasNote',
     'updateNote',
+    'uploadAgentAttachment',
     'wechatPairing',
   ])
   await bridge.applyBusinessArchive('synthetic-preflight-id')

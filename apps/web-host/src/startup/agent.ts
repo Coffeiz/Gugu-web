@@ -680,6 +680,9 @@ export async function createAgentServices(options: AgentDependencies) {
         },
         ...(lease.input.source === 'web' || verifiedOwner ? { attachments: { pool, download: options.downloadAttachment } } : {}),
         open: egress.open,
+        report(error, identity) {
+          try { agentLog.diagnose('view_image_failed', { identity, phase: 'read', error }) } catch { /* 诊断不得影响工具结果。 */ }
+        },
       })
     }
     async function ownerFileTools(lease: AgentDispatchLease, binding: Pick<AgentRunBinding, 'resolve' | 'selection'>,

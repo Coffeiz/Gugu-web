@@ -1,4 +1,4 @@
-import { createImMediaBudget, rollbackImMedia } from '@gugu/gateway'
+import { createImMediaBudget, rollbackImMedia, IM_MEDIA_MAX_FILES, IM_MEDIA_MAX_FILE_BYTES } from '@gugu/gateway'
 import type { ProviderTransport } from '@gugu/core/providers'
 import { NodeProviderTransport, type AddressResolver } from '@gugu/core/providers/node'
 import { readFeishuQuote, type ParsedFeishuMessage } from '@gugu/gateway/feishu'
@@ -19,6 +19,7 @@ export interface PlatformAttachmentStore {
   reuse(input: { scope: Scope; sourcePlatformMessageId: string; sourceAttachmentIndex: number; targetPlatformMessageId: string }, signal?: AbortSignal): Promise<PlatformStagedAttachment | null>
   release(input: ImAttachmentReleaseInput): Promise<void>
 }
+/** Web Host 一次媒体接入的批次额度：服务端要守住内存，宿主可按需收紧。 */
 const limit = 100 * 1024 * 1024
 const invalid = () => new Error('IM 媒体接入未完成')
 function checked(scope: Scope, value: PlatformStagedAttachment): PlatformStagedAttachment {
@@ -48,7 +49,7 @@ export function createPlatformMedia(options: { storage: PlatformAttachmentStore;
       if (quote) Object.assign(payload, quote)
       const ids = await batch(scope, signal, async add => {
         const ids: string[] = []
-        await processFeishuMedia(parsed.mediaItems, client, { maxBytes: limit, signal }, async (file, index) => {
+        await processFeishuMedia(parsed.mediaItems, client, { maxBytes: limit, maxFiles: IM_MEDIA_MAX_FILES, maxFileBytes: IM_MEDIA_MAX_FILE_BYTES, signal }, async (file, index) => {
           ids.push(await add({ scope, sourcePlatformMessageId: source, sourceAttachmentIndex: index, ...file }))
         })
         return ids
@@ -58,10 +59,13 @@ export function createPlatformMedia(options: { storage: PlatformAttachmentStore;
     },
     async qq(scope: Scope, parsed: ParsedQqMessage, signal: AbortSignal): Promise<Payload> {
       const payload: Payload = { ...parsed.payload }, source = String(payload.platform_message_id || payload.message_id)
+      let quotedOversize = false
       payload.attachments = await batch(scope, signal, async (add, remember) => {
-        const ids: string[] = []; const budget = createImMediaBudget(limit)
+        const ids: string[] = []; const budget = createImMediaBudget(limit, IM_MEDIA_MAX_FILES, IM_MEDIA_MAX_FILE_BYTES)
         await processQqMedia(parsed.mediaItems, budget, signal, {
           transport, resolve: options.resolve,
+          // 引用附件超限时保留消息本身，只标注该附件未载入。
+          quotedOversize: () => { quotedOversize = true },
           async quote(media, sourcePlatformMessageId) {
             const reused = await options.storage.reuse({ scope, sourcePlatformMessageId,
               sourceAttachmentIndex: media.attachmentIndex, targetPlatformMessageId: source }, signal)
@@ -81,7 +85,11 @@ export function createPlatformMedia(options: { storage: PlatformAttachmentStore;
         })
         return ids
       })
-      if (parsed.splitFace.faceOnly && parsed.mediaItems.some(item => item.item.qface_generated === true) && (payload.attachments as string[]).length) payload.text = ''
+      if (parsed.splitFace.faceOnly && !quotedOversize && parsed.mediaItems.some(item => item.item.qface_generated === true) && (payload.attachments as string[]).length) payload.text = ''
+      if (quotedOversize) {
+        const text = String(payload.text ?? '')
+        payload.text = [text, '［引用附件超出大小限制，未载入，无法读取或保存该附件。］'].filter(Boolean).join('\n\n')
+      }
       payload.emoji_refs = []; return payload
     },
     async telegram(scope: Scope, payload: TelegramInboundPayload, api: ReturnType<typeof createTelegramBotApi>, resolveToken: (input: { ownerId: string; botId: string }, signal?: AbortSignal) => Promise<string | null>, signal: AbortSignal, notice: (text: string) => Promise<void>): Promise<Payload | null> {
@@ -102,7 +110,7 @@ export function createPlatformMedia(options: { storage: PlatformAttachmentStore;
     async wechat(scope: Scope, items: readonly WechatMediaRequirement[], payload: WechatInboundPayload, media: ReturnType<typeof createWechatMedia>, signal: AbortSignal): Promise<string[]> {
       return batch(scope, signal, async add => {
         const ids: string[] = []
-        await processWechatImages(items, media, { maxBytes: limit, signal }, async (file, index, quoted) => {
+        await processWechatImages(items, media, { maxBytes: limit, maxFiles: IM_MEDIA_MAX_FILES, maxFileBytes: IM_MEDIA_MAX_FILE_BYTES, signal }, async (file, index, quoted) => {
           ids.push(await add({ scope, sourcePlatformMessageId: String(payload.platform_message_id || payload.message_id),
             sourceAttachmentIndex: index, ...file, quoted }))
         })

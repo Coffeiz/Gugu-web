@@ -400,8 +400,12 @@ export interface DesktopAgentAttachmentDownload {
   data: Uint8Array
 }
 export interface DesktopAgentChatReference { type: string; id: number | string; label: string; selection?: import('../agent/sessions/selection-reference.js').SelectionSnapshot }
+/**
+ * 附件上传命令：data 走整块 IPC 传输（小文件），sourcePath 走本机流式复制（大文件）。
+ * sourcePath 由 preload 从用户挑定的 File 解析得到，渲染进程不直接提供任意路径。
+ */
 export type DesktopAgentAttachmentCommand =
-  | { action: 'upload'; name: string; mime: string | null; voice: boolean; data: Uint8Array }
+  | { action: 'upload'; name: string; mime: string | null; voice: boolean; data?: Uint8Array; sourcePath?: string }
   | { action: 'deleteDraft'; attachId: string }
   | { action: 'download'; attachId: string }
 export interface DesktopAgentHistoryPage {
@@ -575,6 +579,8 @@ export interface DesktopBridge {
   agentModel(command: DesktopAgentModelCommand): Promise<DesktopReply<DesktopAgentModel | DesktopAgentModelList | DesktopAgentMediaResult | DesktopAgentModelCapabilities | string[] | null>>
   agentSessions(command: DesktopAgentSessionCommand): Promise<DesktopReply<DesktopAgentSession[] | DesktopAgentSession | DesktopAgentMessage[] | DesktopAgentHistoryPage | DesktopAgentEventPage | DesktopAgentRunCancellation | DesktopAgentInteractionReply | DesktopAgentQueueSnapshot | DesktopAgentImportedQueue[] | Record<string, unknown> | boolean | null>>
   agentAttachment?(command: DesktopAgentAttachmentCommand): Promise<DesktopReply<DesktopAgentAttachment | DesktopAgentAttachmentDownload | null>>
+  /** 大附件上传：由 preload 把用户挑定的 File 解析成本机路径后流式落盘，不整块过桥接。 */
+  uploadAgentAttachment?(file: File, options: { name: string; mime: string | null; voice: boolean }): Promise<DesktopReply<DesktopAgentAttachment>>
   onAgentRunChanged?(callback: (sessionId: number, interactionChanged?: true) => void): () => void
   onTelegramConnectionChanged?(callback: () => void): () => void
   onAgentChatEvent?(callback: (event: DesktopAgentChatEvent) => void): () => void

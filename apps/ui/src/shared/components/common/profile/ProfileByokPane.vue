@@ -634,7 +634,7 @@ onBeforeUnmount(() => { stopRebuildPolling() })
   transition: border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .profile-byok-pane--onboarding .byok-card:hover { border-color: var(--workspace-card-border-hover); }
-.byok-capability-tag { display: inline-flex; margin-left: var(--space-xs); padding: var(--space-xs) var(--space-xs); border: 1px solid color-mix(in srgb, var(--accent-color, var(--action-primary)) 35%, transparent); border-radius: var(--choice-chip-radius); color: var(--text-secondary); font-size: 10px; vertical-align: 1px; }
+.byok-capability-tag { display: inline-flex; margin-inline-start: 5px; padding: 2px 6px; border: 1px solid color-mix(in srgb, var(--accent-color, var(--action-primary)) 35%, transparent); border-radius: var(--choice-chip-radius); color: var(--text-secondary); font-size: 10px; vertical-align: 1px; }
 .byok-expired { color: var(--color-danger, #c66); }
 .byok-message { margin-top: var(--space-md); }
 .byok-message-part { color: var(--text-secondary, #8f95aa); }

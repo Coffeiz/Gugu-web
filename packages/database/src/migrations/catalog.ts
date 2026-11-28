@@ -7,5 +7,6 @@ import { contactAddress } from './0052_contact_address.js'
 
 import { scheduledShellGrants } from './0053_scheduled_shell_grants.js'
 import { imGroupDisabledNotices } from './0054_im_group_disabled_notices.js'
+import { desktopImReflectionJobColumns } from './0056_desktop_im_reflection_job_columns.js'
 
-export const logicalMigrations = [conversationRoleSequence, agentChatReceipts, ragSnapshotGeneration, contactAddress, scheduledShellGrants, imGroupDisabledNotices] as const
+export const logicalMigrations = [conversationRoleSequence, agentChatReceipts, ragSnapshotGeneration, contactAddress, scheduledShellGrants, imGroupDisabledNotices, desktopImReflectionJobColumns] as const

@@ -172,10 +172,10 @@ export function createWechatMedia(options: {
 export async function processWechatImages(
   items: readonly WechatMediaRequirement[],
   media: Pick<ReturnType<typeof createWechatMedia>, 'downloadImage'>,
-  options: { maxBytes: number; maxFiles?: number; signal: AbortSignal; authorize?: () => Promise<boolean> },
+  options: { maxBytes: number; maxFiles?: number; maxFileBytes?: number; signal: AbortSignal; authorize?: () => Promise<boolean> },
   stage: (file: { bytes: Uint8Array; name: string; ext: string; mime: string; voice: false }, index: number, quoted: boolean) => Promise<void>,
 ) {
-  const budget = createImMediaBudget(options.maxBytes, options.maxFiles)
+  const budget = createImMediaBudget(options.maxBytes, options.maxFiles, options.maxFileBytes)
   for (const [index, item] of items.entries()) {
     options.signal.throwIfAborted()
     if (item.kind !== 'image') continue

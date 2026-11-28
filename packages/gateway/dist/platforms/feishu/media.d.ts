@@ -17,6 +17,7 @@ type FeishuMediaFile = {
 export declare function processFeishuMedia(items: ParsedFeishuMessage['mediaItems'], client: Pick<ReturnType<typeof createFeishuClient>, 'downloadResource'>, options: {
     maxBytes: number;
     maxFiles?: number;
+    maxFileBytes?: number;
     signal: AbortSignal;
     authorize?: () => Promise<boolean>;
 }, stage: (file: FeishuMediaFile, index: number) => Promise<void>): Promise<void>;

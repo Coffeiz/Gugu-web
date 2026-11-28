@@ -18,12 +18,11 @@ import { transcribeDesktopImFile, type DesktopImVoice } from '../../inbound/voic
 import { createHash } from 'node:crypto'
 import { FeishuMediaIngressError, parseFeishuEvent, processFeishuMedia, readFeishuQuote } from '@gugu/gateway/feishu'
 import { createGatewaySupervisor, createImGroupAttentionGate, readImReceivedMessage, type ImGroupAttentionHistory,
-  type ImPendingAskStore } from '@gugu/gateway'
+  type ImPendingAskStore, IM_MEDIA_BATCH_BYTES, IM_MEDIA_MAX_FILES, IM_MEDIA_MAX_FILE_BYTES } from '@gugu/gateway'
 import { buildFeishuCompletedActionCard, createPersistentFeishuProjection, createFeishuClient, createFeishuConnection, createFeishuSender, createFeishuWsNetwork } from '@gugu/gateway/feishu'
 import type { createDesktopFeishuPairing } from '../../../connect/platforms/feishu/index.js'
 import type { createDesktopImCallback } from '../../interactions/callback.js'
 import { isDesktopImTextCancel, tryDesktopImRunControl, type createDesktopImDispatch } from '../../delivery/dispatch.js'
-import { MAX_DESKTOP_ATTACHMENT_BYTES } from '../../../../agent/attachments.js'
 import { desktopImEventKey, type DesktopImFile, type createDesktopImInbox } from '../../inbound/inbox.js'
 import { parseImReceivedMessage } from '@gugu/gateway'
 import { startDesktopImPendingAskPump } from '../../inbound/pending-asks.js'
@@ -254,7 +253,8 @@ export function createDesktopFeishuGateway(pairing: Pick<ReturnType<typeof creat
             const files: DesktopImFile[] = []
             try {
               await processFeishuMedia(parsed.mediaItems, client, {
-                maxBytes: MAX_DESKTOP_ATTACHMENT_BYTES, maxFiles: 16, signal: mediaSignal, authorize: eventAuthorize,
+                maxBytes: IM_MEDIA_BATCH_BYTES, maxFiles: IM_MEDIA_MAX_FILES, maxFileBytes: IM_MEDIA_MAX_FILE_BYTES,
+                signal: mediaSignal, authorize: eventAuthorize,
               }, async file => { files.push(await transcribeDesktopImFile(file, voice, mediaSignal, authorize)) })
               if (!await eventAuthorize()) return
               try {

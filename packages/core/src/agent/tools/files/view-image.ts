@@ -92,7 +92,8 @@ async function readImageFile(file: OpenedImageFile, signal: AbortSignal) {
 async function readUrl(open: (url: string, signal: AbortSignal) => Promise<ProviderHttpResponse>, url: string, signal: AbortSignal) {
   const response = await open(url, signal)
   try {
-    if (response.status !== 200 || Number(response.headers['content-length']) > maxBytes) throw new Error()
+    if (response.status !== 200) throw Object.assign(new Error(`HTTP ${response.status}`), { httpStatus: response.status })
+    if (Number(response.headers['content-length']) > maxBytes) throw new Error()
     const chunks: Uint8Array[] = []
     let size = 0
     for await (const chunk of response.body) {
@@ -114,6 +115,8 @@ export function createViewImageTool(options: {
     Promise<OpenedImageFile | Extract<ToolResult, { kind: 'waiting' }> | { error: string } | null>
   openAttachment?(identity: RunIdentity, attachId: string, signal: AbortSignal): Promise<OpenedImageFile | null>
   open(url: string, signal: AbortSignal): Promise<ProviderHttpResponse>
+  /** 未预期失败只进宿主诊断日志，不暴露给模型；缺省时保持静默。 */
+  report?(error: unknown, identity: RunIdentity): void
 }): ToolDefinition {
   const error = (message: string) => ({
     kind: 'completed' as const, successful: false, mutated: false, executed: false, value: { error: message },
@@ -164,9 +167,11 @@ export function createViewImageTool(options: {
         const id = remember(scopeKey(identity), bytes, mime)
         return { kind: 'completed', successful: true, mutated: false, value: { mime, width, height },
           modelValue: [{ type: 'text', text: `图片尺寸：${width} × ${height}` }, { type: 'view-image-ref', id }] }
-      } catch {
+      } catch (failure) {
         signal.throwIfAborted()
-        return error('无法读取图片，请检查图片来源、格式和大小')
+        try { options.report?.(failure, identity) } catch { /* 诊断不影响工具结果。 */ }
+        const status = (failure as { httpStatus?: number } | null)?.httpStatus
+        return error(status ? `图片站点返回 HTTP ${status}，直链可能被拒绝访问` : '无法读取图片，请检查图片来源、格式和大小')
       }
     },
   }

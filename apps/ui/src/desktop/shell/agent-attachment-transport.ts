@@ -38,11 +38,14 @@ export async function uploadDesktopAgentAttachment(file: File, voice = false) {
       'x-gugu-attachment-type': encodeURIComponent(file.type),
       'x-gugu-attachment-voice': voice ? '1' : '0',
     })
-    : await file.arrayBuffer().then(buffer => requestNativeAttachment(bridge => {
+    : await requestNativeAttachment(async bridge => {
+      // 新版桌面端按本机路径流式落盘：大文件不必整块过桥接，也不受 IPC 传输上限约束。
+      if (bridge.uploadAgentAttachment)
+        return bridge.uploadAgentAttachment(file, { name: file.name, mime: file.type || null, voice })
       if (!bridge.agentAttachment) throw new DesktopBridgeError('desktop_update_required', '请重新启动桌面应用后再添加附件')
       return bridge.agentAttachment({ action: 'upload', name: file.name, mime: file.type || null, voice,
-        data: new Uint8Array(buffer) })
-    }))
+        data: new Uint8Array(await file.arrayBuffer()) })
+    })
   if (!result || !('attach_id' in result)) throw new DesktopBridgeError('storage_error', '附件保存失败，请重试')
   return result
 }

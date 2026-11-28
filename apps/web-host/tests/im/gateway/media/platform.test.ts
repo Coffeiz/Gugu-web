@@ -88,6 +88,32 @@ test('Telegram引用仅查同scope历史，目标平台消息绑定新draft引�
   await media.close(); await api.close()
 })
 
+test('QQ 引用附件超出大小限制时保留消息并标注未载入，不再整条丢弃', async () => {
+  const store = storage(), requests: string[] = []
+  store.value.reuse = async () => null
+  const media = createPlatformMedia({ storage: store.value,
+    transport: { async request(input) {
+      requests.push(input.url)
+      // 用 content-length 声明超大体积：下载前就被单文件上限拦下，不必真的传大字节。
+      return response(200, { 'content-length': String(101 * 1024 * 1024) }, Buffer.alloc(0))
+    }, async close() {} },
+    resolve: async () => [{ address: '9.9.9.9', family: 4 }] })
+  const group = { ...scope, chatType: 'group' as const, chatId: 'synthetic-group' }
+  try {
+    const parsed = parseQqMessage('GROUP_AT_MESSAGE_CREATE', {
+      id: 'reply-event', content: '看一下这张图', group_openid: group.chatId,
+      author: { user_openid: group.platformUserId },
+      message_scene: { ext: ['msg_idx=reply-index', 'msg_ref_idx=original-index'] },
+      msg_elements: [{ msg_idx: 'original-index', image: { url: 'https://cdn.example.test/quoted-image' } }],
+    }, { botId: group.botId, ownerId: group.ownerId })!
+    const payload = await media.qq(group, parsed, signal)
+    assert.match(String(payload.text), /引用附件超出大小限制/)
+    assert.deepEqual(payload.attachments, [])
+    assert.equal(store.staged.length, 0)
+    assert.equal(requests.length, 1)
+  } finally { await media.close() }
+})
+
 test('QQ 群聊引用未入库的原图时下载图片并归入当前消息，已有原图时复用', async () => {
   const store = storage(), requests: string[] = [], refs: string[] = []
   let cached = false
