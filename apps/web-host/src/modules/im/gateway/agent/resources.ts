@@ -1,3 +1,4 @@
+import { isVerifiedImOwner } from '@gugu/core/agent/scenes/im'
 import { describeAskUserPrompt, imAskUserPolicy } from '@gugu/core/agent'
 import { createImSendFileTool } from '@gugu/core/tools'
 import { createPostgresFileReadOperations } from '../../../files/browse.js'
@@ -334,7 +335,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
       return { identity: { ownerId: identity.ownerId, workspaceId: null, subject: { kind: 'session', id: identity.sessionId } },
         source: actor.platform, toolNames: (await registry.capabilities(identity)).map(tool => tool.name) }
     }
-    const mcpManagement = actor.role === 'owner' && actor.verifiedOwner ? options.mcpManagement : undefined
+    const mcpManagement = isVerifiedImOwner(actor) ? options.mcpManagement : undefined
     const authorizeTool = async (candidate: RunIdentity, name: string) => same(candidate, identity) && await authorizeCurrent()
       && (name !== 'manage_mcp_servers' || mcpManagement?.enabled() === true)
       && await options.access.authorizeTool(actorInput, name, lease.input.im.attention?.disposition === 'run')
@@ -342,10 +343,10 @@ export function createImProductionResources(options: ImProductionResourcesOption
       identity, binding, secretKey: options.secretKey, digest,
       readSafeEgress: createSafeEgressSettingsReader(options.environment, options.configOverridePath ?? resolveConfigOverridePath(options.environment)),
     })
-    const ownerTools = actor.role === 'owner' && actor.verifiedOwner && options.imOwnerTools
+    const ownerTools = isVerifiedImOwner(actor) && options.imOwnerTools
       ? await options.imOwnerTools(lease, await services.source.data.loadTimezone(identity), authorizeCurrent, binding, actor.verifiedOwner) : undefined
     const builtins = createAgentToolRegistry({ core: options.core, authorize: authorizeTool, ...search, callTool: true, skills: skills.tools, mcpManagement: mcpManagement?.tool,
-      ...(actor.role === 'owner' && actor.verifiedOwner ? {
+      ...(isVerifiedImOwner(actor) ? {
         fileOverview: createProjectFileOverviewPort(options.pool, options.storageRoot),
         calendar: createAgentCalendarReader(createKyselyCalendarAgentReadPort(options.core.db, 'postgres')),
         events: createKyselyCalendarReadPort(options.core.db, 'postgres'),
@@ -361,12 +362,12 @@ export function createImProductionResources(options: ImProductionResourcesOption
         files: createPostgresFileReadOperations(options.pool, options.storageRoot),
         authorizeTool: name => authorizeTool(identity, name),
       }).sendFile) } : {}),
-      ...(process.platform === 'linux' && actor.role === 'owner' && actor.verifiedOwner ? {
+      ...(process.platform === 'linux' && isVerifiedImOwner(actor) ? {
         saveAttachment: createImSaveAttachmentTool({ ...options, identity, actor, scope, messageIds, payload: route.payload,
           ownerAttachment: actor.verifiedOwner ? ownerTools?.historicalSaveAttachment : undefined,
           authorize: () => authorizeTool(identity, 'save_attachment') }),
       } : {}),
-      ...(actor.role === 'owner' && actor.verifiedOwner ? { imOwnerSession: options.ownerSessions.tool({ lease,actor,payload:route.payload,messageIds,authorize:()=>authorizeTool(identity,'bind_web_session') }) } : {}),
+      ...(isVerifiedImOwner(actor) ? { imOwnerSession: options.ownerSessions.tool({ lease,actor,payload:route.payload,messageIds,authorize:()=>authorizeTool(identity,'bind_web_session') }) } : {}),
       time: { now: () => new Date(), timezone: () => services.source.data.loadTimezone(identity) },
       memorySearch: createPostgresImMemorySearch({ ...options, lease, actor, bot, configuration }),
       ...(actor.chatType === 'group' && actor.platform !== 'wechat' ? { groupContext: createPostgresImGroupContextSearch({ pool: options.pool,
@@ -374,7 +375,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
         authorize: (id, _actor, signal) => { signal.throwIfAborted(); return authorizeTool(id, 'group_context_search') }, isTombstoned: tombstoned }) } : {}),
       ...(actor.platform === 'feishu' ? { imReaction: { platform: 'feishu' as const, port: createPostgresImReaction({ ...options, lease, actor, bot, configuration }) } } : {}),
     })
-    const mcpTools = actor.role === 'owner' && actor.verifiedOwner ? options.mcpTools : undefined
+    const mcpTools = isVerifiedImOwner(actor) ? options.mcpTools : undefined
     registry = mcpTools ? createMcpAgentToolPorts({
       base: builtins,
       directory: mcpTools.directory,
@@ -439,7 +440,7 @@ export function createImProductionResources(options: ImProductionResourcesOption
         if (reasoning) await reasoning.checkpointHook(client, id, next, previous)
         else if (next.context?.continuationRef) throw unavailable()
       } },
-      source: { ...services.source, ...(actor.role === 'owner' && actor.verifiedOwner && options.storageRoot ? { skillDataRoot: options.storageRoot } : {}) },
+      source: { ...services.source, ...(isVerifiedImOwner(actor) && options.storageRoot ? { skillDataRoot: options.storageRoot } : {}) },
       builder: services.builder, materialize: materializer.materialize, toolRegistry: readyRegistry, ragContext, executor,
       ...delivery,
       preparation: { configuration, capabilities: {

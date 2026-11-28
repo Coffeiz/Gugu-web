@@ -4,7 +4,7 @@ import type { RunIdentity, Json, CanonicalRunPreparationPorts } from '@gugu/core
 import { createBuiltinSkillDefinitions, createFileSkillDefinitions, isUserSkillBundleEnabled, createSkillRegistry } from '@gugu/core/skills'
 import { createBundledSkillDocuments } from '@gugu/core/skills/bundled'
 import type { ImActor } from '@gugu/core/im/access'
-import { imAllowsBuiltinSkill, imCanUseTool, imSkillToolsAvailable } from '@gugu/core/agent/scenes/im'
+import { imAllowsBuiltinSkill, imCanUseTool, imSkillToolsAvailable, isVerifiedImOwner } from '@gugu/core/agent/scenes/im'
 import { createAgentToolBrief } from '@gugu/core/agent/tool-brief'
 
 const same = (a: RunIdentity, b: RunIdentity) => a.ownerId === b.ownerId && a.sessionId === b.sessionId && a.runId === b.runId
@@ -20,7 +20,7 @@ export async function createImProductionSkills(options: {
     .filter(skill => imAllowsBuiltinSkill(skill.key))
   const canRead = async (candidate: RunIdentity) => same(candidate, identity) && imCanUseTool(actor, 'use_skill') && await options.authorize()
   if (!await options.authorize()) throw failure()
-  const fileSkills = options.storageRoot && actor.role === 'owner' && actor.verifiedOwner
+  const fileSkills = options.storageRoot && isVerifiedImOwner(actor)
     ? (await createFileSkillDefinitions({ dataRoot: options.storageRoot, ownerId: identity.ownerId,
       mapPath: (_path, slug, source = 'user') => `/skills/${source}/${slug}`,
       isEnabled: (owner, slug, source) => isUserSkillBundleEnabled(options.storageRoot!, owner, slug, source),
