@@ -27,6 +27,11 @@ export interface CurrentTurnAttachmentCard extends Record<string, unknown> {
   upload: true
 }
 
+/**
+ * 附件正文注入上下文的读取预算，与附件大小上限（ATTACHMENT_MAX_BYTES）无关。
+ * readText 会把整份文本读入内存，因此这里保持 32 MB 级的小预算，超限仅降级为
+ * 「正文过大」提示，不影响附件落盘与文件库保存。
+ */
 export const CHAT_ATTACHMENT_TEXT_READ_MAX = 32 * 1024 * 1024
 export const CHAT_ATTACHMENT_TEXT_INJECT_MAX = 32_000
 

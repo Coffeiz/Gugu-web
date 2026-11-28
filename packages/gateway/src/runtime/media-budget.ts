@@ -11,7 +11,7 @@
  * IM 入站是网络下载，两者各自独立。
  */
 
-/** 单个 IM 附件的上限（100 MB）。 */
+/** 单个 IM 附件的上限（100 MB），与附件统一预算 ATTACHMENT_MAX_BYTES 保持一致。 */
 export const IM_MEDIA_MAX_FILE_BYTES = 100 * 1024 * 1024
 /** 一条消息内所有附件合计的上限（300 MB）。 */
 export const IM_MEDIA_BATCH_BYTES = 300 * 1024 * 1024

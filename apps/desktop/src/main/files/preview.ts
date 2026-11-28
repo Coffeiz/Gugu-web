@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import { DesktopError, desktopReply } from '../core-host.js'
 import { DESKTOP_CHANNELS } from '@gugu/core/desktop'
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_LABEL } from '@gugu/core/agent/attachments/limits'
 import type { desktopFiles } from './ipc.js'
 
 type PreviewFiles = Pick<ReturnType<typeof desktopFiles>, 'content' | 'handlers'>
@@ -28,7 +29,7 @@ export async function servePreviewFile(req: IncomingMessage, res: ServerResponse
     let size = 0
     for await (const chunk of req) {
       size += chunk.length
-      if (size > 32 * 1024 * 1024) throw new DesktopError('invalid_request', '单个文件最大支持 32 MB')
+      if (size > ATTACHMENT_MAX_BYTES) throw new DesktopError('invalid_request', `单个文件最大支持 ${ATTACHMENT_MAX_LABEL}`)
       chunks.push(chunk)
     }
     return files.handlers[DESKTOP_CHANNELS.files]({

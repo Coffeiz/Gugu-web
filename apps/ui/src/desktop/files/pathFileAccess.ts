@@ -1,5 +1,6 @@
 import type { DesktopFileDirectory } from '@gugu/core/desktop'
 import { resolveRelativeReferences } from '@gugu/core/files/relative-references'
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_LABEL } from '@gugu/core/agent/attachments/limits'
 import { downloadPathFile, pathFilesApi, type PathFileEntry, type PathFileRef } from '@/services/api'
 import type { PathFileAccess } from '@/services/pathFileAccess'
 import { callDesktopBridge, requestDesktopFile } from '@desktop/bridge/bridge'
@@ -99,7 +100,7 @@ export const desktopPathFileAccess: PathFileAccess = {
     : pathFilesApi.moveToTrash(file),
   async upload(file, content, onProgress, overwrite = false) {
     if (!isLocalFile(file)) return pathFilesApi.upload(file, content, onProgress, overwrite)
-    if (content.size > 32 * 1024 * 1024) throw new Error('单个文件最大支持 32 MB')
+    if (content.size > ATTACHMENT_MAX_BYTES) throw new Error(`单个文件最大支持 ${ATTACHMENT_MAX_LABEL}`)
     const data = new Uint8Array(await content.arrayBuffer())
     const result = await requestLocalFile({ action: 'upload', ...localTarget(file), data, overwrite })
     onProgress(100)

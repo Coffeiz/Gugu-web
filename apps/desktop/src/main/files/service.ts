@@ -8,6 +8,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'nod
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { agentDownloadsLimit } from '@gugu/core/tools'
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_LABEL } from '@gugu/core/agent/attachments/limits'
 import { createLocalSkillPackageMover, patchSkillDocument, skillPackageDigest, type SkillDocumentPatch } from '@gugu/core/skills'
 import { scanFilesystem } from '@gugu/search'
 import { DesktopError } from '../core-host.js'
@@ -29,7 +30,7 @@ async function discardFileUndoCopy(holding: string) {
   fileUndoCopies.delete(holding)
 }
 
-const maxUpload = 32 * 1024 * 1024
+const maxUpload = ATTACHMENT_MAX_BYTES
 const mimeTypes: Record<string, string> = {
   '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv', '.json': 'application/json',
   '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -329,7 +330,7 @@ function workspaceFiles(directoryId: DesktopFileDirectory, workspace: () => Prom
 
   async function upload(path: unknown, data: unknown, overwrite: boolean, identity?: string) {
     if (!(data instanceof Uint8Array) || data.byteLength > maxUpload)
-      throw new DesktopError('invalid_request', '单个文件最大支持 32 MB')
+      throw new DesktopError('invalid_request', `单个文件最大支持 ${ATTACHMENT_MAX_LABEL}`)
     await writeAtomically(path, temp => writeFile(temp, data, { flag: 'wx', mode: 0o600 }), overwrite, identity)
   }
 

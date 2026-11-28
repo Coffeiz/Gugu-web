@@ -8,6 +8,8 @@ import { createImSendFileTool, type ImSendFilePort } from '#core-source/agent/to
 import { createSaveAttachmentTool } from '#core-source/agent/tools/files/index.js'
 import { desktopImAttachmentDelivery } from '#core-source/im/desktop-inbox.js'
 import { imFilePathPermission } from '#core-source/agent/scenes/im/index.js'
+import { ATTACHMENT_MAX_LABEL } from '#core-source/agent/attachments/limits.js'
+import { MAX_DESKTOP_ATTACHMENT_BYTES } from '../attachments.js'
 
 type AttachmentScope = 'turn' | 'session' | 'owner'
 
@@ -87,8 +89,8 @@ export function createDesktopAttachmentTools(options: {
           failed.push({ attach_id: attachId, error: '附件不存在或已过期' })
           continue
         }
-        if (attachment.size_bytes > 32 * 1024 * 1024) {
-          failed.push({ attach_id: attachId, error: '附件超过桌面文件库支持的 32 MB 上限' })
+        if (attachment.size_bytes > MAX_DESKTOP_ATTACHMENT_BYTES) {
+          failed.push({ attach_id: attachId, error: `附件超过桌面文件库支持的 ${ATTACHMENT_MAX_LABEL} 上限` })
           continue
         }
         const opened = await openLocalFile(attachment.root, attachment.relativePath)

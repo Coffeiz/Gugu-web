@@ -4,16 +4,18 @@ import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { DESKTOP_CHANNELS, type DesktopAgentAttachment, type DesktopAgentAttachmentCommand } from '@gugu/core/desktop'
 import { CHAT_ATTACHMENT_AUDIO_MATERIALIZE_BYTES, CHAT_ATTACHMENT_STAGING_BYTES, parseChatAttachmentFilename } from '@gugu/core/agent/attachments/staging'
+import { ATTACHMENT_MAX_BYTES } from '@gugu/core/agent/attachments/limits'
 import { DesktopError } from '../core-host.js'
 import type { IpcHandlers, IpcHost } from '../ipc/types.js'
 
 import type { createDesktopRecordingTranscriber } from './voice-recording.js'
 
 /**
- * IPC 整块传输的上限：只有「整块字节」这条路的附件受此限。
- * 大文件走 sourcePath 流式落盘，不受此限——单个附件真正的上限是聊天暂存总容量。
+ * 单文件附件/文件库准入上限（100 MB，来自 core 的 ATTACHMENT_MAX_BYTES，与 IM 媒体预算一致）。
+ * 只有「整块字节」这条 IPC 路径会按此校验，且内存开销与文件大小同阶，优先走
+ * sourcePath 流式落盘；聊天暂存总容量另由 CHAT_ATTACHMENT_STAGING_BYTES 约束。
  */
-export const MAX_DESKTOP_ATTACHMENT_BYTES = 32 * 1024 * 1024
+export const MAX_DESKTOP_ATTACHMENT_BYTES = ATTACHMENT_MAX_BYTES
 
 function attachmentRoot(dataDirectory: string) { return resolve(dataDirectory, 'agent-attachments') }
 

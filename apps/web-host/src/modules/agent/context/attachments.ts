@@ -1,5 +1,6 @@
 import { openLocalFile, UnsafeLocalPathError } from '@gugu/fs/node'
 import type { CurrentTurnAttachment } from '@gugu/core/agent'
+import { ATTACHMENT_MAX_BYTES } from '@gugu/core/agent/attachments/limits'
 import { isOwnedFilePath } from '../../files/store.js'
 import type { Pool, QueryResultRow } from 'pg'
 
@@ -57,12 +58,12 @@ export function createCurrentMessageAttachmentReader(options: CurrentMessageAtta
       const attachment = attachments.find(item => item.attach_id === input.attach_id)
       if (!attachment) throw new Error('附件不属于当前消息')
       const size = Number(attachment.size)
-      if (!Number.isSafeInteger(size) || size < 0 || size > 32 * 1024 * 1024) throw new Error('附件文本读取超限')
+      if (!Number.isSafeInteger(size) || size < 0 || size > ATTACHMENT_MAX_BYTES) throw new Error('附件文本读取超限')
       if (!isOwnedFilePath(owner, attachment.storage_key)) throw new Error('附件归属不匹配')
       const opened = await openLocalFile(options.storageRoot, attachment.storage_key)
       if (!opened) throw new Error('附件文件不可用')
       try {
-        if (opened.size !== size || opened.size > 32 * 1024 * 1024) throw new Error('附件文件大小与元数据不匹配')
+        if (opened.size !== size || opened.size > ATTACHMENT_MAX_BYTES) throw new Error('附件文件大小与元数据不匹配')
         const bytes = await opened.handle.readFile()
         if (bytes.byteLength !== size) throw new Error('附件文件大小与元数据不匹配')
         const extension = attachment.ext.toLowerCase()

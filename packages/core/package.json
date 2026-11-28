@@ -59,6 +59,7 @@
     "./im/binding-code": "./dist/im/binding-code.js",
     "./im/group-settings": "./dist/im/group-settings.js",
     "./agent/attachments/download": "./dist/agent/attachments/download.js",
+    "./agent/attachments/limits": "./dist/agent/attachments/limits.js",
     "./agent/attachments/staging": "./dist/agent/attachments/staging.js",
     "./agent/attachments/delete-draft": "./dist/agent/attachments/delete-draft.js",
     "./agent/attachments/clear-drafts": "./dist/agent/attachments/clear-drafts.js",
